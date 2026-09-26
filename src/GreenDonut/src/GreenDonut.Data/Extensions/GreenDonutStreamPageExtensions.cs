@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using GreenDonut.Data.Cursors;
 
 namespace GreenDonut.Data;
 
@@ -165,31 +164,7 @@ public static class GreenDonutStreamPageExtensions
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        if (offset > 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(offset),
-                offset,
-                "The offset of a last page cursor must not be greater than zero.");
-        }
-
-        if (page.TotalCount is null || page.RequestedSize is null)
-        {
-            throw new InvalidOperationException("This page does not allow relative cursors.");
-        }
-
-        var lastPageNumber = LastPageCursorMath.GetLastPageNumber(page.TotalCount.Value, page.RequestedSize.Value);
-        var pageNumber = lastPageNumber + offset;
-
-        if (pageNumber < 1)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(offset),
-                offset,
-                "The offset moves the page number before the first page.");
-        }
-
-        return new PageCursor(CursorFormatter.FormatEndCursor(offset, page.TotalCount.Value), pageNumber);
+        return LastPageCursorMath.CreateLastPageCursor(page.TotalCount, page.RequestedSize, offset);
     }
 
     /// <summary>
@@ -218,40 +193,10 @@ public static class GreenDonutStreamPageExtensions
     {
         ArgumentNullException.ThrowIfNull(page);
 
-        if (maxCursors < 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxCursors),
-                "Max cursors must be greater than or equal to 0.");
-        }
-
-        if (page.TotalCount is null || page.RequestedSize is null || page.Index is null)
-        {
-            return [];
-        }
-
-        var lastPageNumber = LastPageCursorMath.GetLastPageNumber(page.TotalCount.Value, page.RequestedSize.Value);
-
-        if (lastPageNumber <= page.Index)
-        {
-            return [];
-        }
-
-        var totalCount = page.TotalCount.Value;
-        var cursors = ImmutableArray.CreateBuilder<PageCursor>();
-
-        for (var offset = 0; offset > -maxCursors; offset--)
-        {
-            var pageNumber = lastPageNumber + offset;
-
-            if (pageNumber <= page.Index || pageNumber < 1)
-            {
-                break;
-            }
-
-            cursors.Insert(0, new PageCursor(CursorFormatter.FormatEndCursor(offset, totalCount), pageNumber));
-        }
-
-        return cursors.ToImmutable();
+        return LastPageCursorMath.CreateRelativeLastPageCursors(
+            page.TotalCount,
+            page.RequestedSize,
+            page.Index,
+            maxCursors);
     }
 }
