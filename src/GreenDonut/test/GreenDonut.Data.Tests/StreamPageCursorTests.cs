@@ -67,7 +67,7 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public async Task CreateRelativeBackwardCursors_UsesFirstPageIndex()
+    public async Task CreateRelativeBackwardCursors_Should_CreateCursorsFromFirstEntry_When_IndexIsAfterFirstPage()
     {
         // arrange
         var source = new ScriptedRowSource<int>(1, 2);
@@ -84,10 +84,11 @@ public class StreamPageCursorTests
             cursors,
             cursor => Assert.Equal(new PageCursor("1:-1:3:10", 1), cursor),
             cursor => Assert.Equal(new PageCursor("1:0:3:10", 2), cursor));
+        Assert.Equal(1, source.RowsRead);
     }
 
     [Fact]
-    public async Task CreateRelativeForwardCursorsAsync_UsesLastPageIndex()
+    public async Task CreateRelativeForwardCursorsAsync_Should_CreateCursorsFromLastEntry_When_PagesRemain()
     {
         // arrange
         var source = new ScriptedRowSource<int>(1, 2);
@@ -147,7 +148,7 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public void CreateLastPageCursor_Throws_When_TotalCountIsUnknown()
+    public void CreateLastPageCursor_Should_Throw_When_TotalCountIsUnknown()
     {
         // arrange
         var page = StreamPage<int>.Empty;
