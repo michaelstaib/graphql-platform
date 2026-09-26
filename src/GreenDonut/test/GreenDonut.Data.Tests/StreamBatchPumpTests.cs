@@ -192,6 +192,25 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
+    public async Task DuplicateKey_Should_Throw_ArgumentException_NamingTheKey()
+    {
+        // arrange
+        var source = new ScriptedBatchRowSource<string, string>(Row("A", "a1"));
+
+        // act
+        var exception = await Assert.ThrowsAsync<ArgumentException>(
+            () => StreamBatchPump<string, string>.CreateAsync(
+                source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+                ["A", "B", "A"]).AsTask());
+
+        // assert
+        Assert.Equal("keys", exception.ParamName);
+        Assert.Equal(
+            "The requested keys contain a duplicate: 'A'. (Parameter 'keys')",
+            exception.Message);
+    }
+
+    [Fact]
     public async Task Counter_Should_ReachZero_Only_When_EveryKeyCompletesOrIsDisposed()
     {
         // arrange

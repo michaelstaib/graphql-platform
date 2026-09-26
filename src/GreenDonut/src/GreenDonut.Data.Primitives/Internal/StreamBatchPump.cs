@@ -35,7 +35,16 @@ internal sealed class StreamBatchPump<TKey, TElement>
     {
         _source = source;
         _lifetime = lifetime;
-        _keys = keys.ToDictionary(key => key, static _ => new KeyChannel());
+        _keys = new Dictionary<TKey, KeyChannel>(keys.Count);
+
+        foreach (var key in keys)
+        {
+            if (!_keys.TryAdd(key, new KeyChannel()))
+            {
+                throw ThrowHelper.StreamBatchPump_DuplicateKey(key);
+            }
+        }
+
         _liveKeys = _keys.Count;
     }
 
@@ -47,8 +56,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
     /// The shared, key-ordered source enumerator that produces rows for every requested key.
     /// </param>
     /// <param name="keys">
-    /// The requested keys. The returned pump releases the source and the lifetime once every one
-    /// of these keys' pages has completed or been disposed.
+    /// The requested keys, which must not contain a duplicate. The returned pump releases the
+    /// source and the lifetime once every one of these keys' pages has completed or been disposed.
     /// </param>
     /// <param name="lifetime">
     /// A resource owned by the pump, disposed once every key's page has completed or been
