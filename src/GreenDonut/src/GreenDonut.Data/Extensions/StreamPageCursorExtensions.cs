@@ -8,6 +8,12 @@ public static class StreamPageCursorExtensions
     /// <summary>
     /// Creates a cursor for the first item of the page, without reading ahead.
     /// </summary>
+    /// <param name="page">
+    /// The page to create the cursor for.
+    /// </param>
+    /// <returns>
+    /// The cursor of the first item, or null if the page is empty.
+    /// </returns>
     public static string? CreateStartCursor<T>(this StreamPage<T> page)
     {
         ArgumentNullException.ThrowIfNull(page);
@@ -23,6 +29,9 @@ public static class StreamPageCursorExtensions
     /// <param name="cancellationToken">
     /// A token to cancel the operation.
     /// </param>
+    /// <returns>
+    /// The cursor of the last item, or null if the page is empty.
+    /// </returns>
     public static async ValueTask<string?> CreateEndCursorAsync<T>(
         this StreamPage<T> page,
         CancellationToken cancellationToken = default)
