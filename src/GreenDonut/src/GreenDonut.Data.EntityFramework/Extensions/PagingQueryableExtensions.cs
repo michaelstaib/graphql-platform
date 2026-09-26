@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using GreenDonut.Data.Cursors;
 using GreenDonut.Data.Expressions;
+using GreenDonut.Data.Internal;
 using Microsoft.EntityFrameworkCore;
 using static GreenDonut.Data.Expressions.ExpressionHelpers;
 
@@ -75,135 +76,20 @@ public static class PagingQueryableExtensions
         bool includeTotalCount,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        var composition = PagingQueryComposer.Compose(source, arguments, includeTotalCount);
+        var originalQuery = composition.OriginalQuery;
+        var keys = composition.Keys;
+        var cursor = composition.Cursor;
+        var requestedCount = composition.RequestedCount;
+        var isBackward = composition.IsBackward;
+        var totalCount = composition.TotalCount;
+        arguments = composition.Arguments;
+        includeTotalCount = composition.IncludeTotalCount;
 
-        source = QueryHelpers.EnsureOrderPropsAreSelected(source);
-        Expression<Func<T, T>>? selector = null;
-        var applySelectorAfterPaging = arguments.After is not null || arguments.Before is not null;
-
-        if (applySelectorAfterPaging)
-        {
-            selector = QueryHelpers.ExtractCurrentSelector(source);
-
-            if (selector is not null)
-            {
-                source = QueryHelpers.RemoveSelector(source);
-            }
-        }
-
-        var keys = ParseDataSetKeys(source);
-
-        if (keys.Length == 0)
-        {
-            throw new ArgumentException(
-                "In order to use cursor pagination, you must specify at least one key using the `OrderBy` method.",
-                nameof(source));
-        }
-
-        if (arguments.Last is not null && arguments.First is not null)
-        {
-            throw new ArgumentException(
-                "You can specify either `first` or `last`, but not both as this can lead to unpredictable results.",
-                nameof(arguments));
-        }
-
-        if (arguments.First is null && arguments.Last is null)
-        {
-            arguments = arguments with { First = 10 };
-        }
-
-        // if relative cursors are enabled and no cursor is provided
-        // we must do an initial count of the dataset.
-        if (arguments.EnableRelativeCursors
-            && string.IsNullOrEmpty(arguments.After)
-            && string.IsNullOrEmpty(arguments.Before))
-        {
-            includeTotalCount = true;
-        }
-
-        var originalQuery = source;
-        var forward = arguments.Last is null;
-        var requestedCount = forward ? arguments.First!.Value : arguments.Last!.Value;
-        var offset = 0;
-        int? totalCount = null;
-        var usesRelativeCursors = false;
-        Cursor? cursor = null;
-
-        if (arguments.After is not null)
-        {
-            cursor = CursorParser.Parse(arguments.After, keys);
-            var (whereExpr, cursorOffset) = BuildWhereExpression<T>(
-                keys,
-                cursor,
-                true,
-                arguments.NullOrdering);
-            source = source.Where(whereExpr);
-            offset = cursorOffset;
-
-            if (!includeTotalCount)
-            {
-                totalCount ??= cursor.TotalCount;
-            }
-
-            if (cursor.IsRelative)
-            {
-                usesRelativeCursors = true;
-            }
-        }
-
-        if (arguments.Before is not null)
-        {
-            if (usesRelativeCursors)
-            {
-                throw new ArgumentException(
-                    "You cannot use `before` and `after` with relative cursors at the same time.",
-                    nameof(arguments));
-            }
-
-            cursor = CursorParser.Parse(arguments.Before, keys);
-            var (whereExpr, cursorOffset) = BuildWhereExpression<T>(
-                keys,
-                cursor,
-                false,
-                arguments.NullOrdering);
-            source = source.Where(whereExpr);
-            offset = cursorOffset;
-
-            if (!includeTotalCount)
-            {
-                totalCount ??= cursor.TotalCount;
-            }
-        }
-
-        if (cursor?.IsRelative == true)
-        {
-            if ((arguments.Last is not null && cursor.Offset > 0)
-                || (arguments.First is not null && cursor.Offset < 0))
-            {
-                throw new ArgumentException(
-                    "Positive offsets are not allowed with `last`, and negative offsets are not allowed with `first`.",
-                    nameof(arguments));
-            }
-        }
-
-        var isBackward = arguments.Last is not null;
-
-        if (isBackward)
-        {
-            source = ReverseOrderExpressionRewriter.Rewrite(source);
-        }
-
-        var absOffset = Math.Abs(offset);
-
-        if (absOffset > 0)
-        {
-            source = source.Skip(absOffset * requestedCount);
-        }
-
-        source = source.Take(requestedCount + 1);
-        var pageQuery = selector is null
-            ? source
-            : source.Select(selector);
+        var slicedQuery = composition.SlicedQuery.Take(requestedCount + 1);
+        var pageQuery = composition.Selector is null
+            ? slicedQuery
+            : slicedQuery.Select(composition.Selector);
 
         var builder = ImmutableArray.CreateBuilder<T>();
         var fetchCount = 0;
@@ -472,7 +358,7 @@ public static class PagingQueryableExtensions
             source = QueryHelpers.RemoveSelector(source);
         }
 
-        var keys = ParseDataSetKeys(source);
+        var keys = PagingQueryComposer.ParseDataSetKeys(source);
 
         if (keys.Length == 0)
         {
@@ -676,7 +562,7 @@ public static class PagingQueryableExtensions
         public int Count { get; set; }
     }
 
-    private static Page<T> CreateValueCursorPage<T>(
+    internal static Page<T> CreateValueCursorPage<T>(
         ImmutableArray<PageEntry<T>> entries,
         PagingArguments arguments,
         CursorKey[] keys,
@@ -710,7 +596,7 @@ public static class PagingQueryableExtensions
             items);
     }
 
-    private static Page<TValue> CreateElementCursorPage<TElement, TValue>(
+    internal static Page<TValue> CreateElementCursorPage<TElement, TValue>(
         ImmutableArray<PageEntry<TValue>> entries,
         ImmutableArray<TElement> elements,
         PagingArguments arguments,
@@ -744,7 +630,7 @@ public static class PagingQueryableExtensions
             totalCount: totalCount);
     }
 
-    private static (bool HasNext, bool HasPrevious) CreatePageFlags(
+    internal static (bool HasNext, bool HasPrevious) CreatePageFlags(
         PagingArguments arguments,
         int fetchCount)
     {
@@ -782,7 +668,7 @@ public static class PagingQueryableExtensions
         return (hasNext, hasPrevious);
     }
 
-    private static int? CreateIndex(PagingArguments arguments, Cursor? cursor, int? totalCount)
+    internal static int? CreateIndex(PagingArguments arguments, Cursor? cursor, int? totalCount)
     {
         if (totalCount is not null
             && arguments.Last is not null
@@ -824,13 +710,6 @@ public static class PagingQueryableExtensions
         }
 
         return null;
-    }
-
-    private static CursorKey[] ParseDataSetKeys<T>(IQueryable<T> source)
-    {
-        var parser = new CursorKeyParser();
-        parser.Visit(source.Expression);
-        return [.. parser.Keys];
     }
 
     private sealed class InterceptorHolder
