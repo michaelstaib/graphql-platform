@@ -480,6 +480,35 @@ public class StreamPagingHelperTests(PostgreSqlResource resource)
         Assert.Equal(1, lifetime.DisposeCount);
     }
 
+    [Fact]
+    public async Task ToStreamPageAsync_Should_DisposeLifetimeAfterDrain_When_TotalCountIsStillPending()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 10);
+
+        var context = new SequentialContext(connectionString);
+        var lifetime = new RecordingLifetime(context);
+        var arguments = new PagingArguments(2);
+
+        // Act
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
+            arguments,
+            includeTotalCount: true,
+            lifetime: lifetime,
+            cancellationToken: Xunit.TestContext.Current.CancellationToken);
+
+        var items = await ToArrayAsync(page);
+        var disposedAfterDrain = lifetime.DisposeCount;
+        var totalCount = await page.TotalCountAsync(Xunit.TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(["Item0001", "Item0002"], items);
+        Assert.Equal(1, disposedAfterDrain);
+        Assert.Equal(10, totalCount);
+        Assert.Equal(1, lifetime.DisposeCount);
+    }
+
     // The following cases mirror PagingHelperTests.cs one for one, so the same case run against
     // ToPageAsync and ToStreamPageAsync fails under a name that identifies which API broke.
 
