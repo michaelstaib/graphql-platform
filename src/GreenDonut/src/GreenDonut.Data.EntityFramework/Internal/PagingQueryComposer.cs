@@ -33,8 +33,9 @@ internal static class PagingQueryComposer
     /// </returns>
     /// <exception cref="ArgumentException">
     /// If the queryable does not have any keys specified, if both <c>first</c> and
-    /// <c>last</c> are specified, or if <c>before</c> is combined with a relative
-    /// <c>after</c> cursor.
+    /// <c>last</c> are specified, if <c>before</c> is combined with a relative
+    /// <c>after</c> cursor, or if an end cursor is used without <c>before</c> and
+    /// <c>last</c>.
     /// </exception>
     public static PagingQueryComposition<T> Compose<T>(
         IQueryable<T> source,
@@ -95,9 +96,22 @@ internal static class PagingQueryComposer
         var usesRelativeCursors = false;
         Cursor? cursor = null;
 
+        // the exact skip count for an end cursor page, or null if the cursor is not an end
+        // cursor. It replaces the generic offset-based skip below because it is derived from
+        // the dataset total rather than from a fixed number of pages.
+        int? endCursorSkip = null;
+
         if (arguments.After is not null)
         {
             cursor = CursorParser.Parse(arguments.After, keys);
+
+            if (cursor.IsEndCursor)
+            {
+                throw new ArgumentException(
+                    "An end cursor is only valid when used with `before` and `last`.",
+                    nameof(arguments));
+            }
+
             var (whereExpr, cursorOffset) = BuildWhereExpression<T>(
                 keys,
                 cursor,
@@ -127,17 +141,52 @@ internal static class PagingQueryComposer
             }
 
             cursor = CursorParser.Parse(arguments.Before, keys);
-            var (whereExpr, cursorOffset) = BuildWhereExpression<T>(
-                keys,
-                cursor,
-                false,
-                arguments.NullOrdering);
-            source = source.Where(whereExpr);
-            offset = cursorOffset;
 
-            if (!includeTotalCount)
+            if (cursor.IsEndCursor)
             {
-                totalCount ??= cursor.TotalCount;
+                if (arguments.First is not null || arguments.Last is null)
+                {
+                    throw new ArgumentException(
+                        "An end cursor is only valid when used with `before` and `last`.",
+                        nameof(arguments));
+                }
+
+                offset = cursor.Offset!.Value;
+                var cachedTotal = cursor.TotalCount!.Value;
+                var pagesBeforeLast = -offset;
+
+                // the actual last page requires a fresh count, as the cached total on the
+                // cursor may be stale. Earlier pages reuse the cached total instead, as their
+                // boundaries were computed relative to it when the cursor was created.
+                includeTotalCount = pagesBeforeLast == 0;
+
+                if (includeTotalCount)
+                {
+                    endCursorSkip = 0;
+                }
+                else
+                {
+                    totalCount = cachedTotal;
+                    var remainder = cachedTotal % requestedCount == 0
+                        ? requestedCount
+                        : cachedTotal % requestedCount;
+                    endCursorSkip = remainder + (pagesBeforeLast - 1) * requestedCount;
+                }
+            }
+            else
+            {
+                var (whereExpr, cursorOffset) = BuildWhereExpression<T>(
+                    keys,
+                    cursor,
+                    false,
+                    arguments.NullOrdering);
+                source = source.Where(whereExpr);
+                offset = cursorOffset;
+
+                if (!includeTotalCount)
+                {
+                    totalCount ??= cursor.TotalCount;
+                }
             }
         }
 
@@ -159,11 +208,21 @@ internal static class PagingQueryComposer
             source = ReverseOrderExpressionRewriter.Rewrite(source);
         }
 
-        var absOffset = Math.Abs(offset);
-
-        if (absOffset > 0)
+        if (endCursorSkip is not null)
         {
-            source = source.Skip(absOffset * requestedCount);
+            if (endCursorSkip.Value > 0)
+            {
+                source = source.Skip(endCursorSkip.Value);
+            }
+        }
+        else
+        {
+            var absOffset = Math.Abs(offset);
+
+            if (absOffset > 0)
+            {
+                source = source.Skip(absOffset * requestedCount);
+            }
         }
 
         return new PagingQueryComposition<T>(
