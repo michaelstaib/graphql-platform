@@ -84,7 +84,25 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         var page = new ValueCursorStreamPage<T>(pump, definition, createCursor);
-        await page.PrimeAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await page.PrimeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            try
+            {
+                await page.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // ignored: the priming failure above takes precedence.
+            }
+
+            throw;
+        }
+
         return page;
     }
 
