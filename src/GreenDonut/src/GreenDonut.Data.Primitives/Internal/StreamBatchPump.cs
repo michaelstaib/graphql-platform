@@ -98,18 +98,25 @@ internal sealed class StreamBatchPump<TKey, TElement>
             }
             catch
             {
-                await pump.ReleaseCoreAsync().ConfigureAwait(false);
+                // the priming failure is what the caller must observe; a disposal failure while
+                // releasing the source and the lifetime for it must not replace it.
+                await pump.ReleaseCoreIgnoringFaultAsync().ConfigureAwait(false);
                 throw;
             }
 
             return pump;
         }
 
-        await source.DisposeAsync().ConfigureAwait(false);
-
-        if (lifetime is not null)
+        try
         {
-            await lifetime.DisposeAsync().ConfigureAwait(false);
+            await source.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (lifetime is not null)
+            {
+                await lifetime.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         return null;
@@ -206,9 +213,9 @@ internal sealed class StreamBatchPump<TKey, TElement>
                 // a source that faults mid-stream still releases the shared source and the
                 // lifetime, exactly as reaching the end of the source does, and every later pull
                 // for any key rethrows the same exception instead of touching the now-disposed
-                // source again.
+                // source again. A disposal failure while releasing must not replace this fault.
                 _fault = ExceptionDispatchInfo.Capture(ex);
-                await ReleaseCoreAsync().ConfigureAwait(false);
+                await ReleaseCoreIgnoringFaultAsync().ConfigureAwait(false);
                 throw;
             }
         }
@@ -247,7 +254,7 @@ internal sealed class StreamBatchPump<TKey, TElement>
             // key, rethrows.
             var fault = ThrowHelper.StreamBatchPump_SourceNotGroupedByKey(row.Key);
             _fault = ExceptionDispatchInfo.Capture(fault);
-            await ReleaseCoreAsync().ConfigureAwait(false);
+            await ReleaseCoreIgnoringFaultAsync().ConfigureAwait(false);
             throw fault;
         }
 
@@ -305,6 +312,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
     // Disposes the source and then the lifetime, exactly once, however release was triggered:
     // every requested key completing or being disposed, the source faulting mid-stream, or the
     // priming read during creation failing before any page exists to reach this path otherwise.
+    // The two disposals run in separate try/finally blocks so the lifetime is still disposed even
+    // when disposing the source throws.
     private async ValueTask ReleaseCoreAsync()
     {
         if (_released)
@@ -313,14 +322,34 @@ internal sealed class StreamBatchPump<TKey, TElement>
         }
 
         _released = true;
-        await _source.DisposeAsync().ConfigureAwait(false);
 
-        var lifetime = _lifetime;
-        _lifetime = null;
-
-        if (lifetime is not null)
+        try
         {
-            await lifetime.DisposeAsync().ConfigureAwait(false);
+            await _source.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            var lifetime = _lifetime;
+            _lifetime = null;
+
+            if (lifetime is not null)
+            {
+                await lifetime.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    // Releases while a fault is already recorded, without letting a disposal failure replace it:
+    // the caller rethrows the recorded fault regardless of what happens here.
+    private async ValueTask ReleaseCoreIgnoringFaultAsync()
+    {
+        try
+        {
+            await ReleaseCoreAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // ignored: the already-recorded fault takes precedence.
         }
     }
 
