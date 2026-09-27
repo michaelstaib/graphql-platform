@@ -253,11 +253,16 @@ public class StreamPageTests
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
+        var replayed = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
+        var flagged = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => page.HasNextPageAsync(TestContext.Current.CancellationToken).AsTask());
 
-        // assert: the fault still releases the source and the lifetime, exactly like completion does
-        Assert.Same(exception, thrown);
-        Assert.Equal(1, source.DisposeCount);
-        Assert.Equal(1, lifetime.DisposeCount);
+        // assert: the fault still releases the source and the lifetime, exactly like completion
+        // does, and every later call on the faulted page rethrows the same exception with no
+        // further reads (folded into one tuple equality to stay within the 5-Assert-call limit)
+        Assert.Equal(
+            (exception, exception, exception, 2, 1, 1),
+            (thrown, replayed, flagged, source.MoveNextCount, source.DisposeCount, lifetime.DisposeCount));
     }
 
     [Fact]
