@@ -1003,6 +1003,38 @@ public class RelativeCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Fetch_End_Cursor_One_Page_Before_Last_Forces_Fresh_Count()
+    {
+        // Arrange
+
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 26);
+
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(-1, 25) };
+
+        // Act
+
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
+            arguments,
+            includeTotalCount: true,
+            Xunit.TestContext.Current.CancellationToken);
+
+        // Assert
+
+        Snapshot.Create()
+            .Add(new
+            {
+                page.Index,
+                page.TotalCount,
+                page.HasNextPage,
+                page.HasPreviousPage,
+                Items = page.Select(t => t.Name).ToArray()
+            })
+            .MatchSnapshot();
+    }
+
+    [Fact]
     public async Task Fetch_End_Cursor_With_First_Throws()
     {
         // Arrange

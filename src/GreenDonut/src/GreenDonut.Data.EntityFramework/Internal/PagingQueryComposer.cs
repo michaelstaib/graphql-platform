@@ -155,18 +155,17 @@ internal static class PagingQueryComposer
                 var cachedTotal = cursor.TotalCount!.Value;
                 var pagesBeforeLast = -offset;
 
-                // the actual last page requires a fresh count, as the cached total on the
-                // cursor may be stale. Earlier pages reuse the cached total instead, as their
-                // boundaries were computed relative to it when the cursor was created.
-                includeTotalCount = pagesBeforeLast == 0;
+                // the count is always inlined for an end cursor page, as the cached total on
+                // the cursor may be stale. The cached total is only used to position the skip
+                // for pages before the last one.
+                includeTotalCount = true;
 
-                if (includeTotalCount)
+                if (pagesBeforeLast == 0)
                 {
                     endCursorSkip = 0;
                 }
                 else
                 {
-                    totalCount = cachedTotal;
                     var remainder = cachedTotal % requestedCount == 0
                         ? requestedCount
                         : cachedTotal % requestedCount;

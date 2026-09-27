@@ -174,9 +174,13 @@ public static class PagingQueryableExtensions
                 }
             }
 
+            // the last page's index is derived from the fresh total, as it is the page being
+            // materialized. Earlier pages reuse the cursor's cached total instead, so the
+            // reported index stays consistent with the skip that was computed from it.
+            var indexTotal = pagesBeforeLast == 0 ? effectiveTotal : cursor.TotalCount!.Value;
             var index = Math.Max(
                 1,
-                (int)Math.Ceiling(effectiveTotal / (double)requestedCount) - pagesBeforeLast);
+                (int)Math.Ceiling(indexTotal / (double)requestedCount) - pagesBeforeLast);
 
             return CreateEndCursorPage(
                 Page<T>.ToEntries(items),
@@ -506,7 +510,11 @@ public static class PagingQueryableExtensions
             }
 
             var pageIndex = isEndCursor
-                ? Math.Max(1, (int)Math.Ceiling(totalCount!.Value / (double)requestedCount) - pagesBeforeLast)
+                ? Math.Max(
+                    1,
+                    (int)Math.Ceiling(
+                        (pagesBeforeLast == 0 ? totalCount!.Value : batchExpression.Cursor!.TotalCount!.Value)
+                            / (double)requestedCount) - pagesBeforeLast)
                 : CreateIndex(arguments, batchExpression.Cursor, totalCount);
 
             if (valueSelector is not null)
