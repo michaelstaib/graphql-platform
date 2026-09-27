@@ -105,7 +105,8 @@ public class StreamPagingHelperTests(PostgreSqlResource resource)
         var connectionString = CreateConnectionString();
         await SeedSequentialAsync(connectionString, 10);
 
-        await using var context = new SequentialContext(connectionString);
+        var interceptor = new RecordingReaderInterceptor();
+        await using var context = new SequentialContext(connectionString, [interceptor]);
         var arguments = new PagingArguments(2) { IncludeItems = false };
 
         // Act
@@ -126,6 +127,14 @@ public class StreamPagingHelperTests(PostgreSqlResource resource)
             })
             .AddSql(capture)
             .MatchSnapshot();
+
+        // count-only executes exactly one command against the database: the hoisted count.
+        interceptor.CommandTexts.MatchInlineSnapshot(
+            """
+            [
+              "SELECT count(*)::int\nFROM \"Brands\" AS b"
+            ]
+            """);
     }
 
     [Fact]
@@ -156,7 +165,8 @@ public class StreamPagingHelperTests(PostgreSqlResource resource)
         var connectionString = CreateConnectionString();
         await SeedSequentialAsync(connectionString, 10);
 
-        await using var context = new SequentialContext(connectionString);
+        var interceptor = new RecordingReaderInterceptor();
+        await using var context = new SequentialContext(connectionString, [interceptor]);
         var arguments = new PagingArguments(2);
 
         // Act
@@ -177,6 +187,18 @@ public class StreamPagingHelperTests(PostgreSqlResource resource)
             })
             .AddSql(capture)
             .MatchSnapshot();
+
+        // rows-only executes exactly one command against the database: the row query. The
+        // limit parameter's generated name differs across target frameworks, so it is
+        // normalized before matching.
+        interceptor.CommandTexts
+            .Select(t => t.Replace("@__p_0", "@p"))
+            .MatchInlineSnapshot(
+                """
+                [
+                  "SELECT b.\"Id\", b.\"Name\"\nFROM \"Brands\" AS b\nORDER BY b.\"Name\", b.\"Id\"\nLIMIT @p"
+                ]
+                """);
     }
 
     [Fact]
