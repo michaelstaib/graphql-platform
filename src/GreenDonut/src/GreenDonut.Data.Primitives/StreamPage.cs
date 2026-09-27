@@ -85,7 +85,7 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
     /// A token to cancel the enumeration.
     /// </param>
     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-        => _source.GetAsyncEnumerator(cancellationToken);
+        => _source.GetValuesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
 
     /// <summary>
     /// Enumerates the entries of this page, bundling each item with its position.
@@ -94,7 +94,7 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
     /// A token to cancel the enumeration.
     /// </param>
     public IAsyncEnumerable<PageEntry<T>> EnumerateEntriesAsync(CancellationToken cancellationToken = default)
-        => _source.EnumerateEntriesAsync(cancellationToken);
+        => _source.GetEntriesAsync(cancellationToken);
 
     /// <summary>
     /// Gets the total count of items in the dataset, reading ahead only as far as needed.

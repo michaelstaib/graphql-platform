@@ -16,7 +16,7 @@ namespace GreenDonut.Data.Internal;
 /// enumerators may interleave, but this type has no cross-thread safety, the same stance as
 /// <c>DbContext</c>.
 /// </remarks>
-internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
+internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement>
 {
     private readonly List<TElement> _items = [];
     private readonly StreamPagePump<TElement>? _pump;
@@ -53,16 +53,16 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public bool IsCompleted => _isCompleted;
+    public override bool IsCompleted => _isCompleted;
 
     /// <inheritdoc />
-    public int? TotalCount => _totalCount;
+    public override int? TotalCount => _totalCount;
 
     /// <inheritdoc />
-    public int? RequestedSize => _definition.RequestedSize;
+    public override int? RequestedSize => _definition.RequestedSize;
 
     /// <inheritdoc />
-    public int BufferedCount => _items.Count;
+    public override int BufferedCount => _items.Count;
 
     /// <summary>
     /// Gets the buffered row at the given index, throwing when it has not streamed yet.
@@ -81,15 +81,12 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public IAsyncEnumerator<TElement> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-        => EnumerateAsync(cancellationToken).GetAsyncEnumerator();
+    public override IAsyncEnumerable<PageEntry<TElement>> GetEntriesAsync(
+        CancellationToken cancellationToken = default)
+        => GetEntriesCore(cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<PageEntry<TElement>> EnumerateEntriesAsync(CancellationToken cancellationToken = default)
-        => EnumerateEntriesCore(cancellationToken);
-
-    /// <inheritdoc />
-    public async ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken = default)
+    public override async ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken = default)
     {
         if (_totalCount is null && !_firstRowObserved && !_isCompleted)
         {
@@ -100,7 +97,7 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public async ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default)
+    public override async ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default)
     {
         while (_hasNextPage is null && !_isCompleted)
         {
@@ -111,7 +108,7 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public async ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default)
+    public override async ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default)
     {
         while (_hasPreviousPage is null && !_isCompleted)
         {
@@ -122,13 +119,14 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public ValueTask PrimeAsync(CancellationToken cancellationToken = default) => AdvanceAsync(cancellationToken);
+    public override ValueTask PrimeAsync(CancellationToken cancellationToken = default)
+        => AdvanceAsync(cancellationToken);
 
     /// <inheritdoc />
-    public PageEntry<TElement> GetBufferedEntry(int index) => new(this[index], index);
+    public override PageEntry<TElement> GetBufferedEntry(int index) => new(this[index], index);
 
     /// <inheritdoc />
-    public async ValueTask DrainAsync(CancellationToken cancellationToken = default)
+    public override async ValueTask DrainAsync(CancellationToken cancellationToken = default)
     {
         while (!_isCompleted)
         {
@@ -137,32 +135,9 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public ValueTask DisposeAsync() => CompleteAsync();
+    public override ValueTask DisposeAsync() => CompleteAsync();
 
-    private async IAsyncEnumerable<TElement> EnumerateAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var index = 0;
-
-        while (true)
-        {
-            if (index < _items.Count)
-            {
-                yield return _items[index];
-                index++;
-                continue;
-            }
-
-            if (_isCompleted)
-            {
-                yield break;
-            }
-
-            await AdvanceAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async IAsyncEnumerable<PageEntry<TElement>> EnumerateEntriesCore(
+    private async IAsyncEnumerable<PageEntry<TElement>> GetEntriesCore(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var index = 0;

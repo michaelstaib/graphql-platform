@@ -7,7 +7,7 @@ namespace GreenDonut.Data.Internal;
 /// <typeparam name="TValue">
 /// The type of the page items.
 /// </typeparam>
-internal interface IStreamPageSource<TValue> : IAsyncEnumerable<TValue>, IAsyncDisposable
+internal interface IStreamPageSource<TValue> : IAsyncDisposable
 {
     /// <summary>
     /// Gets a value indicating whether this source has finished streaming.
@@ -32,7 +32,12 @@ internal interface IStreamPageSource<TValue> : IAsyncEnumerable<TValue>, IAsyncD
     /// <summary>
     /// Enumerates the buffered entries, reading ahead from the source as needed.
     /// </summary>
-    IAsyncEnumerable<PageEntry<TValue>> EnumerateEntriesAsync(CancellationToken cancellationToken = default);
+    IAsyncEnumerable<PageEntry<TValue>> GetEntriesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Enumerates the buffered items, reading ahead from the source as needed.
+    /// </summary>
+    IAsyncEnumerable<TValue> GetValuesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Resolves the total count, reading ahead only as far as needed.

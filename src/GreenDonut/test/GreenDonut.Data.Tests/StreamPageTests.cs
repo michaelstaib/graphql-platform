@@ -44,6 +44,83 @@ public class StreamPageTests
     }
 
     [Fact]
+    public async Task EnumerateEntriesAsync_And_Values_Should_ObserveSameRows_InSameOrder_FromTheSharedLoop()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
+        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+
+        // act
+        var entries = new List<PageEntry<string>>();
+        await foreach (var entry in page.EnumerateEntriesAsync(TestContext.Current.CancellationToken))
+        {
+            entries.Add(entry);
+        }
+
+        var values = await CollectAsync(page);
+
+        // assert
+        Assert.Equal(["a", "b", "c"], values);
+        Assert.Equal(values, entries.Select(e => e.Item));
+        Assert.Equal(entries.Select(e => e.Index), Enumerable.Range(0, values.Count));
+    }
+
+    [Fact]
+    public async Task ElementProjectingSource_Should_ObserveSameProjectedRows_InSameOrder_FromTheSharedLoop()
+    {
+        // arrange: entries are read first and values second, so the shared loop, not enumeration
+        // order, must be what keeps the projected values and their entries in sync
+        var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
+        var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var selectorCalls = 0;
+        var page = new ElementCursorStreamPage<int, string>(
+            pump,
+            Definition<int>(requestedCount: 3, forward: true),
+            valueSelector: element =>
+            {
+                selectorCalls++;
+                return $"v{element}";
+            },
+            createCursor: static entry => $"elem:{entry.Node}");
+
+        // act
+        var entries = new List<PageEntry<string>>();
+        await foreach (var entry in page.EnumerateEntriesAsync(TestContext.Current.CancellationToken))
+        {
+            entries.Add(entry);
+        }
+
+        var values = await CollectAsync(page);
+
+        // assert
+        Assert.Equal(["v1", "v2", "v3"], values);
+        Assert.Equal(values, entries.Select(e => e.Item));
+        Assert.Equal(3, selectorCalls);
+    }
+
+    [Fact]
+    public void StreamPageSources_Should_NotImplementIAsyncEnumerable()
+    {
+        // arrange: every non-abstract type that implements IStreamPageSource<T> in this assembly
+        var sourceTypes = typeof(StreamPage<>).Assembly
+            .GetTypes()
+            .Where(t => t.IsClass && !t.IsAbstract)
+            .Where(t => t.GetInterfaces().Any(
+                i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IStreamPageSource<>)))
+            .ToArray();
+
+        // act
+        var typesImplementingBoth = sourceTypes
+            .Where(t => t.GetInterfaces().Any(
+                i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IAsyncEnumerable<>)))
+            .ToArray();
+
+        // assert
+        Assert.NotEmpty(sourceTypes);
+        Assert.Empty(typesImplementingBoth);
+    }
+
+    [Fact]
     public async Task Enumerators_Should_Interleave_Over_TheSharedBuffer()
     {
         // arrange
