@@ -200,6 +200,38 @@ public class StreamPageCursorTests
     }
 
     [Fact]
+    public async Task CreateRelativeBackwardCursorsAsync_Should_ReturnEmptyWithoutReading_When_BatchPageIsOnFirstPageAndNotYetPrimed()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, int>>(Row("A", 1), Row("A", 2), Row("B", 3));
+        var gate = source.GateBeforeItem(2);
+        var pump = (await StreamBatchPump<string, int>.CreateAsync(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"]))!;
+        _ = pump.CreatePage(
+            "A",
+            keyPump => new ValueCursorStreamPage<int>(
+                keyPump,
+                Definition(requestedCount: 1),
+                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+        var pageB = pump.CreatePage(
+            "B",
+            keyPump => new ValueCursorStreamPage<int>(
+                keyPump,
+                Definition(requestedCount: 1, index: 1, requestedSize: 2, totalCount: 10),
+                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+
+        // act
+        var cursorsTask = pageB.CreateRelativeBackwardCursorsAsync(2, TestContext.Current.CancellationToken);
+        var completedSynchronously = cursorsTask.IsCompletedSuccessfully;
+        var cursors = await cursorsTask;
+
+        // assert
+        Assert.True(completedSynchronously);
+        Assert.Empty(cursors);
+        Assert.Single(source.Yielded);
+    }
+
+    [Fact]
     public async Task CreateRelativeForwardCursorsAsync_Should_CreateCursorsFromLastEntry_When_PagesRemain()
     {
         // arrange

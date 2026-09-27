@@ -9,7 +9,7 @@ public static class GreenDonutStreamPageExtensions
 {
     /// <summary>
     /// Creates relative cursors for backward pagination, reading ahead only until the first
-    /// item has arrived.
+    /// item has arrived, and only when previous pages exist.
     /// </summary>
     /// <param name="page">
     /// The page to create cursors for.
@@ -50,6 +50,11 @@ public static class GreenDonutStreamPageExtensions
                 "Max cursors must be greater than or equal to 0.");
         }
 
+        if (page.Index is null || page.Index == 1 || maxCursors == 0)
+        {
+            return new ValueTask<ImmutableArray<PageCursor>>([]);
+        }
+
         if (page.BufferedCount > 0 || page.IsCompleted)
         {
             return new ValueTask<ImmutableArray<PageCursor>>(CreateCursors(page, maxCursors));
@@ -68,13 +73,13 @@ public static class GreenDonutStreamPageExtensions
 
         static ImmutableArray<PageCursor> CreateCursors(StreamPage<T> page, int maxCursors)
         {
-            if (page.BufferedCount == 0 || page.Index is null || page.Index == 1)
+            if (page.BufferedCount == 0)
             {
                 return [];
             }
 
             var firstEntry = page.GetBufferedEntry(0);
-            var previousPages = page.Index.Value - 1;
+            var previousPages = page.Index!.Value - 1;
             var cursors = ImmutableArray.CreateBuilder<PageCursor>();
 
             maxCursors *= -1;
