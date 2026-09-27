@@ -17,8 +17,10 @@ namespace GreenDonut.Data.Internal;
 /// Rows arrive grouped by key. A row whose key differs from the previous row's key completes the
 /// previous key's page; source exhaustion completes every page not yet complete, so a requested
 /// key that never appears in the stream completes as an empty page. Pulling on any key's page
-/// drives this pump; rows for other keys are buffered into their own pages. This type has no
-/// cross-thread safety, the same stance as <see cref="StreamPageBuffer{TElement}"/>.
+/// drives this pump; rows for other keys are buffered into their own pages. A key whose page was
+/// disposed before it completed is abandoned: the pump keeps advancing past its remaining rows
+/// but discards them instead of buffering them. This type has no cross-thread safety, the same
+/// stance as <see cref="StreamPageBuffer{TElement}"/>.
 /// </remarks>
 internal sealed class StreamBatchPump<TKey, TElement>
     where TKey : notnull
@@ -53,8 +55,10 @@ internal sealed class StreamBatchPump<TKey, TElement>
     }
 
     /// <summary>
-    /// Creates a batch pump for the given requested keys, or, for an empty key set, disposes
-    /// <paramref name="source"/> and <paramref name="lifetime"/> immediately and returns null.
+    /// Creates a batch pump for the given requested keys, reading exactly one row from
+    /// <paramref name="source"/> and parking it in whichever requested key sorts first, or, for
+    /// an empty key set, disposes <paramref name="source"/> and <paramref name="lifetime"/>
+    /// immediately and returns null.
     /// </summary>
     /// <param name="source">
     /// The shared, key-ordered source enumerator that produces rows for every requested key.
@@ -81,7 +85,9 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         if (keys.Count > 0)
         {
-            return new StreamBatchPump<TKey, TElement>(source, keys, lifetime);
+            var pump = new StreamBatchPump<TKey, TElement>(source, keys, lifetime);
+            await pump.PumpOnceAsync().ConfigureAwait(false);
+            return pump;
         }
 
         await source.DisposeAsync().ConfigureAwait(false);
@@ -209,18 +215,36 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         _hasCurrentKey = true;
         _currentKey = row.Key;
-        channel.Rows.Enqueue(new StreamRow<TElement>
+
+        if (!channel.Abandoned)
         {
-            Item = row.Item,
-            TotalCount = row.TotalCount,
-            HasMore = row.HasMore
-        });
+            channel.Rows.Enqueue(new StreamRow<TElement>
+            {
+                Item = row.Item,
+                TotalCount = row.TotalCount,
+                HasMore = row.HasMore
+            });
+        }
     }
 
-    // Signals that one requested key's page has completed or been disposed. Once every key has
-    // done so, disposes the source and then the lifetime, exactly once.
-    private async ValueTask ReleaseAsync()
+    // Signals that one requested key's page has completed or been disposed. A page disposed
+    // before its channel completed naturally is abandoned here: its channel is marked completed
+    // so the key-change and source-exhaustion handling above leave it alone, its already-staged
+    // rows are dropped, and later rows for the same key are discarded as they are read instead of
+    // buffered. Once every key has completed or been disposed, disposes the source and then the
+    // lifetime, exactly once.
+    private async ValueTask ReleaseAsync(TKey key)
     {
+        var channel = _keys[key];
+
+        if (!channel.Completed)
+        {
+            channel.Completed = true;
+            channel.Abandoned = true;
+            channel.Rows.Clear();
+            channel.Drain = null;
+        }
+
         if (--_liveKeys > 0)
         {
             return;
@@ -256,6 +280,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         public bool Completed { get; set; }
 
+        public bool Abandoned { get; set; }
+
         public Func<CancellationToken, ValueTask>? Drain { get; set; }
     }
 
@@ -274,6 +300,6 @@ internal sealed class StreamBatchPump<TKey, TElement>
             return _current is not null;
         }
 
-        public ValueTask DisposeAsync() => pump.ReleaseAsync();
+        public ValueTask DisposeAsync() => pump.ReleaseAsync(key);
     }
 }
