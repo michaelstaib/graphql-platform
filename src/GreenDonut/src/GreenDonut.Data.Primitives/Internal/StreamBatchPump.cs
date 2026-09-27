@@ -21,7 +21,9 @@ namespace GreenDonut.Data.Internal;
 /// completes as an empty page. Pulling on any key's page drives this pump; rows for other keys
 /// are buffered into their own pages. A key whose page was disposed before it completed is
 /// abandoned: the pump keeps advancing past its remaining rows but discards them instead of
-/// buffering them. This type has no cross-thread safety, the same stance as
+/// buffering them. A row for a key whose run already completed and was not abandoned means the
+/// source is not grouped by key, which faults the pump exactly like a mid-stream source
+/// exception. This type has no cross-thread safety, the same stance as
 /// <see cref="StreamPageBuffer{TElement}"/>.
 /// </remarks>
 internal sealed class StreamBatchPump<TKey, TElement>
@@ -172,14 +174,17 @@ internal sealed class StreamBatchPump<TKey, TElement>
         return channel.Rows.Count > 0 ? channel.Rows.Dequeue() : null;
     }
 
-    // Advances the shared source by exactly one row, routing it to its key's channel. A key
-    // change completes the previously active key's page; source exhaustion completes every page
-    // already created and leaves a still-unbuilt key's channel alone, so it completes on its own
-    // first pull instead (that pull re-enters this method, finds the source already exhausted,
-    // and falls straight into this same completion pass). Completing a channel here also drains
-    // its page, so the page's own completion (and, once every key has completed or been
-    // disposed, the source and the lifetime) happens without waiting for a consumer to pull the
-    // remaining buffered rows.
+    // Advances the shared source by exactly one row, routing it to its key's channel. A row for a
+    // key whose channel already completed without being abandoned means the source is not grouped
+    // by key, and faults the pump before any of the completion handling below runs, so a wrongly
+    // ordered row never masquerades as a new run of an already-finished key. A key change
+    // completes the previously active key's page; source exhaustion completes every page already
+    // created and leaves a still-unbuilt key's channel alone, so it completes on its own first
+    // pull instead (that pull re-enters this method, finds the source already exhausted, and
+    // falls straight into this same completion pass). Completing a channel here also drains its
+    // page, so the page's own completion (and, once every key has completed or been disposed, the
+    // source and the lifetime) happens without waiting for a consumer to pull the remaining
+    // buffered rows.
     private async ValueTask PumpOnceAsync()
     {
         _fault?.Throw();
@@ -231,6 +236,19 @@ internal sealed class StreamBatchPump<TKey, TElement>
         if (!_keys.TryGetValue(row.Key, out var channel))
         {
             throw ThrowHelper.StreamBatchPump_RowForUnrequestedKey(row.Key);
+        }
+
+        if (channel.Completed && !channel.Abandoned)
+        {
+            // the key's run already completed (a later key was seen, or the source reached its
+            // end) and it was not abandoned, so this row is a source ordering violation: it would
+            // land in a queue no page will ever read again. Fault exactly like a mid-stream source
+            // exception so the source and the lifetime are released and every later pull, for any
+            // key, rethrows.
+            var fault = ThrowHelper.StreamBatchPump_SourceNotGroupedByKey(row.Key);
+            _fault = ExceptionDispatchInfo.Capture(fault);
+            await ReleaseCoreAsync().ConfigureAwait(false);
+            throw fault;
         }
 
         if (_hasCurrentKey && !EqualityComparer<TKey>.Default.Equals(_currentKey, row.Key))

@@ -348,6 +348,53 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
+    public async Task Rows_Should_ThrowAndReleaseSourceAndLifetime_When_ACompletedKeyReappears()
+    {
+        // arrange: A's run ends when B starts, so the trailing "A" row is a source-ordering
+        // violation instead of a continuation of A's run.
+        var lifetime = new ScriptedAsyncDisposable();
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
+            Row("A", "a1"), Row("A", "a2"), Row("B", "b1"), Row("A", "a3"));
+        var pump = await CreatePump(source, ["A", "B"], lifetime);
+        var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
+
+        // act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
+
+        // assert: the fault names the reappearing key and releases the source and the lifetime
+        // exactly once, the same as a mid-stream source exception
+        Assert.Equal(
+            "The batch source produced a row for key 'A' after that key's run had already "
+            + "completed; the source must be ordered by key.",
+            exception.Message);
+        Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
+    public async Task Rows_Should_KeepDiscardingSilently_When_AnAbandonedKeyReappearsAfterAnotherKey()
+    {
+        // arrange: A is abandoned after its first row, then reappears both immediately (its own
+        // trailing rows) and after B has been seen; every later "A" row must still be discarded,
+        // never thrown, because abandonment (not natural completion) closed its run.
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
+            Row("A", "a1"), Row("A", "a2"), Row("B", "b1"), Row("A", "a3"));
+        var pump = await CreatePump(source, ["A", "B"]);
+        var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 2, forward: true));
+        var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
+
+        // act: read A's first row, abandon A, then drain B past both later "A" rows
+        var enumeratorA = pageA.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await enumeratorA.MoveNextAsync();
+        await pageA.DisposeAsync();
+        var itemsB = await CollectAsync(pageB);
+
+        // assert: no exception, B is unaffected, and A's remaining rows never replay
+        Assert.Equal(["b1"], itemsB);
+        Assert.Equal(0, pump.StagedRowCount("A"));
+        Assert.Equal(["a1"], await CollectAsync(pageA));
+    }
+
+    [Fact]
     public async Task SourceEof_Should_CompleteEveryPage_And_ReleaseOnce_When_OnlyOnePageIsDrained()
     {
         // arrange

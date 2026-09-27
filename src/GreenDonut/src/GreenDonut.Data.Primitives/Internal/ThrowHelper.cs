@@ -21,4 +21,9 @@ internal static class ThrowHelper
 
     public static ArgumentException StreamBatchPump_DuplicateKey(object key)
         => new($"The requested keys contain a duplicate: '{key}'.", "keys");
+
+    public static InvalidOperationException StreamBatchPump_SourceNotGroupedByKey(object key)
+        => new(
+            $"The batch source produced a row for key '{key}' after that key's run had already "
+            + "completed; the source must be ordered by key.");
 }
