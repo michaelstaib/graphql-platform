@@ -61,6 +61,34 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
         => _source.PrimeAsync(cancellationToken);
 
     /// <summary>
+    /// Creates a value-cursor streaming page from <paramref name="pump"/> and primes it before
+    /// returning it, so construction and priming happen atomically and a caller can never observe
+    /// an unprimed page.
+    /// </summary>
+    /// <param name="pump">
+    /// The pump the page reads from, or null for an already fully resolved page.
+    /// </param>
+    /// <param name="definition">
+    /// The definition that governs how rows turn into content, flags, and a total count.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a page item.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// A token to cancel priming the page.
+    /// </param>
+    internal static async ValueTask<StreamPage<T>> CreatePrimedAsync(
+        StreamPagePump<T>? pump,
+        StreamPageDefinition<T> definition,
+        Func<EdgeEntry<T>, string> createCursor,
+        CancellationToken cancellationToken = default)
+    {
+        var page = new ValueCursorStreamPage<T>(pump, definition, createCursor);
+        await page.PrimeAsync(cancellationToken).ConfigureAwait(false);
+        return page;
+    }
+
+    /// <summary>
     /// Gets the already buffered entry at the given index, without reading ahead. Used to create
     /// cursors synchronously once the page has been primed.
     /// </summary>
@@ -154,7 +182,7 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
     {
         if (Index is null || TotalCount is null)
         {
-            throw new InvalidOperationException("This page does not allow relative cursors.");
+            throw ThrowHelper.StreamPage_RelativeCursorsNotAllowed();
         }
 
         return CreateCursor(entry.Index, offset, Index.Value, TotalCount.Value);

@@ -73,7 +73,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
         {
             if ((uint)index >= (uint)_items.Count)
             {
-                throw new ArgumentOutOfRangeException(nameof(index));
+                throw ThrowHelper.StreamPageBuffer_IndexNotBuffered(index);
             }
 
             return _items[index];
@@ -187,9 +187,20 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
                 // a source that faults mid-stream releases the pump, exactly as reaching the end
                 // of the source or disposing the page does, but the page itself stays not
                 // completed so every later call rethrows the same exception instead of silently
-                // truncating.
+                // truncating. Releasing still runs both disposals even when one of them throws
+                // (StreamPagePump.ReleaseAsync), but that disposal failure must never replace the
+                // fault being reported here, so it is dropped rather than left to escape.
                 _fault = ExceptionDispatchInfo.Capture(ex);
-                await ReleasePumpAsync().ConfigureAwait(false);
+
+                try
+                {
+                    await ReleasePumpAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignored: the row fault above takes precedence.
+                }
+
                 throw;
             }
 

@@ -26,4 +26,10 @@ internal static class ThrowHelper
         => new(
             $"The batch source produced a row for key '{key}' after that key's run had already "
             + "completed; the source must be ordered by key.");
+
+    public static ArgumentOutOfRangeException StreamPageBuffer_IndexNotBuffered(int index)
+        => new(nameof(index), index, "The row at this index has not been buffered yet.");
+
+    public static InvalidOperationException StreamPage_RelativeCursorsNotAllowed()
+        => new("This page does not allow relative cursors.");
 }
