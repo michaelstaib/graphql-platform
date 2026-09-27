@@ -89,7 +89,17 @@ internal sealed class StreamBatchPump<TKey, TElement>
         if (keys.Count > 0)
         {
             var pump = new StreamBatchPump<TKey, TElement>(source, keys, lifetime);
-            await pump.PumpOnceAsync().ConfigureAwait(false);
+
+            try
+            {
+                await pump.PumpOnceAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                await pump.ReleaseCoreAsync().ConfigureAwait(false);
+                throw;
+            }
+
             return pump;
         }
 
@@ -275,7 +285,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
     }
 
     // Disposes the source and then the lifetime, exactly once, however release was triggered:
-    // every requested key completing or being disposed, or the source faulting mid-stream.
+    // every requested key completing or being disposed, the source faulting mid-stream, or the
+    // priming read during creation failing before any page exists to reach this path otherwise.
     private async ValueTask ReleaseCoreAsync()
     {
         if (_released)

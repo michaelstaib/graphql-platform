@@ -214,6 +214,22 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
+    public async Task CreateAsync_Should_DisposeSourceAndLifetime_When_FirstRowBelongsToAnUnrequestedKey()
+    {
+        // arrange
+        var lifetime = new ScriptedAsyncDisposable();
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("Z", "z1"), Row("A", "a1"));
+
+        // act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => StreamBatchPump<string, string>.CreateAsync(
+                source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"], lifetime).AsTask());
+
+        // assert
+        Assert.Equal((1, 1, 1), (source.MoveNextCount, source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_AbandonTheKey_And_DiscardItsRemainingRows_When_DisposedBeforeCompletion()
     {
         // arrange: B has three rows, but only its first is ever read before its page is disposed.
