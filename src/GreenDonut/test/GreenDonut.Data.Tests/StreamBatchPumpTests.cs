@@ -437,6 +437,73 @@ public class StreamBatchPumpTests
         Assert.Equal((true, 1, 1), (pageB.IsCompleted, source.DisposeCount, lifetime.DisposeCount));
     }
 
+    [Fact]
+    public async Task CreateAsync_Should_DisposeSourceAndLifetime_When_PrimingMoveNextAsyncThrows()
+    {
+        // arrange
+        var exception = new InvalidOperationException("boom");
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("A", "a1"));
+        source.ThrowAt(0, exception);
+        var lifetime = new ScriptedAsyncDisposable();
+
+        // act
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => StreamBatchPump<string, string>.CreateAsync(
+                source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+                ["A"],
+                lifetime).AsTask());
+
+        // assert: the creating call observes the priming fault, with the source and the lifetime
+        // already released and no pump left registered anywhere
+        Assert.Same(exception, thrown);
+        Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
+    public async Task PumpOnceAsync_Should_StillReleaseTheLifetime_And_PreserveTheOriginalFault_When_SourceDisposeAsyncThrows()
+    {
+        // arrange: the source faults mid-stream, and its own DisposeAsync then fails too while the
+        // pump releases it.
+        var faultException = new InvalidOperationException("boom");
+        var disposeException = new InvalidOperationException("dispose boom");
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("A", "a1"), Row("A", "a2"));
+        source.ThrowAt(1, faultException);
+        source.ThrowOnDispose(disposeException);
+        var lifetime = new ScriptedAsyncDisposable();
+        var pump = await CreatePump(source, ["A"], lifetime);
+        var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 2, forward: true));
+
+        // act
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageA));
+
+        // assert: the mid-stream fault surfaces, not the enumerator's own disposal failure, and
+        // the lifetime is still released despite it
+        Assert.Same(faultException, thrown);
+        Assert.Equal(1, lifetime.DisposeCount);
+    }
+
+    [Fact]
+    public async Task ReleaseCoreAsync_Should_SurfaceLifetimeDisposalFailure_Once_And_StayReleased()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("A", "a1"));
+        var lifetime = new ScriptedAsyncDisposable();
+        var disposeException = new InvalidOperationException("lifetime boom");
+        lifetime.ThrowOnDispose(disposeException);
+        var pump = await CreatePump(source, ["A"], lifetime);
+        var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 1, forward: true));
+
+        // act: draining completes the key naturally, which releases the lifetime
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageA));
+
+        // assert: the disposal failure surfaces once, and disposing the page again does not
+        // retry the already-released lifetime
+        Assert.Same(disposeException, thrown);
+        Assert.Equal(1, lifetime.DisposeCount);
+        await pageA.DisposeAsync();
+        Assert.Equal(1, lifetime.DisposeCount);
+    }
+
     private static StreamBatchRow<TKey, TElement> Row<TKey, TElement>(TKey key, TElement item)
         where TKey : notnull
         => new() { Key = key, Item = item };

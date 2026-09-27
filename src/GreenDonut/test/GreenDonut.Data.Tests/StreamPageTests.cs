@@ -343,6 +343,49 @@ public class StreamPageTests
     }
 
     [Fact]
+    public async Task SourceException_Should_StillReleaseTheLifetime_And_PreserveTheOriginalFault_When_SourceDisposeAsyncThrows()
+    {
+        // arrange: the source faults mid-stream, and its own DisposeAsync then fails too while
+        // the pump releases it.
+        var faultException = new InvalidOperationException("boom");
+        var disposeException = new InvalidOperationException("dispose boom");
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
+        source.ThrowAt(1, faultException);
+        source.ThrowOnDispose(disposeException);
+        var lifetime = new ScriptedAsyncDisposable();
+        var page = CreatePage(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
+
+        // act
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
+
+        // assert: the mid-stream fault surfaces, not the enumerator's own disposal failure, and
+        // the lifetime is still released despite it
+        Assert.Same(faultException, thrown);
+        Assert.Equal(1, lifetime.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Completion_Should_SurfaceLifetimeDisposalFailure_Once_When_DrainedNaturally()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
+        var lifetime = new ScriptedAsyncDisposable();
+        var disposeException = new InvalidOperationException("lifetime boom");
+        lifetime.ThrowOnDispose(disposeException);
+        var page = CreatePage(source, Definition<string>(requestedCount: 1, forward: true), lifetime);
+
+        // act
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
+
+        // assert: the disposal failure surfaces once, and disposing the page again does not
+        // retry the already-released lifetime
+        Assert.Same(disposeException, thrown);
+        Assert.Equal(1, lifetime.DisposeCount);
+        await page.DisposeAsync();
+        Assert.Equal(1, lifetime.DisposeCount);
+    }
+
+    [Fact]
     public async Task PrimeAsync_Should_BufferFirstRowAndResolveCount_When_AwaitedBeforeHandOff()
     {
         // arrange
@@ -381,6 +424,45 @@ public class StreamPageTests
         Assert.Equal(
             (true, 1, 1, 0),
             (page.IsCompleted, lifetime.DisposeCount, source.DisposeCount, source.Yielded.Count));
+    }
+
+    [Fact]
+    public async Task PrimeAsync_Should_DisposeSourceAndLifetime_When_PrimingMoveNextAsyncThrows()
+    {
+        // arrange
+        var exception = new InvalidOperationException("boom");
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
+        source.ThrowAt(0, exception);
+        var lifetime = new ScriptedAsyncDisposable();
+        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+        var definition = Definition<string>(requestedCount: 3, forward: true);
+        var page = new ValueCursorStreamPage<string>(pump, definition, static entry => entry.Node!);
+
+        // act
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => page.PrimeAsync(TestContext.Current.CancellationToken).AsTask());
+
+        // assert: the creating call observes the priming fault with the source and the lifetime
+        // already released
+        Assert.Same(exception, thrown);
+        Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
+    public async Task CreatePrimedAsync_Should_ConstructAndPrimeAtomically()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", totalCount: 5), Row("b"));
+        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var definition = Definition<string>(requestedCount: 2, forward: true) with { Index = 1 };
+
+        // act
+        var page = await StreamPage<string>.CreatePrimedAsync(
+            pump, definition, static entry => entry.Node!, TestContext.Current.CancellationToken);
+
+        // assert: the first row is already buffered, so the returned page is never unprimed
+        Assert.Equal(1, page.BufferedCount);
+        Assert.Equal("a", page.GetBufferedEntry(0).Item);
     }
 
     [Fact]
