@@ -1258,7 +1258,7 @@ public class StreamPagingHelperTests(PostgreSqlResource resource)
     {
         List<PageEntry<T>> entries = [];
 
-        await foreach (var entry in page.EnumerateEntriesAsync(cancellationToken))
+        await foreach (var entry in page.GetEntriesAsync(cancellationToken))
         {
             entries.Add(entry);
         }

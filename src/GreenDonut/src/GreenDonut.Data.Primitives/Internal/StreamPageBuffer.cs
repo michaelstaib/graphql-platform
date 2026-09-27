@@ -137,6 +137,48 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
     /// <inheritdoc />
     public override ValueTask DisposeAsync() => CompleteAsync();
 
+    /// <summary>
+    /// Creates a buffer for <paramref name="pump"/> and primes it before returning it, so
+    /// construction and priming happen atomically and a caller can never observe an unprimed
+    /// buffer.
+    /// </summary>
+    /// <param name="pump">
+    /// The pump the buffer reads from, or null for an already fully resolved page.
+    /// </param>
+    /// <param name="definition">
+    /// The definition that governs how rows turn into content, flags, and a total count.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// A token to cancel priming the buffer.
+    /// </param>
+    public static async ValueTask<StreamPageBuffer<TElement>> CreatePrimedAsync(
+        StreamPagePump<TElement>? pump,
+        StreamPageDefinition<TElement> definition,
+        CancellationToken cancellationToken = default)
+    {
+        var buffer = new StreamPageBuffer<TElement>(pump, definition);
+
+        try
+        {
+            await buffer.PrimeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            try
+            {
+                await buffer.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // ignored: the priming failure above takes precedence.
+            }
+
+            throw;
+        }
+
+        return buffer;
+    }
+
     private async IAsyncEnumerable<PageEntry<TElement>> GetEntriesCore(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {

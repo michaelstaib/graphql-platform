@@ -479,7 +479,7 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
     {
         List<PageEntry<Brand>> entries = [];
 
-        await foreach (var entry in page.EnumerateEntriesAsync(cancellationToken))
+        await foreach (var entry in page.GetEntriesAsync(cancellationToken))
         {
             entries.Add(entry);
         }

@@ -33,7 +33,21 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     {
     }
 
-    private ValueCursorStreamPage(
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ValueCursorStreamPage{T}"/> class from an
+    /// already constructed buffer, so a creator that primes the buffer itself can wrap it without
+    /// building a second one.
+    /// </summary>
+    /// <param name="buffer">
+    /// The buffer this page reads from.
+    /// </param>
+    /// <param name="index">
+    /// The index number of this page.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a page item.
+    /// </param>
+    internal ValueCursorStreamPage(
         StreamPageBuffer<T> buffer,
         int? index,
         Func<EdgeEntry<T>, string> createCursor)

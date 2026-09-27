@@ -212,7 +212,7 @@ public class StreamPagingTotalCountTests
     {
         List<PageEntry<Item>> entries = [];
 
-        await foreach (var entry in page.EnumerateEntriesAsync(cancellationToken))
+        await foreach (var entry in page.GetEntriesAsync(cancellationToken))
         {
             entries.Add(entry);
         }

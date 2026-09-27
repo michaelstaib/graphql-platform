@@ -41,90 +41,6 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
     internal int? TotalCount => _source.TotalCount;
 
     /// <summary>
-    /// Gets a value indicating whether this page has finished streaming from its source.
-    /// </summary>
-    internal bool IsCompleted => _source.IsCompleted;
-
-    /// <summary>
-    /// Gets the number of entries buffered so far.
-    /// </summary>
-    internal int BufferedCount => _source.BufferedCount;
-
-    /// <summary>
-    /// Reads from the source until one entry is buffered or the source completes. The creating
-    /// layer must await this once before handing the page to a consumer.
-    /// </summary>
-    /// <param name="cancellationToken">
-    /// A token to cancel the operation.
-    /// </param>
-    internal ValueTask PrimeAsync(CancellationToken cancellationToken = default)
-        => _source.PrimeAsync(cancellationToken);
-
-    /// <summary>
-    /// Creates a value-cursor streaming page from <paramref name="pump"/> and primes it before
-    /// returning it, so construction and priming happen atomically and a caller can never observe
-    /// an unprimed page.
-    /// </summary>
-    /// <param name="pump">
-    /// The pump the page reads from, or null for an already fully resolved page.
-    /// </param>
-    /// <param name="definition">
-    /// The definition that governs how rows turn into content, flags, and a total count.
-    /// </param>
-    /// <param name="createCursor">
-    /// Creates a cursor from a page item.
-    /// </param>
-    /// <param name="cancellationToken">
-    /// A token to cancel priming the page.
-    /// </param>
-    internal static async ValueTask<StreamPage<T>> CreatePrimedAsync(
-        StreamPagePump<T>? pump,
-        StreamPageDefinition<T> definition,
-        Func<EdgeEntry<T>, string> createCursor,
-        CancellationToken cancellationToken = default)
-    {
-        var page = new ValueCursorStreamPage<T>(pump, definition, createCursor);
-
-        try
-        {
-            await page.PrimeAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            try
-            {
-                await page.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // ignored: the priming failure above takes precedence.
-            }
-
-            throw;
-        }
-
-        return page;
-    }
-
-    /// <summary>
-    /// Gets the already buffered entry at the given index, without reading ahead. Used to create
-    /// cursors synchronously once the page has been primed.
-    /// </summary>
-    /// <param name="index">
-    /// The zero-based index of the buffered entry.
-    /// </param>
-    internal PageEntry<T> GetBufferedEntry(int index) => _source.GetBufferedEntry(index);
-
-    /// <summary>
-    /// Reads from the source until it completes, buffering every remaining row along the way.
-    /// </summary>
-    /// <param name="cancellationToken">
-    /// A token to cancel the operation.
-    /// </param>
-    internal ValueTask DrainAsync(CancellationToken cancellationToken = default)
-        => _source.DrainAsync(cancellationToken);
-
-    /// <summary>
     /// Gets the enumerator for the items of this page.
     /// </summary>
     /// <param name="cancellationToken">
@@ -139,7 +55,7 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
     /// <param name="cancellationToken">
     /// A token to cancel the enumeration.
     /// </param>
-    public IAsyncEnumerable<PageEntry<T>> EnumerateEntriesAsync(CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<PageEntry<T>> GetEntriesAsync(CancellationToken cancellationToken = default)
         => _source.GetEntriesAsync(cancellationToken);
 
     /// <summary>

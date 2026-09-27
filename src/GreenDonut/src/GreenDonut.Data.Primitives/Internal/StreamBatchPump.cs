@@ -154,8 +154,20 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         var pump = new StreamPagePump<TElement>(new KeyReader(this, key), pageCount: 1);
         var page = createPage(pump);
-        channel.Drain = page.DrainAsync;
+        channel.Drain = cancellationToken => DrainAsync(page, cancellationToken);
         return page;
+    }
+
+    // Reads a page to completion over its public surface: every implementation buffers as it
+    // enumerates, so this has the same effect as draining the page's source directly.
+    private static async ValueTask DrainAsync<TValue>(
+        StreamPage<TValue> page,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var _ in page.GetEntriesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // draining only for its buffering side effect; the entries themselves are unused here.
+        }
     }
 
     /// <summary>

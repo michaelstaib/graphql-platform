@@ -288,9 +288,10 @@ public static class StreamPagingQueryableExtensions
             HasPreviousPage: hasPreviousPage,
             FlagsFromFirstRow: null);
 
-        var page = new ValueCursorStreamPage<T>(pump, definition, createCursor);
-        await page.PrimeAsync(cancellationToken).ConfigureAwait(false);
-        return page;
+        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump, definition, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new ValueCursorStreamPage<T>(buffer, definition.Index, createCursor);
     }
 
     private static IQueryable<StreamRow<T>> BuildRowQuery<T>(
