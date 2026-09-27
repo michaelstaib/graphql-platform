@@ -274,13 +274,13 @@ public class StreamBatchPumpTests
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageA));
+        var thrownB = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
 
-        // assert: the fault releases the shared source and the lifetime, even though B never
-        // completed and was never disposed itself
+        // assert: the fault releases the shared source and the lifetime once, and the sibling
+        // page rethrows the same fault instead of reading the now-disposed source
         Assert.Same(exception, thrown);
-        Assert.Equal(1, source.DisposeCount);
-        Assert.Equal(1, lifetime.DisposeCount);
-        Assert.False(pageB.IsCompleted);
+        Assert.Same(exception, thrownB);
+        Assert.Equal((2, 1, 1), (source.MoveNextCount, source.DisposeCount, lifetime.DisposeCount));
     }
 
     [Fact]
