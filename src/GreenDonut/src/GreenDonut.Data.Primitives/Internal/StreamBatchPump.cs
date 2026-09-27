@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace GreenDonut.Data.Internal;
 
 /// <summary>
@@ -28,6 +30,7 @@ internal sealed class StreamBatchPump<TKey, TElement>
     private bool _hasCurrentKey;
     private TKey _currentKey = default!;
     private bool _released;
+    private ExceptionDispatchInfo? _fault;
 
     private StreamBatchPump(
         IAsyncEnumerator<StreamBatchRow<TKey, TElement>> source,
@@ -148,16 +151,20 @@ internal sealed class StreamBatchPump<TKey, TElement>
     // lifetime) happens without waiting for a consumer to pull the remaining buffered rows.
     private async ValueTask PumpOnceAsync()
     {
+        _fault?.Throw();
+
         bool hasNext;
 
         try
         {
             hasNext = await _source.MoveNextAsync().ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             // a source that faults mid-stream still releases the shared source and the lifetime,
-            // exactly as reaching the end of the source does.
+            // exactly as reaching the end of the source does, and every later pull for any key
+            // rethrows the same exception instead of touching the now-disposed source again.
+            _fault = ExceptionDispatchInfo.Capture(ex);
             await ReleaseCoreAsync().ConfigureAwait(false);
             throw;
         }
