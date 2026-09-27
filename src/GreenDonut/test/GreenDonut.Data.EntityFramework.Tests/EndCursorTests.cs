@@ -153,6 +153,28 @@ public class EndCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task ToPageAsync_Should_InlineFreshCount_When_EndCursorTotalIsStale()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        using var capture = new CapturePagingQueryInterceptor();
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(0, 24) };
+
+        // Act
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
+            arguments,
+            Xunit.TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal((3, 25, false, true), (page.Index, page.TotalCount, page.HasNextPage, page.HasPreviousPage));
+        Assert.Equal(["Item0021", "Item0022", "Item0023", "Item0024", "Item0025"], page.Select(t => t.Name).ToArray());
+        Assert.Single(capture.Queries);
+    }
+
+    [Fact]
     public async Task ToPageAsync_Should_ProducePageNumbers_MatchingFormula_When_UsingCreateRelativeLastPageCursors()
     {
         // Arrange
@@ -505,6 +527,83 @@ public class StreamEndCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task ToStreamPageAsync_Should_ReportFreshTotal_When_EndCursorTotalIsStale()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 26);
+
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(-1, 25) };
+        var ct = Xunit.TestContext.Current.CancellationToken;
+
+        // Act
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
+            arguments,
+            includeTotalCount: true,
+            cancellationToken: ct);
+        var items = await ToArrayAsync(page);
+
+        // Assert
+        Assert.Equal(
+            (2, 26, true, true),
+            (page.Index, await page.TotalCountAsync(ct), await page.HasNextPageAsync(ct), await page.HasPreviousPageAsync(ct)));
+        Assert.Equal(
+            ["Item0012", "Item0013", "Item0014", "Item0015", "Item0016", "Item0017", "Item0018", "Item0019", "Item0020", "Item0021"],
+            items);
+    }
+
+    [Fact]
+    public async Task ToStreamPageAsync_Should_ReturnEmptyPage_When_OffsetPointsBeforeFirstPage()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 40);
+
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(-3, 25) };
+        var ct = Xunit.TestContext.Current.CancellationToken;
+
+        // Act
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
+            arguments,
+            cancellationToken: ct);
+        var items = await ToArrayAsync(page);
+
+        // Assert
+        Assert.Equal(
+            (1, 40, false, false),
+            (page.Index, await page.TotalCountAsync(ct), await page.HasNextPageAsync(ct), await page.HasPreviousPageAsync(ct)));
+        Assert.Empty(items);
+    }
+
+    [Fact]
+    public async Task ToStreamPageAsync_Should_InlineFreshCount_When_EndCursorTotalIsStale()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        using var capture = new CapturePagingQueryInterceptor();
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(0, 24) };
+
+        // Act
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
+            arguments,
+            cancellationToken: Xunit.TestContext.Current.CancellationToken);
+        var items = await ToArrayAsync(page);
+        var ct = Xunit.TestContext.Current.CancellationToken;
+
+        // Assert
+        Assert.Equal(
+            (3, 25, false, true),
+            (page.Index, await page.TotalCountAsync(ct), await page.HasNextPageAsync(ct), await page.HasPreviousPageAsync(ct)));
+        Assert.Equal(["Item0021", "Item0022", "Item0023", "Item0024", "Item0025"], items);
+        Assert.Single(capture.Queries);
+    }
+
+    [Fact]
     public async Task ToStreamPageAsync_Should_ProducePageNumbers_MatchingFormula_When_UsingCreateRelativeLastPageCursors()
     {
         // Arrange
@@ -664,7 +763,7 @@ public class StreamEndCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
-    public async Task ToStreamPageAsync_Should_ReadAndDiscardTrimmedFrontRows_Without_A_PreQuery()
+    public async Task ToStreamPageAsync_Should_ReadButNotYieldTrimmedFrontRows_When_EndCursorPageIsPartial()
     {
         // Arrange
         var connectionString = CreateConnectionString();
@@ -673,23 +772,36 @@ public class StreamEndCursorTests(PostgreSqlResource resource)
         var interceptor = new RecordingReaderInterceptor();
         await using var context = new TestContext(connectionString, [interceptor]);
         var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(0, 25) };
+        var cancellationToken = Xunit.TestContext.Current.CancellationToken;
 
         // Act
+
+        // priming the page (inside ToStreamPageAsync) reads and discards the 5 trimmed front rows,
+        // then reads and buffers the first served row: 6 reads before the consumer ever pulls.
         var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
             arguments,
-            cancellationToken: Xunit.TestContext.Current.CancellationToken);
-        var commandsBeforeDrain = interceptor.CommandTexts.Count;
-        var items = await ToArrayAsync(page);
+            cancellationToken: cancellationToken);
+        var commandsBeforePull = interceptor.CommandTexts.Count;
+        var readsBeforePull = interceptor.Events.Count(e => e.Result);
+
+        // pulling the first item off the enumerator serves it straight from the row already
+        // buffered by priming, with no additional read from the database.
+        await using var enumerator = page.GetAsyncEnumerator(cancellationToken);
+        await enumerator.MoveNextAsync();
+        var first = enumerator.Current.Name;
+        var readsAfterFirstItem = interceptor.Events.Count(e => e.Result);
+
+        var items = new List<string> { first };
+
+        while (await enumerator.MoveNextAsync())
+        {
+            items.Add(enumerator.Current.Name);
+        }
 
         // Assert
-
-        // the whole page (trimmed front rows included) travels over one command: there is no
-        // separate probe or count query ahead of the row query that carries the first served row.
-        Assert.Equal(1, commandsBeforeDrain);
-        Assert.Single(interceptor.CommandTexts);
-
-        // all 10 rows of the last page are actually read off the wire (the 5 trimmed rows plus
-        // the 5 served ones), even though only the 5 served rows ever reach the consumer.
+        Assert.Equal(1, commandsBeforePull);
+        Assert.Equal((6, 6), (readsBeforePull, readsAfterFirstItem));
+        Assert.Equal("Item0021", first);
         Assert.Equal(10, interceptor.Events.Count(e => e.Result));
         Assert.Equal(["Item0021", "Item0022", "Item0023", "Item0024", "Item0025"], items);
     }
