@@ -253,7 +253,7 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public async Task CreateRelativeForwardCursorsAsync_Should_ReturnEmpty_When_TotalCountIsUnknown()
+    public async Task CreateRelativeForwardCursorsAsync_Should_ReturnEmptyWithoutDraining_When_TotalCountIsUnknown()
     {
         // arrange
         var source = new ScriptedRowSource<int>(1, 2);
@@ -265,6 +265,25 @@ public class StreamPageCursorTests
 
         // assert
         Assert.Empty(cursors);
+        Assert.Equal(1, source.RowsRead);
+    }
+
+    [Fact]
+    public async Task CreateRelativeForwardCursorsAsync_Should_ReturnEmptyWithoutDraining_When_PageIsAlreadyTheLastPage()
+    {
+        // arrange
+        var source = new ScriptedRowSource<int>(1, 2);
+        var page = CreatePage(
+            source,
+            Definition(requestedCount: 2, index: 1, requestedSize: 2, totalCount: 2));
+        await page.PrimeAsync(TestContext.Current.CancellationToken);
+
+        // act
+        var cursors = await page.CreateRelativeForwardCursorsAsync(2, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Empty(cursors);
+        Assert.Equal(1, source.RowsRead);
     }
 
     [Fact]

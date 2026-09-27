@@ -98,7 +98,8 @@ public static class GreenDonutStreamPageExtensions
     }
 
     /// <summary>
-    /// Creates a relative cursor for forwards pagination, reading ahead until the source completes.
+    /// Creates a relative cursor for forwards pagination, reading ahead until the source completes
+    /// only once the current page is known to have a next page.
     /// </summary>
     /// <param name="page">
     /// The page to create cursors for.
@@ -124,6 +125,8 @@ public static class GreenDonutStreamPageExtensions
     /// <remarks>
     /// This method creates cursors for the next pages based on the current page.
     /// The cursors are created using the <see cref="StreamPage{T}.CreateCursor(PageEntry{T}, int)"/> method.
+    /// It checks the index, and the total count, before draining the page to its last entry, so an
+    /// empty result never buffers the whole page.
     /// </remarks>
     public static async ValueTask<ImmutableArray<PageCursor>> CreateRelativeForwardCursorsAsync<T>(
         this StreamPage<T> page,
@@ -139,16 +142,28 @@ public static class GreenDonutStreamPageExtensions
                 "Max cursors must be greater than or equal to 0.");
         }
 
-        await page.DrainAsync(cancellationToken).ConfigureAwait(false);
-
-        if (page.BufferedCount == 0 || page.Index is null)
+        if (page.Index is null)
         {
             return [];
         }
 
-        var totalPages = Math.Ceiling((double)(page.TotalCount ?? 0) / (page.RequestedSize ?? 10));
+        var totalCount = await page.TotalCountAsync(cancellationToken).ConfigureAwait(false);
+
+        if (totalCount is null)
+        {
+            return [];
+        }
+
+        var totalPages = Math.Ceiling((double)totalCount.Value / (page.RequestedSize ?? 10));
 
         if (page.Index >= totalPages)
+        {
+            return [];
+        }
+
+        await page.DrainAsync(cancellationToken).ConfigureAwait(false);
+
+        if (page.BufferedCount == 0)
         {
             return [];
         }
