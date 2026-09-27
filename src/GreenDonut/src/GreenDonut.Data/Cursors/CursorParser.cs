@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Text;
 using System.Collections.Immutable;
 using System.Text;
+using GreenDonut.Data.Internal;
 
 namespace GreenDonut.Data.Cursors;
 
@@ -57,7 +58,7 @@ public static class CursorParser
             if (bufferSpan.Length != 0)
             {
                 ArrayPool<byte>.Shared.Return(buffer);
-                throw new InvalidOperationException("The cursor page info could not be parsed.");
+                throw ThrowHelper.CursorParser_PageInfoCouldNotBeParsed();
             }
 
             ArrayPool<byte>.Shared.Return(buffer);
@@ -162,8 +163,7 @@ public static class CursorParser
 
             if (endOffset > 0 || endTotalCount < 0)
             {
-                throw new InvalidOperationException(
-                    "The cursor page info could not be parsed.");
+                throw ThrowHelper.CursorParser_PageInfoCouldNotBeParsed();
             }
 
             // Advance span beyond closing `}`

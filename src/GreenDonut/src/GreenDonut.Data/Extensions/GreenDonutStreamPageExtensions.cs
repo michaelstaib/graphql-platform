@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using GreenDonut.Data.Internal;
 
 namespace GreenDonut.Data;
 
@@ -45,9 +46,7 @@ public static class GreenDonutStreamPageExtensions
 
         if (maxCursors < 0)
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxCursors),
-                "Max cursors must be greater than or equal to 0.");
+            throw ThrowHelper.RelativeCursors_MaxCursorsMustNotBeNegative(maxCursors);
         }
 
         if (page.Index is null || page.Index == 1 || maxCursors == 0)
@@ -137,9 +136,7 @@ public static class GreenDonutStreamPageExtensions
 
         if (maxCursors < 0)
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxCursors),
-                "Max cursors must be greater than or equal to 0.");
+            throw ThrowHelper.RelativeCursors_MaxCursorsMustNotBeNegative(maxCursors);
         }
 
         if (page.Index is null)
