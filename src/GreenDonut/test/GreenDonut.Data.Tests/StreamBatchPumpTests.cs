@@ -233,7 +233,7 @@ public class StreamBatchPumpTests
 
         // assert: B's remaining rows were never buffered, but its pre-disposal row still replays
         Assert.Equal(1, bufferedBeforeDispose);
-        Assert.Equal(1, pageB.BufferedCount);
+        Assert.Equal(0, pump.StagedRowCount("B"));
         Assert.True(pageB.IsCompleted);
         Assert.Equal(["b1"], await CollectAsync(pageB));
         Assert.Equal(["c1"], itemsC);
@@ -354,6 +354,24 @@ public class StreamBatchPumpTests
         // A's buffered rows still replay with no further physical reads
         Assert.Equal(["a1", "a2"], await CollectAsync(pageA));
         Assert.Equal(3, source.Yielded.Count);
+    }
+
+    [Fact]
+    public async Task SourceEof_Should_CompleteEverySiblingPage_And_ReleaseOnce_When_TheBatchHasNoRows()
+    {
+        // arrange: the source has no rows at all, so creation already reaches end of source.
+        var lifetime = new ScriptedAsyncDisposable();
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>();
+        var pump = await CreatePump(source, ["A", "B"], lifetime);
+        var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 1, forward: true));
+        var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
+
+        // act: draining A alone must also complete B, whose page did not exist yet at EOF
+        var itemsA = await CollectAsync(pageA);
+
+        // assert
+        Assert.Empty(itemsA);
+        Assert.Equal((true, 1, 1), (pageB.IsCompleted, source.DisposeCount, lifetime.DisposeCount));
     }
 
     private static StreamBatchRow<TKey, TElement> Row<TKey, TElement>(TKey key, TElement item)
