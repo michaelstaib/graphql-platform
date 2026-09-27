@@ -85,8 +85,12 @@ public static class PagingQueryableExtensions
         var totalCount = composition.TotalCount;
         arguments = composition.Arguments;
         includeTotalCount = composition.IncludeTotalCount;
+        var isEndCursor = cursor?.IsEndCursor == true;
 
-        var slicedQuery = composition.SlicedQuery.Take(requestedCount + 1);
+        // an end cursor page is materialized with an exact `Take`, as its `HasNextPage` and
+        // `HasPreviousPage` are already known from the cursor's total count instead of from an
+        // over-fetched row.
+        var slicedQuery = composition.SlicedQuery.Take(isEndCursor ? requestedCount : requestedCount + 1);
         var pageQuery = composition.Selector is null
             ? slicedQuery
             : slicedQuery.Select(composition.Selector);
@@ -140,6 +144,11 @@ public static class PagingQueryableExtensions
                 totalCount = await originalQuery.CountAsync(cancellationToken).ConfigureAwait(false);
             }
 
+            if (isEndCursor)
+            {
+                return CreateEndCursorPage<T>([], keys, false, false, 1, requestedCount, totalCount ?? 0);
+            }
+
             return Page<T>.Create([], false, false, _ => string.Empty, totalCount);
         }
 
@@ -148,22 +157,54 @@ public static class PagingQueryableExtensions
             builder.Reverse();
         }
 
+        if (isEndCursor)
+        {
+            var pagesBeforeLast = -cursor!.Offset!.Value;
+            var effectiveTotal = totalCount!.Value;
+            var items = builder.ToImmutable();
+
+            if (pagesBeforeLast == 0)
+            {
+                var remainder = effectiveTotal % requestedCount;
+
+                if (effectiveTotal > requestedCount && remainder != 0)
+                {
+                    var trim = requestedCount - remainder;
+                    items = items[trim..];
+                }
+            }
+
+            var index = Math.Max(
+                1,
+                (int)Math.Ceiling(effectiveTotal / (double)requestedCount) - pagesBeforeLast);
+
+            return CreateEndCursorPage(
+                Page<T>.ToEntries(items),
+                keys,
+                hasNextPage: pagesBeforeLast > 0,
+                hasPreviousPage: index > 1,
+                index,
+                requestedCount,
+                effectiveTotal,
+                items);
+        }
+
         if (builder.Count > requestedCount)
         {
             builder.RemoveAt(isBackward ? 0 : requestedCount);
         }
 
-        var items = builder.ToImmutable();
+        var pageItems = builder.ToImmutable();
         var pageIndex = CreateIndex(arguments, cursor, totalCount);
         return CreateValueCursorPage(
-            Page<T>.ToEntries(items),
+            Page<T>.ToEntries(pageItems),
             arguments,
             keys,
             fetchCount,
             pageIndex,
             requestedCount,
             totalCount,
-            items);
+            pageItems);
     }
 
     /// <summary>
@@ -388,6 +429,13 @@ public static class PagingQueryableExtensions
             includeTotalCount = true;
         }
 
+        // an end cursor page always needs each key's own total, both to trim the last page
+        // and to report an accurate total count on the resulting pages.
+        if (!string.IsNullOrEmpty(arguments.Before) && CursorParser.Parse(arguments.Before, keys).IsEndCursor)
+        {
+            includeTotalCount = true;
+        }
+
         source = QueryHelpers.EnsureGroupPropsAreSelected(source, keySelector);
 
         // we need to move the ordering into the select expression we are constructing
@@ -427,16 +475,39 @@ public static class PagingQueryableExtensions
             .ConfigureAwait(false))
         {
             var totalCount = counts?.GetValueOrDefault(item.Key) ?? batchExpression.Cursor?.TotalCount;
+            var isEndCursor = batchExpression.Cursor?.IsEndCursor == true;
 
             if (item.Items.Count == 0)
             {
-                var page = Page<TValue>.Create([], false, false, static _ => string.Empty, totalCount);
+                var page = isEndCursor
+                    ? CreateEndCursorPage<TValue>([], keys, false, false, 1, requestedCount, totalCount ?? 0)
+                    : Page<TValue>.Create([], false, false, static _ => string.Empty, totalCount);
                 map.Add(item.Key, page);
                 continue;
             }
 
             var itemCount = requestedCount > item.Items.Count ? item.Items.Count : requestedCount;
-            var pageIndex = CreateIndex(arguments, batchExpression.Cursor, totalCount);
+            var pagesBeforeLast = 0;
+
+            if (isEndCursor)
+            {
+                pagesBeforeLast = -batchExpression.Cursor!.Offset!.Value;
+
+                if (pagesBeforeLast == 0)
+                {
+                    var effectiveTotal = totalCount!.Value;
+                    var remainder = effectiveTotal % requestedCount;
+
+                    if (effectiveTotal > requestedCount && remainder != 0)
+                    {
+                        itemCount -= requestedCount - remainder;
+                    }
+                }
+            }
+
+            var pageIndex = isEndCursor
+                ? Math.Max(1, (int)Math.Ceiling(totalCount!.Value / (double)requestedCount) - pagesBeforeLast)
+                : CreateIndex(arguments, batchExpression.Cursor, totalCount);
 
             if (valueSelector is not null)
             {
@@ -462,15 +533,25 @@ public static class PagingQueryableExtensions
                     }
                 }
 
-                var page = CreateElementCursorPage(
-                    entryBuilder.ToImmutable(),
-                    elementBuilder.ToImmutable(),
-                    arguments,
-                    keys,
-                    item.Items.Count,
-                    pageIndex,
-                    requestedCount,
-                    totalCount);
+                var page = isEndCursor
+                    ? CreateEndCursorElementPage<TElement, TValue>(
+                        entryBuilder.ToImmutable(),
+                        elementBuilder.ToImmutable(),
+                        keys,
+                        hasNextPage: pagesBeforeLast > 0,
+                        hasPreviousPage: pageIndex > 1,
+                        pageIndex!.Value,
+                        requestedCount,
+                        totalCount!.Value)
+                    : CreateElementCursorPage(
+                        entryBuilder.ToImmutable(),
+                        elementBuilder.ToImmutable(),
+                        arguments,
+                        keys,
+                        item.Items.Count,
+                        pageIndex,
+                        requestedCount,
+                        totalCount);
                 map.Add(item.Key, page);
             }
             else
@@ -492,14 +573,23 @@ public static class PagingQueryableExtensions
                     }
                 }
 
-                var page = CreateValueCursorPage(
-                    entryBuilder.ToImmutable(),
-                    arguments,
-                    keys,
-                    item.Items.Count,
-                    pageIndex,
-                    requestedCount,
-                    totalCount);
+                var page = isEndCursor
+                    ? CreateEndCursorPage<TValue>(
+                        entryBuilder.ToImmutable(),
+                        keys,
+                        hasNextPage: pagesBeforeLast > 0,
+                        hasPreviousPage: pageIndex > 1,
+                        pageIndex!.Value,
+                        requestedCount,
+                        totalCount!.Value)
+                    : CreateValueCursorPage(
+                        entryBuilder.ToImmutable(),
+                        arguments,
+                        keys,
+                        item.Items.Count,
+                        pageIndex,
+                        requestedCount,
+                        totalCount);
                 map.Add(item.Key, page);
             }
         }
@@ -629,6 +719,44 @@ public static class PagingQueryableExtensions
             item => CursorFormatter.Format(item, keys),
             totalCount: totalCount);
     }
+
+    internal static Page<T> CreateEndCursorPage<T>(
+        ImmutableArray<PageEntry<T>> entries,
+        CursorKey[] keys,
+        bool hasNextPage,
+        bool hasPreviousPage,
+        int index,
+        int requestedPageSize,
+        int totalCount,
+        ImmutableArray<T> items = default)
+        => new ValueCursorPage<T>(
+            entries,
+            hasNextPage,
+            hasPreviousPage,
+            entry => CursorFormatter.Format(entry.Node, keys, new CursorPageInfo(entry.Offset, entry.PageIndex, entry.TotalCount)),
+            index,
+            requestedPageSize,
+            totalCount,
+            items);
+
+    internal static Page<TValue> CreateEndCursorElementPage<TElement, TValue>(
+        ImmutableArray<PageEntry<TValue>> entries,
+        ImmutableArray<TElement> elements,
+        CursorKey[] keys,
+        bool hasNextPage,
+        bool hasPreviousPage,
+        int index,
+        int requestedPageSize,
+        int totalCount)
+        => new ElementCursorPage<TElement, TValue>(
+            entries,
+            elements,
+            hasNextPage,
+            hasPreviousPage,
+            entry => CursorFormatter.Format(entry.Node, keys, new CursorPageInfo(entry.Offset, entry.PageIndex, entry.TotalCount)),
+            index,
+            requestedPageSize,
+            totalCount);
 
     internal static (bool HasNext, bool HasPrevious) CreatePageFlags(
         PagingArguments arguments,
