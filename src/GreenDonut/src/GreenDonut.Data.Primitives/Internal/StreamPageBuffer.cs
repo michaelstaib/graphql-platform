@@ -196,7 +196,19 @@ internal sealed class StreamPageBuffer<TElement> : IStreamPageSource<TElement>
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var row = _pump is null ? null : await _pump.ReadNextAsync().ConfigureAwait(false);
+            StreamRow<TElement>? row;
+
+            try
+            {
+                row = _pump is null ? null : await _pump.ReadNextAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // a source that faults mid-stream still releases the pump, exactly as reaching
+                // the end of the source or disposing the page does.
+                await CompleteAsync().ConfigureAwait(false);
+                throw;
+            }
 
             if (row is null)
             {
