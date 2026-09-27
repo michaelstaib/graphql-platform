@@ -1035,6 +1035,37 @@ public class RelativeCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Fetch_End_Cursor_Offset_Before_First_Page_Returns_Empty_Page()
+    {
+        // Arrange
+
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 40);
+
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(-3, 25) };
+
+        // Act
+
+        var page = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
+            arguments,
+            Xunit.TestContext.Current.CancellationToken);
+
+        // Assert
+
+        Snapshot.Create()
+            .Add(new
+            {
+                page.Index,
+                page.TotalCount,
+                page.HasNextPage,
+                page.HasPreviousPage,
+                Items = page.Select(t => t.Name).ToArray()
+            })
+            .MatchSnapshot();
+    }
+
+    [Fact]
     public async Task Fetch_End_Cursor_With_First_Throws()
     {
         // Arrange
@@ -1096,6 +1127,49 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         await using var context = new TestContext(connectionString);
         var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(0, 25) };
+
+        // Act
+
+        var map = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToBatchPageAsync(
+            t => t.GroupId,
+            arguments,
+            Xunit.TestContext.Current.CancellationToken);
+
+        // Assert
+
+        Snapshot.Create()
+            .Add(new
+            {
+                Key1 = new
+                {
+                    map[1].Index,
+                    map[1].TotalCount,
+                    map[1].HasNextPage,
+                    map[1].HasPreviousPage,
+                    Items = map[1].Select(t => t.Name).ToArray()
+                },
+                Key2 = new
+                {
+                    map[2].Index,
+                    map[2].TotalCount,
+                    map[2].HasNextPage,
+                    map[2].HasPreviousPage,
+                    Items = map[2].Select(t => t.Name).ToArray()
+                }
+            })
+            .MatchSnapshot();
+    }
+
+    [Fact]
+    public async Task BatchFetch_End_Cursor_Offset_Before_First_Page_Returns_Empty_Pages()
+    {
+        // Arrange
+
+        var connectionString = CreateConnectionString();
+        await SeedTwoGroupsAsync(connectionString, 25, 30);
+
+        await using var context = new TestContext(connectionString);
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(-3, 25) };
 
         // Act
 

@@ -87,6 +87,22 @@ public static class PagingQueryableExtensions
         includeTotalCount = composition.IncludeTotalCount;
         var isEndCursor = cursor?.IsEndCursor == true;
 
+        if (isEndCursor)
+        {
+            var pagesBeforeLast = -cursor!.Offset!.Value;
+
+            // a stale or otherwise out-of-range end cursor can point before the first page.
+            // that page does not exist, so the row query never runs and an empty page is
+            // returned with a freshly counted total instead.
+            if (pagesBeforeLast > 0
+                && (int)Math.Ceiling(cursor.TotalCount!.Value / (double)requestedCount) - pagesBeforeLast < 1)
+            {
+                TryGetQueryInterceptor()?.OnBeforeExecute(originalQuery);
+                var freshCount = await originalQuery.CountAsync(cancellationToken).ConfigureAwait(false);
+                return CreateEndCursorPage<T>([], keys, false, false, 1, requestedCount, freshCount);
+            }
+        }
+
         // an end cursor page is materialized with an exact `Take`, as its `HasNextPage` and
         // `HasPreviousPage` are already known from the cursor's total count instead of from an
         // over-fetched row.
@@ -178,9 +194,7 @@ public static class PagingQueryableExtensions
             // materialized. Earlier pages reuse the cursor's cached total instead, so the
             // reported index stays consistent with the skip that was computed from it.
             var indexTotal = pagesBeforeLast == 0 ? effectiveTotal : cursor.TotalCount!.Value;
-            var index = Math.Max(
-                1,
-                (int)Math.Ceiling(indexTotal / (double)requestedCount) - pagesBeforeLast);
+            var index = (int)Math.Ceiling(indexTotal / (double)requestedCount) - pagesBeforeLast;
 
             return CreateEndCursorPage(
                 Page<T>.ToEntries(items),
@@ -435,9 +449,16 @@ public static class PagingQueryableExtensions
 
         // an end cursor page always needs each key's own total, both to trim the last page
         // and to report an accurate total count on the resulting pages.
-        if (!string.IsNullOrEmpty(arguments.Before) && CursorParser.Parse(arguments.Before, keys).IsEndCursor)
+        Cursor? endCursor = null;
+        if (!string.IsNullOrEmpty(arguments.Before))
         {
-            includeTotalCount = true;
+            var beforeCursor = CursorParser.Parse(arguments.Before, keys);
+
+            if (beforeCursor.IsEndCursor)
+            {
+                endCursor = beforeCursor;
+                includeTotalCount = true;
+            }
         }
 
         source = QueryHelpers.EnsureGroupPropsAreSelected(source, keySelector);
@@ -453,6 +474,27 @@ public static class PagingQueryableExtensions
             counts = await GetBatchCountsAsync(source, keySelector, cancellationToken);
         }
 
+        var map = new Dictionary<TKey, Page<TValue>>();
+
+        if (endCursor is not null && arguments.Last is not null)
+        {
+            var pagesBeforeLast = -endCursor.Offset!.Value;
+
+            // a stale or otherwise out-of-range end cursor can point before the first page for
+            // every key. that page does not exist, so the group query never runs and each key
+            // gets an empty page carrying its own freshly counted total.
+            if (pagesBeforeLast > 0
+                && (int)Math.Ceiling(endCursor.TotalCount!.Value / (double)arguments.Last.Value) - pagesBeforeLast < 1)
+            {
+                foreach (var (key, count) in counts!)
+                {
+                    map.Add(key, CreateEndCursorPage<TValue>([], keys, false, false, 1, arguments.Last.Value, count));
+                }
+
+                return map;
+            }
+        }
+
         var forward = arguments.Last is null;
         var requestedCount = int.MaxValue;
         var batchExpression =
@@ -464,7 +506,6 @@ public static class PagingQueryableExtensions
                 forward,
                 selector,
                 ref requestedCount);
-        var map = new Dictionary<TKey, Page<TValue>>();
 
         // we apply our new expression here.
         source = source.Provider.CreateQuery<TElement>(ordering.Expression);
@@ -510,11 +551,9 @@ public static class PagingQueryableExtensions
             }
 
             var pageIndex = isEndCursor
-                ? Math.Max(
-                    1,
-                    (int)Math.Ceiling(
-                        (pagesBeforeLast == 0 ? totalCount!.Value : batchExpression.Cursor!.TotalCount!.Value)
-                            / (double)requestedCount) - pagesBeforeLast)
+                ? (int)Math.Ceiling(
+                    (pagesBeforeLast == 0 ? totalCount!.Value : batchExpression.Cursor!.TotalCount!.Value)
+                        / (double)requestedCount) - pagesBeforeLast
                 : CreateIndex(arguments, batchExpression.Cursor, totalCount);
 
             if (valueSelector is not null)
