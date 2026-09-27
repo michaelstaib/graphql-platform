@@ -38,12 +38,10 @@ public class StreamPageCursorTests
     [Fact]
     public async Task CreateStartCursorAsync_Should_CompleteSynchronously_When_SinglePageAlreadyPrimed()
     {
-        // arrange: ToStreamPageAsync primes a single page before it ever reaches a consumer, so
-        // the start cursor is created from what is already buffered, with no further await.
+        // arrange
         var source = new ScriptedRowSource<int>(1, 2, 3);
         var page = CreatePage(source, Definition(requestedCount: 3));
-        var primeTask = page.PrimeAsync(TestContext.Current.CancellationToken);
-        Assert.True(primeTask.IsCompletedSuccessfully);
+        await page.PrimeAsync(TestContext.Current.CancellationToken);
 
         // act
         var cursorTask = page.CreateStartCursorAsync(TestContext.Current.CancellationToken);
@@ -57,19 +55,36 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public async Task CreateStartCursorAsync_Should_CompleteOnlyAfterThePumpReachedTheKey_When_PageIsNotYetPrimed()
+    public async Task CreateStartCursorAsync_Should_CompleteOnlyAfterThePumpReachedTheKey_When_BatchPageIsNotYetPrimed()
     {
-        // arrange: a batch child page is handed out unprimed; only awaiting the start cursor may
-        // drive the pump for it.
-        var source = new ScriptedRowSource<int>(1, 2, 3);
-        var page = CreatePage(source, Definition(requestedCount: 3));
+        // arrange
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, int>>(Row("A", 1), Row("A", 2), Row("B", 3));
+        var gate = source.GateBeforeItem(2);
+        var pump = (await StreamBatchPump<string, int>.CreateAsync(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"]))!;
+        _ = pump.CreatePage(
+            "A",
+            keyPump => new ValueCursorStreamPage<int>(
+                keyPump,
+                Definition(requestedCount: 1),
+                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+        var pageB = pump.CreatePage(
+            "B",
+            keyPump => new ValueCursorStreamPage<int>(
+                keyPump,
+                Definition(requestedCount: 1),
+                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
 
         // act
-        var cursor = await page.CreateStartCursorAsync(TestContext.Current.CancellationToken);
+        var cursorTask = pageB.CreateStartCursorAsync(TestContext.Current.CancellationToken);
+        var pendingWhileGated = !cursorTask.IsCompleted;
+        gate.SetResult();
+        var cursor = await cursorTask;
 
         // assert
-        Assert.Equal("1:0:0:0", cursor);
-        Assert.Equal(1, source.RowsRead);
+        Assert.True(pendingWhileGated);
+        Assert.Equal("3:0:0:0", cursor);
+        Assert.Equal(3, source.Yielded.Count);
     }
 
     [Fact]
@@ -132,8 +147,7 @@ public class StreamPageCursorTests
         var page = CreatePage(
             source,
             Definition(requestedCount: 2, index: 3, requestedSize: 2, totalCount: 10));
-        var primeTask = page.PrimeAsync(TestContext.Current.CancellationToken);
-        Assert.True(primeTask.IsCompletedSuccessfully);
+        await page.PrimeAsync(TestContext.Current.CancellationToken);
 
         // act
         var cursorsTask = page.CreateRelativeBackwardCursorsAsync(2, TestContext.Current.CancellationToken);
@@ -150,24 +164,39 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public async Task CreateRelativeBackwardCursorsAsync_Should_CompleteOnlyAfterThePumpReachedTheKey_When_PageIsNotYetPrimed()
+    public async Task CreateRelativeBackwardCursorsAsync_Should_CompleteOnlyAfterThePumpReachedTheKey_When_BatchPageIsNotYetPrimed()
     {
-        // arrange: a batch child page is handed out unprimed; only awaiting the cursors may drive
-        // the pump for it.
-        var source = new ScriptedRowSource<int>(1, 2);
-        var page = CreatePage(
-            source,
-            Definition(requestedCount: 2, index: 3, requestedSize: 2, totalCount: 10));
+        // arrange
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, int>>(Row("A", 1), Row("A", 2), Row("B", 3));
+        var gate = source.GateBeforeItem(2);
+        var pump = (await StreamBatchPump<string, int>.CreateAsync(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"]))!;
+        _ = pump.CreatePage(
+            "A",
+            keyPump => new ValueCursorStreamPage<int>(
+                keyPump,
+                Definition(requestedCount: 1),
+                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+        var pageB = pump.CreatePage(
+            "B",
+            keyPump => new ValueCursorStreamPage<int>(
+                keyPump,
+                Definition(requestedCount: 1, index: 3, requestedSize: 2, totalCount: 10),
+                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
 
         // act
-        var cursors = await page.CreateRelativeBackwardCursorsAsync(2, TestContext.Current.CancellationToken);
+        var cursorsTask = pageB.CreateRelativeBackwardCursorsAsync(2, TestContext.Current.CancellationToken);
+        var pendingWhileGated = !cursorsTask.IsCompleted;
+        gate.SetResult();
+        var cursors = await cursorsTask;
 
         // assert
+        Assert.True(pendingWhileGated);
         Assert.Collection(
             cursors,
-            cursor => Assert.Equal(new PageCursor("1:-1:3:10", 1), cursor),
-            cursor => Assert.Equal(new PageCursor("1:0:3:10", 2), cursor));
-        Assert.Equal(1, source.RowsRead);
+            cursor => Assert.Equal(new PageCursor("3:-1:3:10", 1), cursor),
+            cursor => Assert.Equal(new PageCursor("3:0:3:10", 2), cursor));
+        Assert.Equal(3, source.Yielded.Count);
     }
 
     [Fact]
@@ -282,6 +311,10 @@ public class StreamPageCursorTests
         // assert
         Assert.Empty(cursors);
     }
+
+    private static StreamBatchRow<TKey, TElement> Row<TKey, TElement>(TKey key, TElement item)
+        where TKey : notnull
+        => new() { Key = key, Item = item };
 
     private static StreamPageDefinition<int> Definition(
         int requestedCount,

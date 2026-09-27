@@ -8,7 +8,7 @@ namespace GreenDonut.Data;
 public static class GreenDonutStreamPageExtensions
 {
     /// <summary>
-    /// Creates a relative cursor for backwards pagination, reading ahead only until the first
+    /// Creates relative cursors for backward pagination, reading ahead only until the first
     /// item has arrived.
     /// </summary>
     /// <param name="page">
