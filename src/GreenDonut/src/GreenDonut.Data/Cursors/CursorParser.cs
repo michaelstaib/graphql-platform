@@ -153,15 +153,18 @@ public static class CursorParser
 
             var endSeparatorIndex = ExpectSeparator(span, separator);
             var offsetPart = span[..endSeparatorIndex];
-            ParseNumber(offsetPart, out var endOffset, out _);
+            ParseNumber(offsetPart, out var endOffset, out var endOffsetConsumed);
             var endStart = endSeparatorIndex + 1;
 
             endSeparatorIndex = ExpectSeparator(span[endStart..], close);
             var totalCountPart = span.Slice(endStart, endSeparatorIndex);
-            ParseNumber(totalCountPart, out var endTotalCount, out _);
+            ParseNumber(totalCountPart, out var endTotalCount, out var endTotalCountConsumed);
             endStart += endSeparatorIndex + 1;
 
-            if (endOffset > 0 || endTotalCount < 0)
+            if (endOffset > 0
+                || endTotalCount < 0
+                || endOffsetConsumed != offsetPart.Length
+                || endTotalCountConsumed != totalCountPart.Length)
             {
                 throw ThrowHelper.CursorParser_PageInfoCouldNotBeParsed();
             }
