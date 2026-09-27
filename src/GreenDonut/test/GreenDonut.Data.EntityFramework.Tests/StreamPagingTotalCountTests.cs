@@ -13,13 +13,16 @@ public class StreamPagingTotalCountTests
     [Fact]
     public async Task ToPageAsync_Should_ReturnZeroTotalCount_When_FilteredDataSetIsEmpty()
     {
+        // Arrange
         await using var database = await TestDatabase.CreateAsync(2);
         var cancellationToken = XunitTestContext.Current.CancellationToken;
 
+        // Act
         var page = await database.Query.Where(t => t.Id < 0).ToStreamPageAsync(
             new PagingArguments(first: 2, includeTotalCount: true),
             cancellationToken: cancellationToken);
 
+        // Assert
         var snapshot = await CreateSnapshotAsync(page, database.CountQueryCount, cancellationToken);
         snapshot.MatchInlineSnapshot(
             """
@@ -36,6 +39,7 @@ public class StreamPagingTotalCountTests
     [Fact]
     public async Task ToPageAsync_Should_PreserveCursorTotalCount_When_CountIsNotRequested()
     {
+        // Arrange
         await using var database = await TestDatabase.CreateAsync(2);
         var cancellationToken = XunitTestContext.Current.CancellationToken;
 
@@ -46,10 +50,12 @@ public class StreamPagingTotalCountTests
         var cursor = firstPage.CreateCursor(firstEntries[^1], 0);
         database.ResetCountQueryCount();
 
+        // Act
         var page = await database.Query.ToStreamPageAsync(
             new PagingArguments(first: 2, after: cursor),
             cancellationToken: cancellationToken);
 
+        // Assert
         var snapshot = await CreateSnapshotAsync(page, database.CountQueryCount, cancellationToken);
         snapshot.MatchInlineSnapshot(
             """
@@ -66,6 +72,7 @@ public class StreamPagingTotalCountTests
     [Fact]
     public async Task ToPageAsync_Should_ReturnDataSetCount_When_PageAfterLastItemIsEmpty()
     {
+        // Arrange
         await using var database = await TestDatabase.CreateAsync(2);
         var cancellationToken = XunitTestContext.Current.CancellationToken;
 
@@ -76,10 +83,12 @@ public class StreamPagingTotalCountTests
         var cursor = firstPage.CreateCursor(firstEntries[^1]);
         database.ResetCountQueryCount();
 
+        // Act
         var page = await database.Query.ToStreamPageAsync(
             new PagingArguments(first: 2, after: cursor, includeTotalCount: true),
             cancellationToken: cancellationToken);
 
+        // Assert
         var snapshot = await CreateSnapshotAsync(page, database.CountQueryCount, cancellationToken);
         snapshot.MatchInlineSnapshot(
             """
@@ -96,6 +105,7 @@ public class StreamPagingTotalCountTests
     [Fact]
     public async Task ToPageAsync_Should_ReturnDataSetCount_When_PageBeforeFirstItemIsEmpty()
     {
+        // Arrange
         await using var database = await TestDatabase.CreateAsync(2);
         var cancellationToken = XunitTestContext.Current.CancellationToken;
 
@@ -106,10 +116,12 @@ public class StreamPagingTotalCountTests
         var cursor = firstPage.CreateCursor(firstEntries[0]);
         database.ResetCountQueryCount();
 
+        // Act
         var page = await database.Query.ToStreamPageAsync(
             new PagingArguments(last: 2, before: cursor, includeTotalCount: true),
             cancellationToken: cancellationToken);
 
+        // Assert
         var snapshot = await CreateSnapshotAsync(page, database.CountQueryCount, cancellationToken);
         snapshot.MatchInlineSnapshot(
             """
@@ -126,13 +138,16 @@ public class StreamPagingTotalCountTests
     [Fact]
     public async Task ToPageAsync_Should_LeaveTotalCountUnknown_When_CountIsNotRequested()
     {
+        // Arrange
         await using var database = await TestDatabase.CreateAsync(0);
         var cancellationToken = XunitTestContext.Current.CancellationToken;
 
+        // Act
         var page = await database.Query.ToStreamPageAsync(
             new PagingArguments(first: 2),
             cancellationToken: cancellationToken);
 
+        // Assert
         var snapshot = await CreateSnapshotAsync(page, database.CountQueryCount, cancellationToken);
         snapshot.MatchInlineSnapshot(
             """
@@ -149,13 +164,16 @@ public class StreamPagingTotalCountTests
     [Fact]
     public async Task ToPageAsync_Should_UseCombinedCountQuery_When_PageIsNotEmpty()
     {
+        // Arrange
         await using var database = await TestDatabase.CreateAsync(2);
         var cancellationToken = XunitTestContext.Current.CancellationToken;
 
+        // Act
         var page = await database.Query.ToStreamPageAsync(
             new PagingArguments(first: 1, includeTotalCount: true),
             cancellationToken: cancellationToken);
 
+        // Assert
         var snapshot = await CreateSnapshotAsync(page, database.CountQueryCount, cancellationToken);
         snapshot.MatchInlineSnapshot(
             """
