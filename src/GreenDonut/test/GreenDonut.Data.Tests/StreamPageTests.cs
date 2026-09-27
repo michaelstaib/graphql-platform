@@ -377,11 +377,10 @@ public class StreamPageTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
 
-        // assert: the disposal failure surfaces once, and disposing the page again does not
-        // retry the already-released lifetime
+        // assert: the disposal failure surfaces once, and a later replay is clean and complete
         Assert.Same(disposeException, thrown);
-        Assert.Equal(1, lifetime.DisposeCount);
-        await page.DisposeAsync();
+        Assert.Equal(["a"], await CollectAsync(page));
+        Assert.True(page.IsCompleted);
         Assert.Equal(1, lifetime.DisposeCount);
     }
 
@@ -436,15 +435,35 @@ public class StreamPageTests
         var lifetime = new ScriptedAsyncDisposable();
         var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
-        var page = new ValueCursorStreamPage<string>(pump, definition, static entry => entry.Node!);
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => page.PrimeAsync(TestContext.Current.CancellationToken).AsTask());
+            () => StreamPage<string>.CreatePrimedAsync(
+                pump, definition, static entry => entry.Node!, TestContext.Current.CancellationToken).AsTask());
 
         // assert: the creating call observes the priming fault with the source and the lifetime
         // already released
         Assert.Same(exception, thrown);
+        Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
+    public async Task CreatePrimedAsync_Should_DisposeSourceAndLifetime_When_PrimingIsCancelled()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
+        var lifetime = new ScriptedAsyncDisposable();
+        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+        var definition = Definition<string>(requestedCount: 3, forward: true);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // act
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => StreamPage<string>.CreatePrimedAsync(
+                pump, definition, static entry => entry.Node!, cts.Token).AsTask());
+
+        // assert: a cancelled priming call still disposes the source and the lifetime once each
         Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
     }
 

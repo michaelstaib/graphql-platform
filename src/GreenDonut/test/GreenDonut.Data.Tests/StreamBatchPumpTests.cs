@@ -483,7 +483,7 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
-    public async Task ReleaseCoreAsync_Should_SurfaceLifetimeDisposalFailure_Once_And_StayReleased()
+    public async Task Completion_Should_SurfaceLifetimeDisposalFailure_Once_When_BatchKeyDrainedNaturally()
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("A", "a1"));
@@ -493,14 +493,13 @@ public class StreamBatchPumpTests
         var pump = await CreatePump(source, ["A"], lifetime);
         var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 1, forward: true));
 
-        // act: draining completes the key naturally, which releases the lifetime
+        // act: draining completes the key naturally, which releases the lifetime and fails once
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageA));
 
-        // assert: the disposal failure surfaces once, and disposing the page again does not
-        // retry the already-released lifetime
+        // assert: the disposal failure surfaces once, and a later replay is clean and complete
         Assert.Same(disposeException, thrown);
-        Assert.Equal(1, lifetime.DisposeCount);
-        await pageA.DisposeAsync();
+        Assert.Equal(["a1"], await CollectAsync(pageA));
+        Assert.True(pageA.IsCompleted);
         Assert.Equal(1, lifetime.DisposeCount);
     }
 
