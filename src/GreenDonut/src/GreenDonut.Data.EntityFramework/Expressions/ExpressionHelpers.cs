@@ -164,8 +164,7 @@ internal static class ExpressionHelpers
 
         if (keyIsNullable)
         {
-            // Null constant must be typed to match keyExpr.Type so that expression
-            // construction works for both reference types and Nullable<T> value types.
+            // A null constant typed to match keyExpr.Type.
             var nullConst = Expression.Constant(null, keyExpr.Type);
 
             if (cursorValue is null)
@@ -209,8 +208,7 @@ internal static class ExpressionHelpers
 
         if (keyIsNullable)
         {
-            // Null constant must be typed to match keyExpr.Type so that expression
-            // construction works for both reference types and Nullable<T> value types.
+            // A null constant typed to match keyExpr.Type.
             var nullConst = Expression.Constant(null, keyExpr.Type);
 
             if (cursorValue is null)
@@ -268,8 +266,7 @@ internal static class ExpressionHelpers
 
         if (keyIsNullable)
         {
-            // Null constant must be typed to match keyExpr.Type so that expression
-            // construction works for both reference types and Nullable<T> value types.
+            // A null constant typed to match keyExpr.Type.
             var nullConst = Expression.Constant(null, keyExpr.Type);
 
             if (cursorValue is null)
@@ -310,7 +307,7 @@ internal static class ExpressionHelpers
 
     private static bool IsNullable(LambdaExpression expression)
     {
-        // A nullable value-type return (for example an explicit cast to int?).
+        // A nullable value-type return.
         if (expression.ReturnType.IsValueType
             && Nullable.GetUnderlyingType(expression.ReturnType) is not null)
         {
@@ -325,9 +322,8 @@ internal static class ExpressionHelpers
             current = StripConvert(right);
         }
 
-        // The key value is nullable if the leaf or any intermediate navigation along
-        // the member-access path is nullable (for example x.Meter.Id is null when
-        // x.Meter is null).
+        // The key value is nullable if the leaf or any intermediate navigation along the
+        // member-access path is nullable.
         while (current is MemberExpression { Member: PropertyInfo or FieldInfo } member)
         {
             if (IsMemberNullable(member))
@@ -343,9 +339,7 @@ internal static class ExpressionHelpers
             current = StripConvert(member.Expression);
         }
 
-        // For computed key expressions (method calls, concatenation, etc.) we cannot inspect
-        // NRT annotations at runtime. Treat as non-nullable, the safe default that avoids
-        // injecting spurious null-handling into the generated WHERE clause.
+        // A computed key expression is treated as non-nullable.
         return false;
     }
 
@@ -729,11 +723,9 @@ internal static class ExpressionHelpers
             : expression;
 
     /// <summary>
-    /// Lifts a non-nullable value-type key (for example <c>int</c> for
-    /// <c>x.Meter.Id</c>) to its <see cref="Nullable{T}"/> form when the key is
-    /// nullable because of an intermediate navigation, so the key can be compared
-    /// against <c>null</c>. Keys that are already nullable or are reference types
-    /// are returned unchanged.
+    /// Lifts a non-nullable value-type key to its <see cref="Nullable{T}"/> form when
+    /// <paramref name="keyIsNullable"/> is <c>true</c>. Keys that are already nullable or are
+    /// reference types are returned unchanged.
     /// </summary>
     private static Expression LiftValueTypeIfNullable(Expression keyExpr, bool keyIsNullable)
         => keyIsNullable && keyExpr.Type.IsValueType && Nullable.GetUnderlyingType(keyExpr.Type) is null
@@ -1028,7 +1020,11 @@ internal static class ExpressionHelpers
                 throw ThrowHelper.PagingArguments_EndCursorRequiresBeforeAndLast();
             }
 
-            var (whereExpr, cursorOffset) = BuildWhereExpression<TElement>(keys, cursor, forward: true, arguments.NullOrdering);
+            var (whereExpr, cursorOffset) = BuildWhereExpression<TElement>(
+                keys,
+                cursor,
+                forward: true,
+                arguments.NullOrdering);
             afterPredicate = whereExpr;
             offset = cursorOffset;
             usesRelativeCursorsFromAfter = cursor.IsRelative;
@@ -1057,7 +1053,11 @@ internal static class ExpressionHelpers
             }
             else
             {
-                var (whereExpr, cursorOffset) = BuildWhereExpression<TElement>(keys, cursor, forward: false, arguments.NullOrdering);
+                var (whereExpr, cursorOffset) = BuildWhereExpression<TElement>(
+                    keys,
+                    cursor,
+                    forward: false,
+                    arguments.NullOrdering);
                 beforePredicate = whereExpr;
                 offset = cursorOffset;
             }
@@ -1124,7 +1124,11 @@ internal static class ExpressionHelpers
         if (beforePredicate is not null)
         {
             body = Expression.Call(
-                typeof(Queryable), nameof(Queryable.Where), [typeof(TElement)], body, Expression.Quote(beforePredicate));
+                typeof(Queryable),
+                nameof(Queryable.Where),
+                [typeof(TElement)],
+                body,
+                Expression.Quote(beforePredicate));
         }
 
         if (isBackward)
@@ -1152,7 +1156,11 @@ internal static class ExpressionHelpers
         if (selector is not null)
         {
             body = Expression.Call(
-                typeof(Queryable), nameof(Queryable.Select), [typeof(TElement), typeof(TElement)], body, Expression.Quote(selector));
+                typeof(Queryable),
+                nameof(Queryable.Select),
+                [typeof(TElement), typeof(TElement)],
+                body,
+                Expression.Quote(selector));
         }
 
         var rowType = typeof(StreamBatchRow<TKey, TElement>);
@@ -1183,7 +1191,8 @@ internal static class ExpressionHelpers
         for (var i = 0; i < keys.Length; i++)
         {
             var key = keys[i];
-            var rebound = new ReplaceParameterVisitor(key.Expression.Parameters[0], itemAccess).Visit(key.Expression.Body);
+            var rebound = new ReplaceParameterVisitor(key.Expression.Parameters[0], itemAccess)
+                .Visit(key.Expression.Body);
             var thenByLambda = Expression.Lambda(rebound, rowParam);
             var methodName = key.Direction == CursorKeyDirection.Ascending
                 ? nameof(Queryable.ThenBy)
@@ -1194,7 +1203,13 @@ internal static class ExpressionHelpers
             ordered = (IQueryable<StreamBatchRow<TKey, TElement>>)method.Invoke(null, [ordered, thenByLambda])!;
         }
 
-        return new BatchStreamExpression<TKey, TElement>(ordered, isBackward, cursor, afterPredicate, beforePredicate, skipAmount);
+        return new BatchStreamExpression<TKey, TElement>(
+            ordered,
+            isBackward,
+            cursor,
+            afterPredicate,
+            beforePredicate,
+            skipAmount);
     }
 
     /// <summary>
@@ -1248,7 +1263,10 @@ internal static class ExpressionHelpers
                 .MakeGenericMethod(typeof(TElement));
 
             var predicateCountCall = Expression.Call(countWithPredicateMethod, gParam, predicate);
-            bindings.Add(Expression.Bind(resultType.GetProperty(nameof(BatchStreamCount<TKey>.PredicateCount))!, predicateCountCall));
+            bindings.Add(
+                Expression.Bind(
+                    resultType.GetProperty(nameof(BatchStreamCount<TKey>.PredicateCount))!,
+                    predicateCountCall));
         }
 
         var selector = Expression.Lambda(Expression.MemberInit(Expression.New(resultType), bindings), gParam);

@@ -114,11 +114,7 @@ public static class StreamPagingQueryableExtensions
 
         var relative = arguments.EnableRelativeCursors;
 
-        // whether a backward page's flags are computed by index arithmetic instead of the
-        // over-fetch-free probe: a plain incoming cursor always rules it out, no matter what
-        // this call requests, and the entry point, which has no cursor to contradict it, falls
-        // back to what this call requests. EnableRelativeCursors otherwise only decides whether
-        // the result page formats relative cursors, exactly as in ToPageAsync.
+        // Whether a backward page's flags come from index arithmetic instead of the has-more probe.
         var usesRelativeBackwardFlags = relative && cursor?.IsRelative != false;
 
         // count-only: no row query ever runs, so no lifetime is ever handed to a page.
@@ -179,8 +175,7 @@ public static class StreamPagingQueryableExtensions
         var needsHasMore = isBackward && !isEndCursor && !usesRelativeBackwardFlags && arguments.After is null;
 
 #if NET8_0
-        // hoisted out of the try block below so the empty-row branch can reuse it instead of
-        // running a second count query.
+        // The total count fetched for this page, reused by the empty-row branch below.
         int? totalCountValue = null;
 #endif
 
@@ -193,9 +188,8 @@ public static class StreamPagingQueryableExtensions
 
             if (isBackward)
             {
-                // no over-fetch: take exactly what was requested from the inverted order, then
-                // re-apply the original ascending order on top. EF wraps the sliced query in a
-                // subquery to do so, which is what makes the nested re-sort work.
+                // Backward pages take exactly the requested count from the inverted order and
+                // re-apply the original order.
                 var taken = composition.SlicedQuery.Take(requestedCount);
                 pageQuery = OriginalOrderReapplier.Reapply(taken, keys);
 
@@ -206,8 +200,7 @@ public static class StreamPagingQueryableExtensions
             }
             else
             {
-                // forward pages keep the sentinel trick: the (requestedCount + 1)-th row is never
-                // yielded, and its mere presence answers HasNextPage without a second statement.
+                // Forward pages read one extra row to answer HasNextPage; it is never yielded.
                 pageQuery = composition.SlicedQuery.Take(requestedCount + 1);
             }
 
@@ -219,12 +212,8 @@ public static class StreamPagingQueryableExtensions
             IQueryable<StreamRow<T>> rowQuery;
 
 #if NET8_0
-            // EF Core 9 and later translate an uncorrelated scalar projected alongside the row
-            // query server-side, inlined into the row statement itself. EF Core 8 instead
-            // evaluates the scalar client-side, synchronously, while translating the row query.
-            // Every such scalar is instead fetched here with its own explicit, awaited query run
-            // before the row query opens, and the row query then carries the already-known value
-            // as a plain parameter rather than a live subquery.
+            // On EF Core 8, HasMore and the total count are fetched here explicitly before the
+            // row query runs, then carried into it as plain parameters.
             bool? hasMoreValue = null;
 
             if (hasMoreSource is { } probeQuery)
@@ -372,11 +361,8 @@ public static class StreamPagingQueryableExtensions
         }
         else if (isBackward && !usesRelativeBackwardFlags)
         {
-            // a plain backward page: the `before` rule decides HasNextPage, since it cannot be
-            // read from an index. HasPreviousPage comes from the probe unless After is set, in
-            // which case it is derived the same way ToPageAsync derives it (After != null and at
-            // least one row was fetched, which is already known to be true here). The index itself
-            // and the cursor shape it drives still follow the same rule as ToPageAsync.
+            // A plain backward page: HasNextPage follows the before cursor, and HasPreviousPage
+            // follows the probe or an after cursor.
             index = relative && totalCount is not null
                 ? PagingQueryableExtensions.CreateIndex(arguments, cursor, totalCount) ?? 1
                 : null;
@@ -428,9 +414,8 @@ public static class StreamPagingQueryableExtensions
     }
 
 #if NET8_0
-    // EF Core 8's row query never carries a live scalar subquery: HasMore and TotalCount arrive
-    // as already-known values (see the NET8_0 branch in ToStreamPageAsync) and are wired in here
-    // as plain parameters.
+    // Builds the row query for EF Core 8, where HasMore and TotalCount arrive as already-known
+    // parameters instead of live subqueries.
     private static IQueryable<StreamRow<T>> BuildRowQuery<T>(
         IQueryable<T> pageQuery,
         bool? hasMore,
@@ -519,9 +504,8 @@ public static class StreamPagingQueryableExtensions
     private static ValueTask DisposeLifetimeAsync(IAsyncDisposable? lifetime)
         => lifetime?.DisposeAsync() ?? default;
 
-    // A caller-supplied lifetime is released on every fault that happens before the pump takes
-    // ownership of it; a disposal failure while cleaning up is attached to the original fault
-    // instead of replacing it, so the caller always observes the fault that actually happened.
+    // Releases a caller-supplied lifetime on any fault before the pump takes ownership of it; a
+    // disposal failure during cleanup is attached to the original fault instead of replacing it.
     private static async ValueTask ReleaseLifetimeOnFaultAsync(Exception fault, IAsyncDisposable? lifetime)
     {
         try
@@ -711,10 +695,9 @@ public static class StreamPagingQueryableExtensions
 
     /// <summary>
     /// Executes a batch query with paging and returns the selected streaming pages for each
-    /// parent, from one flat, key-ordered query. The requested key set comes from a top-level
-    /// <c>Contains</c> filter over an in-memory collection on <paramref name="source"/>, falling
-    /// back to a distinct-keys query when none is found; a <c>Concat</c> or <c>Union</c> applied
-    /// above that filter is the caller's own responsibility.
+    /// parent, from one flat, key-ordered query. The requested key set is extracted from a
+    /// top-level <c>Contains</c> filter on <paramref name="source"/> when present, falling back
+    /// to a distinct-keys query otherwise.
     /// </summary>
     /// <param name="source">
     /// The queryable to be paged.
@@ -819,7 +802,13 @@ public static class StreamPagingQueryableExtensions
                 arguments = arguments with { First = 10 };
             }
 
-            composition = BuildBatchStreamExpression(source, keySelector, arguments, keys, selector, ref requestedCount);
+            composition = BuildBatchStreamExpression(
+                source,
+                keySelector,
+                arguments,
+                keys,
+                selector,
+                ref requestedCount);
 
             // An end cursor forces includeTotalCount.
             if (composition.Cursor?.IsEndCursor == true)

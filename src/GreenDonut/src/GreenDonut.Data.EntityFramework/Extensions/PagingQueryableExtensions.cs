@@ -99,7 +99,14 @@ public static class PagingQueryableExtensions
             {
                 TryGetQueryInterceptor()?.OnBeforeExecute(originalQuery);
                 var freshCount = await originalQuery.CountAsync(cancellationToken).ConfigureAwait(false);
-                return CreateEndCursorPage<T>([], keys, false, false, 1, requestedCount, freshCount);
+                return CreateEndCursorPage<T>(
+                    [],
+                    keys,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
+                    1,
+                    requestedCount,
+                    freshCount);
             }
         }
 
@@ -162,10 +169,17 @@ public static class PagingQueryableExtensions
 
             if (isEndCursor)
             {
-                return CreateEndCursorPage<T>([], keys, false, false, 1, requestedCount, totalCount ?? 0);
+                return CreateEndCursorPage<T>(
+                    [],
+                    keys,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
+                    1,
+                    requestedCount,
+                    totalCount ?? 0);
             }
 
-            return Page<T>.Create([], false, false, _ => string.Empty, totalCount);
+            return Page<T>.Create([], hasNextPage: false, hasPreviousPage: false, _ => string.Empty, totalCount);
         }
 
         if (isBackward)
@@ -523,15 +537,36 @@ public static class PagingQueryableExtensions
 
             if (isEndCursor && pageIndex < 1)
             {
-                map.Add(item.Key, CreateEndCursorPage<TValue>([], keys, false, false, 1, requestedCount, totalCount!.Value));
+                map.Add(
+                    item.Key,
+                    CreateEndCursorPage<TValue>(
+                        [],
+                        keys,
+                        hasNextPage: false,
+                        hasPreviousPage: false,
+                        1,
+                        requestedCount,
+                        totalCount!.Value));
                 continue;
             }
 
             if (item.Items.Count == 0)
             {
                 var page = isEndCursor
-                    ? CreateEndCursorPage<TValue>([], keys, false, false, 1, requestedCount, totalCount ?? 0)
-                    : Page<TValue>.Create([], false, false, static _ => string.Empty, totalCount);
+                    ? CreateEndCursorPage<TValue>(
+                        [],
+                        keys,
+                        hasNextPage: false,
+                        hasPreviousPage: false,
+                        1,
+                        requestedCount,
+                        totalCount ?? 0)
+                    : Page<TValue>.Create(
+                        [],
+                        hasNextPage: false,
+                        hasPreviousPage: false,
+                        static _ => string.Empty,
+                        totalCount);
                 map.Add(item.Key, page);
                 continue;
             }
@@ -556,7 +591,9 @@ public static class PagingQueryableExtensions
                 {
                     // This key's exact page sits inside its window at its own remainder, never
                     // the cursor's cached one.
-                    itemOffset = effectiveTotal % requestedCount == 0 ? requestedCount : effectiveTotal % requestedCount;
+                    itemOffset = effectiveTotal % requestedCount == 0
+                        ? requestedCount
+                        : effectiveTotal % requestedCount;
                     itemCount = requestedCount;
                 }
             }
@@ -614,14 +651,16 @@ public static class PagingQueryableExtensions
                 {
                     for (var i = itemCount - 1; i >= 0; i--)
                     {
-                        entryBuilder.Add(new PageEntry<TValue>((TValue)(object)item.Items[itemOffset + i]!, entryBuilder.Count));
+                        entryBuilder.Add(
+                            new PageEntry<TValue>((TValue)(object)item.Items[itemOffset + i]!, entryBuilder.Count));
                     }
                 }
                 else
                 {
                     for (var i = 0; i < itemCount; i++)
                     {
-                        entryBuilder.Add(new PageEntry<TValue>((TValue)(object)item.Items[itemOffset + i]!, entryBuilder.Count));
+                        entryBuilder.Add(
+                            new PageEntry<TValue>((TValue)(object)item.Items[itemOffset + i]!, entryBuilder.Count));
                     }
                 }
 

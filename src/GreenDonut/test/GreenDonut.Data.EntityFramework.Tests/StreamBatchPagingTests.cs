@@ -240,7 +240,11 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
             .Where(t => new[] { "A", "B" }.Contains(t.GroupKey))
             .OrderBy(t => t.Name)
             .ThenBy(t => t.Id)
-            .ToBatchStreamPageAsync(t => t.GroupKey, t => t.Name.ToUpperInvariant(), arguments, cancellationToken: cancellationToken);
+            .ToBatchStreamPageAsync(
+                t => t.GroupKey,
+                t => t.Name.ToUpperInvariant(),
+                arguments,
+                cancellationToken: cancellationToken);
 
         // Assert
         Assert.Equal(["A-ITEM01", "A-ITEM02"], await ItemsAsync(pages["A"]));
@@ -272,7 +276,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
             .ThenBy(t => t.Id)
             .ToBatchStreamPageAsync(t => t.GroupKey, arguments, cancellationToken: cancellationToken);
         await using var expectedContext = new SequentialItemContext(connectionString);
-        var expected = await KeyASource(expectedContext).ToStreamPageAsync(arguments, cancellationToken: cancellationToken);
+        var expected = await KeyASource(expectedContext).ToStreamPageAsync(
+            arguments,
+            cancellationToken: cancellationToken);
 
         // Assert
         await AssertMatchesStreamPageAsync(expected, batchPages["A"], t => t.Name, cancellationToken);
@@ -297,7 +303,11 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
             .Where(t => new[] { "A", "B" }.Contains(t.GroupKey))
             .OrderBy(t => t.Name)
             .ThenBy(t => t.Id)
-            .ToBatchStreamPageAsync(t => t.GroupKey, arguments, includeTotalCount: false, cancellationToken: cancellationToken);
+            .ToBatchStreamPageAsync(
+                t => t.GroupKey,
+                arguments,
+                includeTotalCount: false,
+                cancellationToken: cancellationToken);
         await using var expectedContext = new SequentialItemContext(connectionString);
         var expected = await KeyASource(expectedContext).ToStreamPageAsync(
             arguments, includeTotalCount: false, cancellationToken: cancellationToken);
@@ -318,7 +328,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
 
         await using var seedContext = new SequentialItemContext(connectionString);
         var relativeArguments = new PagingArguments(last: 2) { EnableRelativeCursors = true };
-        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(relativeArguments, cancellationToken: cancellationToken);
+        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(
+            relativeArguments,
+            cancellationToken: cancellationToken);
         var relativeBeforeCursor = seedPage.CreateCursor((await EntriesAsync(seedPage))[0], -1);
 
         // Act
@@ -330,7 +342,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
             .ThenBy(t => t.Id)
             .ToBatchStreamPageAsync(t => t.GroupKey, arguments, cancellationToken: cancellationToken);
         await using var expectedContext = new SequentialItemContext(connectionString);
-        var expected = await KeyASource(expectedContext).ToStreamPageAsync(arguments, cancellationToken: cancellationToken);
+        var expected = await KeyASource(expectedContext).ToStreamPageAsync(
+            arguments,
+            cancellationToken: cancellationToken);
 
         // Assert
         await AssertMatchesStreamPageAsync(expected, batchPages["A"], t => t.Name, cancellationToken);
@@ -379,7 +393,11 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
             .Where(t => new[] { "A", "B" }.Contains(t.GroupKey))
             .OrderBy(t => t.Name)
             .ThenBy(t => t.Id)
-            .ToBatchStreamPageAsync(t => t.GroupKey, arguments, includeTotalCount: true, cancellationToken: cancellationToken);
+            .ToBatchStreamPageAsync(
+                t => t.GroupKey,
+                arguments,
+                includeTotalCount: true,
+                cancellationToken: cancellationToken);
 
         // Assert
         Assert.Equal(5, await batchPages["A"].TotalCountAsync(cancellationToken));
@@ -555,7 +573,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
 
         await using var seedContext = new SequentialItemContext(connectionString);
         var relativeArguments = new PagingArguments(2) { EnableRelativeCursors = true };
-        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(relativeArguments, cancellationToken: cancellationToken);
+        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(
+            relativeArguments,
+            cancellationToken: cancellationToken);
         var afterCursor = seedPage.CreateCursor((await EntriesAsync(seedPage))[^1], 0);
 
         // Act
@@ -587,7 +607,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
 
         await using var seedContext = new SequentialItemContext(connectionString);
         var relativeArguments = new PagingArguments(2) { EnableRelativeCursors = true };
-        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(relativeArguments, cancellationToken: cancellationToken);
+        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(
+            relativeArguments,
+            cancellationToken: cancellationToken);
         var afterCursor = seedPage.CreateCursor((await EntriesAsync(seedPage))[^1], 0);
 
         // Act
@@ -705,7 +727,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
 
         await using var seedContext = new SequentialItemContext(connectionString);
         var relativeArguments = new PagingArguments { EnableRelativeCursors = true };
-        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(relativeArguments, cancellationToken: cancellationToken);
+        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(
+            relativeArguments,
+            cancellationToken: cancellationToken);
         var relativeAfterCursor = seedPage.CreateCursor((await EntriesAsync(seedPage))[^1], 0);
 
         // Act
@@ -717,7 +741,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
             .ThenBy(t => t.Id)
             .ToBatchStreamPageAsync(t => t.GroupKey, arguments, cancellationToken: cancellationToken);
         await using var expectedContext = new SequentialItemContext(connectionString);
-        var expected = await KeyASource(expectedContext).ToStreamPageAsync(arguments, cancellationToken: cancellationToken);
+        var expected = await KeyASource(expectedContext).ToStreamPageAsync(
+            arguments,
+            cancellationToken: cancellationToken);
 
         // Assert
         await AssertMatchesStreamPageAsync(expected, batchPages["A"], t => t.Name, cancellationToken);
@@ -733,7 +759,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
 
         await using var seedContext = new SequentialItemContext(connectionString);
         var relativeArguments = new PagingArguments { EnableRelativeCursors = true };
-        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(relativeArguments, cancellationToken: cancellationToken);
+        var seedPage = await KeyASource(seedContext).ToStreamPageAsync(
+            relativeArguments,
+            cancellationToken: cancellationToken);
         var relativeAfterCursor = seedPage.CreateCursor((await EntriesAsync(seedPage))[^1], -1);
         var arguments = new PagingArguments { EnableRelativeCursors = true, After = relativeAfterCursor };
 
@@ -1019,10 +1047,15 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
 
         Assert.Equal(expectedNames, actualNames);
         Assert.Equal(expected.Index, actual.Index);
-        Assert.Equal(await expected.TotalCountAsync(cancellationToken), await actual.TotalCountAsync(cancellationToken));
-        Assert.Equal(await expected.HasNextPageAsync(cancellationToken), await actual.HasNextPageAsync(cancellationToken));
         Assert.Equal(
-            await expected.HasPreviousPageAsync(cancellationToken), await actual.HasPreviousPageAsync(cancellationToken));
+            await expected.TotalCountAsync(cancellationToken),
+            await actual.TotalCountAsync(cancellationToken));
+        Assert.Equal(
+            await expected.HasNextPageAsync(cancellationToken),
+            await actual.HasNextPageAsync(cancellationToken));
+        Assert.Equal(
+            await expected.HasPreviousPageAsync(cancellationToken),
+            await actual.HasPreviousPageAsync(cancellationToken));
     }
 
     private static string[] SplitOnOrderBy(string sql)
@@ -1059,7 +1092,9 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
         await context.SaveChangesAsync();
     }
 
-    public class SequentialItemContext(string connectionString, IEnumerable<IInterceptor>? interceptors = null) : DbContext
+    public class SequentialItemContext(
+        string connectionString,
+        IEnumerable<IInterceptor>? interceptors = null) : DbContext
     {
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
