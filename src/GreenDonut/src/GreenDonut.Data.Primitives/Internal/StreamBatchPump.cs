@@ -117,7 +117,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         await OrderedDisposal.ReleaseAsync(
             source.DisposeAsync,
-            lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
+            lifetime is null ? null : lifetime.DisposeAsync)
+            .ConfigureAwait(false);
 
         return null;
     }
@@ -406,7 +407,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         await OrderedDisposal.ReleaseAsync(
             _source.DisposeAsync,
-            lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
+            lifetime is null ? null : lifetime.DisposeAsync)
+            .ConfigureAwait(false);
     }
 
     private sealed class KeyChannel

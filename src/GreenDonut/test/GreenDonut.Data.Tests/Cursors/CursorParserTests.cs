@@ -45,7 +45,9 @@ public class CursorParserTests
     [InlineData(-5, 0)]
     [InlineData(-5, 1)]
     [InlineData(-5, 100)]
-    public void FormatEndCursor_Should_RoundTripWithAsciiMinus_When_CultureUsesUnicodeMinusSign(int offset, int totalCount)
+    public void FormatEndCursor_Should_RoundTripWithAsciiMinus_When_CultureUsesUnicodeMinusSign(
+        int offset,
+        int totalCount)
     {
         // arrange
         var keys = CreateKeys();

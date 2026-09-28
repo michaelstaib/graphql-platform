@@ -205,7 +205,8 @@ public static class StreamPagingQueryableExtensions
             {
                 await OrderedDisposal.ReleaseAsync(
                     enumerator.DisposeAsync,
-                    lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
+                    lifetime is null ? null : lifetime.DisposeAsync)
+                    .ConfigureAwait(false);
             }
             catch (Exception releaseException)
             {

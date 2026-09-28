@@ -94,7 +94,8 @@ internal sealed class StreamPagePump<TElement>
 
         await OrderedDisposal.ReleaseAsync(
             DisposeSourceAsync,
-            lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
+            lifetime is null ? null : lifetime.DisposeAsync)
+            .ConfigureAwait(false);
     }
 
     private async ValueTask DisposeSourceAsync()
