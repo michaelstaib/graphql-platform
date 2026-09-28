@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq.Expressions;
+using System.Text;
 using GreenDonut.Data.Cursors.Serializers;
 
 namespace GreenDonut.Data.Cursors;
@@ -44,7 +45,7 @@ public class CursorParserTests
     [InlineData(-5, 0)]
     [InlineData(-5, 1)]
     [InlineData(-5, 100)]
-    public void Parse_RoundTrips_EndCursor_Under_Culture_With_Unicode_Minus_Sign(int offset, int totalCount)
+    public void FormatEndCursor_Should_RoundTripWithAsciiMinus_When_CultureUsesUnicodeMinusSign(int offset, int totalCount)
     {
         // arrange
         var keys = CreateKeys();
@@ -54,14 +55,14 @@ public class CursorParserTests
         try
         {
             // act
-            // sv-SE formats a negative sign as U+2212 (minus sign) rather than ASCII '-',
-            // so a culture-sensitive formatter would break the wire format here.
             var formatted = CursorFormatter.FormatEndCursor(offset, totalCount);
             var bytes = Convert.FromBase64String(formatted);
             var parsed = CursorParser.Parse(formatted, keys);
 
             // assert
-            Assert.Equal(offset < 0, Array.IndexOf(bytes, (byte)'-') >= 0);
+            Assert.Equal(
+                $"{{end|{offset.ToString(CultureInfo.InvariantCulture)}|{totalCount.ToString(CultureInfo.InvariantCulture)}}}",
+                Encoding.UTF8.GetString(bytes));
             Assert.True(parsed.IsEndCursor);
             Assert.Equal(offset, parsed.Offset);
             Assert.Equal(totalCount, parsed.TotalCount);

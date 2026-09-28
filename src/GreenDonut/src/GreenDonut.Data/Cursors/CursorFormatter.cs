@@ -174,7 +174,7 @@ public static class CursorFormatter
 
         if (!Utf8Formatter.TryFormat(offset, buffer[totalWritten..], out var written))
         {
-            throw new InvalidOperationException();
+            throw ThrowHelper.EndCursor_BufferTooSmall();
         }
         totalWritten += written;
 
@@ -182,7 +182,7 @@ public static class CursorFormatter
 
         if (!Utf8Formatter.TryFormat(totalCount, buffer[totalWritten..], out written))
         {
-            throw new InvalidOperationException();
+            throw ThrowHelper.EndCursor_BufferTooSmall();
         }
         totalWritten += written;
 

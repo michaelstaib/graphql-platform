@@ -37,4 +37,7 @@ internal static class ThrowHelper
 
     public static InvalidOperationException PagingArgumentsHash_BufferTooSmall()
         => new("Buffer is too small.");
+
+    public static InvalidOperationException EndCursor_BufferTooSmall()
+        => new("Buffer is too small.");
 }
