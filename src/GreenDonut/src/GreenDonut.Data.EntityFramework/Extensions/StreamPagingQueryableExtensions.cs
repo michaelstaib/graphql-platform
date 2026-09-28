@@ -131,9 +131,7 @@ public static class StreamPagingQueryableExtensions
         {
             var pagesBeforeLast = -cursor!.Offset!.Value;
 
-            // a stale or otherwise out-of-range end cursor can point before the first page. That
-            // page does not exist, so the row query never runs and an empty page is returned with
-            // a freshly counted total instead.
+            // An end cursor that points before the first page yields an empty page with a freshly counted total.
             if (pagesBeforeLast > 0
                 && (int)Math.Ceiling(cursor.TotalCount!.Value / (double)requestedCount) - pagesBeforeLast < 1)
             {
@@ -153,9 +151,7 @@ public static class StreamPagingQueryableExtensions
             }
         }
 
-        // a plain (non-relative, non-end-cursor) backward page never over-fetches, so the only way
-        // to learn whether more rows exist before this page is to carry that existence check along
-        // with the rows themselves.
+        // A plain backward page carries its previous-page check along with the rows.
         var needsHasMore = isBackward && !isEndCursor && !relative;
 
         IQueryable<T> pageQuery;
@@ -163,9 +159,7 @@ public static class StreamPagingQueryableExtensions
 
         if (isBackward)
         {
-            // no over-fetch: take exactly what was requested from the inverted order, then
-            // re-apply the original ascending order on top. EF wraps the sliced query in a
-            // subquery to do so, which is what makes the nested re-sort work.
+            // Backward pages take exactly the requested count from the inverted order and re-apply the original order.
             var taken = composition.SlicedQuery.Take(requestedCount);
             pageQuery = OriginalOrderReapplier.Reapply(taken, keys);
 
@@ -176,8 +170,7 @@ public static class StreamPagingQueryableExtensions
         }
         else
         {
-            // forward pages keep the sentinel trick: the (requestedCount + 1)-th row is never
-            // yielded, and its mere presence answers HasNextPage without a second statement.
+            // Forward pages read one extra row to answer HasNextPage; it is never yielded.
             pageQuery = composition.SlicedQuery.Take(requestedCount + 1);
         }
 
@@ -218,9 +211,7 @@ public static class StreamPagingQueryableExtensions
 
         if (!hasFirstRow)
         {
-            // an empty row query never carries an inlined count, since there is no row for it to
-            // ride on. When the count was requested, it is fetched separately while the reader
-            // that just came back empty is already closed.
+            // An empty row query carries no inlined count; a requested count is fetched separately.
             try
             {
                 await enumerator.DisposeAsync().ConfigureAwait(false);
@@ -264,8 +255,7 @@ public static class StreamPagingQueryableExtensions
                     .ConfigureAwait(false);
             }
 
-            // an empty page never carries an index, even for a relative page, the same shortcut
-            // ToPageAsync takes: there is no position within the dataset left to report.
+            // An empty page never carries an index.
             return await CreateResolvedPageAsync<T>(
                 keys,
                 hasNextPage: false,
@@ -291,9 +281,7 @@ public static class StreamPagingQueryableExtensions
             var pagesBeforeLast = -cursor!.Offset!.Value;
             var effectiveTotal = totalCount!.Value;
 
-            // the last page's index is derived from the fresh total, as it is the page being
-            // materialized. Earlier pages reuse the cursor's cached total instead, so the reported
-            // index stays consistent with the skip that was computed from it.
+            // The last page derives its index from the fresh total; earlier pages reuse the cursor's total.
             var indexTotal = pagesBeforeLast == 0 ? effectiveTotal : cursor.TotalCount!.Value;
 
             index = (int)Math.Ceiling(indexTotal / (double)requestedCount) - pagesBeforeLast;
@@ -314,9 +302,7 @@ public static class StreamPagingQueryableExtensions
         }
         else
         {
-            // forward pages and relative-cursor backward pages share the same index rule; only
-            // their next/previous-page flags differ. A relative page always reports an index, so
-            // the entry-point page (no incoming cursor to compute one from) defaults to 1.
+            // A relative page always reports an index; the entry-point page defaults to 1.
             index = relative && totalCount is not null
                 ? PagingQueryableExtensions.CreateIndex(arguments, cursor, totalCount) ?? 1
                 : null;
@@ -350,7 +336,11 @@ public static class StreamPagingQueryableExtensions
             HasPreviousPage: hasPreviousPage,
             FlagsFromFirstRow: null);
 
-        return await ValueCursorStreamPage<T>.CreatePrimedAsync(pump, definition, createCursor, cancellationToken)
+        return await ValueCursorStreamPage<T>.CreatePrimedAsync(
+            pump,
+            definition,
+            createCursor,
+            cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -400,7 +390,11 @@ public static class StreamPagingQueryableExtensions
             HasPreviousPage: hasPreviousPage,
             FlagsFromFirstRow: null);
 
-        return await ValueCursorStreamPage<T>.CreatePrimedAsync(pump: null, definition, createCursor, cancellationToken)
+        return await ValueCursorStreamPage<T>.CreatePrimedAsync(
+            pump: null,
+            definition,
+            createCursor,
+            cancellationToken)
             .ConfigureAwait(false);
     }
 

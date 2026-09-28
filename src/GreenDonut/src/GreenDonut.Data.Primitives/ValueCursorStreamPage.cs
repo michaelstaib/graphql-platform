@@ -72,7 +72,10 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
         Func<EdgeEntry<T>, string> createCursor,
         CancellationToken cancellationToken = default)
     {
-        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump, definition, cancellationToken)
+        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(
+            pump,
+            definition,
+            cancellationToken)
             .ConfigureAwait(false);
 
         return new ValueCursorStreamPage<T>(buffer, definition.Index, createCursor);

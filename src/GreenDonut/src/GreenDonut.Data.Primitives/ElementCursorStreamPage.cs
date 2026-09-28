@@ -62,7 +62,10 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
         Func<EdgeEntry<TElement>, string> createCursor,
         CancellationToken cancellationToken = default)
     {
-        var buffer = await StreamPageBuffer<TElement>.CreatePrimedAsync(pump, definition, cancellationToken)
+        var buffer = await StreamPageBuffer<TElement>.CreatePrimedAsync(
+            pump,
+            definition,
+            cancellationToken)
             .ConfigureAwait(false);
 
         return new ElementCursorStreamPage<TElement, TValue>(buffer, definition.Index, valueSelector, createCursor);
