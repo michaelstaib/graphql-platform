@@ -72,7 +72,9 @@ public class StreamPageTests
         // arrange: entries are read first and values second, so the shared loop, not enumeration
         // order, must be what keeps the projected values and their entries in sync
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
-        var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var pump = new StreamPagePump<int>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1);
         var selectorCalls = 0;
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
@@ -298,7 +300,9 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"), Row("d"));
-        var page = await CreatePage(source, Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
+        var page = await CreatePage(
+            source,
+            Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
 
         // act: ask for the flag before touching any item
         var hasNextPage = await page.HasNextPageAsync(TestContext.Current.CancellationToken);
@@ -316,7 +320,9 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
-        var page = await CreatePage(source, Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
+        var page = await CreatePage(
+            source,
+            Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
 
         // act
         var items = await CollectAsync(page);
@@ -398,7 +404,9 @@ public class StreamPageTests
         var rowCount = Math.Min(total, pageSize);
         var source = new ScriptedAsyncSource<StreamRow<int>>(
             Enumerable.Range(1, rowCount).Select(i => Row(i)).ToArray());
-        var page = await CreatePage(source, Definition<int>(requestedCount: pageSize, forward: true, skipFront: expectedSkip));
+        var page = await CreatePage(
+            source,
+            Definition<int>(requestedCount: pageSize, forward: true, skipFront: expectedSkip));
 
         // act
         var items = await CollectAsync(page);
@@ -613,7 +621,10 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         source.ThrowAt(0, exception);
         var lifetime = new ScriptedAsyncDisposable();
-        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+        var pump = new StreamPagePump<string>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
 
         // act
@@ -633,7 +644,10 @@ public class StreamPageTests
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         var lifetime = new ScriptedAsyncDisposable();
-        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+        var pump = new StreamPagePump<string>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -676,7 +690,9 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", totalCount: 5), Row("b"));
-        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var pump = new StreamPagePump<string>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1);
         var definition = Definition<string>(requestedCount: 2, forward: true) with { Index = 1 };
 
         // act
