@@ -196,17 +196,22 @@ public class StreamPageTests
         // available for both subclasses, keeping them symmetric
         var valueSource = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         var valuePump = new StreamPagePump<string>(
-            valueSource.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+            valueSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1);
         var valueDefinition = Definition<string>(requestedCount: 1, forward: true);
 
         var elementSource = new ScriptedAsyncSource<StreamRow<int>>(Row(1));
         var elementPump = new StreamPagePump<int>(
-            elementSource.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+            elementSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1);
         var elementDefinition = Definition<int>(requestedCount: 1, forward: true);
 
         // act
         var valuePage = await ValueCursorStreamPage<string>.CreatePrimedAsync(
-            valuePump, valueDefinition, static entry => entry.Node!, TestContext.Current.CancellationToken);
+            valuePump,
+            valueDefinition,
+            static entry => entry.Node!,
+            TestContext.Current.CancellationToken);
         var elementPage = await ElementCursorStreamPage<int, string>.CreatePrimedAsync(
             elementPump,
             elementDefinition,
@@ -577,7 +582,10 @@ public class StreamPageTests
 
         // act: the primed factory buffers the first row and resolves the count as part of creation
         var page = await ValueCursorStreamPage<string>.CreatePrimedAsync(
-            pump, definition, static entry => entry.Node!, TestContext.Current.CancellationToken);
+            pump,
+            definition,
+            static entry => entry.Node!,
+            TestContext.Current.CancellationToken);
         var rowsReadAfterPrime = source.Yielded.Count;
         var entries = new List<PageEntry<string>>();
         await foreach (var pageEntry in page.GetEntriesAsync(TestContext.Current.CancellationToken))
@@ -630,7 +638,9 @@ public class StreamPageTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
             () => StreamPageBuffer<string>.CreatePrimedAsync(
-                pump, definition, TestContext.Current.CancellationToken).AsTask());
+                pump,
+                definition,
+                TestContext.Current.CancellationToken).AsTask());
 
         // assert: the creating call observes the priming fault with the source and the lifetime
         // already released
@@ -670,7 +680,9 @@ public class StreamPageTests
         var disposeException = new InvalidOperationException("lifetime boom");
         lifetime.ThrowOnDispose(disposeException);
         var pump = new StreamPagePump<string>(
-            source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -697,7 +709,9 @@ public class StreamPageTests
 
         // act
         var buffer = await StreamPageBuffer<string>.CreatePrimedAsync(
-            pump, definition, TestContext.Current.CancellationToken);
+            pump,
+            definition,
+            TestContext.Current.CancellationToken);
 
         // assert: the first row is already buffered, so the buffer is never handed to a page unprimed
         Assert.Equal(1, buffer.BufferedCount);
@@ -832,7 +846,10 @@ public class StreamPageTests
     {
         var pump = new StreamPagePump<T>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
         return await ValueCursorStreamPage<T>.CreatePrimedAsync(
-            pump, definition, static entry => entry.Node!.ToString()!, TestContext.Current.CancellationToken);
+            pump,
+            definition,
+            static entry => entry.Node!.ToString()!,
+            TestContext.Current.CancellationToken);
     }
 
     // Builds a page whose first row is already buffered, exactly as the creator hands a page to a

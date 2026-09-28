@@ -208,7 +208,9 @@ public class StreamBatchPumpTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
             () => StreamBatchPump<string, string>.CreateAsync(
-                source.GetAsyncEnumerator(TestContext.Current.CancellationToken), [], lifetime).AsTask());
+                source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+                [],
+                lifetime).AsTask());
 
         // assert: the source's exception wins the race, with the lifetime's attached instead of
         // replacing it, and both disposals ran exactly once
@@ -376,7 +378,10 @@ public class StreamBatchPumpTests
         // violation instead of a continuation of A's run.
         var lifetime = new ScriptedAsyncDisposable();
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
-            Row("A", "a1"), Row("A", "a2"), Row("B", "b1"), Row("A", "a3"));
+            Row("A", "a1"),
+            Row("A", "a2"),
+            Row("B", "b1"),
+            Row("A", "a3"));
         var pump = await CreatePump(source, ["A", "B"], lifetime);
         var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
 
@@ -399,7 +404,10 @@ public class StreamBatchPumpTests
         // violation, and the shared source's own DisposeAsync then fails too while releasing it.
         var lifetime = new ScriptedAsyncDisposable();
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
-            Row("A", "a1"), Row("A", "a2"), Row("B", "b1"), Row("A", "a3"));
+            Row("A", "a1"),
+            Row("A", "a2"),
+            Row("B", "b1"),
+            Row("A", "a3"));
         var pump = await CreatePump(source, ["A", "B"], lifetime);
         var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
         var disposeException = new InvalidOperationException("dispose boom");
@@ -425,7 +433,10 @@ public class StreamBatchPumpTests
         // trailing rows) and after B has been seen; every later "A" row must still be discarded,
         // never thrown, because abandonment (not natural completion) closed its run.
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
-            Row("A", "a1"), Row("A", "a2"), Row("B", "b1"), Row("A", "a3"));
+            Row("A", "a1"),
+            Row("A", "a2"),
+            Row("B", "b1"),
+            Row("A", "a3"));
         var pump = await CreatePump(source, ["A", "B"]);
         var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 2, forward: true));
         var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
