@@ -79,7 +79,8 @@ internal sealed class StreamPagePump<TElement>
     /// <summary>
     /// Signals that one page fed by this pump has completed or been disposed. Once every page
     /// has done so, disposes the source, exhausted or not, and then the lifetime, exactly once.
-    /// The lifetime is disposed even when disposing the source throws.
+    /// The lifetime is disposed even when disposing the source throws; if both throw, the
+    /// source's exception is rethrown with the lifetime's exception attached to it.
     /// </summary>
     public async ValueTask ReleaseAsync()
     {
@@ -88,20 +89,12 @@ internal sealed class StreamPagePump<TElement>
             return;
         }
 
-        try
-        {
-            await DisposeSourceAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            var lifetime = _lifetime;
-            _lifetime = null;
+        var lifetime = _lifetime;
+        _lifetime = null;
 
-            if (lifetime is not null)
-            {
-                await lifetime.DisposeAsync().ConfigureAwait(false);
-            }
-        }
+        await OrderedDisposal.ReleaseAsync(
+            DisposeSourceAsync,
+            lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
     }
 
     private async ValueTask DisposeSourceAsync()

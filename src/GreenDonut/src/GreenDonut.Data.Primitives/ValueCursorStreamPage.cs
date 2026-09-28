@@ -14,7 +14,8 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     private readonly Func<EdgeEntry<T>, string> _createCursor;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ValueCursorStreamPage{T}"/> class.
+    /// Initializes a new instance of the <see cref="ValueCursorStreamPage{T}"/> class from a not
+    /// yet primed pump, for the batch pump's own per-key construction path.
     /// </summary>
     /// <param name="pump">
     /// The pump this page reads from, or null for an already fully resolved page.
@@ -25,7 +26,7 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     /// <param name="createCursor">
     /// Creates a cursor from a page item.
     /// </param>
-    public ValueCursorStreamPage(
+    internal ValueCursorStreamPage(
         StreamPagePump<T>? pump,
         StreamPageDefinition<T> definition,
         Func<EdgeEntry<T>, string> createCursor)

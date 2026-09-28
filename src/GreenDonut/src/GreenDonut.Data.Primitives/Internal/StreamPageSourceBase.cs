@@ -47,9 +47,6 @@ internal abstract class StreamPageSourceBase<TValue> : IStreamPageSource<TValue>
     public abstract PageEntry<TValue> GetBufferedEntry(int index);
 
     /// <inheritdoc />
-    public abstract ValueTask DrainAsync(CancellationToken cancellationToken = default);
-
-    /// <inheritdoc />
     public abstract ValueTask DisposeAsync();
 
     private async IAsyncEnumerable<TValue> GetValuesCore(

@@ -114,7 +114,9 @@ public static class StreamPagingQueryableExtensions
             int? countOnlyIndex = relative
                 ? PagingQueryableExtensions.CreateIndex(arguments, cursor, countOnlyTotal) ?? 1
                 : null;
-            return CreateResolvedPage<T>(keys, false, false, countOnlyIndex, requestedCount, countOnlyTotal);
+            return await CreateResolvedPageAsync<T>(
+                keys, false, false, countOnlyIndex, requestedCount, countOnlyTotal, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var isEndCursor = cursor?.IsEndCursor == true;
@@ -133,7 +135,9 @@ public static class StreamPagingQueryableExtensions
                 var freshCount = await originalQuery.CountAsync(cancellationToken).ConfigureAwait(false);
                 await DisposeLifetimeAsync(lifetime).ConfigureAwait(false);
 
-                return CreateResolvedPage<T>(keys, false, false, 1, requestedCount, freshCount);
+                return await CreateResolvedPageAsync<T>(
+                    keys, false, false, 1, requestedCount, freshCount, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
 
@@ -207,12 +211,16 @@ public static class StreamPagingQueryableExtensions
 
             if (isEndCursor)
             {
-                return CreateResolvedPage<T>(keys, false, false, 1, requestedCount, emptyTotalCount ?? 0);
+                return await CreateResolvedPageAsync<T>(
+                    keys, false, false, 1, requestedCount, emptyTotalCount ?? 0, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             // an empty page never carries an index, even for a relative page, the same shortcut
             // ToPageAsync takes: there is no position within the dataset left to report.
-            return CreateResolvedPage<T>(keys, false, false, null, requestedCount, emptyTotalCount);
+            return await CreateResolvedPageAsync<T>(
+                keys, false, false, null, requestedCount, emptyTotalCount, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var firstRow = enumerator.Current;
@@ -317,13 +325,14 @@ public static class StreamPagingQueryableExtensions
             : pageQuery.Select(t => new StreamRow<T> { Item = t });
     }
 
-    private static StreamPage<T> CreateResolvedPage<T>(
+    private static async ValueTask<StreamPage<T>> CreateResolvedPageAsync<T>(
         CursorKey[] keys,
         bool hasNextPage,
         bool hasPreviousPage,
         int? index,
         int requestedCount,
-        int? totalCount)
+        int? totalCount,
+        CancellationToken cancellationToken)
     {
         var createCursor = CreateCursorFactory<T>(keys, relativeShaped: index is not null);
         var definition = new StreamPageDefinition<T>(
@@ -339,7 +348,10 @@ public static class StreamPagingQueryableExtensions
             HasPreviousPage: hasPreviousPage,
             FlagsFromFirstRow: null);
 
-        return new ValueCursorStreamPage<T>(pump: null, definition, createCursor);
+        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump: null, definition, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new ValueCursorStreamPage<T>(buffer, definition.Index, createCursor);
     }
 
     private static Func<EdgeEntry<T>, string> CreateCursorFactory<T>(CursorKey[] keys, bool relativeShaped)

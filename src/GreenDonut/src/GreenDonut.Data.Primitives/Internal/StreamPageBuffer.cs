@@ -126,15 +126,6 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
     public override PageEntry<TElement> GetBufferedEntry(int index) => new(this[index], index);
 
     /// <inheritdoc />
-    public override async ValueTask DrainAsync(CancellationToken cancellationToken = default)
-    {
-        while (!_isCompleted)
-        {
-            await AdvanceAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    /// <inheritdoc />
     public override ValueTask DisposeAsync() => CompleteAsync();
 
     /// <summary>
@@ -162,15 +153,17 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
         {
             await buffer.PrimeAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception primingException)
         {
+            // the priming failure is what the caller must observe; a disposal failure while
+            // cleaning up is attached to it instead of replacing it.
             try
             {
                 await buffer.DisposeAsync().ConfigureAwait(false);
             }
-            catch
+            catch (Exception disposeException)
             {
-                // ignored: the priming failure above takes precedence.
+                OrderedDisposal.Attach(primingException, disposeException);
             }
 
             throw;
@@ -231,16 +224,16 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
                 // completed so every later call rethrows the same exception instead of silently
                 // truncating. Releasing still runs both disposals even when one of them throws
                 // (StreamPagePump.ReleaseAsync), but that disposal failure must never replace the
-                // fault being reported here, so it is dropped rather than left to escape.
+                // fault being reported here, so it is attached to it instead.
                 _fault = ExceptionDispatchInfo.Capture(ex);
 
                 try
                 {
                     await ReleasePumpAsync().ConfigureAwait(false);
                 }
-                catch
+                catch (Exception releaseException)
                 {
-                    // ignored: the row fault above takes precedence.
+                    OrderedDisposal.Attach(ex, releaseException);
                 }
 
                 throw;

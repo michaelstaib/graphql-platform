@@ -371,6 +371,32 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
+    public async Task Rows_Should_AttachSourceDisposalFailure_Not_ReplaceTheOrderingFault_When_ACompletedKeyReappears()
+    {
+        // arrange: A's run ends when B starts, so the trailing "A" row is a source-ordering
+        // violation, and the shared source's own DisposeAsync then fails too while releasing it.
+        var lifetime = new ScriptedAsyncDisposable();
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
+            Row("A", "a1"), Row("A", "a2"), Row("B", "b1"), Row("A", "a3"));
+        var pump = await CreatePump(source, ["A", "B"], lifetime);
+        var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
+        var disposeException = new InvalidOperationException("dispose boom");
+        source.ThrowOnDispose(disposeException);
+
+        // act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
+
+        // assert: the ordering fault surfaces, and the source's own disposal failure is attached
+        // to it instead of replacing it, with the lifetime still released despite it
+        Assert.Equal(
+            "The batch source produced a row for key 'A' after that key's run had already "
+            + "completed; the source must be ordered by key.",
+            exception.Message);
+        Assert.Equal([disposeException], OrderedDisposal.GetAttached(exception));
+        Assert.Equal(1, lifetime.DisposeCount);
+    }
+
+    [Fact]
     public async Task Rows_Should_KeepDiscardingSilently_When_AnAbandonedKeyReappearsAfterAnotherKey()
     {
         // arrange: A is abandoned after its first row, then reappears both immediately (its own

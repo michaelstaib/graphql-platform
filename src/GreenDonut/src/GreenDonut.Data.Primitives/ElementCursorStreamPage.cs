@@ -19,7 +19,7 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ElementCursorStreamPage{TElement,TValue}"/>
-    /// class.
+    /// class from a not yet primed pump, for the batch pump's own per-key construction path.
     /// </summary>
     /// <param name="pump">
     /// The pump this page reads from, or null for an already fully resolved page.
@@ -33,7 +33,7 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
     /// <param name="createCursor">
     /// Creates a cursor from a source row.
     /// </param>
-    public ElementCursorStreamPage(
+    internal ElementCursorStreamPage(
         StreamPagePump<TElement>? pump,
         StreamPageDefinition<TElement> definition,
         Func<TElement, TValue> valueSelector,
@@ -42,7 +42,24 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
     {
     }
 
-    private ElementCursorStreamPage(
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ElementCursorStreamPage{TElement,TValue}"/>
+    /// class from an already constructed buffer, so a creator that primes the buffer itself can
+    /// wrap it without building a second one.
+    /// </summary>
+    /// <param name="buffer">
+    /// The buffer this page reads from.
+    /// </param>
+    /// <param name="index">
+    /// The index number of this page.
+    /// </param>
+    /// <param name="valueSelector">
+    /// Projects a source row into a page item.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a source row.
+    /// </param>
+    internal ElementCursorStreamPage(
         StreamPageBuffer<TElement> buffer,
         int? index,
         Func<TElement, TValue> valueSelector,
