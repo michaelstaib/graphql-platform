@@ -69,8 +69,7 @@ public class StreamPageTests
     [Fact]
     public async Task ElementProjectingSource_Should_ObserveSameProjectedRows_InSameOrder_FromTheSharedLoop()
     {
-        // arrange: entries are read first and values second, so the shared loop, not enumeration
-        // order, must be what keeps the projected values and their entries in sync
+        // arrange: entries are read first and values second, from the same shared loop
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
         var pump = new StreamPagePump<int>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
@@ -126,9 +125,7 @@ public class StreamPageTests
     [Fact]
     public void StreamPage_Should_DeclareNoNonPublicMembers_Besides_TotalCountRequestedSizeAndCreateCursor()
     {
-        // arrange: every non-public property and non-accessor method declared directly on the
-        // base page, now that lifecycle plumbing (priming, draining, buffered-entry access) lives
-        // only on the source
+        // arrange: every non-public property and non-accessor method declared directly on the base page
         var members = typeof(StreamPage<>)
             .GetMembers(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
             .Where(member => member is PropertyInfo or MethodInfo { IsSpecialName: false })
@@ -143,8 +140,7 @@ public class StreamPageTests
     [Fact]
     public void IStreamPageSource_Should_NotDeclareDrainAsync()
     {
-        // arrange: DrainAsync became dead code once every remaining caller enumerated
-        // GetEntriesAsync to the end instead of draining explicitly
+        // arrange: DrainAsync became dead code once every caller enumerated GetEntriesAsync instead
         var methodNames = typeof(IStreamPageSource<>)
             .GetMethods()
             .Where(member => !member.IsSpecialName)
@@ -181,9 +177,7 @@ public class StreamPageTests
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             .ToArray();
 
-        // assert: construction from outside Primitives only ever goes through a primed factory or
-        // the batch pump's own CreatePage, never a constructor reachable across the assembly
-        // boundary (private, or the base's private protected constructor)
+        // assert: construction outside Primitives only ever goes through a primed factory or CreatePage
         Assert.NotEmpty(pageTypes);
         Assert.NotEmpty(constructors);
         Assert.All(constructors, c => Assert.True(c.IsPrivate || c.IsFamilyAndAssembly));
@@ -192,8 +186,7 @@ public class StreamPageTests
     [Fact]
     public async Task ValueCursorStreamPage_And_ElementCursorStreamPage_Should_BothConstructFromAPrimedFactory()
     {
-        // arrange: the same construction path (priming and wrapping happening atomically) is
-        // available for both subclasses, keeping them symmetric
+        // arrange: the same construction path is available for both subclasses
         var valueSource = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         var valuePump = new StreamPagePump<string>(
             valueSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
@@ -227,8 +220,7 @@ public class StreamPageTests
     [Fact]
     public void PageFactories_Should_BeInternalAndLimitedToCreateForBatchAndCreatePrimedAsync()
     {
-        // arrange: the only ways to construct a page from outside Primitives are the primed,
-        // single-page factory and the batch pump's own internal factory
+        // arrange: the only ways to construct a page from outside Primitives are these two factories
         var factoryTypes = new[] { typeof(ValueCursorStreamPage<>), typeof(ElementCursorStreamPage<,>) };
 
         // act
@@ -341,8 +333,7 @@ public class StreamPageTests
     [Fact]
     public async Task HasPreviousPageAsync_Should_ReturnTheFixedValueFromTheDefinition()
     {
-        // arrange: a plain "last: N" page with no cursor carries fixed flags computed up front
-        // from the inlined total, never derived from a row
+        // arrange: a plain "last: N" page with no cursor carries fixed flags from the inlined total
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
         var page = await CreatePage(
             source,
@@ -403,9 +394,7 @@ public class StreamPageTests
     [InlineData(7, 10, 0)]
     public async Task SkipFront_Should_MatchEndCursorAlignment_ForTheLastPage(int total, int pageSize, int expectedSkip)
     {
-        // arrange: the skip ToStreamPageAsync computes for an end-cursor's last page (m89.11): the
-        // dataset's trailing remainder survives at the front, everything before it is read but
-        // never yielded
+        // arrange: the skip ToStreamPageAsync computes for an end-cursor's last page (m89.11)
         var rowCount = Math.Min(total, pageSize);
         var source = new ScriptedAsyncSource<StreamRow<int>>(
             Enumerable.Range(1, rowCount).Select(i => Row(i)).ToArray());
@@ -479,9 +468,7 @@ public class StreamPageTests
         var flagged = await Assert.ThrowsAsync<InvalidOperationException>(
             () => page.HasNextPageAsync(TestContext.Current.CancellationToken).AsTask());
 
-        // assert: the fault still releases the source and the lifetime, exactly like completion
-        // does, and every later call on the faulted page rethrows the same exception with no
-        // further reads (folded into one tuple equality to stay within the 5-Assert-call limit)
+        // assert: the fault releases the source and the lifetime, and every later call rethrows it
         Assert.Equal(
             (exception, exception, exception, 2, 1, 1),
             (thrown, replayed, flagged, source.MoveNextCount, source.DisposeCount, lifetime.DisposeCount));
@@ -490,8 +477,7 @@ public class StreamPageTests
     [Fact]
     public async Task SourceException_Should_StillReleaseTheLifetime_And_PreserveTheOriginalFault_When_SourceDisposeAsyncThrows()
     {
-        // arrange: the source faults mid-stream, and its own DisposeAsync then fails too while
-        // the pump releases it.
+        // arrange: the source faults mid-stream, and its own DisposeAsync then fails too
         var faultException = new InvalidOperationException("boom");
         var disposeException = new InvalidOperationException("dispose boom");
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
@@ -503,8 +489,7 @@ public class StreamPageTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
 
-        // assert: the mid-stream fault surfaces, not the enumerator's own disposal failure, and
-        // the lifetime is still released despite it
+        // assert: the mid-stream fault surfaces, and the lifetime is still released
         Assert.Same(faultException, thrown);
         Assert.Equal(1, lifetime.DisposeCount);
     }
@@ -513,7 +498,6 @@ public class StreamPageTests
     public async Task SourceException_Should_AttachLifetimeDisposalFailure_Not_ReplaceIt_When_LifetimeDisposeAsyncThrows()
     {
         // arrange: the source faults mid-stream, and the lifetime's own DisposeAsync then fails
-        // too while the pump releases it.
         var faultException = new InvalidOperationException("boom");
         var disposeException = new InvalidOperationException("lifetime boom");
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
@@ -525,8 +509,7 @@ public class StreamPageTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
 
-        // assert: the mid-stream fault surfaces, and the lifetime's own disposal failure is
-        // attached to it instead of replacing it
+        // assert: the mid-stream fault surfaces, with the lifetime's disposal failure attached
         Assert.Same(faultException, thrown);
         Assert.Equal([disposeException], OrderedDisposal.GetAttached(thrown));
     }
@@ -553,8 +536,7 @@ public class StreamPageTests
     [Fact]
     public async Task Completion_Should_ThrowSourceException_With_LifetimeAttached_When_BothDisposalsFail_AndNoFaultWasRecorded()
     {
-        // arrange: natural completion, no fault recorded; both the source's own DisposeAsync and
-        // the lifetime's DisposeAsync fail while releasing.
+        // arrange: natural completion; both the source's and the lifetime's DisposeAsync fail
         var sourceDisposeException = new InvalidOperationException("source boom");
         var lifetimeDisposeException = new InvalidOperationException("lifetime boom");
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
@@ -566,8 +548,7 @@ public class StreamPageTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
 
-        // assert: the source's exception wins the race, with the lifetime's attached instead of
-        // replacing it
+        // assert: the source's exception wins the race, with the lifetime's attached
         Assert.Same(sourceDisposeException, thrown);
         Assert.Equal([lifetimeDisposeException], OrderedDisposal.GetAttached(thrown));
     }
@@ -642,8 +623,7 @@ public class StreamPageTests
                 definition,
                 TestContext.Current.CancellationToken).AsTask());
 
-        // assert: the creating call observes the priming fault with the source and the lifetime
-        // already released
+        // assert: the creating call observes the priming fault with everything already released
         Assert.Same(exception, thrown);
         Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
     }
@@ -673,8 +653,7 @@ public class StreamPageTests
     [Fact]
     public async Task CreatePrimedAsync_Should_AttachCleanupFailure_Not_ReplaceCancellation_When_LifetimeDisposeAsyncThrows()
     {
-        // arrange: priming is cancelled before any row is read, and cleaning up afterward fails to
-        // dispose the lifetime.
+        // arrange: priming is cancelled, and cleaning up afterward fails to dispose the lifetime
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         var lifetime = new ScriptedAsyncDisposable();
         var disposeException = new InvalidOperationException("lifetime boom");
@@ -691,8 +670,7 @@ public class StreamPageTests
         var thrown = await Assert.ThrowsAsync<OperationCanceledException>(
             () => StreamPageBuffer<string>.CreatePrimedAsync(pump, definition, cts.Token).AsTask());
 
-        // assert: the cancellation surfaces, with the cleanup failure attached instead of
-        // replacing it
+        // assert: the cancellation surfaces, with the cleanup failure attached
         Assert.Equal([disposeException], OrderedDisposal.GetAttached(thrown));
         Assert.Equal(1, source.DisposeCount);
     }
@@ -749,8 +727,7 @@ public class StreamPageTests
     [Fact]
     public async Task CreateCursor_Should_UseMatchingElementIndex_When_ValuesRepeat()
     {
-        // arrange: two rows project to the same value, so the cursor can only be right if it is
-        // read from the entry's index, not looked up by the value itself
+        // arrange: two rows project to the same value, so the cursor must be read from the entry's index
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2));
         var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
@@ -810,8 +787,7 @@ public class StreamPageTests
         var hasNextPage = await page.HasNextPageAsync(TestContext.Current.CancellationToken);
         var hasPreviousPage = await page.HasPreviousPageAsync(TestContext.Current.CancellationToken);
 
-        // assert: an empty page has nothing left to stream, which is exactly what enumerating it
-        // already proved by yielding no items
+        // assert: an empty page has nothing left to stream
         Assert.Empty(items);
         Assert.Equal(0, totalCount);
         Assert.False(hasNextPage);
@@ -852,8 +828,7 @@ public class StreamPageTests
             TestContext.Current.CancellationToken);
     }
 
-    // Builds a page whose first row is already buffered, exactly as the creator hands a page to a
-    // consumer, for tests that assert on already-primed behaviour.
+    // Builds a page whose first row is already buffered.
     private static Task<StreamPage<T>> CreatePrimedPageAsync<T>(
         ScriptedAsyncSource<StreamRow<T>> source,
         StreamPageDefinition<T> definition,

@@ -4,7 +4,7 @@ namespace GreenDonut.Data.Internal;
 
 /// <summary>
 /// Provides the shared item enumeration for an <see cref="IStreamPageSource{TValue}"/>, projecting
-/// it from the entries once so every implementation only has to write its own entries loop.
+/// it from the entries once.
 /// </summary>
 /// <typeparam name="TValue">
 /// The type of the page items.

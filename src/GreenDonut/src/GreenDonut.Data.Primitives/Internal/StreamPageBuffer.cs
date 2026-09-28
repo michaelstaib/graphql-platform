@@ -129,9 +129,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
     public override ValueTask DisposeAsync() => CompleteAsync();
 
     /// <summary>
-    /// Creates a buffer for <paramref name="pump"/> and primes it before returning it, so
-    /// construction and priming happen atomically and a caller can never observe an unprimed
-    /// buffer.
+    /// Creates and primes a buffer for <paramref name="pump"/> before returning it.
     /// </summary>
     /// <param name="pump">
     /// The pump the buffer reads from, or null for an already fully resolved page.
@@ -155,8 +153,8 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
         }
         catch (Exception primingException)
         {
-            // the priming failure is what the caller must observe; a disposal failure while
-            // cleaning up is attached to it instead of replacing it.
+            // A disposal failure while cleaning up is attached to the priming failure instead of
+            // replacing it.
             try
             {
                 await buffer.DisposeAsync().ConfigureAwait(false);
@@ -195,9 +193,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
         }
     }
 
-    // Reads from the pump until either one more content row is buffered or the page completes
-    // (the source is exhausted, or, for a forward page, the trailing sentinel is found). Rows
-    // consumed by SkipFront are read and discarded in the same call.
+    // Reads from the pump until one more content row is buffered or the page completes.
     private async ValueTask AdvanceAsync(CancellationToken cancellationToken)
     {
         if (_isCompleted)
@@ -219,12 +215,9 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
             }
             catch (Exception ex)
             {
-                // a source that faults mid-stream releases the pump, exactly as reaching the end
-                // of the source or disposing the page does, but the page itself stays not
-                // completed so every later call rethrows the same exception instead of silently
-                // truncating. Releasing still runs both disposals even when one of them throws
-                // (StreamPagePump.ReleaseAsync), but that disposal failure must never replace the
-                // fault being reported here, so it is attached to it instead.
+                // A mid-stream fault releases the pump but leaves the page not completed, so
+                // every later call rethrows it; a disposal failure while releasing is attached
+                // to it instead of replacing it.
                 _fault = ExceptionDispatchInfo.Capture(ex);
 
                 try
@@ -300,9 +293,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
         await ReleasePumpAsync().ConfigureAwait(false);
     }
 
-    // Releases the pump exactly once, however release was triggered: normal completion or the
-    // source faulting mid-stream. A faulted page stays not completed, so it needs its own
-    // released flag separate from _isCompleted.
+    // Releases the pump exactly once, whether triggered by normal completion or a mid-stream fault.
     private async ValueTask ReleasePumpAsync()
     {
         if (_pumpReleased)

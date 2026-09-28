@@ -46,8 +46,7 @@ public class OrderedDisposalTests
                     return ValueTask.CompletedTask;
                 }).AsTask());
 
-        // assert: the lifetime is still disposed even though the source threw, and nothing is
-        // attached since there was only one failure
+        // assert: the lifetime is still disposed even though the source threw
         Assert.Same(sourceException, thrown);
         Assert.True(lifetimeDisposed);
         Assert.Empty(OrderedDisposal.GetAttached(thrown));

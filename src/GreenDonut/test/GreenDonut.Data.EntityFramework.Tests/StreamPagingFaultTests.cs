@@ -8,9 +8,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace GreenDonut.Data;
 
-// Pins the north star for ToStreamPageAsync's fault paths (f4f262fac, b2f435a29): a failure while
-// priming or while closing an empty result always releases the lifetime, and the ORIGINAL fault is
-// the one every caller observes, with any disposal failure attached to it instead of replacing it.
 [Collection(PostgresCacheCollectionFixture.DefinitionName)]
 public class StreamPagingFaultTests(PostgreSqlResource resource)
 {
@@ -61,8 +58,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
                 lifetime: lifetime,
                 cancellationToken: cancellationToken).AsTask());
 
-        // assert: the priming fault surfaces, with the lifetime's own disposal failure attached
-        // instead of replacing it
+        // assert: the priming fault surfaces, with the lifetime's disposal failure attached
         Assert.Same(primingException, thrown);
         Assert.Equal([lifetimeException], OrderedDisposal.GetAttached(thrown));
     }
@@ -92,8 +88,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
     [Fact]
     public async Task ToStreamPageAsync_Should_ReleaseLifetimeOnce_And_SurfaceOriginalFault_When_EmptyRowEnumeratorDisposeThrows()
     {
-        // arrange: no row matches, so priming succeeds empty and the enumerator's own dispose,
-        // which closes the reader, is what fails.
+        // arrange: no row matches, so the enumerator's own closing dispose is what fails.
         var connectionString = CreateConnectionString();
         await SeedBrandsAsync(connectionString, 0);
         var exception = new InvalidOperationException("close boom");
@@ -130,8 +125,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         await context.SaveChangesAsync();
     }
 
-    // Fails the row query itself, the same fault a broken command or a dropped connection would
-    // surface while EF is still executing the reader.
+    // Fails the row query while EF is still executing the reader.
     private sealed class ThrowingReaderInterceptor(Exception exception) : DbCommandInterceptor
     {
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
@@ -142,8 +136,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
             => throw exception;
     }
 
-    // Fails while EF closes the reader, the fault surfaced by the empty-row path's own
-    // enumerator disposal rather than by priming.
+    // Fails while EF closes the reader.
     private sealed class ThrowingReaderCloseInterceptor(Exception exception) : DbCommandInterceptor
     {
         public override ValueTask<InterceptionResult> DataReaderClosingAsync(
@@ -164,8 +157,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         }
     }
 
-    // Disposes the inner resource fully before failing, the same as a lifetime whose own
-    // teardown logic runs to completion but then reports an error.
+    // Disposes the inner resource fully before failing.
     private sealed class ThrowingLifetime(IAsyncDisposable inner, Exception exception) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()

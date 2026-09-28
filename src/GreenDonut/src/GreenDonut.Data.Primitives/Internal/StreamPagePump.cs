@@ -77,10 +77,8 @@ internal sealed class StreamPagePump<TElement>
     }
 
     /// <summary>
-    /// Signals that one page fed by this pump has completed or been disposed. Once every page
-    /// has done so, disposes the source, exhausted or not, and then the lifetime, exactly once.
-    /// The lifetime is disposed even when disposing the source throws; if both throw, the
-    /// source's exception is rethrown with the lifetime's exception attached to it.
+    /// Disposes the source and then the lifetime exactly once; if both throw the source's
+    /// exception is rethrown with the lifetime's attached.
     /// </summary>
     public async ValueTask ReleaseAsync()
     {

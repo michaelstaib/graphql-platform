@@ -17,7 +17,6 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
     private readonly StreamPageBuffer<TElement> _buffer;
     private readonly Func<EdgeEntry<TElement>, string> _createCursor;
 
-    // From a not yet primed pump, for the batch pump's own per-key construction path.
     private ElementCursorStreamPage(
         StreamPagePump<TElement>? pump,
         StreamPageDefinition<TElement> definition,
@@ -27,8 +26,6 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
     {
     }
 
-    // From an already primed buffer, so a creator that primes the buffer itself can wrap it
-    // without building a second one.
     private ElementCursorStreamPage(
         StreamPageBuffer<TElement> buffer,
         int? index,
@@ -41,8 +38,7 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
     }
 
     /// <summary>
-    /// Creates a page whose buffer is already primed, so priming and wrapping it happen atomically
-    /// and a caller can never observe an unprimed page.
+    /// Creates a page whose buffer is already primed.
     /// </summary>
     /// <param name="pump">
     /// The pump this page reads from, or null for an already fully resolved page.
@@ -73,8 +69,7 @@ internal sealed class ElementCursorStreamPage<TElement, TValue> : StreamPage<TVa
     }
 
     /// <summary>
-    /// Creates an unprimed page for the batch pump's own per-key construction path, where priming
-    /// is deferred to the first pull from the page instead of happening at construction.
+    /// Creates an unprimed page for the batch pump's own per-key construction path.
     /// </summary>
     /// <param name="pump">
     /// The pump this page reads from.

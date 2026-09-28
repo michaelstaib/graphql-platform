@@ -11,10 +11,8 @@ internal static class OrderedDisposal
     private const string AttachedKey = "GreenDonut.Data.AttachedExceptions";
 
     /// <summary>
-    /// Runs <paramref name="disposeSource"/> and then <paramref name="disposeLifetime"/>, each in
-    /// its own try/finally so the lifetime is always attempted even when disposing the source
-    /// throws. If both throw, the source's exception is rethrown with the lifetime's exception
-    /// attached to it instead of replacing it.
+    /// Disposes the source and then the lifetime; if both throw, the source's exception is
+    /// rethrown with the lifetime's attached.
     /// </summary>
     /// <param name="disposeSource">
     /// Disposes the source.

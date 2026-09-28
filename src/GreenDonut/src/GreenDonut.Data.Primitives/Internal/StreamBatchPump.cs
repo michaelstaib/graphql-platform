@@ -14,17 +14,9 @@ namespace GreenDonut.Data.Internal;
 /// The type of the source rows.
 /// </typeparam>
 /// <remarks>
-/// Rows arrive grouped by key. A row whose key differs from the previous row's key completes the
-/// previous key's page; source exhaustion completes every page already created, and leaves a
-/// still-unbuilt key's channel to complete on its own first pull. This way a requested key that
-/// never appears in the stream, and whose page is created only after the source ran out, still
-/// completes as an empty page. Pulling on any key's page drives this pump; rows for other keys
-/// are buffered into their own pages. A key whose page was disposed before it completed is
-/// abandoned: the pump keeps advancing past its remaining rows but discards them instead of
-/// buffering them. A row for a key whose run already completed and was not abandoned means the
-/// source is not grouped by key, which faults the pump exactly like a mid-stream source
-/// exception. This type has no cross-thread safety, the same stance as
-/// <see cref="StreamPageBuffer{TElement}"/>.
+/// Rows arrive grouped by key; pulling on any key's page drives this pump, buffering rows for
+/// other keys into their own pages until a key change or source exhaustion completes them. This
+/// type has no cross-thread safety, the same stance as <see cref="StreamPageBuffer{TElement}"/>.
 /// </remarks>
 internal sealed class StreamBatchPump<TKey, TElement>
     where TKey : notnull
@@ -98,8 +90,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
             }
             catch (Exception primingException)
             {
-                // the priming failure is what the caller must observe; a disposal failure while
-                // releasing the source and the lifetime for it is attached instead of replacing it.
+                // A disposal failure while releasing for the priming failure is attached to it
+                // instead of replacing it.
                 try
                 {
                     await pump.ReleaseCoreAsync().ConfigureAwait(false);
@@ -203,15 +195,14 @@ internal sealed class StreamBatchPump<TKey, TElement>
     private void RegisterDrain<TValue>(TKey key, StreamPage<TValue> page)
         => _keys[key].Drain = cancellationToken => DrainAsync(page, cancellationToken);
 
-    // Reads a page to completion over its public surface: every implementation buffers as it
-    // enumerates, so this has the same effect as draining the page's source directly.
+    // Reads a page to completion over its public surface.
     private static async ValueTask DrainAsync<TValue>(
         StreamPage<TValue> page,
         CancellationToken cancellationToken)
     {
         await foreach (var _ in page.GetEntriesAsync(cancellationToken).ConfigureAwait(false))
         {
-            // draining only for its buffering side effect; the entries themselves are unused here.
+            // Only the buffering side effect is needed; entries are discarded.
         }
     }
 
@@ -238,17 +229,9 @@ internal sealed class StreamBatchPump<TKey, TElement>
         return channel.Rows.Count > 0 ? channel.Rows.Dequeue() : null;
     }
 
-    // Advances the shared source by exactly one row, routing it to its key's channel. A row for a
-    // key whose channel already completed without being abandoned means the source is not grouped
-    // by key, and faults the pump before any of the completion handling below runs, so a wrongly
-    // ordered row never masquerades as a new run of an already-finished key. A key change
-    // completes the previously active key's page; source exhaustion completes every page already
-    // created and leaves a still-unbuilt key's channel alone, so it completes on its own first
-    // pull instead (that pull re-enters this method, finds the source already exhausted, and
-    // falls straight into this same completion pass). Completing a channel here also drains its
-    // page, so the page's own completion (and, once every key has completed or been disposed, the
-    // source and the lifetime) happens without waiting for a consumer to pull the remaining
-    // buffered rows.
+    // Reads one row from the shared source and routes it to its key's channel; a row for a key
+    // that already completed faults the pump. A key change completes the previous key's page,
+    // and source exhaustion completes every remaining page.
     private async ValueTask PumpOnceAsync()
     {
         _fault?.Throw();
@@ -267,10 +250,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
             }
             catch (Exception ex)
             {
-                // a source that faults mid-stream still releases the shared source and the
-                // lifetime, exactly as reaching the end of the source does, and every later pull
-                // for any key rethrows the same exception instead of touching the now-disposed
-                // source again. A disposal failure while releasing is attached to this fault
+                // A mid-stream fault releases the source and the lifetime, and every later pull
+                // rethrows it. A disposal failure while releasing is attached to this fault
                 // instead of replacing it.
                 _fault = ExceptionDispatchInfo.Capture(ex);
 
@@ -314,12 +295,9 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
         if (channel.Completed && !channel.Abandoned)
         {
-            // the key's run already completed (a later key was seen, or the source reached its
-            // end) and it was not abandoned, so this row is a source ordering violation: it would
-            // land in a queue no page will ever read again. Fault exactly like a mid-stream source
-            // exception so the source and the lifetime are released and every later pull, for any
-            // key, rethrows. A disposal failure while releasing is attached to this fault instead
-            // of replacing it.
+            // A row for a key whose run already completed and was not abandoned is a source
+            // ordering violation, and faults the pump like a mid-stream exception. A disposal
+            // failure while releasing is attached to this fault instead of replacing it.
             var fault = ThrowHelper.StreamBatchPump_SourceNotGroupedByKey(row.Key);
             _fault = ExceptionDispatchInfo.Capture(fault);
 
@@ -360,12 +338,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
         }
     }
 
-    // Signals that one requested key's page has completed or been disposed. A page disposed
-    // before its channel completed naturally is abandoned here: its channel is marked completed
-    // so the key-change and source-exhaustion handling above leave it alone, its already-staged
-    // rows are dropped, and later rows for the same key are discarded as they are read instead of
-    // buffered. Once every key has completed or been disposed, disposes the source and then the
-    // lifetime, exactly once.
+    // Signals that a key's page has completed or been disposed; a disposed page is abandoned and
+    // its remaining rows discarded. Releases the source and the lifetime once every key is done.
     private async ValueTask ReleaseAsync(TKey key)
     {
         var channel = _keys[key];
@@ -386,13 +360,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
         await ReleaseCoreAsync().ConfigureAwait(false);
     }
 
-    // Disposes the source and then the lifetime, exactly once, however release was triggered:
-    // every requested key completing or being disposed, the source faulting mid-stream, or the
-    // priming read during creation failing before any page exists to reach this path otherwise.
-    // The two disposals run in separate try/finally blocks so the lifetime is still disposed even
-    // when disposing the source throws. When this is the only fault (nothing was already
-    // recorded), the source's exception is what a caller of this method observes, with the
-    // lifetime's exception attached to it rather than replacing it.
+    // Disposes the source and then the lifetime exactly once; a disposal failure is attached to
+    // an already recorded fault instead of replacing it.
     private async ValueTask ReleaseCoreAsync()
     {
         if (_released)

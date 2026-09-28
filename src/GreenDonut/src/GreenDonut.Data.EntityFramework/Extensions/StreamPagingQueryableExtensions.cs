@@ -199,8 +199,8 @@ public static class StreamPagingQueryableExtensions
         }
         catch (Exception primingException)
         {
-            // the priming failure is what the caller must observe; a disposal failure while
-            // cleaning up is attached to it instead of replacing it.
+            // A disposal failure while cleaning up is attached to the priming failure instead of
+            // replacing it.
             try
             {
                 await OrderedDisposal.ReleaseAsync(
@@ -227,9 +227,8 @@ public static class StreamPagingQueryableExtensions
             }
             catch (Exception disposeException)
             {
-                // the enumerator's own disposal failure is what the caller must observe; the
-                // lifetime is still released, with a failure releasing it attached instead of
-                // replacing the original failure.
+                // The lifetime is still released; a failure releasing it is attached to the
+                // enumerator's disposal failure instead of replacing it.
                 try
                 {
                     await DisposeLifetimeAsync(lifetime).ConfigureAwait(false);

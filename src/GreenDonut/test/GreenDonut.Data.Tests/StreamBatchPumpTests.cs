@@ -32,16 +32,14 @@ public class StreamBatchPumpTests
         var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 2, forward: true));
         var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 2, forward: true));
 
-        // act: pulling on B alone must drive the pump through every one of A's rows first, and
-        // buffer them, before A is ever touched directly
+        // act: pulling on B alone must drive the pump through every one of A's rows first
         await using var enumeratorB = pageB.GetAsyncEnumerator(TestContext.Current.CancellationToken);
         await enumeratorB.MoveNextAsync();
         var rowsReadAfterB = source.Yielded.Count;
         var itemsA = await CollectAsync(pageA);
         var itemsB = await CollectAsync(pageB);
 
-        // assert: A's key change was already detected, so completing A needed no further reads,
-        // and B is still readable in full through the enumerator already pulled on it
+        // assert: A's key change was already detected, so completing A needed no further reads
         Assert.Equal(3, rowsReadAfterB);
         Assert.Equal(["a1", "a2"], itemsA);
         Assert.Equal(["b1"], itemsB);
@@ -71,8 +69,7 @@ public class StreamBatchPumpTests
     [Fact]
     public async Task BackwardPages_Should_UsePerKeyFixedFlagsAndTotalCount()
     {
-        // arrange: backward pages never over-fetch, so each key's flags and total come from the
-        // per-key definition, exactly as the EF layer would supply them.
+        // arrange: backward pages never over-fetch, so each key's flags and total come from its own definition
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("A", "a1"), Row("B", "b1"), Row("B", "b2"));
         var pump = await CreatePump(source, ["A", "B"]);
         var definitionA = Definition<string>(requestedCount: 1, forward: false) with
@@ -120,8 +117,7 @@ public class StreamBatchPumpTests
         var rowsReadAfterB = source.Yielded.Count;
         var itemsA = await CollectAsync(pageA);
 
-        // assert: B completed empty only once the source reached end, and A's row was already
-        // buffered by then
+        // assert: B completed empty only once the source reached end
         Assert.Empty(itemsB);
         Assert.Equal(1, rowsReadAfterB);
         Assert.Equal(["a1"], itemsA);
@@ -212,8 +208,7 @@ public class StreamBatchPumpTests
                 [],
                 lifetime).AsTask());
 
-        // assert: the source's exception wins the race, with the lifetime's attached instead of
-        // replacing it, and both disposals ran exactly once
+        // assert: the source's exception wins the race, with the lifetime's attached
         Assert.Same(sourceException, thrown);
         Assert.Equal([lifetimeException], OrderedDisposal.GetAttached(thrown));
         Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
@@ -233,8 +228,7 @@ public class StreamBatchPumpTests
         var enumeratorA = pageA.GetAsyncEnumerator(TestContext.Current.CancellationToken);
         var hasFirst = await enumeratorA.MoveNextAsync();
 
-        // assert: creation read only the first key's first row, and pulling its page needed no
-        // further physical reads
+        // assert: creation read only the first key's first row
         Assert.Equal(1, movesAfterCreate);
         Assert.True(hasFirst);
         Assert.Equal("a1", enumeratorA.Current);
@@ -267,8 +261,7 @@ public class StreamBatchPumpTests
         var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 3, forward: true));
         var pageC = CreatePage(pump, "C", Definition<string>(requestedCount: 1, forward: true));
 
-        // act: read B's first row, abandon B, then drain C, which forces the pump past B's two
-        // remaining rows along the way
+        // act: read B's first row, abandon B, then drain C past B's two remaining rows
         var enumeratorB = pageB.GetAsyncEnumerator(TestContext.Current.CancellationToken);
         await enumeratorB.MoveNextAsync();
         await pageB.DisposeAsync();
@@ -364,8 +357,7 @@ public class StreamBatchPumpTests
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageA));
         var thrownB = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
 
-        // assert: the fault releases the shared source and the lifetime once, and the sibling
-        // page rethrows the same fault instead of reading the now-disposed source
+        // assert: the fault releases the shared source and the lifetime once, and the sibling page rethrows it
         Assert.Same(exception, thrown);
         Assert.Same(exception, thrownB);
         Assert.Equal((2, 1, 1), (source.MoveNextCount, source.DisposeCount, lifetime.DisposeCount));
@@ -374,8 +366,7 @@ public class StreamBatchPumpTests
     [Fact]
     public async Task Rows_Should_ThrowAndReleaseSourceAndLifetime_When_ACompletedKeyReappears()
     {
-        // arrange: A's run ends when B starts, so the trailing "A" row is a source-ordering
-        // violation instead of a continuation of A's run.
+        // arrange: A's run ends when B starts, so the trailing "A" row is a source-ordering violation
         var lifetime = new ScriptedAsyncDisposable();
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
             Row("A", "a1"),
@@ -389,7 +380,6 @@ public class StreamBatchPumpTests
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
 
         // assert: the fault names the reappearing key and releases the source and the lifetime
-        // exactly once, the same as a mid-stream source exception
         Assert.Equal(
             "The batch source produced a row for key 'A' after that key's run had already "
             + "completed; the source must be ordered by key.",
@@ -400,8 +390,7 @@ public class StreamBatchPumpTests
     [Fact]
     public async Task Rows_Should_AttachSourceDisposalFailure_Not_ReplaceTheOrderingFault_When_ACompletedKeyReappears()
     {
-        // arrange: A's run ends when B starts, so the trailing "A" row is a source-ordering
-        // violation, and the shared source's own DisposeAsync then fails too while releasing it.
+        // arrange: A's run ends when B starts, and the shared source's DisposeAsync then fails too
         var lifetime = new ScriptedAsyncDisposable();
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
             Row("A", "a1"),
@@ -416,8 +405,7 @@ public class StreamBatchPumpTests
         // act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
 
-        // assert: the ordering fault surfaces, and the source's own disposal failure is attached
-        // to it instead of replacing it, with the lifetime still released despite it
+        // assert: the ordering fault surfaces, with the source's own disposal failure attached
         Assert.Equal(
             "The batch source produced a row for key 'A' after that key's run had already "
             + "completed; the source must be ordered by key.",
@@ -429,9 +417,7 @@ public class StreamBatchPumpTests
     [Fact]
     public async Task Rows_Should_KeepDiscardingSilently_When_AnAbandonedKeyReappearsAfterAnotherKey()
     {
-        // arrange: A is abandoned after its first row, then reappears both immediately (its own
-        // trailing rows) and after B has been seen; every later "A" row must still be discarded,
-        // never thrown, because abandonment (not natural completion) closed its run.
+        // arrange: A is abandoned after its first row, then reappears both immediately and after B
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
             Row("A", "a1"),
             Row("A", "a2"),
@@ -463,8 +449,7 @@ public class StreamBatchPumpTests
         var pageA = CreatePage(pump, "A", Definition<string>(requestedCount: 2, forward: true));
         var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
 
-        // act: draining only B must still complete A once the source runs out, with no consumer
-        // ever pulling on A directly
+        // act: draining only B must still complete A once the source runs out
         var itemsB = await CollectAsync(pageB);
 
         // assert: everything released as soon as the source ran out
@@ -512,8 +497,7 @@ public class StreamBatchPumpTests
                 ["A"],
                 lifetime).AsTask());
 
-        // assert: the creating call observes the priming fault, with the source and the lifetime
-        // already released and no pump left registered anywhere
+        // assert: the creating call observes the priming fault with everything already released
         Assert.Same(exception, thrown);
         Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
     }
@@ -521,8 +505,7 @@ public class StreamBatchPumpTests
     [Fact]
     public async Task PumpOnceAsync_Should_StillReleaseTheLifetime_And_PreserveTheOriginalFault_When_SourceDisposeAsyncThrows()
     {
-        // arrange: the source faults mid-stream, and its own DisposeAsync then fails too while the
-        // pump releases it.
+        // arrange: the source faults mid-stream, and its own DisposeAsync then fails too
         var faultException = new InvalidOperationException("boom");
         var disposeException = new InvalidOperationException("dispose boom");
         var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(Row("A", "a1"), Row("A", "a2"));
@@ -535,8 +518,7 @@ public class StreamBatchPumpTests
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageA));
 
-        // assert: the mid-stream fault surfaces, not the enumerator's own disposal failure, and
-        // the lifetime is still released despite it
+        // assert: the mid-stream fault surfaces, not the enumerator's own disposal failure
         Assert.Same(faultException, thrown);
         Assert.Equal(1, lifetime.DisposeCount);
     }

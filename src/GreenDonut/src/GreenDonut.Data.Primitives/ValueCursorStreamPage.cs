@@ -13,7 +13,6 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     private readonly StreamPageBuffer<T> _buffer;
     private readonly Func<EdgeEntry<T>, string> _createCursor;
 
-    // From a not yet primed pump, for the batch pump's own per-key construction path.
     private ValueCursorStreamPage(
         StreamPagePump<T>? pump,
         StreamPageDefinition<T> definition,
@@ -22,8 +21,6 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     {
     }
 
-    // From an already primed buffer, so a creator that primes the buffer itself can wrap it
-    // without building a second one.
     private ValueCursorStreamPage(
         StreamPageBuffer<T> buffer,
         int? index,
@@ -55,8 +52,7 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
             createCursor: static _ => string.Empty);
 
     /// <summary>
-    /// Creates a page whose buffer is already primed, so priming and wrapping it happen atomically
-    /// and a caller can never observe an unprimed page.
+    /// Creates a page whose buffer is already primed.
     /// </summary>
     /// <param name="pump">
     /// The pump this page reads from, or null for an already fully resolved page.
@@ -83,8 +79,7 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     }
 
     /// <summary>
-    /// Creates an unprimed page for the batch pump's own per-key construction path, where priming
-    /// is deferred to the first pull from the page instead of happening at construction.
+    /// Creates an unprimed page for the batch pump's own per-key construction path.
     /// </summary>
     /// <param name="pump">
     /// The pump this page reads from.
