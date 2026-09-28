@@ -393,7 +393,9 @@ public static class PagingQueryableExtensions
     /// A dictionary mapping each parent key to its page of results.
     /// </returns>
     /// <exception cref="ArgumentException">
-    /// If the queryable does not have any keys specified.
+    /// If the queryable does not have any keys specified, if <c>first</c> or <c>last</c> is
+    /// given and not greater than zero, or if an end cursor in <c>before</c> has a skip that
+    /// does not fit into an <see cref="int"/>.
     /// </exception>
     public static async ValueTask<Dictionary<TKey, Page<TValue>>> ToBatchPageAsync<TKey, TValue, TElement>(
         this IQueryable<TElement> source,
@@ -433,6 +435,8 @@ public static class PagingQueryableExtensions
                 nameof(arguments));
         }
 
+        PagingQueryComposer.ValidateRequestedCount(arguments);
+
         if (valueSelector is null && !typeof(TValue).IsAssignableFrom(typeof(TElement)))
         {
             throw new ArgumentException(
@@ -447,16 +451,24 @@ public static class PagingQueryableExtensions
             includeTotalCount = true;
         }
 
-        // an end cursor page always needs each key's own total, both to trim the last page
+        // an end cursor page always needs each key's own total, both to trim or window its page
         // and to report an accurate total count on the resulting pages.
-        Cursor? endCursor = null;
         if (!string.IsNullOrEmpty(arguments.Before))
         {
             var beforeCursor = CursorParser.Parse(arguments.Before, keys);
 
             if (beforeCursor.IsEndCursor)
             {
-                endCursor = beforeCursor;
+                if (arguments.After is not null)
+                {
+                    throw ThrowHelper.PagingArguments_EndCursorBeforeCombinedWithAfter();
+                }
+
+                if (arguments.Last is not null)
+                {
+                    PagingQueryComposer.GetBatchEndCursorSkip(-beforeCursor.Offset!.Value, arguments.Last.Value);
+                }
+
                 includeTotalCount = true;
             }
         }
@@ -475,25 +487,6 @@ public static class PagingQueryableExtensions
         }
 
         var map = new Dictionary<TKey, Page<TValue>>();
-
-        if (endCursor is not null && arguments.Last is not null)
-        {
-            var pagesBeforeLast = -endCursor.Offset!.Value;
-
-            // a stale or otherwise out-of-range end cursor can point before the first page for
-            // every key. that page does not exist, so the group query never runs and each key
-            // gets an empty page carrying its own freshly counted total.
-            if (pagesBeforeLast > 0
-                && (int)Math.Ceiling(endCursor.TotalCount!.Value / (double)arguments.Last.Value) - pagesBeforeLast < 1)
-            {
-                foreach (var (key, count) in counts!)
-                {
-                    map.Add(key, CreateEndCursorPage<TValue>([], keys, false, false, 1, arguments.Last.Value, count));
-                }
-
-                return map;
-            }
-        }
 
         var forward = arguments.Last is null;
         var requestedCount = int.MaxValue;
@@ -521,6 +514,18 @@ public static class PagingQueryableExtensions
         {
             var totalCount = counts?.GetValueOrDefault(item.Key) ?? batchExpression.Cursor?.TotalCount;
             var isEndCursor = batchExpression.Cursor?.IsEndCursor == true;
+            var pagesBeforeLast = isEndCursor ? -batchExpression.Cursor!.Offset!.Value : 0;
+
+            // An end cursor page aligns to each key's own total, never the cursor's cached one.
+            var pageIndex = isEndCursor
+                ? (int)Math.Ceiling(totalCount!.Value / (double)requestedCount) - pagesBeforeLast
+                : CreateIndex(arguments, batchExpression.Cursor, totalCount);
+
+            if (isEndCursor && pageIndex < 1)
+            {
+                map.Add(item.Key, CreateEndCursorPage<TValue>([], keys, false, false, 1, requestedCount, totalCount!.Value));
+                continue;
+            }
 
             if (item.Items.Count == 0)
             {
@@ -531,16 +536,15 @@ public static class PagingQueryableExtensions
                 continue;
             }
 
+            var itemOffset = 0;
             var itemCount = requestedCount > item.Items.Count ? item.Items.Count : requestedCount;
-            var pagesBeforeLast = 0;
 
             if (isEndCursor)
             {
-                pagesBeforeLast = -batchExpression.Cursor!.Offset!.Value;
+                var effectiveTotal = totalCount!.Value;
 
                 if (pagesBeforeLast == 0)
                 {
-                    var effectiveTotal = totalCount!.Value;
                     var remainder = effectiveTotal % requestedCount;
 
                     if (effectiveTotal > requestedCount && remainder != 0)
@@ -548,13 +552,14 @@ public static class PagingQueryableExtensions
                         itemCount -= requestedCount - remainder;
                     }
                 }
+                else
+                {
+                    // This key's exact page sits inside its window at its own remainder, never
+                    // the cursor's cached one.
+                    itemOffset = effectiveTotal % requestedCount == 0 ? requestedCount : effectiveTotal % requestedCount;
+                    itemCount = requestedCount;
+                }
             }
-
-            var pageIndex = isEndCursor
-                ? (int)Math.Ceiling(
-                    (pagesBeforeLast == 0 ? totalCount!.Value : batchExpression.Cursor!.TotalCount!.Value)
-                        / (double)requestedCount) - pagesBeforeLast
-                : CreateIndex(arguments, batchExpression.Cursor, totalCount);
 
             if (valueSelector is not null)
             {
@@ -565,7 +570,7 @@ public static class PagingQueryableExtensions
                 {
                     for (var i = itemCount - 1; i >= 0; i--)
                     {
-                        var element = item.Items[i];
+                        var element = item.Items[itemOffset + i];
                         entryBuilder.Add(new PageEntry<TValue>(valueSelector(element), entryBuilder.Count));
                         elementBuilder.Add(element);
                     }
@@ -574,7 +579,7 @@ public static class PagingQueryableExtensions
                 {
                     for (var i = 0; i < itemCount; i++)
                     {
-                        var element = item.Items[i];
+                        var element = item.Items[itemOffset + i];
                         entryBuilder.Add(new PageEntry<TValue>(valueSelector(element), entryBuilder.Count));
                         elementBuilder.Add(element);
                     }
@@ -609,14 +614,14 @@ public static class PagingQueryableExtensions
                 {
                     for (var i = itemCount - 1; i >= 0; i--)
                     {
-                        entryBuilder.Add(new PageEntry<TValue>((TValue)(object)item.Items[i]!, entryBuilder.Count));
+                        entryBuilder.Add(new PageEntry<TValue>((TValue)(object)item.Items[itemOffset + i]!, entryBuilder.Count));
                     }
                 }
                 else
                 {
                     for (var i = 0; i < itemCount; i++)
                     {
-                        entryBuilder.Add(new PageEntry<TValue>((TValue)(object)item.Items[i]!, entryBuilder.Count));
+                        entryBuilder.Add(new PageEntry<TValue>((TValue)(object)item.Items[itemOffset + i]!, entryBuilder.Count));
                     }
                 }
 

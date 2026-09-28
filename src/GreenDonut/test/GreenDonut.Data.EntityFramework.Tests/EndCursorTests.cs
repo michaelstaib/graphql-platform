@@ -233,6 +233,39 @@ public class EndCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task ToPageAsync_Should_ThrowArgumentException_When_AbsoluteAfterIsCombinedWithEndCursorBefore()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        string afterCursor;
+        await using (var context = new TestContext(connectionString))
+        {
+            var firstPage = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
+                new PagingArguments(5),
+                Xunit.TestContext.Current.CancellationToken);
+            afterCursor = firstPage.CreateCursor(firstPage.Last!.Value);
+        }
+
+        var arguments = new PagingArguments(last: 10)
+        {
+            After = afterCursor,
+            Before = CursorFormatter.FormatEndCursor(0, 25)
+        };
+
+        // Act
+        async Task Error()
+        {
+            await using var context = new TestContext(connectionString);
+            await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(arguments);
+        }
+
+        // Assert
+        await Assert.ThrowsAsync<ArgumentException>(Error);
+    }
+
+    [Fact]
     public async Task ToPageAsync_Should_ThrowInvalidOperationException_When_EndCursorBodyIsMalformed()
     {
         // Arrange
@@ -252,6 +285,50 @@ public class EndCursorTests(PostgreSqlResource resource)
         // Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(Error);
         Assert.Equal("The cursor page info could not be parsed.", exception.Message);
+    }
+
+    [Fact]
+    public async Task ToPageAsync_Should_ThrowInvalidOperationException_When_EndCursorOffsetIsIntMinValue()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(int.MinValue, 25) };
+
+        // Act
+        async Task Error()
+        {
+            await using var context = new TestContext(connectionString);
+            await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(arguments);
+        }
+
+        // Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(Error);
+        Assert.Equal("The cursor page info could not be parsed.", exception.Message);
+    }
+
+    [Fact]
+    public async Task ToPageAsync_Should_ThrowArgumentException_When_EndCursorSkipOverflowsInt()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        var arguments = new PagingArguments(last: 2) { Before = CursorFormatter.FormatEndCursor(-int.MaxValue, 25) };
+
+        // Act
+        async Task Error()
+        {
+            await using var context = new TestContext(connectionString);
+            await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(arguments);
+        }
+
+        // Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(Error);
+        Assert.Equal(
+            "The end cursor offset points too far before the last page for the requested page size. (Parameter 'arguments')",
+            exception.Message);
     }
 
     [Fact]
@@ -657,6 +734,41 @@ public class StreamEndCursorTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task ToStreamPageAsync_Should_ThrowArgumentException_When_AbsoluteAfterIsCombinedWithEndCursorBefore()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+        var cancellationToken = Xunit.TestContext.Current.CancellationToken;
+
+        string afterCursor;
+        await using (var context = new TestContext(connectionString))
+        {
+            var firstPage = await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
+                new PagingArguments(5),
+                cancellationToken: cancellationToken);
+            var firstEntries = await DrainEntriesAndDisposeAsync(firstPage, cancellationToken);
+            afterCursor = firstPage.CreateCursor(firstEntries[^1]);
+        }
+
+        var arguments = new PagingArguments(last: 10)
+        {
+            After = afterCursor,
+            Before = CursorFormatter.FormatEndCursor(0, 25)
+        };
+
+        // Act
+        async Task Error()
+        {
+            await using var context = new TestContext(connectionString);
+            await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(arguments);
+        }
+
+        // Assert
+        await Assert.ThrowsAsync<ArgumentException>(Error);
+    }
+
+    [Fact]
     public async Task ToStreamPageAsync_Should_ThrowInvalidOperationException_When_EndCursorBodyIsMalformed()
     {
         // Arrange
@@ -676,6 +788,50 @@ public class StreamEndCursorTests(PostgreSqlResource resource)
         // Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(Error);
         Assert.Equal("The cursor page info could not be parsed.", exception.Message);
+    }
+
+    [Fact]
+    public async Task ToStreamPageAsync_Should_ThrowInvalidOperationException_When_EndCursorOffsetIsIntMinValue()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        var arguments = new PagingArguments(last: 10) { Before = CursorFormatter.FormatEndCursor(int.MinValue, 25) };
+
+        // Act
+        async Task Error()
+        {
+            await using var context = new TestContext(connectionString);
+            await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(arguments);
+        }
+
+        // Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(Error);
+        Assert.Equal("The cursor page info could not be parsed.", exception.Message);
+    }
+
+    [Fact]
+    public async Task ToStreamPageAsync_Should_ThrowArgumentException_When_EndCursorSkipOverflowsInt()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedSequentialAsync(connectionString, 25);
+
+        var arguments = new PagingArguments(last: 2) { Before = CursorFormatter.FormatEndCursor(-int.MaxValue, 25) };
+
+        // Act
+        async Task Error()
+        {
+            await using var context = new TestContext(connectionString);
+            await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(arguments);
+        }
+
+        // Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(Error);
+        Assert.Equal(
+            "The end cursor offset points too far before the last page for the requested page size. (Parameter 'arguments')",
+            exception.Message);
     }
 
     [Fact]

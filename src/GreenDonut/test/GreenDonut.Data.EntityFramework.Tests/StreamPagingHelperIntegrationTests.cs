@@ -7,8 +7,7 @@ namespace GreenDonut.Data;
 // Mirrors PagingHelperIntegrationTests.cs one for one against ToStreamPageAsync, so a failure
 // names the API. Only the single-page cases are mirrored here; the batch cases (BatchPaging_First_5,
 // ToBatchPageAsync_Should_PreserveNestedOrdering_When_PredicateContainsOrderBy, BatchPaging_Last_5,
-// BatchPaging_With_Relative_Cursor) use ToBatchPageAsync and are out of scope for this suite
-// because ToBatchStreamPageAsync does not exist yet.
+// BatchPaging_With_Relative_Cursor) use ToBatchPageAsync and are covered by StreamBatchPagingTests.
 [Collection(PostgresCacheCollectionFixture.DefinitionName)]
 public class StreamPagingHelperIntegrationTests(PostgreSqlResource resource)
 {

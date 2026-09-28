@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using GreenDonut.Data.Cursors;
+using GreenDonut.Data.Internal;
 
 namespace GreenDonut.Data.Expressions;
 
@@ -396,8 +397,9 @@ internal static class ExpressionHelpers
     /// </typeparam>
     /// <exception cref="ArgumentException">
     /// If the number of keys is less than one, the number of order expressions does not match
-    /// the number of order methods, or an end cursor is used without <c>before</c> and
-    /// <c>last</c>.
+    /// the number of order methods, if an end cursor is used without <c>before</c> and
+    /// <c>last</c>, if an end cursor in <c>before</c> is combined with <c>after</c>, or if the
+    /// end cursor's skip or a relative cursor's offset does not fit into an <see cref="int"/>.
     /// </exception>
     public static BatchExpression<TK, TV> BuildBatchExpression<TK, TV>(
         PagingArguments arguments,
@@ -464,9 +466,7 @@ internal static class ExpressionHelpers
 
             if (cursor.IsEndCursor)
             {
-                throw new ArgumentException(
-                    "An end cursor is only valid when used with `before` and `last`.",
-                    nameof(arguments));
+                throw ThrowHelper.PagingArguments_EndCursorRequiresBeforeAndLast();
             }
 
             var (whereExpr, cursorOffset) = BuildWhereExpression<TV>(
@@ -500,9 +500,12 @@ internal static class ExpressionHelpers
             {
                 if (arguments.First is not null || arguments.Last is null)
                 {
-                    throw new ArgumentException(
-                        "An end cursor is only valid when used with `before` and `last`.",
-                        nameof(arguments));
+                    throw ThrowHelper.PagingArguments_EndCursorRequiresBeforeAndLast();
+                }
+
+                if (arguments.After is not null)
+                {
+                    throw ThrowHelper.PagingArguments_EndCursorBeforeCombinedWithAfter();
                 }
 
                 isEndCursor = true;
@@ -541,43 +544,53 @@ internal static class ExpressionHelpers
 
         if (isEndCursor)
         {
-            var cachedTotal = cursor!.TotalCount!.Value;
-            var pagesBeforeLast = -cursor.Offset!.Value;
+            var pagesBeforeLast = -cursor!.Offset!.Value;
 
-            if (pagesBeforeLast > 0)
+            if (pagesBeforeLast == 0)
             {
-                var remainder = cachedTotal % requestedCount == 0
-                    ? requestedCount
-                    : cachedTotal % requestedCount;
-                var skip = remainder + (pagesBeforeLast - 1) * requestedCount;
+                source = Expression.Call(
+                    typeof(Enumerable),
+                    "Take",
+                    [typeof(TV)],
+                    source,
+                    Expression.Constant(requestedCount));
+            }
+            else
+            {
+                // Fetches twice the page size starting (pagesBeforeLast - 1) pages before the end
+                // of each group; the exact page always fits inside that window.
+                var skip = PagingQueryComposer.GetBatchEndCursorSkip(pagesBeforeLast, requestedCount);
+
+                if (skip > 0)
+                {
+                    source = Expression.Call(
+                        typeof(Enumerable),
+                        "Skip",
+                        [typeof(TV)],
+                        source,
+                        Expression.Constant(skip));
+                }
 
                 source = Expression.Call(
                     typeof(Enumerable),
-                    "Skip",
+                    "Take",
                     [typeof(TV)],
                     source,
-                    Expression.Constant(skip));
+                    Expression.Constant(requestedCount * 2));
             }
-
-            source = Expression.Call(
-                typeof(Enumerable),
-                "Take",
-                [typeof(TV)],
-                source,
-                Expression.Constant(requestedCount));
         }
         else
         {
-            offset = Math.Abs(offset);
+            var absOffset = Math.Abs((long)offset);
 
-            if (offset > 0)
+            if (absOffset > 0)
             {
                 source = Expression.Call(
                     typeof(Enumerable),
                     "Skip",
                     [typeof(TV)],
                     source,
-                    Expression.Constant(offset * requestedCount));
+                    Expression.Constant(PagingQueryComposer.CheckedOffsetSkip(absOffset, requestedCount)));
             }
 
             if (arguments.First is not null)
@@ -873,5 +886,414 @@ internal static class ExpressionHelpers
         public Expression<Func<IGrouping<TK, TV>, Group<TK, TV>>> SelectExpression { get; } = selectExpression;
         public bool IsBackward { get; } = isBackward;
         public Cursor? Cursor { get; } = cursor;
+    }
+
+    /// <summary>
+    /// The flat, key-ordered query behind <c>ToBatchStreamPageAsync</c>, together with the
+    /// slicing decisions the caller needs to turn its rows into pages.
+    /// </summary>
+    /// <typeparam name="TKey">
+    /// The type of the key that routes a row to its page.
+    /// </typeparam>
+    /// <typeparam name="TElement">
+    /// The type of the source rows.
+    /// </typeparam>
+    internal readonly struct BatchStreamExpression<TKey, TElement>(
+        IQueryable<StreamBatchRow<TKey, TElement>> flatQuery,
+        bool isBackward,
+        Cursor? cursor,
+        Expression<Func<TElement, bool>>? afterPredicate,
+        Expression<Func<TElement, bool>>? beforePredicate,
+        int skipAmount)
+        where TKey : notnull
+    {
+        /// <summary>
+        /// The flat, explicitly key-ordered query, one row per requested key's content or
+        /// trailing sentinel.
+        /// </summary>
+        public IQueryable<StreamBatchRow<TKey, TElement>> FlatQuery { get; } = flatQuery;
+
+        /// <summary>
+        /// Whether every key's page paginates backward (<c>last</c>).
+        /// </summary>
+        public bool IsBackward { get; } = isBackward;
+
+        /// <summary>
+        /// The parsed cursor, or null if neither <c>after</c> nor <c>before</c> was specified.
+        /// </summary>
+        public Cursor? Cursor { get; } = cursor;
+
+        /// <summary>
+        /// The predicate a relative forward cursor page's per-key emptiness is checked against,
+        /// or null if no <c>after</c> cursor was given.
+        /// </summary>
+        public Expression<Func<TElement, bool>>? AfterPredicate { get; } = afterPredicate;
+
+        /// <summary>
+        /// The predicate a plain backward page's per-key "more before this page" flag is counted
+        /// against, and a relative backward cursor page's per-key emptiness is checked against,
+        /// or null if no <c>before</c> cursor was given.
+        /// </summary>
+        public Expression<Func<TElement, bool>>? BeforePredicate { get; } = beforePredicate;
+
+        /// <summary>
+        /// The number of rows skipped from the front of every key's correlated window, derived
+        /// from the cursor's offset, if any, and the requested page size.
+        /// </summary>
+        public int SkipAmount { get; } = skipAmount;
+    }
+
+    /// <summary>
+    /// A per-key count result: the full row count for a key, and optionally the number of its
+    /// rows matching an additional predicate.
+    /// </summary>
+    /// <typeparam name="TKey">
+    /// The type of the key.
+    /// </typeparam>
+    internal sealed class BatchStreamCount<TKey>
+    {
+        public TKey Key { get; set; } = default!;
+
+        public int Count { get; set; }
+
+        public int PredicateCount { get; set; }
+    }
+
+    /// <summary>
+    /// Builds the flat, key-ordered query behind <c>ToBatchStreamPageAsync</c>: a correlated
+    /// per-key ordered slice over <paramref name="source"/>, flattened by an explicit outer
+    /// ordering into one row stream that a <see cref="StreamBatchPump{TKey,TElement}"/> can
+    /// demultiplex.
+    /// </summary>
+    /// <param name="source">
+    /// The queryable to be paged, already carrying the caller's key predicate and its
+    /// declared ordering.
+    /// </param>
+    /// <param name="keySelector">
+    /// Selects the key that routes a row to its page.
+    /// </param>
+    /// <param name="arguments">
+    /// The paging arguments.
+    /// </param>
+    /// <param name="keys">
+    /// The key definitions extracted from <paramref name="source"/>'s ordering.
+    /// </param>
+    /// <param name="selector">
+    /// The caller's original projection, or null if the source carries no projection.
+    /// </param>
+    /// <param name="requestedCount">
+    /// The requested page size on input; overwritten with the number derived from
+    /// <paramref name="arguments"/>.
+    /// </param>
+    /// <typeparam name="TKey">
+    /// The type of the key that routes a row to its page.
+    /// </typeparam>
+    /// <typeparam name="TElement">
+    /// The type of the source rows.
+    /// </typeparam>
+    /// <exception cref="ArgumentException">
+    /// If the number of keys is zero, if an end cursor is used without <c>before</c> and
+    /// <c>last</c>, if an end cursor in <c>before</c> is combined with <c>after</c>, if
+    /// <c>before</c> is combined with a relative <c>after</c> cursor, if a relative cursor's
+    /// offset direction does not match <c>first</c> or <c>last</c>, or if the end cursor offset
+    /// or a relative cursor's offset does not fit the requested page size.
+    /// </exception>
+    public static BatchStreamExpression<TKey, TElement> BuildBatchStreamExpression<TKey, TElement>(
+        IQueryable<TElement> source,
+        Expression<Func<TElement, TKey>> keySelector,
+        PagingArguments arguments,
+        ReadOnlySpan<CursorKey> keys,
+        Expression<Func<TElement, TElement>>? selector,
+        ref int requestedCount)
+        where TKey : notnull
+    {
+        if (keys.Length == 0)
+        {
+            throw ThrowHelper.Paging_NoOrderByKeys();
+        }
+
+        var forward = arguments.Last is null;
+        var offset = 0;
+        Cursor? cursor = null;
+        Expression<Func<TElement, bool>>? afterPredicate = null;
+        Expression<Func<TElement, bool>>? beforePredicate = null;
+        var usesRelativeCursorsFromAfter = false;
+
+        if (arguments.After is not null)
+        {
+            cursor = CursorParser.Parse(arguments.After, keys);
+
+            if (cursor.IsEndCursor)
+            {
+                throw ThrowHelper.PagingArguments_EndCursorRequiresBeforeAndLast();
+            }
+
+            var (whereExpr, cursorOffset) = BuildWhereExpression<TElement>(keys, cursor, forward: true, arguments.NullOrdering);
+            afterPredicate = whereExpr;
+            offset = cursorOffset;
+            usesRelativeCursorsFromAfter = cursor.IsRelative;
+        }
+
+        if (arguments.Before is not null)
+        {
+            if (usesRelativeCursorsFromAfter)
+            {
+                throw ThrowHelper.PagingArguments_BeforeCombinedWithRelativeAfter();
+            }
+
+            cursor = CursorParser.Parse(arguments.Before, keys);
+
+            if (cursor.IsEndCursor)
+            {
+                if (arguments.First is not null || arguments.Last is null)
+                {
+                    throw ThrowHelper.PagingArguments_EndCursorRequiresBeforeAndLast();
+                }
+
+                if (arguments.After is not null)
+                {
+                    throw ThrowHelper.PagingArguments_EndCursorBeforeCombinedWithAfter();
+                }
+            }
+            else
+            {
+                var (whereExpr, cursorOffset) = BuildWhereExpression<TElement>(keys, cursor, forward: false, arguments.NullOrdering);
+                beforePredicate = whereExpr;
+                offset = cursorOffset;
+            }
+        }
+
+        if (cursor?.IsRelative == true)
+        {
+            if ((arguments.Last is not null && cursor.Offset > 0) || (arguments.First is not null && cursor.Offset < 0))
+            {
+                throw ThrowHelper.PagingArguments_RelativeOffsetDirectionMismatch();
+            }
+        }
+
+        if (arguments.First is not null)
+        {
+            requestedCount = arguments.First.Value;
+        }
+
+        if (arguments.Last is not null)
+        {
+            requestedCount = arguments.Last.Value;
+        }
+
+        var isBackward = !forward;
+        var isEndCursor = cursor?.IsEndCursor == true;
+        var pagesBeforeLast = 0;
+
+        int skipAmount;
+
+        if (isEndCursor)
+        {
+            pagesBeforeLast = -cursor!.Offset!.Value;
+            skipAmount = PagingQueryComposer.GetBatchEndCursorSkip(pagesBeforeLast, requestedCount);
+        }
+        else
+        {
+            skipAmount = PagingQueryComposer.CheckedOffsetSkip(Math.Abs((long)offset), requestedCount);
+        }
+
+        // The distinct set of requested keys, derived without the source's own ordering.
+        var orderStripped = ExtractAndRemoveOrder(source.Expression).Expression;
+        var keysQuery = source.Provider.CreateQuery<TElement>(orderStripped).Select(keySelector).Distinct();
+
+        // The correlated per-key subquery: the key filter is repeated inside it, against the
+        // parameter `k` of the outer SelectMany.
+        var kParam = Expression.Parameter(typeof(TKey), "k");
+        var xParam = Expression.Parameter(typeof(TElement), "x");
+        var keyBody = ReplaceParameter(keySelector, xParam);
+        var keyEqualsK = Expression.Lambda<Func<TElement, bool>>(Expression.Equal(keyBody, kParam), xParam);
+
+        Expression body = Expression.Call(
+            typeof(Queryable),
+            nameof(Queryable.Where),
+            [typeof(TElement)],
+            source.Expression,
+            Expression.Quote(keyEqualsK));
+
+        if (afterPredicate is not null)
+        {
+            body = Expression.Call(
+                typeof(Queryable), nameof(Queryable.Where), [typeof(TElement)], body, Expression.Quote(afterPredicate));
+        }
+
+        if (beforePredicate is not null)
+        {
+            body = Expression.Call(
+                typeof(Queryable), nameof(Queryable.Where), [typeof(TElement)], body, Expression.Quote(beforePredicate));
+        }
+
+        if (isBackward)
+        {
+            // Inverts the ordering already embedded in `source`.
+            var backwardQuery = ReverseOrderExpressionRewriter.Rewrite(source.Provider.CreateQuery<TElement>(body));
+            body = backwardQuery.Expression;
+        }
+
+        if (skipAmount > 0)
+        {
+            body = Expression.Call(
+                typeof(Queryable), nameof(Queryable.Skip), [typeof(TElement)], body, Expression.Constant(skipAmount));
+        }
+
+        // Forward pages take one extra row, the sentinel that answers HasNextPage.
+        var takeAmount = isBackward
+            ? isEndCursor && pagesBeforeLast >= 1 ? requestedCount * 2 : requestedCount
+            : requestedCount + 1;
+        body = Expression.Call(
+            typeof(Queryable), nameof(Queryable.Take), [typeof(TElement)], body, Expression.Constant(takeAmount));
+
+        // The caller's own projection, if any, is re-applied here, once, on each key's already
+        // sliced window.
+        if (selector is not null)
+        {
+            body = Expression.Call(
+                typeof(Queryable), nameof(Queryable.Select), [typeof(TElement), typeof(TElement)], body, Expression.Quote(selector));
+        }
+
+        var rowType = typeof(StreamBatchRow<TKey, TElement>);
+        var tParam = Expression.Parameter(typeof(TElement), "t");
+        var newRow = Expression.MemberInit(
+            Expression.New(rowType),
+            Expression.Bind(rowType.GetProperty(nameof(StreamBatchRow<TKey, TElement>.Key))!, kParam),
+            Expression.Bind(rowType.GetProperty(nameof(StreamBatchRow<TKey, TElement>.Item))!, tParam));
+        body = Expression.Call(
+            typeof(Queryable),
+            nameof(Queryable.Select),
+            [typeof(TElement), rowType],
+            body,
+            Expression.Quote(Expression.Lambda(newRow, tParam)));
+
+        var selectManyLambda = Expression.Lambda<Func<TKey, IEnumerable<StreamBatchRow<TKey, TElement>>>>(body, kParam);
+        var flat = keysQuery.SelectMany(selectManyLambda);
+
+        // The explicit outer ordering: by key first, then every original key in its original,
+        // ascending display direction.
+        var rowParam = Expression.Parameter(rowType, "row");
+        var itemAccess = Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Item));
+        var outerKeySelector = Expression.Lambda<Func<StreamBatchRow<TKey, TElement>, TKey>>(
+            Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Key)), rowParam);
+
+        var ordered = (IQueryable<StreamBatchRow<TKey, TElement>>)flat.OrderBy(outerKeySelector);
+
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var key = keys[i];
+            var rebound = new ReplaceParameterVisitor(key.Expression.Parameters[0], itemAccess).Visit(key.Expression.Body);
+            var thenByLambda = Expression.Lambda(rebound, rowParam);
+            var methodName = key.Direction == CursorKeyDirection.Ascending
+                ? nameof(Queryable.ThenBy)
+                : nameof(Queryable.ThenByDescending);
+            var method = typeof(Queryable).GetMethods(BindingFlags.Static | BindingFlags.Public)
+                .First(m => m.Name == methodName && m.GetParameters().Length == 2)
+                .MakeGenericMethod(rowType, rebound.Type);
+            ordered = (IQueryable<StreamBatchRow<TKey, TElement>>)method.Invoke(null, [ordered, thenByLambda])!;
+        }
+
+        return new BatchStreamExpression<TKey, TElement>(ordered, isBackward, cursor, afterPredicate, beforePredicate, skipAmount);
+    }
+
+    /// <summary>
+    /// Builds a grouped query that counts, per key, the number of rows in
+    /// <paramref name="source"/> and, when <paramref name="predicate"/> is given, the number of
+    /// rows matching it, in a single statement.
+    /// </summary>
+    /// <param name="source">
+    /// The unsliced source to count, grouped by <paramref name="keySelector"/>.
+    /// </param>
+    /// <param name="keySelector">
+    /// Selects the key to group by.
+    /// </param>
+    /// <param name="predicate">
+    /// An additional predicate to count matching rows for, per key, or null to count only the
+    /// full per-key total.
+    /// </param>
+    /// <typeparam name="TKey">
+    /// The type of the key to group by.
+    /// </typeparam>
+    /// <typeparam name="TElement">
+    /// The type of the source rows.
+    /// </typeparam>
+    public static IQueryable<BatchStreamCount<TKey>> BuildBatchStreamCountsExpression<TKey, TElement>(
+        IQueryable<TElement> source,
+        Expression<Func<TElement, TKey>> keySelector,
+        Expression<Func<TElement, bool>>? predicate)
+        where TKey : notnull
+    {
+        var groupBy = source.GroupBy(keySelector);
+        var groupingType = typeof(IGrouping<TKey, TElement>);
+        var gParam = Expression.Parameter(groupingType, "g");
+        var keyProperty = Expression.Property(gParam, nameof(IGrouping<TKey, TElement>.Key));
+
+        var countMethod = typeof(Enumerable).GetMethods(BindingFlags.Static | BindingFlags.Public)
+            .First(m => m.Name == nameof(Enumerable.Count) && m.GetParameters().Length == 1)
+            .MakeGenericMethod(typeof(TElement));
+        var countCall = Expression.Call(countMethod, gParam);
+
+        var resultType = typeof(BatchStreamCount<TKey>);
+        var bindings = new List<MemberBinding>
+        {
+            Expression.Bind(resultType.GetProperty(nameof(BatchStreamCount<TKey>.Key))!, keyProperty),
+            Expression.Bind(resultType.GetProperty(nameof(BatchStreamCount<TKey>.Count))!, countCall)
+        };
+
+        if (predicate is not null)
+        {
+            var countWithPredicateMethod = typeof(Enumerable).GetMethods(BindingFlags.Static | BindingFlags.Public)
+                .First(m => m.Name == nameof(Enumerable.Count) && m.GetParameters().Length == 2)
+                .MakeGenericMethod(typeof(TElement));
+
+            var predicateCountCall = Expression.Call(countWithPredicateMethod, gParam, predicate);
+            bindings.Add(Expression.Bind(resultType.GetProperty(nameof(BatchStreamCount<TKey>.PredicateCount))!, predicateCountCall));
+        }
+
+        var selector = Expression.Lambda(Expression.MemberInit(Expression.New(resultType), bindings), gParam);
+        var selectCall = Expression.Call(
+            typeof(Queryable),
+            nameof(Queryable.Select),
+            [groupingType, resultType],
+            groupBy.Expression,
+            Expression.Quote(selector));
+
+        return source.Provider.CreateQuery<BatchStreamCount<TKey>>(selectCall);
+    }
+
+    /// <summary>
+    /// Combines two optional predicates into their conjunction, unified onto a single parameter.
+    /// </summary>
+    /// <param name="left">
+    /// The first predicate, or null.
+    /// </param>
+    /// <param name="right">
+    /// The second predicate, or null.
+    /// </param>
+    /// <typeparam name="TElement">
+    /// The type of the element the predicates test.
+    /// </typeparam>
+    /// <returns>
+    /// Returns whichever predicate is given when the other is null, their conjunction when both
+    /// are given, or null when both are null.
+    /// </returns>
+    public static Expression<Func<TElement, bool>>? CombinePredicates<TElement>(
+        Expression<Func<TElement, bool>>? left,
+        Expression<Func<TElement, bool>>? right)
+    {
+        if (left is null)
+        {
+            return right;
+        }
+
+        if (right is null)
+        {
+            return left;
+        }
+
+        var parameter = left.Parameters[0];
+        var rightBody = ReplaceParameter(right, parameter);
+        return Expression.Lambda<Func<TElement, bool>>(Expression.AndAlso(left.Body, rightBody), parameter);
     }
 }
