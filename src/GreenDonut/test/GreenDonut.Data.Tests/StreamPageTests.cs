@@ -140,7 +140,7 @@ public class StreamPageTests
     [Fact]
     public void IStreamPageSource_Should_NotDeclareDrainAsync()
     {
-        // arrange: DrainAsync became dead code once every caller enumerated GetEntriesAsync instead
+        // arrange
         var methodNames = typeof(IStreamPageSource<>)
             .GetMethods()
             .Where(member => !member.IsSpecialName)
@@ -394,7 +394,7 @@ public class StreamPageTests
     [InlineData(7, 10, 0)]
     public async Task SkipFront_Should_MatchEndCursorAlignment_ForTheLastPage(int total, int pageSize, int expectedSkip)
     {
-        // arrange: the skip ToStreamPageAsync computes for an end-cursor's last page (m89.11)
+        // arrange: the skip ToStreamPageAsync computes for an end-cursor's last page
         var rowCount = Math.Min(total, pageSize);
         var source = new ScriptedAsyncSource<StreamRow<int>>(
             Enumerable.Range(1, rowCount).Select(i => Row(i)).ToArray());

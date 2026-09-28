@@ -392,8 +392,7 @@ public class StreamPageCursorTests
             TestContext.Current.CancellationToken).AsTask();
     }
 
-    // Builds a page whose first row is already buffered, exactly as the creator hands a page to a
-    // consumer, for tests that assert on already-primed behaviour.
+    // Builds a page whose first row is already buffered.
     private static Task<StreamPage<int>> CreatePrimedPageAsync(
         ScriptedRowSource<int> source,
         StreamPageDefinition<int> definition)

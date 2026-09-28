@@ -360,8 +360,8 @@ internal sealed class StreamBatchPump<TKey, TElement>
         await ReleaseCoreAsync().ConfigureAwait(false);
     }
 
-    // Disposes the source and then the lifetime exactly once; a disposal failure is attached to
-    // an already recorded fault instead of replacing it.
+    // Disposes the source and then the lifetime exactly once; if both throw, the source's exception
+    // is rethrown with the lifetime's attached.
     private async ValueTask ReleaseCoreAsync()
     {
         if (_released)
