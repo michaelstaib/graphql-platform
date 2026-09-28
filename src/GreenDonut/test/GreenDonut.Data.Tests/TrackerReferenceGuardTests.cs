@@ -77,8 +77,7 @@ public class TrackerReferenceGuardTests
 
     private static string[] BuildForbiddenPatterns()
     {
-        // Assembled at runtime so this file never contains the literal id prefix or attribution
-        // strings it searches for.
+        // Returns the forbidden tracker-id prefix and attribution strings.
         var trackerPrefix = string.Concat("hc", "-", "fork", "-", "1", "-");
         var generatedWith = string.Concat("Generated", " ", "with", " ", "Claude");
         var coAuthoredBy = string.Concat("Co", "-", "Authored", "-", "By", ":", " ", "Claude");
