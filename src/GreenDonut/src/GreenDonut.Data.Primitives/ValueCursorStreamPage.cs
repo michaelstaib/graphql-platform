@@ -13,20 +13,8 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     private readonly StreamPageBuffer<T> _buffer;
     private readonly Func<EdgeEntry<T>, string> _createCursor;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ValueCursorStreamPage{T}"/> class from a not
-    /// yet primed pump, for the batch pump's own per-key construction path.
-    /// </summary>
-    /// <param name="pump">
-    /// The pump this page reads from, or null for an already fully resolved page.
-    /// </param>
-    /// <param name="definition">
-    /// The definition that governs how rows turn into content, flags, and a total count.
-    /// </param>
-    /// <param name="createCursor">
-    /// Creates a cursor from a page item.
-    /// </param>
-    internal ValueCursorStreamPage(
+    // From a not yet primed pump, for the batch pump's own per-key construction path.
+    private ValueCursorStreamPage(
         StreamPagePump<T>? pump,
         StreamPageDefinition<T> definition,
         Func<EdgeEntry<T>, string> createCursor)
@@ -34,21 +22,9 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
     {
     }
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ValueCursorStreamPage{T}"/> class from an
-    /// already constructed buffer, so a creator that primes the buffer itself can wrap it without
-    /// building a second one.
-    /// </summary>
-    /// <param name="buffer">
-    /// The buffer this page reads from.
-    /// </param>
-    /// <param name="index">
-    /// The index number of this page.
-    /// </param>
-    /// <param name="createCursor">
-    /// Creates a cursor from a page item.
-    /// </param>
-    internal ValueCursorStreamPage(
+    // From an already primed buffer, so a creator that primes the buffer itself can wrap it
+    // without building a second one.
+    private ValueCursorStreamPage(
         StreamPageBuffer<T> buffer,
         int? index,
         Func<EdgeEntry<T>, string> createCursor)
@@ -77,6 +53,53 @@ internal sealed class ValueCursorStreamPage<T> : StreamPage<T>
                 HasPreviousPage: false,
                 FlagsFromFirstRow: null),
             createCursor: static _ => string.Empty);
+
+    /// <summary>
+    /// Creates a page whose buffer is already primed, so priming and wrapping it happen atomically
+    /// and a caller can never observe an unprimed page.
+    /// </summary>
+    /// <param name="pump">
+    /// The pump this page reads from, or null for an already fully resolved page.
+    /// </param>
+    /// <param name="definition">
+    /// The definition that governs how rows turn into content, flags, and a total count.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a page item.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// A token to cancel priming the page.
+    /// </param>
+    internal static async ValueTask<StreamPage<T>> CreatePrimedAsync(
+        StreamPagePump<T>? pump,
+        StreamPageDefinition<T> definition,
+        Func<EdgeEntry<T>, string> createCursor,
+        CancellationToken cancellationToken = default)
+    {
+        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump, definition, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new ValueCursorStreamPage<T>(buffer, definition.Index, createCursor);
+    }
+
+    /// <summary>
+    /// Creates an unprimed page for the batch pump's own per-key construction path, where priming
+    /// is deferred to the first pull from the page instead of happening at construction.
+    /// </summary>
+    /// <param name="pump">
+    /// The pump this page reads from.
+    /// </param>
+    /// <param name="definition">
+    /// The definition that governs how rows turn into content, flags, and a total count.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a page item.
+    /// </param>
+    internal static StreamPage<T> CreateForBatch(
+        StreamPagePump<T> pump,
+        StreamPageDefinition<T> definition,
+        Func<EdgeEntry<T>, string> createCursor)
+        => new ValueCursorStreamPage<T>(pump, definition, createCursor);
 
     protected override string CreateCursor(int index, int offset, int pageIndex, int totalCount)
         => _createCursor(new EdgeEntry<T>(_buffer[index], offset, pageIndex, totalCount));

@@ -29,6 +29,11 @@ public abstract class StreamPage<T> : IAsyncEnumerable<T>, IAsyncDisposable
     public int? Index { get; }
 
     /// <summary>
+    /// Gets the source backing this page.
+    /// </summary>
+    internal IStreamPageSource<T> Source => _source;
+
+    /// <summary>
     /// Gets the requested page size.
     /// This value can be null if the page size is unknown.
     /// </summary>

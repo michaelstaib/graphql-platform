@@ -115,17 +115,9 @@ internal sealed class StreamBatchPump<TKey, TElement>
             return pump;
         }
 
-        try
-        {
-            await source.DisposeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            if (lifetime is not null)
-            {
-                await lifetime.DisposeAsync().ConfigureAwait(false);
-            }
-        }
+        await OrderedDisposal.ReleaseAsync(
+            source.DisposeAsync,
+            lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
 
         return null;
     }
@@ -135,21 +127,61 @@ internal sealed class StreamBatchPump<TKey, TElement>
     /// moves past that key. Must be called exactly once for every key this batch pump was created
     /// with, before any page is primed.
     /// </summary>
+    /// <param name="key">
+    /// One of the keys this batch pump was created with.
+    /// </param>
+    /// <param name="definition">
+    /// The definition that governs how rows turn into content, flags, and a total count.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a page item.
+    /// </param>
+    public StreamPage<TElement> CreatePage(
+        TKey key,
+        StreamPageDefinition<TElement> definition,
+        Func<EdgeEntry<TElement>, string> createCursor)
+    {
+        var pump = CreateKeyPump(key);
+        var page = ValueCursorStreamPage<TElement>.CreateForBatch(pump, definition, createCursor);
+        RegisterDrain(key, page);
+        return page;
+    }
+
+    /// <summary>
+    /// Builds the page for the given requested key, projecting each source row into a different
+    /// item type, and wiring it to complete when the shared source moves past that key. Must be
+    /// called exactly once for every key this batch pump was created with, before any page is
+    /// primed.
+    /// </summary>
     /// <typeparam name="TValue">
     /// The type of the page's items.
     /// </typeparam>
     /// <param name="key">
     /// One of the keys this batch pump was created with.
     /// </param>
-    /// <param name="createPage">
-    /// Builds the page from the per-key pump this batch pump creates for <paramref name="key"/>.
+    /// <param name="definition">
+    /// The definition that governs how rows turn into content, flags, and a total count.
+    /// </param>
+    /// <param name="valueSelector">
+    /// Projects a source row into a page item.
+    /// </param>
+    /// <param name="createCursor">
+    /// Creates a cursor from a source row.
     /// </param>
     public StreamPage<TValue> CreatePage<TValue>(
         TKey key,
-        Func<StreamPagePump<TElement>, StreamPage<TValue>> createPage)
+        StreamPageDefinition<TElement> definition,
+        Func<TElement, TValue> valueSelector,
+        Func<EdgeEntry<TElement>, string> createCursor)
     {
-        ArgumentNullException.ThrowIfNull(createPage);
+        var pump = CreateKeyPump(key);
+        var page = ElementCursorStreamPage<TElement, TValue>.CreateForBatch(pump, definition, valueSelector, createCursor);
+        RegisterDrain(key, page);
+        return page;
+    }
 
+    private StreamPagePump<TElement> CreateKeyPump(TKey key)
+    {
         if (!_keys.TryGetValue(key, out var channel))
         {
             throw ThrowHelper.StreamBatchPump_KeyNotRequested(key);
@@ -160,11 +192,11 @@ internal sealed class StreamBatchPump<TKey, TElement>
             throw ThrowHelper.StreamBatchPump_KeyAlreadyHasPage(key);
         }
 
-        var pump = new StreamPagePump<TElement>(new KeyReader(this, key), pageCount: 1);
-        var page = createPage(pump);
-        channel.Drain = cancellationToken => DrainAsync(page, cancellationToken);
-        return page;
+        return new StreamPagePump<TElement>(new KeyReader(this, key), pageCount: 1);
     }
+
+    private void RegisterDrain<TValue>(TKey key, StreamPage<TValue> page)
+        => _keys[key].Drain = cancellationToken => DrainAsync(page, cancellationToken);
 
     // Reads a page to completion over its public surface: every implementation buffers as it
     // enumerates, so this has the same effect as draining the page's source directly.

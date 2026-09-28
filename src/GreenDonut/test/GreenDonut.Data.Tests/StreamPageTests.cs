@@ -10,7 +10,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
 
         // act
         var first = await CollectAsync(page);
@@ -27,7 +27,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
 
         // act
         var entries = new List<PageEntry<string>>();
@@ -49,7 +49,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
 
         // act
         var entries = new List<PageEntry<string>>();
@@ -74,7 +74,7 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
         var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
         var selectorCalls = 0;
-        var page = new ElementCursorStreamPage<int, string>(
+        var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
             Definition<int>(requestedCount: 3, forward: true),
             valueSelector: element =>
@@ -122,7 +122,7 @@ public class StreamPageTests
     }
 
     [Fact]
-    public void StreamPage_Should_DeclareNoNonPublicMembers_Besides_TotalCountRequestedSizeAndCreateCursor()
+    public void StreamPage_Should_DeclareNoNonPublicMembers_Besides_TotalCountRequestedSizeSourceAndCreateCursor()
     {
         // arrange: every non-public property and non-accessor method declared directly on the
         // base page, now that lifecycle plumbing (priming, draining, buffered-entry access) lives
@@ -135,7 +135,7 @@ public class StreamPageTests
             .OrderBy(name => name, StringComparer.Ordinal);
 
         // assert
-        Assert.Equal(["CreateCursor", "RequestedSize", "TotalCount"], members);
+        Assert.Equal(["CreateCursor", "RequestedSize", "Source", "TotalCount"], members);
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public class StreamPageTests
     }
 
     [Fact]
-    public void StreamPage_And_Subclasses_Should_ExposeNoPublicConstructors()
+    public void StreamPage_And_Subclasses_Should_ExposeNoConstructorsAccessibleOutsidePrimitives()
     {
         // arrange: the abstract base and every concrete page type derived from it in this assembly
         var pageTypes = typeof(StreamPage<>).Assembly
@@ -174,43 +174,43 @@ public class StreamPageTests
             .ToArray();
 
         // act
-        var publicConstructors = pageTypes
-            .SelectMany(t => t.GetConstructors(BindingFlags.Instance | BindingFlags.Public))
+        var constructors = pageTypes
+            .SelectMany(t => t.GetConstructors(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             .ToArray();
 
         // assert: construction from outside Primitives only ever goes through a primed factory or
-        // the batch pump's own CreatePage, never a public constructor
+        // the batch pump's own CreatePage, never a constructor reachable across the assembly
+        // boundary (private, or the base's private protected constructor)
         Assert.NotEmpty(pageTypes);
-        Assert.Empty(publicConstructors);
+        Assert.NotEmpty(constructors);
+        Assert.All(constructors, c => Assert.True(c.IsPrivate || c.IsFamilyAndAssembly));
     }
 
     [Fact]
-    public async Task ValueCursorStreamPage_And_ElementCursorStreamPage_Should_BothConstructFromAnAlreadyPrimedBuffer()
+    public async Task ValueCursorStreamPage_And_ElementCursorStreamPage_Should_BothConstructFromAPrimedFactory()
     {
-        // arrange: the same construction path (a buffer primed ahead of time, wrapped by the page)
-        // is available for both subclasses, keeping them symmetric
+        // arrange: the same construction path (priming and wrapping happening atomically) is
+        // available for both subclasses, keeping them symmetric
         var valueSource = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         var valuePump = new StreamPagePump<string>(
             valueSource.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
         var valueDefinition = Definition<string>(requestedCount: 1, forward: true);
-        var valueBuffer = await StreamPageBuffer<string>.CreatePrimedAsync(
-            valuePump, valueDefinition, TestContext.Current.CancellationToken);
 
         var elementSource = new ScriptedAsyncSource<StreamRow<int>>(Row(1));
         var elementPump = new StreamPagePump<int>(
             elementSource.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
         var elementDefinition = Definition<int>(requestedCount: 1, forward: true);
-        var elementBuffer = await StreamPageBuffer<int>.CreatePrimedAsync(
-            elementPump, elementDefinition, TestContext.Current.CancellationToken);
 
         // act
-        var valuePage = new ValueCursorStreamPage<string>(
-            valueBuffer, valueDefinition.Index, static entry => entry.Node!);
-        var elementPage = new ElementCursorStreamPage<int, string>(
-            elementBuffer,
-            elementDefinition.Index,
+        var valuePage = await ValueCursorStreamPage<string>.CreatePrimedAsync(
+            valuePump, valueDefinition, static entry => entry.Node!, TestContext.Current.CancellationToken);
+        var elementPage = await ElementCursorStreamPage<int, string>.CreatePrimedAsync(
+            elementPump,
+            elementDefinition,
             static element => $"v{element}",
-            static entry => entry.Node.ToString());
+            static entry => entry.Node.ToString(),
+            TestContext.Current.CancellationToken);
 
         // assert
         Assert.Equal(["a"], await CollectAsync(valuePage));
@@ -237,7 +237,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
 
         // act
         await using var first = page.GetAsyncEnumerator(TestContext.Current.CancellationToken);
@@ -258,7 +258,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", totalCount: 5), Row("b"), Row("c"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
 
         // act
         var totalCount = await page.TotalCountAsync(TestContext.Current.CancellationToken);
@@ -276,7 +276,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"), Row("d"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
 
         // act: ask for the flag before touching any item
         var hasNextPage = await page.HasNextPageAsync(TestContext.Current.CancellationToken);
@@ -294,7 +294,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 2, forward: true, trailingSentinel: true));
 
         // act
         var items = await CollectAsync(page);
@@ -311,7 +311,7 @@ public class StreamPageTests
         // arrange: a plain "last: N" page with no cursor carries fixed flags computed up front
         // from the inlined total, never derived from a row
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
-        var page = CreatePage(
+        var page = await CreatePage(
             source,
             Definition<string>(requestedCount: 2, forward: false) with
             {
@@ -333,7 +333,7 @@ public class StreamPageTests
     {
         // arrange: a plain "last: N before: X" page carries its previous-page flag on the first row
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", hasMore: true), Row("b"));
-        var page = CreatePage(
+        var page = await CreatePage(
             source,
             Definition<string>(requestedCount: 2, forward: false) with
             {
@@ -354,7 +354,7 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"), Row("d"));
-        var page = CreatePage(source, Definition<string>(requestedCount: 4, forward: true, skipFront: 2));
+        var page = await CreatePage(source, Definition<string>(requestedCount: 4, forward: true, skipFront: 2));
 
         // act
         var items = await CollectAsync(page);
@@ -376,7 +376,7 @@ public class StreamPageTests
         var rowCount = Math.Min(total, pageSize);
         var source = new ScriptedAsyncSource<StreamRow<int>>(
             Enumerable.Range(1, rowCount).Select(i => Row(i)).ToArray());
-        var page = CreatePage(source, Definition<int>(requestedCount: pageSize, forward: true, skipFront: expectedSkip));
+        var page = await CreatePage(source, Definition<int>(requestedCount: pageSize, forward: true, skipFront: expectedSkip));
 
         // act
         var items = await CollectAsync(page);
@@ -392,7 +392,7 @@ public class StreamPageTests
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
         var lifetime = new ScriptedAsyncDisposable();
-        var (page, pageSource) = CreatePageWithSource(source, Definition<string>(requestedCount: 3, forward: true), lifetime);
+        var (page, pageSource) = await CreatePageWithSource(source, Definition<string>(requestedCount: 3, forward: true), lifetime);
 
         await using var enumerator = page.GetAsyncEnumerator(TestContext.Current.CancellationToken);
         await enumerator.MoveNextAsync();
@@ -415,7 +415,7 @@ public class StreamPageTests
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"));
         var lifetime = new ScriptedAsyncDisposable();
-        var (page, pageSource) = CreatePageWithSource(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
+        var (page, pageSource) = await CreatePageWithSource(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
 
         // act: draining completes the page naturally; disposing it again afterward is a no-op
         var first = await CollectAsync(page);
@@ -438,7 +438,7 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"));
         source.ThrowAt(1, exception);
         var lifetime = new ScriptedAsyncDisposable();
-        var page = CreatePage(source, Definition<string>(requestedCount: 3, forward: true), lifetime);
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true), lifetime);
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
@@ -465,7 +465,7 @@ public class StreamPageTests
         source.ThrowAt(1, faultException);
         source.ThrowOnDispose(disposeException);
         var lifetime = new ScriptedAsyncDisposable();
-        var page = CreatePage(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
+        var page = await CreatePage(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
@@ -487,7 +487,7 @@ public class StreamPageTests
         source.ThrowAt(1, faultException);
         var lifetime = new ScriptedAsyncDisposable();
         lifetime.ThrowOnDispose(disposeException);
-        var page = CreatePage(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
+        var page = await CreatePage(source, Definition<string>(requestedCount: 2, forward: true), lifetime);
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
@@ -506,7 +506,7 @@ public class StreamPageTests
         var lifetime = new ScriptedAsyncDisposable();
         var disposeException = new InvalidOperationException("lifetime boom");
         lifetime.ThrowOnDispose(disposeException);
-        var (page, pageSource) = CreatePageWithSource(source, Definition<string>(requestedCount: 1, forward: true), lifetime);
+        var (page, pageSource) = await CreatePageWithSource(source, Definition<string>(requestedCount: 1, forward: true), lifetime);
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
@@ -529,7 +529,7 @@ public class StreamPageTests
         source.ThrowOnDispose(sourceDisposeException);
         var lifetime = new ScriptedAsyncDisposable();
         lifetime.ThrowOnDispose(lifetimeDisposeException);
-        var (page, _) = CreatePageWithSource(source, Definition<string>(requestedCount: 1, forward: true), lifetime);
+        var (page, _) = await CreatePageWithSource(source, Definition<string>(requestedCount: 1, forward: true), lifetime);
 
         // act
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(page));
@@ -547,11 +547,11 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", totalCount: 5), Row("b"), Row("c"));
         var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
         var definition = Definition<string>(requestedCount: 3, forward: true) with { Index = 1 };
-        var buffer = new StreamPageBuffer<string>(pump, definition);
-        var page = new ValueCursorStreamPage<string>(buffer, definition.Index, static entry => entry.Node!);
 
-        // act
-        await buffer.PrimeAsync(TestContext.Current.CancellationToken);
+        // act: the primed factory buffers the first row and resolves the count as part of creation
+        var page = await ValueCursorStreamPage<string>.CreatePrimedAsync(
+            pump, definition, static entry => entry.Node!, TestContext.Current.CancellationToken);
+        var buffer = (StreamPageBuffer<string>)page.Source;
         var entry = buffer.GetBufferedEntry(0);
         var cursor = page.CreateCursor(entry);
         var relativeCursor = page.CreateCursor(entry, 0);
@@ -672,7 +672,7 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
         var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
         var selectorCalls = 0;
-        var page = new ElementCursorStreamPage<int, string>(
+        var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
             Definition<int>(requestedCount: 3, forward: true),
             valueSelector: element =>
@@ -700,7 +700,7 @@ public class StreamPageTests
         // read from the entry's index, not looked up by the value itself
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2));
         var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
-        var page = new ElementCursorStreamPage<int, string>(
+        var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
             Definition<int>(requestedCount: 2, forward: true),
             valueSelector: static _ => "duplicate",
@@ -786,39 +786,34 @@ public class StreamPageTests
             HasPreviousPage: null,
             FlagsFromFirstRow: null);
 
-    private static ValueCursorStreamPage<T> CreatePage<T>(
+    private static async Task<StreamPage<T>> CreatePage<T>(
         ScriptedAsyncSource<StreamRow<T>> source,
         StreamPageDefinition<T> definition,
         IAsyncDisposable? lifetime = null)
     {
         var pump = new StreamPagePump<T>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
-        return new ValueCursorStreamPage<T>(pump, definition, static entry => entry.Node!.ToString()!);
+        return await ValueCursorStreamPage<T>.CreatePrimedAsync(
+            pump, definition, static entry => entry.Node!.ToString()!, TestContext.Current.CancellationToken);
     }
 
     // Keeps a reference to the page's source alongside the page itself, for tests that assert on
     // lifecycle state (IsCompleted, BufferedCount) the page no longer exposes.
-    private static (ValueCursorStreamPage<T> Page, StreamPageBuffer<T> Source) CreatePageWithSource<T>(
+    private static async Task<(StreamPage<T> Page, StreamPageBuffer<T> Source)> CreatePageWithSource<T>(
         ScriptedAsyncSource<StreamRow<T>> source,
         StreamPageDefinition<T> definition,
         IAsyncDisposable? lifetime = null)
     {
-        var pump = new StreamPagePump<T>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
-        var buffer = new StreamPageBuffer<T>(pump, definition);
-        var page = new ValueCursorStreamPage<T>(buffer, definition.Index, static entry => entry.Node!.ToString()!);
-        return (page, buffer);
+        var page = await CreatePage(source, definition, lifetime);
+        return (page, (StreamPageBuffer<T>)page.Source);
     }
 
     // Builds a page whose first row is already buffered, exactly as the creator hands a page to a
     // consumer, for tests that assert on already-primed behaviour.
-    private static async Task<ValueCursorStreamPage<T>> CreatePrimedPageAsync<T>(
+    private static Task<StreamPage<T>> CreatePrimedPageAsync<T>(
         ScriptedAsyncSource<StreamRow<T>> source,
         StreamPageDefinition<T> definition,
         IAsyncDisposable? lifetime = null)
-    {
-        var pump = new StreamPagePump<T>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
-        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump, definition, TestContext.Current.CancellationToken);
-        return new ValueCursorStreamPage<T>(buffer, definition.Index, static entry => entry.Node!.ToString()!);
-    }
+        => CreatePage(source, definition, lifetime);
 
     private static async Task<List<T>> CollectAsync<T>(StreamPage<T> page)
     {

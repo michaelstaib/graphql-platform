@@ -41,7 +41,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSourceBase<TElement
     /// <param name="definition">
     /// The definition that governs how rows turn into content, flags, and a total count.
     /// </param>
-    public StreamPageBuffer(StreamPagePump<TElement>? pump, StreamPageDefinition<TElement> definition)
+    internal StreamPageBuffer(StreamPagePump<TElement>? pump, StreamPageDefinition<TElement> definition)
     {
         _pump = pump;
         _definition = definition;

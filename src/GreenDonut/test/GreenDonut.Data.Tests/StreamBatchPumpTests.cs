@@ -192,6 +192,29 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
+    public async Task CreateAsync_Should_ThrowSourceException_With_LifetimeAttached_When_KeysAreEmpty_AndBothDisposalsFail()
+    {
+        // arrange
+        var sourceException = new InvalidOperationException("source boom");
+        var lifetimeException = new InvalidOperationException("lifetime boom");
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>();
+        source.ThrowOnDispose(sourceException);
+        var lifetime = new ScriptedAsyncDisposable();
+        lifetime.ThrowOnDispose(lifetimeException);
+
+        // act
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => StreamBatchPump<string, string>.CreateAsync(
+                source.GetAsyncEnumerator(TestContext.Current.CancellationToken), [], lifetime).AsTask());
+
+        // assert: the source's exception wins the race, with the lifetime's attached instead of
+        // replacing it, and both disposals ran exactly once
+        Assert.Same(sourceException, thrown);
+        Assert.Equal([lifetimeException], OrderedDisposal.GetAttached(thrown));
+        Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
     public async Task CreateAsync_Should_ReadExactlyOneRow_When_CreatingAMultiKeyBatch()
     {
         // arrange
@@ -568,9 +591,7 @@ public class StreamBatchPumpTests
         TKey key,
         StreamPageDefinition<T> definition)
         where TKey : notnull
-        => pump.CreatePage(
-            key,
-            keyPump => new ValueCursorStreamPage<T>(keyPump, definition, static entry => entry.Node!.ToString()!));
+        => pump.CreatePage(key, definition, static entry => entry.Node!.ToString()!);
 
     // Keeps a reference to the page's source alongside the page itself, for tests that assert on
     // lifecycle state (IsCompleted, BufferedCount) the page no longer exposes.
@@ -580,16 +601,8 @@ public class StreamBatchPumpTests
         StreamPageDefinition<T> definition)
         where TKey : notnull
     {
-        StreamPageBuffer<T>? source = null;
-        var page = pump.CreatePage(
-            key,
-            keyPump =>
-            {
-                source = new StreamPageBuffer<T>(keyPump, definition);
-                return new ValueCursorStreamPage<T>(source, definition.Index, static entry => entry.Node!.ToString()!);
-            });
-
-        return (page, source!);
+        var page = pump.CreatePage(key, definition, static entry => entry.Node!.ToString()!);
+        return (page, (StreamPageBuffer<T>)page.Source);
     }
 
     private static async Task<List<T>> CollectAsync<T>(StreamPage<T> page)

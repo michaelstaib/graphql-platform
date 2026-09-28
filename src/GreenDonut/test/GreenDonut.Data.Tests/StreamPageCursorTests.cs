@@ -61,16 +61,12 @@ public class StreamPageCursorTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"]))!;
         _ = pump.CreatePage(
             "A",
-            keyPump => new ValueCursorStreamPage<int>(
-                keyPump,
-                Definition(requestedCount: 1),
-                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+            Definition(requestedCount: 1),
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
         var pageB = pump.CreatePage(
             "B",
-            keyPump => new ValueCursorStreamPage<int>(
-                keyPump,
-                Definition(requestedCount: 1),
-                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+            Definition(requestedCount: 1),
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
 
         // act
         var cursorTask = pageB.CreateStartCursorAsync(TestContext.Current.CancellationToken);
@@ -166,16 +162,12 @@ public class StreamPageCursorTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"]))!;
         _ = pump.CreatePage(
             "A",
-            keyPump => new ValueCursorStreamPage<int>(
-                keyPump,
-                Definition(requestedCount: 1),
-                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+            Definition(requestedCount: 1),
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
         var pageB = pump.CreatePage(
             "B",
-            keyPump => new ValueCursorStreamPage<int>(
-                keyPump,
-                Definition(requestedCount: 1, index: 3, requestedSize: 2, totalCount: 10),
-                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+            Definition(requestedCount: 1, index: 3, requestedSize: 2, totalCount: 10),
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
 
         // act
         var cursorsTask = pageB.CreateRelativeBackwardCursorsAsync(2, TestContext.Current.CancellationToken);
@@ -202,16 +194,12 @@ public class StreamPageCursorTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken), ["A", "B"]))!;
         _ = pump.CreatePage(
             "A",
-            keyPump => new ValueCursorStreamPage<int>(
-                keyPump,
-                Definition(requestedCount: 1),
-                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+            Definition(requestedCount: 1),
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
         var pageB = pump.CreatePage(
             "B",
-            keyPump => new ValueCursorStreamPage<int>(
-                keyPump,
-                Definition(requestedCount: 1, index: 1, requestedSize: 2, totalCount: 10),
-                static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}"));
+            Definition(requestedCount: 1, index: 1, requestedSize: 2, totalCount: 10),
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
 
         // act
         var cursorsTask = pageB.CreateRelativeBackwardCursorsAsync(2, TestContext.Current.CancellationToken);
@@ -294,10 +282,10 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public void CreateLastPageCursor_Should_MatchPageHelper_ForTheSameTotalSizeAndIndex()
+    public async Task CreateLastPageCursor_Should_MatchPageHelper_ForTheSameTotalSizeAndIndex()
     {
         // arrange
-        var streamPage = CreatePage(
+        var streamPage = await CreatePage(
             new ScriptedRowSource<int>(1, 2),
             Definition(requestedCount: 2, index: 1, requestedSize: 10, totalCount: 25));
         var page = Page<int>.Create(
@@ -332,10 +320,10 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public void CreateRelativeLastPageCursors_Should_MatchPageHelper_ForTheSameTotalSizeAndIndex()
+    public async Task CreateRelativeLastPageCursors_Should_MatchPageHelper_ForTheSameTotalSizeAndIndex()
     {
         // arrange
-        var streamPage = CreatePage(
+        var streamPage = await CreatePage(
             new ScriptedRowSource<int>(1, 2),
             Definition(requestedCount: 2, index: 1, requestedSize: 10, totalCount: 25));
         var page = Page<int>.Create(
@@ -356,10 +344,10 @@ public class StreamPageCursorTests
     }
 
     [Fact]
-    public void CreateRelativeLastPageCursors_Should_ReturnEmpty_When_OnLastPage()
+    public async Task CreateRelativeLastPageCursors_Should_ReturnEmpty_When_OnLastPage()
     {
         // arrange
-        var streamPage = CreatePage(
+        var streamPage = await CreatePage(
             new ScriptedRowSource<int>(1, 2),
             Definition(requestedCount: 2, index: 3, requestedSize: 10, totalCount: 25));
 
@@ -392,31 +380,24 @@ public class StreamPageCursorTests
             HasPreviousPage: null,
             FlagsFromFirstRow: null);
 
-    private static ValueCursorStreamPage<int> CreatePage(
+    private static Task<StreamPage<int>> CreatePage(
         ScriptedRowSource<int> source,
         StreamPageDefinition<int> definition)
     {
         var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(), pageCount: 1);
-        return new ValueCursorStreamPage<int>(
+        return ValueCursorStreamPage<int>.CreatePrimedAsync(
             pump,
             definition,
-            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
+            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}",
+            TestContext.Current.CancellationToken).AsTask();
     }
 
     // Builds a page whose first row is already buffered, exactly as the creator hands a page to a
     // consumer, for tests that assert on already-primed behaviour.
-    private static async Task<ValueCursorStreamPage<int>> CreatePrimedPageAsync(
+    private static Task<StreamPage<int>> CreatePrimedPageAsync(
         ScriptedRowSource<int> source,
         StreamPageDefinition<int> definition)
-    {
-        var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(), pageCount: 1);
-        var buffer = await StreamPageBuffer<int>.CreatePrimedAsync(
-            pump, definition, TestContext.Current.CancellationToken);
-        return new ValueCursorStreamPage<int>(
-            buffer,
-            definition.Index,
-            static entry => $"{entry.Node}:{entry.Offset}:{entry.PageIndex}:{entry.TotalCount}");
-    }
+        => CreatePage(source, definition);
 
     // A minimal hand-rolled async source for these tests. The shared, reusable scripted source
     // lives in a later test-infrastructure task.

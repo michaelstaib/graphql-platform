@@ -185,10 +185,21 @@ public static class StreamPagingQueryableExtensions
         {
             hasFirstRow = await enumerator.MoveNextAsync().ConfigureAwait(false);
         }
-        catch
+        catch (Exception primingException)
         {
-            await enumerator.DisposeAsync().ConfigureAwait(false);
-            await DisposeLifetimeAsync(lifetime).ConfigureAwait(false);
+            // the priming failure is what the caller must observe; a disposal failure while
+            // cleaning up is attached to it instead of replacing it.
+            try
+            {
+                await OrderedDisposal.ReleaseAsync(
+                    enumerator.DisposeAsync,
+                    lifetime is null ? null : lifetime.DisposeAsync).ConfigureAwait(false);
+            }
+            catch (Exception releaseException)
+            {
+                OrderedDisposal.Attach(primingException, releaseException);
+            }
+
             throw;
         }
 
@@ -197,7 +208,26 @@ public static class StreamPagingQueryableExtensions
             // an empty row query never carries an inlined count, since there is no row for it to
             // ride on. When the count was requested, it is fetched separately while the reader
             // that just came back empty is already closed.
-            await enumerator.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception disposeException)
+            {
+                // the enumerator's own disposal failure is what the caller must observe; the
+                // lifetime is still released, with a failure releasing it attached instead of
+                // replacing the original failure.
+                try
+                {
+                    await DisposeLifetimeAsync(lifetime).ConfigureAwait(false);
+                }
+                catch (Exception lifetimeException)
+                {
+                    OrderedDisposal.Attach(disposeException, lifetimeException);
+                }
+
+                throw;
+            }
 
             var emptyTotalCount = composition.TotalCount;
 
@@ -296,10 +326,8 @@ public static class StreamPagingQueryableExtensions
             HasPreviousPage: hasPreviousPage,
             FlagsFromFirstRow: null);
 
-        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump, definition, cancellationToken)
+        return await ValueCursorStreamPage<T>.CreatePrimedAsync(pump, definition, createCursor, cancellationToken)
             .ConfigureAwait(false);
-
-        return new ValueCursorStreamPage<T>(buffer, definition.Index, createCursor);
     }
 
     private static IQueryable<StreamRow<T>> BuildRowQuery<T>(
@@ -348,10 +376,8 @@ public static class StreamPagingQueryableExtensions
             HasPreviousPage: hasPreviousPage,
             FlagsFromFirstRow: null);
 
-        var buffer = await StreamPageBuffer<T>.CreatePrimedAsync(pump: null, definition, cancellationToken)
+        return await ValueCursorStreamPage<T>.CreatePrimedAsync(pump: null, definition, createCursor, cancellationToken)
             .ConfigureAwait(false);
-
-        return new ValueCursorStreamPage<T>(buffer, definition.Index, createCursor);
     }
 
     private static Func<EdgeEntry<T>, string> CreateCursorFactory<T>(CursorKey[] keys, bool relativeShaped)
