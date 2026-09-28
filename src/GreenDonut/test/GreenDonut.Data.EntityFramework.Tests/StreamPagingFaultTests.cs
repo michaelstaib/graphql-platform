@@ -25,8 +25,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
     public async Task ToStreamPageAsync_Should_ReleaseLifetimeOnce_And_SurfaceOriginalFault_When_PrimingThrows()
     {
         // arrange: the fault is injected from inside ReadAsync, after EF has already opened the
-        // row query's reader, so the reader's own disposal proves the underlying EF resource was
-        // released too, not only the lifetime wrapper.
+        // row query's reader.
         var connectionString = CreateConnectionString();
         await SeedBrandsAsync(connectionString, 5);
         var exception = new InvalidOperationException("priming boom");
@@ -153,8 +152,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
     public async Task ToStreamPageAsync_Should_ReleaseLifetimeOnce_And_SurfaceOriginalFault_When_CountOnlyCountThrows()
     {
         // arrange: IncludeItems is false, so the count is the only query the count-only path
-        // ever runs, and it is what fails here; the fault fires before a reader ever exists, so
-        // the database connection's own disposal stands in for the released EF resource instead.
+        // runs, and it is the one that fails here.
         var connectionString = CreateConnectionString();
         await SeedBrandsAsync(connectionString, 5);
         var exception = new InvalidOperationException("count boom");
@@ -619,8 +617,7 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
     }
 
     // Wraps every DbDataReader EF Core opens so a fault can be injected from inside ReadAsync,
-    // after a real reader already exists, instead of before ReaderExecutingAsync ever creates one.
-    // This lets a fault test assert that the underlying EF reader is genuinely disposed afterward.
+    // after a real reader already exists.
     private sealed class ReaderFaultingInterceptor(Func<Exception> createFault) : DbCommandInterceptor
     {
         public override ValueTask<DbDataReader> ReaderExecutedAsync(

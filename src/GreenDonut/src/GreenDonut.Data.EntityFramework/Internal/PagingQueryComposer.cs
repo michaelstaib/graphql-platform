@@ -83,8 +83,7 @@ internal static class PagingQueryComposer
             arguments = arguments with { First = 10 };
         }
 
-        // if relative cursors are enabled and no cursor is provided
-        // we must do an initial count of the dataset.
+        // Relative cursors with no incoming cursor require an initial count of the dataset.
         if (arguments.EnableRelativeCursors
             && string.IsNullOrEmpty(arguments.After)
             && string.IsNullOrEmpty(arguments.Before))
@@ -100,9 +99,7 @@ internal static class PagingQueryComposer
         var usesRelativeCursors = false;
         Cursor? cursor = null;
 
-        // the exact skip count for an end cursor page, or null if the cursor is not an end
-        // cursor. It replaces the generic offset-based skip below because it is derived from
-        // the dataset total rather than from a fixed number of pages.
+        // The exact skip count for an end-cursor page, or null otherwise.
         int? endCursorSkip = null;
 
         if (arguments.After is not null)
@@ -158,9 +155,8 @@ internal static class PagingQueryComposer
 
                 offset = cursor.Offset!.Value;
 
-                // the count is always inlined for an end cursor page, as the cached total on
-                // the cursor may be stale. The cached total is only used to position the skip
-                // for pages before the last one.
+                // The count is always inlined for an end-cursor page; the cached total is only
+                // used to position the skip for pages before the last one.
                 includeTotalCount = true;
 
                 endCursorSkip = GetEndCursorSkip(cursor, requestedCount);

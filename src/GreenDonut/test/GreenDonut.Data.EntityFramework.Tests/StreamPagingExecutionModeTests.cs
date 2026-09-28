@@ -6,10 +6,8 @@ using XunitTestContext = Xunit.TestContext;
 
 namespace GreenDonut.Data;
 
-// Guards the EF Core 8 fallback: the backward probe and the inlined total count must always
-// run as an explicit awaited query, never as a synchronous ExecuteReader/ExecuteScalar call,
-// even though EF Core 8 does not hoist an uncorrelated scalar into a preceding async command
-// the way EF Core 9 and later do.
+// Guards the EF Core 8 fallback: the backward probe and the inlined total count must always run
+// as an explicit awaited query, never as a synchronous call.
 public class StreamPagingExecutionModeTests
 {
     [Fact]
@@ -108,10 +106,8 @@ public class StreamPagingExecutionModeTests
             """);
     }
 
-    // On EF Core 9 and later the probe and the total count are translated server-side, inlined
-    // into the row statement itself, so only that single async row query ever runs, which is why
-    // otherSnapshot always holds exactly one entry. EF Core 8 never hoists them, so
-    // netCore8Snapshot pins the explicit awaited fallback that replaces the inlining in its place.
+    // otherSnapshot holds the single async row query EF Core 9 and later run; netCore8Snapshot
+    // pins EF Core 8's explicit awaited fallback.
     private static void AssertExecutionMode(TestDatabase database, string netCore8Snapshot, string otherSnapshot)
     {
         var records = database.Interceptor.Records;

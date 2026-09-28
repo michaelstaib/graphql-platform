@@ -641,8 +641,7 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
             cancellationToken: cancellationToken);
         var firstEntries = await DrainEntriesAndDisposeAsync(first, cancellationToken);
 
-        // an offset this large times the page size no longer fits an int, and used to wrap into
-        // a negative Skip instead of being rejected.
+        // This offset times the page size overflows an int and must be rejected.
         arguments = arguments with { After = first.CreateCursor(firstEntries[^1], int.MaxValue / 2) };
 
         // Act
@@ -735,8 +734,7 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
             cancellationToken: cancellationToken);
         var firstEntries = await DrainEntriesAndDisposeAsync(first, cancellationToken);
 
-        // an offset this large times the page size no longer fits an int, and used to wrap into
-        // a negative Skip instead of being rejected.
+        // This offset times the page size overflows an int and must be rejected.
         arguments = arguments with { After = first.CreateCursor(firstEntries[^1], int.MaxValue / 2) };
 
         // Act

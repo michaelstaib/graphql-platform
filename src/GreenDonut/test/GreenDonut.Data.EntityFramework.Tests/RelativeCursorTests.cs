@@ -1373,9 +1373,8 @@ public class RelativeCursorTests(PostgreSqlResource resource)
             afterCursor = firstPage.CreateCursor(firstPage.Last!.Value);
         }
 
-        // this offset points before the first page (same as the empty-pages case above), so
-        // without validating `after` ahead of that short-circuit this combination used to skip
-        // straight to an empty page per key instead of rejecting the arguments.
+        // An `after` cursor combined with an end cursor `before` must be rejected, not resolved
+        // to an empty page.
         var arguments = new PagingArguments(last: 10)
         {
             After = afterCursor,
@@ -1518,8 +1517,7 @@ public class RelativeCursorTests(PostgreSqlResource resource)
             arguments,
             Xunit.TestContext.Current.CancellationToken);
 
-        // an offset this large times the page size no longer fits an int, and used to wrap into
-        // a negative Skip instead of being rejected.
+        // This offset times the page size overflows an int and must be rejected.
         arguments = arguments with { After = first.CreateCursor(first.Last!.Value, int.MaxValue / 2) };
 
         // Act
@@ -1600,8 +1598,7 @@ public class RelativeCursorTests(PostgreSqlResource resource)
             arguments,
             Xunit.TestContext.Current.CancellationToken);
 
-        // an offset this large times the page size no longer fits an int, and used to wrap into
-        // a negative Skip instead of being rejected.
+        // This offset times the page size overflows an int and must be rejected.
         arguments = arguments with { After = first.CreateCursor(first.Last!.Value, int.MaxValue / 2) };
 
         // Act
