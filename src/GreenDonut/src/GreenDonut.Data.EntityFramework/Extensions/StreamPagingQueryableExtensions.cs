@@ -695,9 +695,10 @@ public static class StreamPagingQueryableExtensions
 
     /// <summary>
     /// Executes a batch query with paging and returns the selected streaming pages for each
-    /// parent, from one flat, key-ordered query. The requested key set is extracted from a
-    /// top-level <c>Contains</c> filter on <paramref name="source"/> when present, falling back
-    /// to a distinct-keys query otherwise.
+    /// parent, from one flat, key-ordered query. The requested key set comes from a top-level
+    /// <c>Contains</c> filter over an in-memory collection on <paramref name="source"/>, or from
+    /// a distinct-keys query when none is found; a <c>Concat</c> or <c>Union</c> applied above
+    /// that filter is the caller's responsibility.
     /// </summary>
     /// <param name="source">
     /// The queryable to be paged.

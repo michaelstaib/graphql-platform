@@ -439,7 +439,7 @@ internal static class ExpressionHelpers
                 typedOrderExpression);
         }
 
-        // keep the historical query shape unless cursor filtering is active.
+        // The selector stays in place unless cursor filtering is active.
         if (!applySelectorAfterPaging && selector is not null)
         {
             var selectMethod = typeof(Enumerable)
@@ -608,8 +608,7 @@ internal static class ExpressionHelpers
             }
         }
 
-        // apply the selector after cursor filtering and paging so cursor predicates
-        // run against the unprojected source when the selector shape is not SQL-translatable.
+        // With cursor filtering active the selector is applied after paging.
         if (applySelectorAfterPaging && selector is not null)
         {
             var selectMethod = typeof(Enumerable)
@@ -699,8 +698,7 @@ internal static class ExpressionHelpers
             return Nullable.GetUnderlyingType(member.Type) is not null;
         }
 
-        // Unknown means the assembly was compiled without NRT annotations;
-        // treat as non-nullable (safe default).
+        // Unknown nullability is treated as non-nullable.
         return member.Member switch
         {
             PropertyInfo p => GetNullabilityInfoState(p) == NullabilityState.Nullable,
@@ -1151,8 +1149,7 @@ internal static class ExpressionHelpers
         body = Expression.Call(
             typeof(Queryable), nameof(Queryable.Take), [typeof(TElement)], body, Expression.Constant(takeAmount));
 
-        // The caller's own projection, if any, is re-applied here, once, on each key's already
-        // sliced window.
+        // The caller's projection is applied once per key window.
         if (selector is not null)
         {
             body = Expression.Call(
@@ -1179,8 +1176,7 @@ internal static class ExpressionHelpers
         var selectManyLambda = Expression.Lambda<Func<TKey, IEnumerable<StreamBatchRow<TKey, TElement>>>>(body, kParam);
         var flat = keysQuery.SelectMany(selectManyLambda);
 
-        // The explicit outer ordering: by key first, then every original key in its original,
-        // ascending display direction.
+        // Rows are ordered by key, then by the original keys ascending.
         var rowParam = Expression.Parameter(rowType, "row");
         var itemAccess = Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Item));
         var outerKeySelector = Expression.Lambda<Func<StreamBatchRow<TKey, TElement>, TKey>>(
