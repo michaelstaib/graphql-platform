@@ -115,7 +115,13 @@ public static class StreamPagingQueryableExtensions
                 ? PagingQueryableExtensions.CreateIndex(arguments, cursor, countOnlyTotal) ?? 1
                 : null;
             return await CreateResolvedPageAsync<T>(
-                keys, false, false, countOnlyIndex, requestedCount, countOnlyTotal, cancellationToken)
+                keys,
+                hasNextPage: false,
+                hasPreviousPage: false,
+                countOnlyIndex,
+                requestedCount,
+                countOnlyTotal,
+                cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -136,7 +142,13 @@ public static class StreamPagingQueryableExtensions
                 await DisposeLifetimeAsync(lifetime).ConfigureAwait(false);
 
                 return await CreateResolvedPageAsync<T>(
-                    keys, false, false, 1, requestedCount, freshCount, cancellationToken)
+                    keys,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
+                    1,
+                    requestedCount,
+                    freshCount,
+                    cancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -242,14 +254,26 @@ public static class StreamPagingQueryableExtensions
             if (isEndCursor)
             {
                 return await CreateResolvedPageAsync<T>(
-                    keys, false, false, 1, requestedCount, emptyTotalCount ?? 0, cancellationToken)
+                    keys,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
+                    1,
+                    requestedCount,
+                    emptyTotalCount ?? 0,
+                    cancellationToken)
                     .ConfigureAwait(false);
             }
 
             // an empty page never carries an index, even for a relative page, the same shortcut
             // ToPageAsync takes: there is no position within the dataset left to report.
             return await CreateResolvedPageAsync<T>(
-                keys, false, false, null, requestedCount, emptyTotalCount, cancellationToken)
+                keys,
+                hasNextPage: false,
+                hasPreviousPage: false,
+                null,
+                requestedCount,
+                emptyTotalCount,
+                cancellationToken)
                 .ConfigureAwait(false);
         }
 

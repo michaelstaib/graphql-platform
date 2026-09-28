@@ -69,7 +69,11 @@ internal sealed class DateTimeOffsetCursorKeySerializer : ICursorKeySerializer
         characters[charsWritten++] = dateTimeOffset.Offset < TimeSpan.Zero ? '-' : '+';
 
         // Format offset.
-        if (!dateTimeOffset.Offset.TryFormat(characters[charsWritten..], out _, OffsetFormat, CultureInfo.InvariantCulture))
+        if (!dateTimeOffset.Offset.TryFormat(
+            characters[charsWritten..],
+            out _,
+            OffsetFormat,
+            CultureInfo.InvariantCulture))
         {
             written = 0;
             return false;

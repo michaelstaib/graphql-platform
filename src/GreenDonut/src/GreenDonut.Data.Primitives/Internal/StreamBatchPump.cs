@@ -175,7 +175,11 @@ internal sealed class StreamBatchPump<TKey, TElement>
         Func<EdgeEntry<TElement>, string> createCursor)
     {
         var pump = CreateKeyPump(key);
-        var page = ElementCursorStreamPage<TElement, TValue>.CreateForBatch(pump, definition, valueSelector, createCursor);
+        var page = ElementCursorStreamPage<TElement, TValue>.CreateForBatch(
+            pump,
+            definition,
+            valueSelector,
+            createCursor);
         RegisterDrain(key, page);
         return page;
     }
