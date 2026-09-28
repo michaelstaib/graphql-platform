@@ -1,8 +1,7 @@
 namespace GreenDonut.Data.Internal;
 
 /// <summary>
-/// Creates the exceptions thrown by the cursor and streaming page APIs, so their messages live in
-/// one place.
+/// Creates the exceptions thrown by the cursor and streaming page APIs.
 /// </summary>
 internal static class ThrowHelper
 {

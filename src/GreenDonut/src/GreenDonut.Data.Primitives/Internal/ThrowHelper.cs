@@ -1,8 +1,7 @@
 namespace GreenDonut.Data.Internal;
 
 /// <summary>
-/// Creates the exceptions thrown by the streaming page primitives, so their messages live in one
-/// place.
+/// Creates the exceptions thrown by the streaming page primitives.
 /// </summary>
 internal static class ThrowHelper
 {

@@ -107,8 +107,6 @@ public static class GreenDonutStreamPageExtensions
     /// <remarks>
     /// This method creates cursors for the next pages based on the current page.
     /// The cursors are created using the <see cref="StreamPage{T}.CreateCursor(PageEntry{T}, int)"/> method.
-    /// It checks the index, and the total count, before draining the page to its last entry, so an
-    /// empty result never buffers the whole page.
     /// </remarks>
     public static async ValueTask<ImmutableArray<PageCursor>> CreateRelativeForwardCursorsAsync<T>(
         this StreamPage<T> page,

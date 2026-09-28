@@ -398,8 +398,7 @@ public class StreamPageCursorTests
         StreamPageDefinition<int> definition)
         => CreatePage(source, definition);
 
-    // A minimal hand-rolled async source for these tests. The shared, reusable scripted source
-    // lives in a later test-infrastructure task.
+    // A minimal scripted async source for these tests.
     private sealed class ScriptedRowSource<T> : IAsyncEnumerable<StreamRow<T>>
     {
         private readonly StreamRow<T>[] _rows;
