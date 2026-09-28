@@ -81,7 +81,8 @@ public class TrackerReferenceGuardTests
         var trackerPrefix = string.Concat("hc", "-", "fork", "-", "1", "-");
         var generatedWith = string.Concat("Generated", " ", "with", " ", "Claude");
         var coAuthoredBy = string.Concat("Co", "-", "Authored", "-", "By", ":", " ", "Claude");
+        var sessionMarker = string.Concat("Claude", "-", "Session");
 
-        return [trackerPrefix, generatedWith, coAuthoredBy];
+        return [trackerPrefix, generatedWith, coAuthoredBy, sessionMarker];
     }
 }
