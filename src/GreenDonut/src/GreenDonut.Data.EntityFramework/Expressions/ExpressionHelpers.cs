@@ -1188,7 +1188,7 @@ internal static class ExpressionHelpers
         var selectManyLambda = Expression.Lambda<Func<TKey, IEnumerable<StreamBatchRow<TKey, TElement>>>>(body, kParam);
         var flat = keysQuery.SelectMany(selectManyLambda);
 
-        // Rows are ordered by key, then by the original keys ascending.
+        // Rows are ordered by key, then by each original key in its own direction.
         var rowParam = Expression.Parameter(rowType, "row");
         var itemAccess = Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Item));
         var outerKeySelector = Expression.Lambda<Func<StreamBatchRow<TKey, TElement>, TKey>>(
