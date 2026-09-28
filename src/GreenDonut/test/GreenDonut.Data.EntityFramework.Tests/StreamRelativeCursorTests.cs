@@ -591,7 +591,8 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
-                arguments, cancellationToken: cancellationToken);
+                arguments,
+                cancellationToken: cancellationToken);
 
         // Assert
 
@@ -617,7 +618,8 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
-                arguments, cancellationToken: cancellationToken);
+                arguments,
+                cancellationToken: cancellationToken);
 
         // Assert
 
@@ -648,7 +650,8 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToStreamPageAsync(
-                arguments, cancellationToken: cancellationToken);
+                arguments,
+                cancellationToken: cancellationToken);
 
         // Assert
 
@@ -741,7 +744,9 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToBatchStreamPageAsync(
-                t => t.GroupId, arguments, cancellationToken: cancellationToken);
+                t => t.GroupId,
+                arguments,
+                cancellationToken: cancellationToken);
 
         // Assert
 
@@ -800,7 +805,10 @@ public class StreamRelativeCursorTests(PostgreSqlResource resource)
         };
 
     private static async Task SeedThreeGroupsAsync(
-        string connectionString, int countGroup1, int countGroup2, int countGroup3)
+        string connectionString,
+        int countGroup1,
+        int countGroup2,
+        int countGroup3)
     {
         await using var context = new TestContext(connectionString);
         await context.Database.EnsureCreatedAsync();

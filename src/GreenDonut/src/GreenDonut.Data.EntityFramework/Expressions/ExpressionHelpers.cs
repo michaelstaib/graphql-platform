@@ -1116,7 +1116,11 @@ internal static class ExpressionHelpers
         if (afterPredicate is not null)
         {
             body = Expression.Call(
-                typeof(Queryable), nameof(Queryable.Where), [typeof(TElement)], body, Expression.Quote(afterPredicate));
+                typeof(Queryable),
+                nameof(Queryable.Where),
+                [typeof(TElement)],
+                body,
+                Expression.Quote(afterPredicate));
         }
 
         if (beforePredicate is not null)
@@ -1139,7 +1143,11 @@ internal static class ExpressionHelpers
         if (skipAmount > 0)
         {
             body = Expression.Call(
-                typeof(Queryable), nameof(Queryable.Skip), [typeof(TElement)], body, Expression.Constant(skipAmount));
+                typeof(Queryable),
+                nameof(Queryable.Skip),
+                [typeof(TElement)],
+                body,
+                Expression.Constant(skipAmount));
         }
 
         // Forward pages take one extra row, the sentinel that answers HasNextPage.
@@ -1147,7 +1155,11 @@ internal static class ExpressionHelpers
             ? isEndCursor && pagesBeforeLast >= 1 ? requestedCount * 2 : requestedCount
             : requestedCount + 1;
         body = Expression.Call(
-            typeof(Queryable), nameof(Queryable.Take), [typeof(TElement)], body, Expression.Constant(takeAmount));
+            typeof(Queryable),
+            nameof(Queryable.Take),
+            [typeof(TElement)],
+            body,
+            Expression.Constant(takeAmount));
 
         // The caller's projection is applied once per key window.
         if (selector is not null)
@@ -1180,7 +1192,8 @@ internal static class ExpressionHelpers
         var rowParam = Expression.Parameter(rowType, "row");
         var itemAccess = Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Item));
         var outerKeySelector = Expression.Lambda<Func<StreamBatchRow<TKey, TElement>, TKey>>(
-            Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Key)), rowParam);
+            Expression.Property(rowParam, nameof(StreamBatchRow<TKey, TElement>.Key)),
+            rowParam);
 
         var ordered = (IQueryable<StreamBatchRow<TKey, TElement>>)flat.OrderBy(outerKeySelector);
 

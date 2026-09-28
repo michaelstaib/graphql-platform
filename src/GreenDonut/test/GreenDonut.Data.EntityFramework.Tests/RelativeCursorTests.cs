@@ -1470,7 +1470,8 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
-                arguments, Xunit.TestContext.Current.CancellationToken);
+                arguments,
+                Xunit.TestContext.Current.CancellationToken);
 
         // Assert
 
@@ -1495,7 +1496,8 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
-                arguments, Xunit.TestContext.Current.CancellationToken);
+                arguments,
+                Xunit.TestContext.Current.CancellationToken);
 
         // Assert
 
@@ -1524,7 +1526,8 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToPageAsync(
-                arguments, Xunit.TestContext.Current.CancellationToken);
+                arguments,
+                Xunit.TestContext.Current.CancellationToken);
 
         // Assert
 
@@ -1551,7 +1554,9 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToBatchPageAsync(
-                t => t.GroupId, arguments, Xunit.TestContext.Current.CancellationToken);
+                t => t.GroupId,
+                arguments,
+                Xunit.TestContext.Current.CancellationToken);
 
         // Assert
 
@@ -1576,7 +1581,9 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToBatchPageAsync(
-                t => t.GroupId, arguments, Xunit.TestContext.Current.CancellationToken);
+                t => t.GroupId,
+                arguments,
+                Xunit.TestContext.Current.CancellationToken);
 
         // Assert
 
@@ -1605,7 +1612,9 @@ public class RelativeCursorTests(PostgreSqlResource resource)
 
         async Task Error()
             => await context.Brands.OrderBy(t => t.Name).ThenBy(t => t.Id).ToBatchPageAsync(
-                t => t.GroupId, arguments, Xunit.TestContext.Current.CancellationToken);
+                t => t.GroupId,
+                arguments,
+                Xunit.TestContext.Current.CancellationToken);
 
         // Assert
 
@@ -1683,7 +1692,10 @@ public class RelativeCursorTests(PostgreSqlResource resource)
     }
 
     private static async Task SeedThreeGroupsAsync(
-        string connectionString, int countGroup1, int countGroup2, int countGroup3)
+        string connectionString,
+        int countGroup1,
+        int countGroup2,
+        int countGroup3)
     {
         await using var context = new TestContext(connectionString);
         await context.Database.EnsureCreatedAsync();

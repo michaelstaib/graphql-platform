@@ -909,7 +909,8 @@ public static class StreamPagingQueryableExtensions
                 }
 
                 await foreach (var row in countsQuery.AsAsyncEnumerable()
-                    .WithCancellation(cancellationToken).ConfigureAwait(false))
+                    .WithCancellation(cancellationToken)
+                    .ConfigureAwait(false))
                 {
                     counts[row.Key] = row.Count;
 
@@ -947,12 +948,13 @@ public static class StreamPagingQueryableExtensions
                 countOnlyMap[key] = await CreateResolvedBatchPageAsync(
                     keys,
                     effectiveValueSelector,
-                    false,
-                    false,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
                     countOnlyIndex,
                     requestedCount,
                     keyTotal,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             return countOnlyMap;
@@ -975,7 +977,10 @@ public static class StreamPagingQueryableExtensions
 
         // A null pump means an empty key set: the enumerator and lifetime are already released.
         var pump = await StreamBatchPump<TKey, TElement>.CreateAsync(
-            rowEnumerator, distinctRequestedKeys, lifetime).ConfigureAwait(false);
+            rowEnumerator,
+            distinctRequestedKeys,
+            lifetime)
+            .ConfigureAwait(false);
 
         if (pump is null)
         {
@@ -1212,6 +1217,11 @@ public static class StreamPagingQueryableExtensions
         var createCursor = CreateCursorFactory<TElement>(keys, relativeShaped: index is not null);
 
         return await ElementCursorStreamPage<TElement, TValue>.CreatePrimedAsync(
-            pump: null, definition, valueSelector, createCursor, cancellationToken).ConfigureAwait(false);
+            pump: null,
+            definition,
+            valueSelector,
+            createCursor,
+            cancellationToken)
+            .ConfigureAwait(false);
     }
 }

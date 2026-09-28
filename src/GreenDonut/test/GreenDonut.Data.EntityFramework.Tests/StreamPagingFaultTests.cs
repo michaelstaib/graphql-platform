@@ -31,7 +31,8 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         var exception = new InvalidOperationException("priming boom");
         var readerDisposal = new DataReaderDisposalInterceptor();
         var context = new CatalogContext(
-            connectionString, [new ReaderFaultingInterceptor(() => exception), readerDisposal]);
+            connectionString,
+            [new ReaderFaultingInterceptor(() => exception), readerDisposal]);
         var lifetime = new RecordingLifetime(context);
         var cancellationToken = Xunit.TestContext.Current.CancellationToken;
 
@@ -158,7 +159,8 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         var exception = new InvalidOperationException("count boom");
         var connectionDisposal = new ConnectionDisposalInterceptor();
         var context = new CatalogContext(
-            connectionString, [new ThrowingReaderInterceptor(exception), connectionDisposal]);
+            connectionString,
+            [new ThrowingReaderInterceptor(exception), connectionDisposal]);
         var lifetime = new RecordingLifetime(context);
         var arguments = new PagingArguments(2, includeTotalCount: true) { IncludeItems = false };
         var cancellationToken = Xunit.TestContext.Current.CancellationToken;
@@ -187,7 +189,8 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         var exception = new InvalidOperationException("count boom");
         var readerDisposal = new DataReaderDisposalInterceptor();
         var context = new CatalogContext(
-            connectionString, [new ThrowingSecondReaderInterceptor(exception), readerDisposal]);
+            connectionString,
+            [new ThrowingSecondReaderInterceptor(exception), readerDisposal]);
         var lifetime = new RecordingLifetime(context);
         var arguments = new PagingArguments(2, includeTotalCount: true);
         var cancellationToken = Xunit.TestContext.Current.CancellationToken;
@@ -321,7 +324,8 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         var exception = new InvalidOperationException("batch count boom");
         var connectionDisposal = new ConnectionDisposalInterceptor();
         var context = new CatalogContext(
-            connectionString, [new ThrowingReaderInterceptor(exception), connectionDisposal]);
+            connectionString,
+            [new ThrowingReaderInterceptor(exception), connectionDisposal]);
         var lifetime = new RecordingLifetime(context);
         var cancellationToken = Xunit.TestContext.Current.CancellationToken;
 
@@ -353,7 +357,8 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
         var exception = new InvalidOperationException("distinct keys boom");
         var connectionDisposal = new ConnectionDisposalInterceptor();
         var context = new CatalogContext(
-            connectionString, [new ThrowingReaderInterceptor(exception), connectionDisposal]);
+            connectionString,
+            [new ThrowingReaderInterceptor(exception), connectionDisposal]);
         var lifetime = new RecordingLifetime(context);
         var cancellationToken = Xunit.TestContext.Current.CancellationToken;
 
@@ -364,7 +369,10 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
                 .OrderBy(t => t.Name)
                 .ThenBy(t => t.Id)
                 .ToBatchStreamPageAsync(
-                    t => t.Name, new PagingArguments(2), lifetime: lifetime, cancellationToken: cancellationToken)
+                    t => t.Name,
+                    new PagingArguments(2),
+                    lifetime: lifetime,
+                    cancellationToken: cancellationToken)
                 .AsTask());
 
         // assert
@@ -389,7 +397,10 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
                 .OrderBy(t => t.Name)
                 .ThenBy(t => t.Id)
                 .ToBatchStreamPageAsync(
-                    t => t.Name, new PagingArguments(2), lifetime: lifetime, cancellationToken: cancellationToken)
+                    t => t.Name,
+                    new PagingArguments(2),
+                    lifetime: lifetime,
+                    cancellationToken: cancellationToken)
                 .AsTask());
 
         // assert
@@ -464,7 +475,10 @@ public class StreamPagingFaultTests(PostgreSqlResource resource)
             .OrderBy(t => t.Name)
             .ThenBy(t => t.Id)
             .ToBatchStreamPageAsync(
-                t => t.Name, new PagingArguments(2), lifetime: lifetime, cancellationToken: cancellationToken);
+                t => t.Name,
+                new PagingArguments(2),
+                lifetime: lifetime,
+                cancellationToken: cancellationToken);
 
         foreach (var page in pages.Values)
         {
