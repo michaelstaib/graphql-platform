@@ -299,7 +299,7 @@ internal sealed class StreamBatchPump<TKey, TElement>
                 }
 
                 each.Completed = true;
-                await each.Drain(CancellationToken.None).ConfigureAwait(false);
+                await DrainKeyAsync(each.Drain).ConfigureAwait(false);
             }
 
             return;
@@ -329,7 +329,7 @@ internal sealed class StreamBatchPump<TKey, TElement>
 
             if (previous.Drain is not null)
             {
-                await previous.Drain(CancellationToken.None).ConfigureAwait(false);
+                await DrainKeyAsync(previous.Drain).ConfigureAwait(false);
             }
         }
 
@@ -344,6 +344,20 @@ internal sealed class StreamBatchPump<TKey, TElement>
                 TotalCount = row.TotalCount,
                 HasMore = row.HasMore
             });
+        }
+    }
+
+    // Runs a key's drain, faulting the pump and rethrowing the original failure if it throws.
+    private async ValueTask DrainKeyAsync(Func<CancellationToken, ValueTask> drain)
+    {
+        try
+        {
+            await drain(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await FaultAsync(ex).ConfigureAwait(false);
+            throw;
         }
     }
 

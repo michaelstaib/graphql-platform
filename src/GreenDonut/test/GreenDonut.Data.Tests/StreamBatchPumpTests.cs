@@ -599,6 +599,35 @@ public class StreamBatchPumpTests
     }
 
     [Fact]
+    public async Task DrainAsync_Should_FaultThePump_When_TheValueSelectorThrows_And_ASiblingPullsLater()
+    {
+        // arrange
+        var selectorException = new InvalidOperationException("selector boom");
+        var lifetime = new ScriptedAsyncDisposable();
+        var source = new ScriptedAsyncSource<StreamBatchRow<string, string>>(
+            Row("A", "a1"),
+            Row("A", "bad"),
+            Row("B", "b1"));
+        var pump = await CreatePump(source, ["A", "B", "C"], lifetime);
+        pump.CreatePage(
+            "A",
+            Definition<string>(requestedCount: 2, forward: true),
+            item => item == "bad" ? throw selectorException : item,
+            static entry => entry.Node!);
+        var pageB = CreatePage(pump, "B", Definition<string>(requestedCount: 1, forward: true));
+        var pageC = CreatePage(pump, "C", Definition<string>(requestedCount: 1, forward: true));
+
+        // act
+        var thrownForC = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageC));
+        var thrownForB = await Assert.ThrowsAsync<InvalidOperationException>(() => CollectAsync(pageB));
+
+        // assert
+        Assert.Same(selectorException, thrownForC);
+        Assert.Same(selectorException, thrownForB);
+        Assert.Equal((1, 1), (source.DisposeCount, lifetime.DisposeCount));
+    }
+
+    [Fact]
     public async Task Completion_Should_SurfaceLifetimeDisposalFailure_Once_When_BatchKeyDrainedNaturally()
     {
         // arrange
