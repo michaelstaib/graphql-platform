@@ -1,8 +1,6 @@
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Linq.Expressions;
-using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace GreenDonut.Data.Internal;
@@ -184,19 +182,10 @@ internal static class ContainsKeysCompiler<TKey>
         }
 
         private static bool IsClosureSlot(object? value, Type type)
-        {
-            if (value is null)
-            {
-                return false;
-            }
+            => value is not null && !IsLiteralType(type);
 
-            if (type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false))
-            {
-                return true;
-            }
-
-            return value is IEnumerable and not string;
-        }
+        private static bool IsLiteralType(Type type)
+            => type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal);
 
         // The length prefix keeps a literal's rendered text from aliasing the shape key's own
         // delimiters.
