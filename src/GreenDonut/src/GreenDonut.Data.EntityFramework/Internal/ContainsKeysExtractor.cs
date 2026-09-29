@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using System.Reflection;
 
 namespace GreenDonut.Data.Internal;
 
@@ -158,17 +157,12 @@ internal static class ContainsKeysExtractor
                 return false;
             }
 
-            // A bare closure-field access reads the captured collection directly, no compiled
-            // delegate needed.
-            if (collectionExpr is MemberExpression
-                { Expression: ConstantExpression fieldOwner, Member: FieldInfo field }
-                && field.GetValue(fieldOwner.Value) is IEnumerable<TKey> fieldValue)
-            {
-                keys = fieldValue.Distinct().ToArray();
-                return true;
-            }
-
-            var enumerable = ContainsKeysCompiler<TKey>.Evaluate(collectionExpr);
+            // The whole collection operand is compiled as a standalone, parameterless delegate
+            // and invoked directly.
+            var operand = collectionExpr.Type == typeof(IEnumerable<TKey>)
+                ? collectionExpr
+                : Expression.Convert(collectionExpr, typeof(IEnumerable<TKey>));
+            var enumerable = Expression.Lambda<Func<IEnumerable<TKey>>>(operand).Compile()();
 
             keys = enumerable.Distinct().ToArray();
             return true;

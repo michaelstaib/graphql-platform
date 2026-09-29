@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="HotChocolate.Data.EntityFramework" />
-    <InternalsVisibleTo Include="GreenDonut.Data.Tests" />
   </ItemGroup>
 
   <ItemGroup>
