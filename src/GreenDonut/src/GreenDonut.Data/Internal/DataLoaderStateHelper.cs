@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 
@@ -119,6 +120,10 @@ internal static class DataLoaderStateHelper
         return hash;
     }
 
+    /// <summary>
+    /// Appends the paging arguments to the branch key. The default combination of arguments
+    /// produces the same bytes it always has, and every non-default value appends a marker.
+    /// </summary>
     internal static ExpressionHasher Add(this ExpressionHasher hasher, PagingArguments pagingArguments)
     {
         var requiredBufferSize = 1;
@@ -145,6 +150,23 @@ internal static class DataLoaderStateHelper
             requiredBufferSize += 2;
         }
 
+        // Only reserve space for these markers when the value differs from its default, so
+        // the hash of every existing argument combination stays byte-identical.
+        if (pagingArguments.IncludeTotalCount)
+        {
+            requiredBufferSize += 2;
+        }
+
+        if (pagingArguments.EnableRelativeCursors)
+        {
+            requiredBufferSize += 2;
+        }
+
+        if (pagingArguments.NullOrdering != NullOrdering.Unspecified)
+        {
+            requiredBufferSize += 2 + EstimateNonNegativeIntLength((int)pagingArguments.NullOrdering);
+        }
+
         if (requiredBufferSize == 1)
         {
             hasher.Add('-');
@@ -166,7 +188,10 @@ internal static class DataLoaderStateHelper
             span[1] = ':';
             written += 2;
 
-            if (!pagingArguments.First.Value.TryFormat(buffer[written..], out var charsWritten))
+            if (!pagingArguments.First.Value.TryFormat(
+                buffer[written..],
+                out var charsWritten,
+                provider: CultureInfo.InvariantCulture))
             {
                 throw ThrowHelper.PagingArgumentsHash_BufferTooSmall();
             }
@@ -193,7 +218,10 @@ internal static class DataLoaderStateHelper
             span[1] = ':';
             written += 2;
 
-            if (!pagingArguments.Last.Value.TryFormat(buffer[written..], out var charsWritten))
+            if (!pagingArguments.Last.Value.TryFormat(
+                buffer[written..],
+                out var charsWritten,
+                provider: CultureInfo.InvariantCulture))
             {
                 throw ThrowHelper.PagingArgumentsHash_BufferTooSmall();
             }
@@ -221,6 +249,40 @@ internal static class DataLoaderStateHelper
             written += 2;
         }
 
+        if (pagingArguments.IncludeTotalCount)
+        {
+            var span = buffer[written..];
+            span[0] = 't';
+            span[1] = ':';
+            written += 2;
+        }
+
+        if (pagingArguments.EnableRelativeCursors)
+        {
+            var span = buffer[written..];
+            span[0] = 'r';
+            span[1] = ':';
+            written += 2;
+        }
+
+        if (pagingArguments.NullOrdering != NullOrdering.Unspecified)
+        {
+            var span = buffer[written..];
+            span[0] = 'o';
+            span[1] = ':';
+            written += 2;
+
+            if (!((int)pagingArguments.NullOrdering).TryFormat(
+                buffer[written..],
+                out var charsWritten,
+                provider: CultureInfo.InvariantCulture))
+            {
+                throw ThrowHelper.PagingArgumentsHash_BufferTooSmall();
+            }
+
+            written += charsWritten;
+        }
+
         hasher.Add(buffer[..written]);
 
         if (rentedBuffer != null)
@@ -230,6 +292,10 @@ internal static class DataLoaderStateHelper
 
         return hasher;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int EstimateNonNegativeIntLength(int value)
+        => value == 0 ? 1 : (int)Math.Floor(Math.Log10(value) + 1);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int EstimateIntLength(int? value)
