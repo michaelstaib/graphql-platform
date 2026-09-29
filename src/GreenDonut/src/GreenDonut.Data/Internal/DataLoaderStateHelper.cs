@@ -121,8 +121,8 @@ internal static class DataLoaderStateHelper
     }
 
     /// <summary>
-    /// Appends the paging arguments to the branch key. The default combination of arguments
-    /// produces the same bytes it always has, and every non-default value appends a marker.
+    /// Appends the paging arguments to the branch key. Values equal to their defaults add no
+    /// bytes, and each non-default value appends its own marker.
     /// </summary>
     internal static ExpressionHasher Add(this ExpressionHasher hasher, PagingArguments pagingArguments)
     {
@@ -150,8 +150,6 @@ internal static class DataLoaderStateHelper
             requiredBufferSize += 2;
         }
 
-        // Only reserve space for these markers when the value differs from its default, so
-        // the hash of every existing argument combination stays byte-identical.
         if (pagingArguments.IncludeTotalCount)
         {
             requiredBufferSize += 2;
@@ -164,7 +162,7 @@ internal static class DataLoaderStateHelper
 
         if (pagingArguments.NullOrdering != NullOrdering.Unspecified)
         {
-            requiredBufferSize += 2 + EstimateNonNegativeIntLength((int)pagingArguments.NullOrdering);
+            requiredBufferSize += EstimateIntLength((int)pagingArguments.NullOrdering);
         }
 
         if (requiredBufferSize == 1)
@@ -292,10 +290,6 @@ internal static class DataLoaderStateHelper
 
         return hasher;
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int EstimateNonNegativeIntLength(int value)
-        => value == 0 ? 1 : (int)Math.Floor(Math.Log10(value) + 1);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int EstimateIntLength(int? value)

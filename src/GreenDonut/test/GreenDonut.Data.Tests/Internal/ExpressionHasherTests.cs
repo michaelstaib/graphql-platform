@@ -775,6 +775,23 @@ public static class ExpressionHasherTests
     }
 
     [Fact]
+    public static void PagingArguments_Should_ProduceStableDistinctHash_When_NullOrderingIsUndefined()
+    {
+        // arrange
+        var undefined = new PagingArguments(first: 5) with { NullOrdering = (NullOrdering)(-1) };
+        var nullsFirst = new PagingArguments(first: 5) with { NullOrdering = NullOrdering.NativeNullsFirst };
+
+        // act
+        var hash1 = new ExpressionHasher().Add(undefined).Compute();
+        var hash2 = new ExpressionHasher().Add(undefined).Compute();
+        var hashNullsFirst = new ExpressionHasher().Add(nullsFirst).Compute();
+
+        // assert
+        Assert.Equal(hash1, hash2);
+        Assert.NotEqual(hash1, hashNullsFirst);
+    }
+
+    [Fact]
     public static void PagingArguments_Should_ProduceSameHash_When_ArgumentsAreIdentical()
     {
         // arrange
@@ -805,13 +822,16 @@ public static class ExpressionHasherTests
         // arrange
         var arguments = new PagingArguments(first: -5, last: -3);
         var originalCulture = CultureInfo.CurrentCulture;
-        var invariantHash = new ExpressionHasher().Add(arguments).Compute();
-
-        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
-
+        string invariantHash;
         string swedishHash;
+
         try
         {
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            invariantHash = new ExpressionHasher().Add(arguments).Compute();
+
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
+
             // act
             swedishHash = new ExpressionHasher().Add(arguments).Compute();
         }
@@ -829,13 +849,16 @@ public static class ExpressionHasherTests
     {
         // arrange
         var originalCulture = CultureInfo.CurrentCulture;
-        var invariantHash = HashConstant(SampleEnum.Negative);
-
-        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
-
+        string invariantHash;
         string swedishHash;
+
         try
         {
+            CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+            invariantHash = HashConstant(SampleEnum.Negative);
+
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
+
             // act
             swedishHash = HashConstant(SampleEnum.Negative);
         }
@@ -846,6 +869,28 @@ public static class ExpressionHasherTests
 
         // assert
         Assert.Equal(invariantHash, swedishHash);
+    }
+
+    [Fact]
+    public static void Captured_Enum_Should_ProduceByteIdenticalHash_When_ValueIsNegative()
+    {
+        // arrange
+        // act
+        var hash = HashConstant(SampleEnum.Negative);
+
+        // assert
+        Assert.Equal("36eaabb0a6a8b3852c69ff6bdba0b500", hash);
+    }
+
+    [Fact]
+    public static void Captured_Enum_Should_ProduceByteIdenticalHash_When_ValueIsPositive()
+    {
+        // arrange
+        // act
+        var hash = HashConstant(SampleEnum.Positive);
+
+        // assert
+        Assert.Equal("d1a41c292640b9272a93193aa8b1c11b", hash);
     }
 
     private static string HashConstant(object value)
