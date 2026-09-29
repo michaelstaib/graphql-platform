@@ -579,7 +579,7 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
     [Fact]
     public async Task ToBatchStreamPageAsync_Should_FallBackToDistinctKeysQuery_When_ContainsOperandReferencesTheQueryParameter()
     {
-        // Arrange: the `Contains` receiver reads a member of the query parameter itself.
+        // Arrange: the `Contains` receiver is an IEnumerable<TKey> member of the query parameter itself.
         var connectionString = CreateConnectionString();
         await SeedAsync(connectionString, ("A", 2), ("B", 2), ("C", 1));
         var cancellationToken = Xunit.TestContext.Current.CancellationToken;
@@ -590,7 +590,7 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
         // Act
         using var capture = new CapturePagingQueryInterceptor();
         var pages = await context.Items
-            .Where(t => t.Name.Contains(t.GroupKey))
+            .Where(t => t.Aliases.Contains(t.GroupKey))
             .OrderBy(t => t.Name)
             .ThenBy(t => t.Id)
             .ToBatchStreamPageAsync(t => t.GroupKey, arguments, cancellationToken: cancellationToken);
@@ -1170,7 +1170,12 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
         {
             for (var i = 1; i <= count; i++)
             {
-                context.Items.Add(new SequentialItem { GroupKey = groupKey, Name = $"{groupKey}-Item{i:D2}" });
+                context.Items.Add(new SequentialItem
+                {
+                    GroupKey = groupKey,
+                    Name = $"{groupKey}-Item{i:D2}",
+                    Aliases = [groupKey]
+                });
             }
         }
 
@@ -1201,6 +1206,8 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
         [MaxLength(50)] public required string GroupKey { get; set; }
 
         [MaxLength(100)] public required string Name { get; set; }
+
+        public List<string> Aliases { get; set; } = [];
     }
 }
 #endif
