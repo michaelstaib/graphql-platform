@@ -840,9 +840,11 @@ public static class StreamPagingQueryableExtensions
         // flat query applies per key.
         var windowPredicate = CombinePredicates(composition.AfterPredicate, composition.BeforePredicate);
 
-        // True when a relative continuation cursor needs its own per-key empty check. Otherwise an
-        // empty key's page falls back to the cursor's cached total and index.
-        var needsCursorEmptyCheck = relative && cursor is { IsEndCursor: false } && includeTotalCount;
+        // True whenever a relative continuation cursor needs its own per-key empty check: a fresh
+        // count already runs, or a backward page bakes its flags and index before any row streams.
+        var needsCursorEmptyCheck = relative
+            && cursor is { IsEndCursor: false }
+            && (includeTotalCount || (isBackward && usesRelativeBackwardFlags));
 
         // The requested keys are the caller's key set; a key with zero matching rows still gets
         // an empty page.
