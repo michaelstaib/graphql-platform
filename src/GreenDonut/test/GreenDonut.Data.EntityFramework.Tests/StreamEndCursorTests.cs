@@ -7,8 +7,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace GreenDonut.Data;
 
-// The stream twin of EndCursorTests above: front rows trimmed from an offset-zero end cursor
-// page are read from the database but never handed to the consumer.
+// Streaming counterpart to EndCursorTests (in EndCursorTests.cs): front rows trimmed from an
+// offset-zero end cursor page are read from the database but never handed to the consumer.
 [Collection(PostgresCacheCollectionFixture.DefinitionName)]
 public class StreamEndCursorTests(PostgreSqlResource resource)
 {
