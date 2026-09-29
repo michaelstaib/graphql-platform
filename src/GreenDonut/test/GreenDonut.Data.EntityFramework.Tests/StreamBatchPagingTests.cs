@@ -62,6 +62,38 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task ToBatchStreamPageAsync_Should_UseEachCallsOwnKeys_When_TheSameContainsShapeRunsTwice()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedAsync(connectionString, ("A", 2), ("B", 2), ("C", 2));
+        var cancellationToken = Xunit.TestContext.Current.CancellationToken;
+
+        // Act
+        var firstPages = await RunWithSkippedKeysAsync(connectionString, ["Z", "A", "B"], cancellationToken);
+        var secondPages = await RunWithSkippedKeysAsync(connectionString, ["Z", "B", "C"], cancellationToken);
+
+        // Assert
+        Assert.Equal(["A", "B"], firstPages.Keys.OrderBy(t => t).ToArray());
+        Assert.Equal(["B", "C"], secondPages.Keys.OrderBy(t => t).ToArray());
+    }
+
+    private static async Task<Dictionary<string, StreamPage<SequentialItem>>> RunWithSkippedKeysAsync(
+        string connectionString,
+        string[] keys,
+        CancellationToken cancellationToken)
+    {
+        await using var context = new SequentialItemContext(connectionString);
+        var arguments = new PagingArguments(2);
+
+        return await context.Items
+            .Where(t => keys.Skip(1).Contains(t.GroupKey))
+            .OrderBy(t => t.Name)
+            .ThenBy(t => t.Id)
+            .ToBatchStreamPageAsync(t => t.GroupKey, arguments, cancellationToken: cancellationToken);
+    }
+
+    [Fact]
     public async Task ToBatchStreamPageAsync_Should_ReturnEachKeysLastItemsInAscendingOrder_When_PagingBackward()
     {
         // Arrange
