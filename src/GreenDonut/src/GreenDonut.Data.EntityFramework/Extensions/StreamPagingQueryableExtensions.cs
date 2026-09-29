@@ -39,7 +39,9 @@ public static class StreamPagingQueryableExtensions
     /// Returns a streaming page of items.
     /// </returns>
     /// <exception cref="ArgumentException">
-    /// If the queryable does not have any keys specified.
+    /// If the queryable does not have any keys specified, if <c>first</c> or <c>last</c> is
+    /// given and not greater than zero, or if a relative cursor's offset does not fit into an
+    /// <see cref="int"/>.
     /// </exception>
     public static ValueTask<StreamPage<T>> ToStreamPageAsync<T>(
         this IQueryable<T> source,
@@ -76,9 +78,10 @@ public static class StreamPagingQueryableExtensions
     /// Returns a streaming page of items.
     /// </returns>
     /// <exception cref="ArgumentException">
-    /// If the queryable does not have any keys specified, or if
-    /// <see cref="PagingArguments.IncludeItems"/> is <c>false</c> while
-    /// <paramref name="includeTotalCount"/> is also <c>false</c>.
+    /// If the queryable does not have any keys specified, if <c>first</c> or <c>last</c> is
+    /// given and not greater than zero, if a relative cursor's offset does not fit into an
+    /// <see cref="int"/>, or if <see cref="PagingArguments.IncludeItems"/> is <c>false</c>
+    /// while <paramref name="includeTotalCount"/> is also <c>false</c>.
     /// </exception>
     public static async ValueTask<StreamPage<T>> ToStreamPageAsync<T>(
         this IQueryable<T> source,
