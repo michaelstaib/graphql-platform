@@ -164,6 +164,57 @@ public class StreamBatchPagingTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task ToBatchStreamPageAsync_Should_UseEachOverloadsKeys_When_AssignableOverloadsShareAShape()
+    {
+        // Arrange
+        var connectionString = CreateConnectionString();
+        await SeedAsync(connectionString, ("A", 2), ("B", 2), ("C", 2));
+        var cancellationToken = Xunit.TestContext.Current.CancellationToken;
+        string[] arrayKeys = ["A", "B", "C"];
+        IEnumerable<string> enumerableKeys = arrayKeys;
+
+        // Act
+        var arrayPages = await RunWithArrayOverloadAsync(connectionString, arrayKeys, cancellationToken);
+        var enumerablePages = await RunWithEnumerableOverloadAsync(connectionString, enumerableKeys, cancellationToken);
+
+        // Assert
+        Assert.Equal(["B", "C"], arrayPages.Keys.OrderBy(t => t).ToArray());
+        Assert.Equal(["A", "B"], enumerablePages.Keys.OrderBy(t => t).ToArray());
+    }
+
+    private static async Task<Dictionary<string, StreamPage<SequentialItem>>> RunWithArrayOverloadAsync(
+        string connectionString,
+        string[] keys,
+        CancellationToken cancellationToken)
+    {
+        await using var context = new SequentialItemContext(connectionString);
+
+        return await context.Items
+            .Where(t => Pick(keys).Contains(t.GroupKey))
+            .OrderBy(t => t.Name)
+            .ThenBy(t => t.Id)
+            .ToBatchStreamPageAsync(t => t.GroupKey, new PagingArguments(2), cancellationToken: cancellationToken);
+    }
+
+    private static async Task<Dictionary<string, StreamPage<SequentialItem>>> RunWithEnumerableOverloadAsync(
+        string connectionString,
+        IEnumerable<string> keys,
+        CancellationToken cancellationToken)
+    {
+        await using var context = new SequentialItemContext(connectionString);
+
+        return await context.Items
+            .Where(t => Pick(keys).Contains(t.GroupKey))
+            .OrderBy(t => t.Name)
+            .ThenBy(t => t.Id)
+            .ToBatchStreamPageAsync(t => t.GroupKey, new PagingArguments(2), cancellationToken: cancellationToken);
+    }
+
+    private static string[] Pick(string[] source) => source[1..];
+
+    private static IEnumerable<string> Pick(IEnumerable<string> source) => source.Take(2);
+
+    [Fact]
     public async Task ToBatchStreamPageAsync_Should_ReturnEachKeysLastItemsInAscendingOrder_When_PagingBackward()
     {
         // Arrange
