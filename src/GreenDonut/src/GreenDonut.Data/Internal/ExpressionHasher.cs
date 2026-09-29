@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Text;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -534,7 +535,12 @@ internal sealed class ExpressionHasher : ExpressionVisitor
         Append(EnumTag);
         AppendType(value.GetType());
         Append('|');
-        Append(value.ToString("D"));
+
+        var underlyingValue = Convert.ChangeType(
+            value,
+            Enum.GetUnderlyingType(value.GetType()),
+            CultureInfo.InvariantCulture);
+        Append(((IFormattable)underlyingValue).ToString("D", CultureInfo.InvariantCulture));
     }
 
     private void AppendNumber<T>(ValueKind kind, T value)
