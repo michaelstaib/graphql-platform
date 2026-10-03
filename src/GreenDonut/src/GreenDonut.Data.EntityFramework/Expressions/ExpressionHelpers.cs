@@ -833,7 +833,7 @@ internal static class ExpressionHelpers
     /// offset direction does not match <c>first</c> or <c>last</c>, or if the end cursor offset
     /// or a relative cursor's offset does not fit the requested page size.
     /// </exception>
-    public static BatchStreamExpression<TKey, TElement> BuildBatchStreamExpression<TKey, TElement>(
+    public static BatchStreamQuery<TKey, TElement> BuildBatchStreamQuery<TKey, TElement>(
         IQueryable<TElement> source,
         Expression<Func<TElement, TKey>> keySelector,
         PagingArguments arguments,
@@ -1057,7 +1057,7 @@ internal static class ExpressionHelpers
             ordered = (IQueryable<StreamBatchRow<TKey, TElement>>)method.Invoke(null, [ordered, thenByLambda])!;
         }
 
-        return new BatchStreamExpression<TKey, TElement>(
+        return new BatchStreamQuery<TKey, TElement>(
             ordered,
             isBackward,
             cursor,

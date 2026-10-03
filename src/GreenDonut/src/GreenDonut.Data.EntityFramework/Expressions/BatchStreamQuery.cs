@@ -14,7 +14,7 @@ namespace GreenDonut.Data.Expressions;
 /// <typeparam name="TElement">
 /// The type of the source rows.
 /// </typeparam>
-internal readonly struct BatchStreamExpression<TKey, TElement>(
+internal readonly struct BatchStreamQuery<TKey, TElement>(
     IQueryable<StreamBatchRow<TKey, TElement>> flatQuery,
     bool isBackward,
     Cursor? cursor,

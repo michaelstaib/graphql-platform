@@ -753,7 +753,7 @@ public static class StreamPagingQueryableExtensions
         where TKey : notnull
     {
         CursorKey[] keys;
-        BatchStreamExpression<TKey, TElement> composition;
+        BatchStreamQuery<TKey, TElement> composition;
         var requestedCount = 10;
 
         try
@@ -803,7 +803,7 @@ public static class StreamPagingQueryableExtensions
                 arguments = arguments with { First = 10 };
             }
 
-            composition = BuildBatchStreamExpression(
+            composition = BuildBatchStreamQuery(
                 source,
                 keySelector,
                 arguments,
