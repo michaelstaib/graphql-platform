@@ -80,8 +80,8 @@ public static class PagingQueryableExtensions
         var originalQuery = composition.OriginalQuery;
         var keys = composition.Keys;
         var cursor = composition.Cursor;
-        var requestedCount = composition.RequestedCount;
-        var isBackward = composition.IsBackward;
+        var requestedCount = composition.RequestedPageSize;
+        var isBackward = composition.Direction is PagingDirection.Backward;
         var totalCount = composition.TotalCount;
         arguments = composition.Arguments;
         includeTotalCount = composition.IncludeTotalCount;

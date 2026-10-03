@@ -92,8 +92,12 @@ internal static class PagingQueryComposer
         }
 
         var originalQuery = source;
-        var forward = arguments.Last is null;
-        var requestedCount = forward ? arguments.First!.Value : arguments.Last!.Value;
+        var direction = arguments.Last is null
+            ? PagingDirection.Forward
+            : PagingDirection.Backward;
+        var requestedCount = direction is PagingDirection.Forward
+            ? arguments.First!.Value
+            : arguments.Last!.Value;
         var offset = 0;
         int? totalCount = null;
         var usesRelativeCursors = false;
@@ -189,9 +193,7 @@ internal static class PagingQueryComposer
             }
         }
 
-        var isBackward = arguments.Last is not null;
-
-        if (isBackward)
+        if (direction is PagingDirection.Backward)
         {
             source = ReverseOrderExpressionRewriter.Rewrite(source);
         }
@@ -218,8 +220,7 @@ internal static class PagingQueryComposer
             source,
             keys,
             cursor,
-            forward,
-            isBackward,
+            direction,
             requestedCount,
             offset,
             selector,

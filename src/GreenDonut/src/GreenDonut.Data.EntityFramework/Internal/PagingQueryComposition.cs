@@ -20,13 +20,10 @@ namespace GreenDonut.Data.Internal;
 /// <param name="Cursor">
 /// The parsed cursor, or <c>null</c> if neither <c>after</c> nor <c>before</c> was specified.
 /// </param>
-/// <param name="Forward">
-/// <c>true</c> if the page is sliced from the start of the dataset (using <c>first</c>).
+/// <param name="Direction">
+/// The direction in which the page is sliced from the dataset.
 /// </param>
-/// <param name="IsBackward">
-/// <c>true</c> if the page is sliced from the end of the dataset (using <c>last</c>).
-/// </param>
-/// <param name="RequestedCount">
+/// <param name="RequestedPageSize">
 /// The number of items requested through <c>first</c> or <c>last</c>.
 /// </param>
 /// <param name="Offset">
@@ -53,9 +50,8 @@ internal sealed record PagingQueryComposition<T>(
     IQueryable<T> SlicedQuery,
     CursorKey[] Keys,
     Cursor? Cursor,
-    bool Forward,
-    bool IsBackward,
-    int RequestedCount,
+    PagingDirection Direction,
+    int RequestedPageSize,
     int Offset,
     Expression<Func<T, T>>? Selector,
     PagingArguments Arguments,

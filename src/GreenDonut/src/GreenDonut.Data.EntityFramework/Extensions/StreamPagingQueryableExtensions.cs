@@ -100,8 +100,8 @@ public static class StreamPagingQueryableExtensions
             originalQuery = composition.OriginalQuery;
             keys = composition.Keys;
             cursor = composition.Cursor;
-            requestedCount = composition.RequestedCount;
-            isBackward = composition.IsBackward;
+            requestedCount = composition.RequestedPageSize;
+            isBackward = composition.Direction is PagingDirection.Backward;
             arguments = composition.Arguments;
             includeTotalCount = composition.IncludeTotalCount;
         }
