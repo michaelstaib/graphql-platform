@@ -40,8 +40,8 @@ internal sealed class PagingArgumentsParameterExpressionBuilder()
 
         if (includeTotalCount)
         {
-            var flags = ConnectionFlagsHelper.GetConnectionFlags(context);
-            includeItems = (flags & ~ConnectionFlags.TotalCount) != ConnectionFlags.None
+            includeItems = context.IsSelected("nodes")
+                || context.IsSelected("edges")
                 || context.IsSelected("pageInfo");
         }
 

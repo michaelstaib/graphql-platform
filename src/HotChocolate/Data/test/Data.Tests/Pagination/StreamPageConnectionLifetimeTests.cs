@@ -51,6 +51,40 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Execute_Should_ReturnRowsAndTotalCount_When_TotalCountAndNodesAreSelected()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            "{ items(first: 2) { totalCount nodes { id } } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "items": {
+                  "totalCount": 5,
+                  "nodes": [
+                    {
+                      "id": 1
+                    },
+                    {
+                      "id": 2
+                    }
+                  ]
+                }
+              }
+            }
+            """);
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
     public async Task Execute_Should_ShareOnePage_When_NodesEdgesAndPageInfoAreSelected()
     {
         // arrange
@@ -282,9 +316,7 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             descriptor
                 .Field(t => t.GetItems(default!, default!, default))
                 .AddPagingArguments()
-                .Type<NonNullType<ItemConnectionType>>()
-                .Extend()
-                .OnBeforeCreate(d => d.SetConnectionFlags());
+                .Type<NonNullType<ItemConnectionType>>();
         }
     }
 
@@ -295,9 +327,7 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             descriptor
                 .Field(t => t.GetItems(default!, default!, default))
                 .AddPagingArguments()
-                .Type<NonNullType<ItemConnectionType>>()
-                .Extend()
-                .OnBeforeCreate(d => d.SetConnectionFlags());
+                .Type<NonNullType<ItemConnectionType>>();
         }
     }
 
