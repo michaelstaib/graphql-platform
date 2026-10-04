@@ -53,11 +53,24 @@ internal sealed class QueryExecutor
 
             // there are no deferred parts, so this behaves like a buffered result: seal now.
             memory.Seal();
+
+            foreach (var cleanupTask in operationContext.Result.TakeCleanupTasks())
+            {
+                initialResult.RegisterForCleanup(cleanupTask);
+            }
+
             return initialResult;
         }
 
         coordinator.EnqueueResult(initialResult);
-        return new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult);
+
+        var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult);
+
+        // the payloads are disposed while the stream is still being read, so the request cleanup
+        // is released when the stream itself is disposed.
+        stream.RegisterForCleanup(operationContext.Result.ExecuteCleanupTasksAsync);
+
+        return stream;
 
         async IAsyncEnumerable<OperationResult> CreateStream()
         {
@@ -171,6 +184,7 @@ internal sealed class QueryExecutor
             results[i] = i == 0
                 ? new ResponseStream(CreateStreamAndComplete, ExecutionResultKind.DeferredResult)
                 : CreateItemStream(context);
+            results[i].RegisterForCleanup(context.Result.ExecuteCleanupTasksAsync);
         }
 
         static ResponseStream CreateItemStream(OperationContext context)

@@ -8,6 +8,7 @@ internal sealed class DeferTask : ExecutionTask
 {
     private static readonly ArrayPool<IExecutionTask> s_pool = ArrayPool<IExecutionTask>.Shared;
     private OperationContextOwner _deferContextOwner = null!;
+    private OperationContext _cleanupContext = null!;
     private object? _parent;
     private IImmutableDictionary<string, object?> _scopedContext = null!;
     private int _executionBranchId;
@@ -59,7 +60,16 @@ internal sealed class DeferTask : ExecutionTask
 
         // once the execution branch has completed we enqueue the completed
         // result with the defer coordinator so it can be delivered.
-        deferContext.DeferExecutionCoordinator.EnqueueResult(deferContext.BuildResult(), _executionBranchId);
+        var result = deferContext.BuildResult();
+
+        // the request cleanup registered by the deferred resolvers is handed to the operation
+        // context that owns the response stream, so it runs once the stream is disposed.
+        foreach (var cleanupTask in deferContext.Result.TakeCleanupTasks())
+        {
+            _cleanupContext.Result.RegisterForCleanup(cleanupTask);
+        }
+
+        deferContext.DeferExecutionCoordinator.EnqueueResult(result, _executionBranchId);
     }
 
     protected override ValueTask OnAfterCompletedAsync(CancellationToken cancellationToken)
@@ -89,6 +99,7 @@ internal sealed class DeferTask : ExecutionTask
             executionBranchId,
             deferUsage);
 
+        _cleanupContext = parentContext.CleanupContext;
         _parent = parent;
         _scopedContext = scopedContext;
         _executionBranchId = executionBranchId;
@@ -99,6 +110,7 @@ internal sealed class DeferTask : ExecutionTask
     {
         _deferContextOwner.Dispose();
         _deferContextOwner = null!;
+        _cleanupContext = null!;
         _parent = null!;
         _scopedContext = null!;
         _executionBranchId = 0;

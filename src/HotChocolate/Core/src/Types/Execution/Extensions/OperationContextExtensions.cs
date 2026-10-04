@@ -101,9 +101,14 @@ internal static class OperationContextExtensions
                 ContextData = resultBuilder.ContextData
             };
 
-            foreach (var cleanupTask in resultBuilder.TakeCleanupTasks())
+            // incremental operations deliver several payloads, so their request cleanup is owned by
+            // the response stream instead of the payload that happens to be built first.
+            if (!context.Operation.HasIncrementalParts)
             {
-                result.RegisterForCleanup(cleanupTask);
+                foreach (var cleanupTask in resultBuilder.TakeCleanupTasks())
+                {
+                    result.RegisterForCleanup(cleanupTask);
+                }
             }
 
             if (resultBuilder.Path is not null

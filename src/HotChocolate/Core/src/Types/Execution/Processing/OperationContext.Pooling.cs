@@ -39,6 +39,7 @@ internal sealed partial class OperationContext
     private IBatchDispatcher _batchDispatcher = null!;
     private InputParser _inputParser = null!;
     private MemoryArena? _memory;
+    private OperationContext? _cleanupContext;
     private int _branchId;
     private int _variableIndex;
     private object? _rootValue;
@@ -62,6 +63,12 @@ internal sealed partial class OperationContext
     }
 
     public bool IsInitialized => _isInitialized;
+
+    /// <summary>
+    /// Gets the operation context that owns the request cleanup tasks of this context.
+    /// This is the context itself unless it executes a deferred part of the operation.
+    /// </summary>
+    public OperationContext CleanupContext => _cleanupContext ?? this;
 
     public bool IsSharedScheduler => !ReferenceEquals(_workScheduler, _currentWorkScheduler);
 
@@ -146,6 +153,7 @@ internal sealed partial class OperationContext
         _resolveQueryRootValue = context._resolveQueryRootValue;
         _batchDispatcher = context._batchDispatcher;
         _memory = context._memory;
+        _cleanupContext = context.CleanupContext;
         _currentBranchTracker = context._currentBranchTracker;
         _currentWorkScheduler = context._currentWorkScheduler;
         _currentDeferExecutionCoordinator = context._currentDeferExecutionCoordinator;
@@ -202,6 +210,7 @@ internal sealed partial class OperationContext
             _resolveQueryRootValue = null!;
             _batchDispatcher = null!;
             _memory = null;
+            _cleanupContext = null;
             _branchId = int.MinValue;
             _propagateNullValues = false;
             _isInitialized = false;

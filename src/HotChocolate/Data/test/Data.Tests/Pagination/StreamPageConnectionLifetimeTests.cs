@@ -149,6 +149,82 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Dispose_Should_ReleaseThePageWithTheStream_When_NodesAreDeferred()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+        List<string> payloads = [];
+        List<int> releasedAfterPayload = [];
+        probe.NodesGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ items(first: 2) { totalCount ... @defer { nodes { id } } } }",
+            TestContext.Current.CancellationToken);
+
+        await foreach (var payload in result.ExpectResponseStream().ReadResultsAsync())
+        {
+            payloads.Add(payload.ToJson());
+            await payload.DisposeAsync();
+            releasedAfterPayload.Add(probe.Released);
+            probe.NodesGate.TrySetResult();
+        }
+
+        await result.DisposeAsync();
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": {
+                  "totalCount": 5
+                }
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "data": {
+                    "nodes": [
+                      {
+                        "id": 1
+                      },
+                      {
+                        "id": 2
+                      }
+                    ]
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+        Assert.Equal(0, releasedAfterPayload[0]);
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
     public async Task Dispose_Should_ReleaseThePageOnce_When_ThePageIsAbandonedBeforeCompletion()
     {
         // arrange
@@ -259,6 +335,7 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             .AddType<ItemConnectionType>()
             .AddDataLoader<ItemsByAuthorDataLoader>()
             .AddPagingArguments()
+            .ModifyOptions(o => o.EnableDefer = true)
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
     public sealed class Item
@@ -336,6 +413,17 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         protected override void Configure(IObjectTypeDescriptor<StreamPageConnection<Item>> descriptor)
         {
             descriptor.Name("ItemConnection");
+            descriptor
+                .Field(t => t.Nodes)
+                .Use(next => async context =>
+                {
+                    if (context.Service<Probe>().NodesGate is { } gate)
+                    {
+                        await gate.Task;
+                    }
+
+                    await next(context);
+                });
             descriptor.Field(t => t.Edges).Type<ListType<NonNullType<ItemEdgeType>>>();
             descriptor.Field(t => t.PageInfo).Type<NonNullType<ItemPageInfoType>>();
         }
@@ -411,6 +499,8 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         public int Released => Volatile.Read(ref _released);
 
         public CancellationTokenSource? CancelAfterCreate { get; set; }
+
+        public TaskCompletionSource? NodesGate { get; set; }
 
         public static async Task<Probe> CreateSqliteAsync(int authorCount, int itemsPerAuthor)
         {
