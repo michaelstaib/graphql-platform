@@ -101,6 +101,11 @@ internal static class OperationContextExtensions
                 ContextData = resultBuilder.ContextData
             };
 
+            foreach (var cleanupTask in resultBuilder.TakeCleanupTasks())
+            {
+                result.RegisterForCleanup(cleanupTask);
+            }
+
             if (resultBuilder.Path is not null
                 || resultBuilder.HasNext.HasValue
                 || !resultBuilder.Pending.IsEmpty

@@ -285,13 +285,20 @@ internal sealed class OperationExecutionMiddleware
 
             return result;
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            // if an operation is canceled we will abandon the rented operation context
-            // to ensure that that abandoned tasks do not leak into new operations.
-            operationContextOwner = null;
+            if (ex is OperationCanceledException)
+            {
+                // if an operation is canceled we will abandon the rented operation context
+                // to ensure that that abandoned tasks do not leak into new operations.
+                operationContextOwner = null;
+            }
 
-            // we rethrow so that another middleware can deal with the cancellation.
+            // no result will be built, so the cleanup tasks registered for the request
+            // would never run if we did not release them here.
+            await operationContext.Result.ExecuteCleanupTasksAsync().ConfigureAwait(false);
+
+            // we rethrow so that another middleware can deal with the failure.
             throw;
         }
         finally

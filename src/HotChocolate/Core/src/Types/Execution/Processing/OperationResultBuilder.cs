@@ -126,6 +126,24 @@ internal sealed class OperationResultBuilder : IOperationResultBuilder
         }
     }
 
+    public ImmutableList<Func<ValueTask>> TakeCleanupTasks()
+    {
+        lock (_sync)
+        {
+            var cleanupTasks = CleanupTasks;
+            CleanupTasks = [];
+            return cleanupTasks;
+        }
+    }
+
+    public async ValueTask ExecuteCleanupTasksAsync()
+    {
+        foreach (var cleanupTask in TakeCleanupTasks())
+        {
+            await cleanupTask().ConfigureAwait(false);
+        }
+    }
+
     public void Reset()
     {
         RequestIndex = -1;
