@@ -50,12 +50,43 @@ public class ResolverCleanupTests
         Assert.Equal(["request"], log);
     }
 
+    [Fact]
+    public async Task RegisterForCleanup_Should_RunRequestCleanupForEachContext_When_AVariableBatchIsCancelled()
+    {
+        // arrange
+        List<string> log = [];
+        var registrations = 0;
+        using var cancellation = new CancellationTokenSource();
+        var executor = await CreateExecutorAsync(
+            context =>
+            {
+                context.RegisterForCleanup(() => Log(log, "request"), CleanAfter.Request);
+
+                if (Interlocked.Increment(ref registrations) == 2)
+                {
+                    cancellation.Cancel();
+                }
+            });
+        var request = OperationRequestBuilder.New()
+            .SetDocument("query($n: Int) { foo(n: $n) }")
+            .SetVariableValues("""[{ "n": 1 }, { "n": 2 }]""")
+            .Build();
+
+        // act
+        var result = await executor.ExecuteAsync(request, cancellation.Token);
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(["request", "request"], log);
+    }
+
     private static async Task<IRequestExecutor> CreateExecutorAsync(Action<IMiddlewareContext> register)
         => await new ServiceCollection()
             .AddGraphQL()
             .AddQueryType(
                 descriptor => descriptor
                     .Field("foo")
+                    .Argument("n", a => a.Type<IntType>())
                     .Type<StringType>()
                     .Use(next => context =>
                     {

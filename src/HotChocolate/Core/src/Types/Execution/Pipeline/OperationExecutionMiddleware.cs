@@ -151,13 +151,26 @@ internal sealed class OperationExecutionMiddleware
 
             context.Result = new OperationResultBatch([.. resultBuffer.AsSpan(0, variableSets.Length)]);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            // if an operation is canceled we will abandon the rented operation contexts
-            // to ensure that that abandoned tasks do not leak into new operations.
-            AbandonContexts(ref operationContextBuffer, variableSets.Length);
+            // no results will be built, so the cleanup tasks registered for the request
+            // would never run if we did not release them here.
+            for (var i = 0; i < variableSets.Length; i++)
+            {
+                if (operationContextBuffer[i] is { } owner)
+                {
+                    await owner.OperationContext.Result.ExecuteCleanupTasksAsync().ConfigureAwait(false);
+                }
+            }
 
-            // we rethrow so that another middleware can deal with the cancellation.
+            if (ex is OperationCanceledException)
+            {
+                // if an operation is canceled we will abandon the rented operation contexts
+                // to ensure that that abandoned tasks do not leak into new operations.
+                AbandonContexts(ref operationContextBuffer, variableSets.Length);
+            }
+
+            // we rethrow so that another middleware can deal with the failure.
             throw;
         }
         finally
