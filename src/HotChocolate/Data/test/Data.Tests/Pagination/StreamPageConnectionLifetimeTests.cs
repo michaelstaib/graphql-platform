@@ -283,6 +283,26 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Dispose_Should_ReleaseThePageOnce_When_ReadingTheRowsFaults()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+        probe.FailRowReader = true;
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ items(first: 2) { nodes { id } } }",
+            TestContext.Current.CancellationToken);
+        var errors = result.ExpectOperationResult().Errors.Select(t => t.Message).ToArray();
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(["Unexpected Execution Error"], errors);
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
     public async Task Dispose_Should_ReleaseThePageOnce_When_TheRequestIsCancelledAfterThePageWasCreated()
     {
         // arrange
@@ -502,6 +522,8 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
 
         public TaskCompletionSource? NodesGate { get; set; }
 
+        public bool FailRowReader { get; set; }
+
         public static async Task<Probe> CreateSqliteAsync(int authorCount, int itemsPerAuthor)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
@@ -560,6 +582,11 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             lock (Commands)
             {
                 Commands.Add(command.CommandText);
+            }
+
+            if (FailRowReader)
+            {
+                throw new InvalidOperationException("The row reader faulted.");
             }
 
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
