@@ -11,7 +11,7 @@ namespace HotChocolate.Types.Pagination;
 /// </typeparam>
 [GraphQLName("{0}Connection")]
 [GraphQLDescription("A connection to a list of items.")]
-public class StreamPageConnection<TNode>
+public class StreamPageConnection<TNode> : IAsyncDisposable
 {
     private readonly StreamPage<TNode> _page;
     private readonly int _maxRelativeCursorCount;
@@ -93,4 +93,7 @@ public class StreamPageConnection<TNode>
     /// </param>
     public static implicit operator StreamPageConnection<TNode>(StreamPage<TNode> page)
         => new(page);
+
+    /// <inheritdoc />
+    ValueTask IAsyncDisposable.DisposeAsync() => _page.DisposeAsync();
 }
