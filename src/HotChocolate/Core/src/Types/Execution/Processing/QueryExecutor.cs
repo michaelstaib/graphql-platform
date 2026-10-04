@@ -26,6 +26,9 @@ internal sealed class QueryExecutor
         OperationContext operationContext,
         IImmutableDictionary<string, object?> scopedContext)
     {
+        var requestCleanup = new RequestCleanup();
+        operationContext.RequestCleanup = requestCleanup;
+
         EnqueueRootResolverTasks(
             operationContext,
             operationContext.RootValue,
@@ -64,11 +67,16 @@ internal sealed class QueryExecutor
 
         coordinator.EnqueueResult(initialResult);
 
+        foreach (var cleanupTask in operationContext.Result.TakeCleanupTasks())
+        {
+            requestCleanup.Register(cleanupTask);
+        }
+
         var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult);
 
         // the payloads are disposed while the stream is still being read, so the request cleanup
         // is released when the stream itself is disposed.
-        stream.RegisterForCleanup(operationContext.Result.ExecuteCleanupTasksAsync);
+        stream.RegisterForCleanup(requestCleanup.ExecuteAsync);
 
         return stream;
 
@@ -162,6 +170,11 @@ internal sealed class QueryExecutor
         var parentContext = operationContexts[0].OperationContext;
         var scheduler = parentContext.Scheduler;
 
+        for (var i = 0; i < length; ++i)
+        {
+            operationContexts[i].OperationContext.RequestCleanup = new RequestCleanup();
+        }
+
         FillSchedulerWithWork(parentContext, operationContexts, length);
 
         var execution = parentContext.Scheduler.ExecuteAsync1();
@@ -177,6 +190,13 @@ internal sealed class QueryExecutor
             await scheduler.WaitForCompletionAsync(branchId).ConfigureAwait(false);
             context.DeferExecutionCoordinator.EnqueueResult(context.BuildResult());
 
+            var requestCleanup = context.RequestCleanup!;
+
+            foreach (var cleanupTask in context.Result.TakeCleanupTasks())
+            {
+                requestCleanup.Register(cleanupTask);
+            }
+
             // The first item's stream drives completion of the shared execution: once it has
             // delivered every payload it awaits the scheduler and seals the shared arena. Every
             // item reads from its own coordinator and honors its own cancellation token, so a
@@ -184,7 +204,7 @@ internal sealed class QueryExecutor
             results[i] = i == 0
                 ? new ResponseStream(CreateStreamAndComplete, ExecutionResultKind.DeferredResult)
                 : CreateItemStream(context);
-            results[i].RegisterForCleanup(context.Result.ExecuteCleanupTasksAsync);
+            results[i].RegisterForCleanup(requestCleanup.ExecuteAsync);
         }
 
         static ResponseStream CreateItemStream(OperationContext context)

@@ -4,6 +4,7 @@ using CookieCrumble.Resources;
 using GreenDonut;
 using GreenDonut.Data;
 using HotChocolate.Execution;
+using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using HotChocolate.Types.Pagination;
 using Microsoft.Data.Sqlite;
@@ -322,6 +323,53 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Dispose_Should_ReleaseThePageOnce_When_TheRequestIsCancelledWhileTheDeferredBranchRuns()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+        using var cancellation = new CancellationTokenSource();
+        probe.CancelOnNodes = cancellation;
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ __typename ... @defer { items(first: 2) { nodes { id } } } }",
+            cancellation.Token);
+        await result.DisposeAsync();
+        await probe.WaitForReleaseAsync();
+
+        // assert
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
+    public async Task Dispose_Should_ReleaseThePageOnce_When_TheStreamIsDisposedBeforeTheDeferredPayloadArrives()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+        probe.NodesGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ __typename ... @defer { items(first: 2) { pageInfo { startCursor } } } }",
+            TestContext.Current.CancellationToken);
+
+        await foreach (var payload in result.ExpectResponseStream().ReadResultsAsync())
+        {
+            await payload.DisposeAsync();
+            break;
+        }
+
+        await result.DisposeAsync();
+        probe.NodesGate.TrySetResult();
+        await probe.WaitForReleaseAsync();
+
+        // assert
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
     public async Task Dispose_Should_ReleaseBatchPagesTogether_When_PagesShareOnePump()
     {
         // arrange
@@ -433,20 +481,27 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         protected override void Configure(IObjectTypeDescriptor<StreamPageConnection<Item>> descriptor)
         {
             descriptor.Name("ItemConnection");
-            descriptor
-                .Field(t => t.Nodes)
-                .Use(next => async context =>
-                {
-                    if (context.Service<Probe>().NodesGate is { } gate)
-                    {
-                        await gate.Task;
-                    }
-
-                    await next(context);
-                });
+            descriptor.Field(t => t.Nodes).Use(GateMiddleware);
             descriptor.Field(t => t.Edges).Type<ListType<NonNullType<ItemEdgeType>>>();
-            descriptor.Field(t => t.PageInfo).Type<NonNullType<ItemPageInfoType>>();
+            descriptor
+                .Field(t => t.PageInfo)
+                .Type<NonNullType<ItemPageInfoType>>()
+                .Use(GateMiddleware);
         }
+
+        private static FieldDelegate GateMiddleware(FieldDelegate next)
+            => async context =>
+            {
+                var probe = context.Service<Probe>();
+                probe.CancelOnNodes?.Cancel();
+
+                if (probe.NodesGate is { } gate)
+                {
+                    await gate.Task;
+                }
+
+                await next(context);
+            };
     }
 
     public sealed class ItemEdgeType : ObjectType<StreamPageEdge<Item>>
@@ -495,6 +550,8 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     {
         private readonly SqliteConnection? _connection;
         private readonly DbContextOptions<PagingContext> _options;
+        private readonly TaskCompletionSource _releasedSignal =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _created;
         private int _released;
 
@@ -519,6 +576,8 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         public int Released => Volatile.Read(ref _released);
 
         public CancellationTokenSource? CancelAfterCreate { get; set; }
+
+        public CancellationTokenSource? CancelOnNodes { get; set; }
 
         public TaskCompletionSource? NodesGate { get; set; }
 
@@ -571,6 +630,9 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             return new PagingContext(_options);
         }
 
+        public Task WaitForReleaseAsync()
+            => _releasedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
         public IAsyncDisposable CreateLifetime(PagingContext context) => new Lifetime(this, context);
 
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
@@ -605,6 +667,7 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             public async ValueTask DisposeAsync()
             {
                 Interlocked.Increment(ref probe._released);
+                probe._releasedSignal.TrySetResult();
                 await context.DisposeAsync();
             }
         }

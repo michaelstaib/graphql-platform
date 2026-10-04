@@ -39,7 +39,7 @@ internal sealed partial class OperationContext
     private IBatchDispatcher _batchDispatcher = null!;
     private InputParser _inputParser = null!;
     private MemoryArena? _memory;
-    private OperationContext? _cleanupContext;
+    private bool _isDeferContext;
     private int _branchId;
     private int _variableIndex;
     private object? _rootValue;
@@ -65,10 +65,25 @@ internal sealed partial class OperationContext
     public bool IsInitialized => _isInitialized;
 
     /// <summary>
-    /// Gets the operation context that owns the request cleanup tasks of this context.
-    /// This is the context itself unless it executes a deferred part of the operation.
+    /// Gets or sets the collector for the request cleanup of an incremental operation,
+    /// or <c>null</c> when the operation has no incremental parts.
     /// </summary>
-    public OperationContext CleanupContext => _cleanupContext ?? this;
+    internal RequestCleanup? RequestCleanup { get; set; }
+
+    /// <summary>
+    /// Registers a cleanup action that runs when the request ends. In a deferred part of an incremental
+    /// operation the action is registered with the request cleanup of the response stream.
+    /// </summary>
+    internal void RegisterRequestCleanup(Func<ValueTask> action)
+    {
+        if (_isDeferContext && RequestCleanup is { } requestCleanup)
+        {
+            requestCleanup.Register(action);
+            return;
+        }
+
+        Result.RegisterForCleanup(action);
+    }
 
     public bool IsSharedScheduler => !ReferenceEquals(_workScheduler, _currentWorkScheduler);
 
@@ -153,7 +168,8 @@ internal sealed partial class OperationContext
         _resolveQueryRootValue = context._resolveQueryRootValue;
         _batchDispatcher = context._batchDispatcher;
         _memory = context._memory;
-        _cleanupContext = context.CleanupContext;
+        RequestCleanup = context.RequestCleanup;
+        _isDeferContext = true;
         _currentBranchTracker = context._currentBranchTracker;
         _currentWorkScheduler = context._currentWorkScheduler;
         _currentDeferExecutionCoordinator = context._currentDeferExecutionCoordinator;
@@ -210,7 +226,8 @@ internal sealed partial class OperationContext
             _resolveQueryRootValue = null!;
             _batchDispatcher = null!;
             _memory = null;
-            _cleanupContext = null;
+            RequestCleanup = null;
+            _isDeferContext = false;
             _branchId = int.MinValue;
             _propagateNullValues = false;
             _isInitialized = false;
