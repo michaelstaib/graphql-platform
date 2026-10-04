@@ -171,7 +171,7 @@ public sealed class EdgeTypeInfo
                             property,
                             compilation.GetDescription(property),
                             compilation.GetDeprecationReason(property),
-                            ResolverResultKind.Pure,
+                            property.GetResultKind(),
                             [],
                             ObjectTypeInspector.GetMemberBindings(member),
                             compilation.CreateTypeReference(property),

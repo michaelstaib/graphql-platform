@@ -389,7 +389,7 @@ public class ConnectionTypeTransformer : IPostCollectSyntaxTransformer
         if (returnType is not INamedTypeSymbol namedType
             || !namedType.IsGenericType
             || namedType.TypeArguments.Length != 1
-            || namedType.Name != "IReadOnlyList")
+            || namedType.Name is not ("IReadOnlyList" or "IAsyncEnumerable"))
         {
             return null;
         }

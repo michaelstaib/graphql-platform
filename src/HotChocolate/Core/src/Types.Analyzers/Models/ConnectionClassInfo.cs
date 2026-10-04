@@ -109,7 +109,7 @@ public sealed class ConnectionClassInfo : SyntaxInfo, IEquatable<ConnectionClass
                             property,
                             compilation.GetDescription(property),
                             compilation.GetDeprecationReason(property),
-                            ResolverResultKind.Pure,
+                            property.GetResultKind(),
                             [],
                             ObjectTypeInspector.GetMemberBindings(member),
                             compilation.CreateTypeReference(property),

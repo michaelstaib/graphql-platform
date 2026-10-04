@@ -178,7 +178,7 @@ public sealed class ConnectionTypeInfo
                             property,
                             compilation.GetDescription(property),
                             compilation.GetDeprecationReason(property),
-                            ResolverResultKind.Pure,
+                            property.GetResultKind(),
                             [],
                             GetMemberBindings(property),
                             compilation.CreateTypeReference(property),
