@@ -15,8 +15,7 @@ public class StreamPageConnection<TNode>
 {
     private readonly StreamPage<TNode> _page;
     private readonly int _maxRelativeCursorCount;
-    private IAsyncEnumerable<StreamPageEdge<TNode>>? _edges;
-    private StreamPageInfo<TNode>? _pageInfo;
+    private StreamPageInfo? _pageInfo;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StreamPageConnection{TNode}"/> class.
@@ -37,30 +36,54 @@ public class StreamPageConnection<TNode>
     }
 
     /// <summary>
-    /// A list of edges.
+    /// Streams the edges of the connection.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the enumeration.
+    /// </param>
     [GraphQLDescription("A list of edges.")]
-    public IAsyncEnumerable<StreamPageEdge<TNode>>? Edges => _edges ??= GetEdgesAsync();
+    public async IAsyncEnumerable<StreamPageEdge<TNode>> GetEdgesAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var entry in _page.GetEntriesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            yield return new StreamPageEdge<TNode>(_page, entry);
+        }
+    }
 
     /// <summary>
-    /// A flattened list of the nodes.
+    /// Streams a flattened list of the nodes.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the enumeration.
+    /// </param>
     [GraphQLDescription("A flattened list of the nodes")]
-    public IAsyncEnumerable<TNode>? Nodes => _page;
+    public async IAsyncEnumerable<TNode> GetNodesAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var node in _page.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return node;
+        }
+    }
 
     /// <summary>
     /// Information to aid in pagination.
     /// </summary>
     [GraphQLDescription("Information to aid in pagination.")]
-    public StreamPageInfo<TNode> PageInfo
+    public StreamPageInfo PageInfo
         => _pageInfo ??= new StreamPageInfo<TNode>(_page, _maxRelativeCursorCount);
 
     /// <summary>
-    /// Identifies the total count of items in the connection.
+    /// Gets the total count of items in the connection, or <c>null</c> if it was not requested.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription("Identifies the total count of items in the connection.")]
     [GraphQLType<NonNullType<IntType>>]
-    public ValueTask<int?> TotalCount => _page.TotalCountAsync();
+    public ValueTask<int?> GetTotalCountAsync(CancellationToken cancellationToken = default)
+        => _page.TotalCountAsync(cancellationToken);
 
     /// <summary>
     /// Converts a <see cref="StreamPage{TNode}"/> to a <see cref="StreamPageConnection{TNode}"/>.
@@ -70,13 +93,4 @@ public class StreamPageConnection<TNode>
     /// </param>
     public static implicit operator StreamPageConnection<TNode>(StreamPage<TNode> page)
         => new(page);
-
-    private async IAsyncEnumerable<StreamPageEdge<TNode>> GetEdgesAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await foreach (var entry in _page.GetEntriesAsync(cancellationToken).ConfigureAwait(false))
-        {
-            yield return new StreamPageEdge<TNode>(_page, entry);
-        }
-    }
 }

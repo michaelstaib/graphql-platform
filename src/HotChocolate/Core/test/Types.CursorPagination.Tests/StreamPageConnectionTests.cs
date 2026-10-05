@@ -19,8 +19,7 @@ public class StreamPageConnectionTests
         StreamPageConnection<Item> connection = page;
 
         // assert
-        Assert.Same(page, connection.Nodes);
-        Assert.Equal(5, await connection.TotalCount);
+        Assert.Equal(5, await connection.GetTotalCountAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -50,7 +49,7 @@ public class StreamPageConnectionTests
     }
 
     [Fact]
-    public async Task Edges_Should_PreserveEntryCursors_When_PageIsEnumerated()
+    public async Task GetEdgesAsync_Should_PreserveEntryCursors_When_PageIsEnumerated()
     {
         // arrange
         await using var database = await TestDatabase.CreateAsync(5);
@@ -61,7 +60,7 @@ public class StreamPageConnectionTests
 
         // act
         List<object> edges = [];
-        await foreach (var edge in connection.Edges!.WithCancellation(TestContext.Current.CancellationToken))
+        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken))
         {
             edges.Add(new { edge.Node.Id, edge.Cursor });
         }
@@ -87,7 +86,7 @@ public class StreamPageConnectionTests
     }
 
     [Fact]
-    public async Task Edges_Should_ReplayAllEdges_When_EnumeratedTwice()
+    public async Task GetEdgesAsync_Should_ReplayAllEdges_When_EnumeratedTwice()
     {
         // arrange
         await using var database = await TestDatabase.CreateAsync(5);
@@ -191,7 +190,7 @@ public class StreamPageConnectionTests
     }
 
     [Fact]
-    public async Task TotalCount_Should_BeNull_When_CountWasNotRequested()
+    public async Task GetTotalCountAsync_Should_ReturnNull_When_CountWasNotRequested()
     {
         // arrange
         await using var database = await TestDatabase.CreateAsync(5);
@@ -201,10 +200,79 @@ public class StreamPageConnectionTests
         var connection = new StreamPageConnection<Item>(page);
 
         // act
-        var totalCount = await connection.TotalCount;
+        var totalCount = await connection.GetTotalCountAsync(TestContext.Current.CancellationToken);
 
         // assert
         Assert.Null(totalCount);
+    }
+
+    [Fact]
+    public async Task GetNodesAsync_Should_ThrowOperationCanceledException_When_TokenIsCancelled()
+    {
+        // arrange
+        await using var database = await TestDatabase.CreateAsync(5);
+        var page = await database.Query.ToStreamPageAsync(
+            new PagingArguments(first: 2),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var connection = new StreamPageConnection<Item>(page);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // act
+        async Task Enumerate()
+        {
+            await foreach (var _ in connection.GetNodesAsync(cts.Token))
+            {
+            }
+        }
+
+        // assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Enumerate);
+    }
+
+    [Fact]
+    public async Task GetEdgesAsync_Should_ThrowOperationCanceledException_When_TokenIsCancelled()
+    {
+        // arrange
+        await using var database = await TestDatabase.CreateAsync(5);
+        var page = await database.Query.ToStreamPageAsync(
+            new PagingArguments(first: 2),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var connection = new StreamPageConnection<Item>(page);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // act
+        async Task Enumerate()
+        {
+            await foreach (var _ in connection.GetEdgesAsync(cts.Token))
+            {
+            }
+        }
+
+        // assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Enumerate);
+    }
+
+    [Fact]
+    public async Task GetNodesAsync_Should_StreamNodes_When_PageIsEnumerated()
+    {
+        // arrange
+        await using var database = await TestDatabase.CreateAsync(5);
+        var page = await database.Query.ToStreamPageAsync(
+            new PagingArguments(first: 3),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var connection = new StreamPageConnection<Item>(page);
+
+        // act
+        List<int> ids = [];
+        await foreach (var node in connection.GetNodesAsync(TestContext.Current.CancellationToken))
+        {
+            ids.Add(node.Id);
+        }
+
+        // assert
+        Assert.Equal([1, 2, 3], ids);
     }
 
     [Fact]
@@ -215,7 +283,7 @@ public class StreamPageConnectionTests
 
         // act
         List<object?> edges = [];
-        await foreach (var edge in connection.Edges!.WithCancellation(TestContext.Current.CancellationToken))
+        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken))
         {
             edges.Add(edge);
         }
@@ -224,7 +292,7 @@ public class StreamPageConnectionTests
         var snapshot = new
         {
             Edges = edges,
-            TotalCount = await connection.TotalCount,
+            TotalCount = await connection.GetTotalCountAsync(TestContext.Current.CancellationToken),
             HasNextPage = await pageInfo.HasNextPage,
             HasPreviousPage = await pageInfo.HasPreviousPage,
             StartCursor = await pageInfo.StartCursor,
@@ -267,7 +335,7 @@ public class StreamPageConnectionTests
     {
         List<int> ids = [];
 
-        await foreach (var edge in connection.Edges!.WithCancellation(TestContext.Current.CancellationToken))
+        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken))
         {
             ids.Add(edge.Node.Id);
         }
