@@ -836,6 +836,15 @@ namespace HotChocolate.Fusion.Properties {
         }
 
         /// <summary>
+        ///   Looks up a localized string similar to The &apos;{1}&apos; argument of the @{0} directive on &apos;{2}&apos; in schema &apos;{3}&apos; must be a string or a list of strings and string lists, but has the value {4}..
+        /// </summary>
+        internal static string LogEntryHelper_AuthorizationDirectiveArgumentInvalid {
+            get {
+                return ResourceManager.GetString("LogEntryHelper_AuthorizationDirectiveArgumentInvalid", resourceCulture);
+            }
+        }
+
+        /// <summary>
         ///   Looks up a localized string similar to The merged {0} requirement of &apos;{1}&apos; has {2} alternative groups, which exceeds the threshold of {3}..
         /// </summary>
         internal static string LogEntryHelper_AuthorizationGroupCountExceeded {

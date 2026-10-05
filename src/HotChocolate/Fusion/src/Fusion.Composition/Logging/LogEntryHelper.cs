@@ -27,6 +27,28 @@ internal static class LogEntryHelper
             .Build();
     }
 
+    public static LogEntry AuthorizationDirectiveArgumentInvalid(
+        string directiveName,
+        string argumentName,
+        IValueNode? value,
+        SchemaCoordinate coordinate,
+        MutableSchemaDefinition schema)
+    {
+        return LogEntryBuilder.New()
+            .SetMessage(
+                LogEntryHelper_AuthorizationDirectiveArgumentInvalid,
+                directiveName,
+                argumentName,
+                coordinate,
+                schema.Name,
+                value?.ToString() ?? "undefined")
+            .SetCode(LogEntryCodes.AuthorizationDirectiveArgumentInvalid)
+            .SetSeverity(LogSeverity.Error)
+            .SetCoordinate(coordinate)
+            .SetSchema(schema)
+            .Build();
+    }
+
     public static LogEntry AuthorizationGroupCountExceeded(
         string requirement,
         SchemaCoordinate coordinate,

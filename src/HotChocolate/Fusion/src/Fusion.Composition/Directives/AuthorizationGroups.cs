@@ -119,8 +119,18 @@ internal static class AuthorizationGroups
         IDirective directive,
         string argumentName)
     {
-        if (!directive.Arguments.TryGetValue(argumentName, out var argument)
-            || argument is not ListValueNode outer)
+        if (!directive.Arguments.TryGetValue(argumentName, out var argument))
+        {
+            throw ThrowHelper.AuthorizationDirectiveArgumentInvalid(directive.Name, argumentName);
+        }
+
+        // A single string coerces to a list of one group of one.
+        if (argument is StringValueNode singleValue)
+        {
+            return [[singleValue.Value]];
+        }
+
+        if (argument is not ListValueNode outer)
         {
             throw ThrowHelper.AuthorizationDirectiveArgumentInvalid(directive.Name, argumentName);
         }
