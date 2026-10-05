@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace HotChocolate.Fusion.Authorization;
 
 /// <summary>
@@ -15,4 +17,4 @@ namespace HotChocolate.Fusion.Authorization;
 public readonly record struct PolicyVerdict(
     PolicyOutcome Outcome,
     string? Reason,
-    IReadOnlyDictionary<string, object?>? AuditData);
+    ImmutableDictionary<string, string>? AuditData);

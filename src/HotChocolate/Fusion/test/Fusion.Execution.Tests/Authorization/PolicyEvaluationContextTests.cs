@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using static HotChocolate.Fusion.Authorization.PolicyTestHelper;
 
 namespace HotChocolate.Fusion.Authorization;
@@ -86,7 +87,7 @@ public class PolicyEvaluationContextTests
         var context = CreateContext(
             Anonymous(),
             CreateEntry(selections[1], AuthenticatedPolicy.Instance));
-        var auditData = new Dictionary<string, object?> { ["rule"] = "r1" };
+        var auditData = ImmutableDictionary<string, string>.Empty.Add("rule", "r1");
 
         // act
         context.Deny(context.Entries[0], "no", auditData);

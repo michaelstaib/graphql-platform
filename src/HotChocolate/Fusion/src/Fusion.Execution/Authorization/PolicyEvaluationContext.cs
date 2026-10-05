@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Features;
 using HotChocolate.Fusion.Execution;
@@ -114,7 +115,7 @@ public sealed class PolicyEvaluationContext
     /// <param name="auditData">
     /// Key/value pairs that are only meant for auditing.
     /// </param>
-    public void Allow(in PolicyEvaluationEntry entry, IReadOnlyDictionary<string, object?> auditData)
+    public void Allow(in PolicyEvaluationEntry entry, ImmutableDictionary<string, string> auditData)
     {
         ArgumentNullException.ThrowIfNull(auditData);
         Record(entry, PolicyOutcome.Allowed, null, auditData);
@@ -147,7 +148,7 @@ public sealed class PolicyEvaluationContext
     public void Deny(
         in PolicyEvaluationEntry entry,
         string? reason,
-        IReadOnlyDictionary<string, object?> auditData)
+        ImmutableDictionary<string, string> auditData)
     {
         ArgumentNullException.ThrowIfNull(auditData);
         Record(entry, PolicyOutcome.Denied, reason, auditData);
@@ -166,7 +167,7 @@ public sealed class PolicyEvaluationContext
         in PolicyEvaluationEntry entry,
         PolicyOutcome outcome,
         string? reason,
-        IReadOnlyDictionary<string, object?>? auditData)
+        ImmutableDictionary<string, string>? auditData)
     {
         var index = GetIndex(entry);
 
