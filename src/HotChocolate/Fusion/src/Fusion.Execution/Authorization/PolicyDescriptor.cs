@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Execution;
 
 namespace HotChocolate.Fusion.Authorization;
@@ -18,7 +19,8 @@ public sealed class PolicyDescriptor
     /// The opaque policy name, or <c>null</c> for directives without one.
     /// </param>
     /// <param name="scopes">
-    /// The required scopes as OR-of-AND groups, or <c>null</c> for directives without scopes.
+    /// The required scopes as OR-of-AND groups, or a default or empty array for directives
+    /// without scopes.
     /// </param>
     /// <param name="selection">
     /// The selection the directive applies to.
@@ -29,7 +31,7 @@ public sealed class PolicyDescriptor
     public PolicyDescriptor(
         string directiveName,
         string? policyName,
-        IReadOnlyList<IReadOnlyList<string>>? scopes,
+        ImmutableArray<ImmutableArray<string>> scopes,
         ISelection selection,
         IPolicy policy)
     {
@@ -39,7 +41,7 @@ public sealed class PolicyDescriptor
 
         DirectiveName = directiveName;
         PolicyName = policyName;
-        Scopes = scopes;
+        Scopes = scopes.IsDefault ? [] : scopes;
         Selection = selection;
         Policy = policy;
     }
@@ -55,9 +57,10 @@ public sealed class PolicyDescriptor
     public string? PolicyName { get; }
 
     /// <summary>
-    /// Gets the required scopes as OR-of-AND groups, or <c>null</c> for directives without scopes.
+    /// Gets the required scopes as OR-of-AND groups, which is empty when the descriptor has no
+    /// scope requirement.
     /// </summary>
-    public IReadOnlyList<IReadOnlyList<string>>? Scopes { get; }
+    public ImmutableArray<ImmutableArray<string>> Scopes { get; }
 
     /// <summary>
     /// Gets the selection the directive applies to.

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace HotChocolate.Fusion.Authorization;
 
 /// <summary>
@@ -80,14 +82,9 @@ public sealed class RequiresScopesPolicy : IPolicy
     }
 
     private static bool IsSatisfied(
-        IReadOnlyList<IReadOnlyList<string>>? groups,
+        ImmutableArray<ImmutableArray<string>> groups,
         HashSet<string> granted)
     {
-        if (groups is null)
-        {
-            return false;
-        }
-
         foreach (var group in groups)
         {
             var satisfied = true;

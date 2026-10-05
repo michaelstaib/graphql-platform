@@ -104,4 +104,22 @@ public class BuiltInPolicyTests
         // assert
         Assert.Equal([PolicyOutcome.Allowed, PolicyOutcome.Denied], Outcomes(context));
     }
+
+    [Fact]
+    public async Task RequiresScopesPolicy_Should_DenyWithEmptyScopes_When_DescriptorScopesAreDefault()
+    {
+        // arrange
+        var selections = CreateSelections();
+        var policy = new RequiresScopesPolicy();
+        var entry = CreateEntry(selections[1], policy, PolicyDirectiveNames.RequiresScopes, null);
+        var context = CreateContext(Authenticated(new Claim("scope", "read")), entry);
+
+        // act
+        await policy.EvaluateAsync(context, CancellationToken.None);
+
+        // assert
+        Assert.False(entry.Descriptor.Scopes.IsDefault);
+        Assert.Empty(entry.Descriptor.Scopes);
+        Assert.Equal([PolicyOutcome.Denied], Outcomes(context));
+    }
 }

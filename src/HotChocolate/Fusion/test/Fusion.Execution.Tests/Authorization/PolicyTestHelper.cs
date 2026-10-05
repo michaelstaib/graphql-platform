@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Features;
@@ -33,7 +34,7 @@ internal static class PolicyTestHelper
         IPolicy policy,
         string directiveName = PolicyDirectiveNames.Policy,
         string? policyName = "p",
-        IReadOnlyList<IReadOnlyList<string>>? scopes = null)
+        ImmutableArray<ImmutableArray<string>> scopes = default)
         => new(
             new PolicyDescriptor(directiveName, policyName, scopes, selection, policy),
             new Dictionary<string, object?>());
