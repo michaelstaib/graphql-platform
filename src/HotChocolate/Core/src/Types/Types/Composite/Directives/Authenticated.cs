@@ -15,12 +15,14 @@ namespace HotChocolate.Types.Composite;
 [GraphQLDescription("The @authenticated directive requires the client to be authenticated.")]
 public sealed class Authenticated
 {
+    private const string Name = $"@{DirectiveNames.Authenticated.Name}";
+
     private Authenticated()
     {
     }
 
     /// <inheritdoc />
-    public override string ToString() => "@authenticated";
+    public override string ToString() => Name;
 
     /// <summary>
     /// The singleton instance of the <see cref="Authenticated"/> directive.

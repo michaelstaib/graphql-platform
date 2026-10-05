@@ -19,6 +19,8 @@ namespace HotChocolate.Types.Composite;
     """)]
 public sealed class Policy
 {
+    private const string Name = $"@{DirectiveNames.Policy.Name}";
+
     /// <summary>
     /// Initializes a new instance of <see cref="Policy"/>.
     /// </summary>
@@ -44,5 +46,5 @@ public sealed class Policy
 
     /// <inheritdoc />
     public override string ToString()
-        => $"@policy(policies: [{string.Join(", ", Policies.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
+        => $"{Name}(policies: [{string.Join(", ", Policies.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
 }

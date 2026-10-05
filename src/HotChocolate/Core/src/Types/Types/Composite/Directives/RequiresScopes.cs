@@ -19,6 +19,8 @@ namespace HotChocolate.Types.Composite;
     """)]
 public sealed class RequiresScopes
 {
+    private const string Name = $"@{DirectiveNames.RequiresScopes.Name}";
+
     /// <summary>
     /// Initializes a new instance of <see cref="RequiresScopes"/>.
     /// </summary>
@@ -44,5 +46,5 @@ public sealed class RequiresScopes
 
     /// <inheritdoc />
     public override string ToString()
-        => $"@requiresScopes(scopes: [{string.Join(", ", Scopes.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
+        => $"{Name}(scopes: [{string.Join(", ", Scopes.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
 }
