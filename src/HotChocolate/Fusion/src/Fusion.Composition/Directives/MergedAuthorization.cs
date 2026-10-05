@@ -41,8 +41,20 @@ internal sealed record MergedAuthorization(
 
         return new MergedAuthorization(
             Authenticated || other.Authenticated,
-            AuthorizationGroups.Reduce([Scopes, other.Scopes]),
-            AuthorizationGroups.Reduce([Policies, other.Policies]));
+            CombineGroups(Scopes, other.Scopes),
+            CombineGroups(Policies, other.Policies));
+    }
+
+    private static ImmutableArray<ImmutableArray<string>> CombineGroups(
+        ImmutableArray<ImmutableArray<string>> left,
+        ImmutableArray<ImmutableArray<string>> right)
+    {
+        if (left.IsEmpty)
+        {
+            return right;
+        }
+
+        return right.IsEmpty ? left : AuthorizationGroups.Reduce([left, right]);
     }
 
     /// <summary>
