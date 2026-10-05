@@ -255,4 +255,36 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
             }
             """);
     }
+
+    [Fact]
+    public void Merge_Should_EmitCanonicalGroups_When_ArgumentIsASingleString()
+    {
+        // arrange & act & assert
+        AssertMatches(
+            [
+                $$"""
+                # Schema A
+                type Query {
+                    scoped: Int @requiresScopes(scopes: "read")
+                    policed: Int @policy(policies: "p")
+                }
+
+                {{AuthorizationDirectives}}
+                """
+            ],
+            """
+            schema {
+              query: Query
+            }
+
+            type Query @fusion__type(schema: A) {
+              policed: Int
+                @fusion__authorization(policies: [["p"]])
+                @fusion__field(schema: A)
+              scoped: Int
+                @fusion__authorization(scopes: [["read"]])
+                @fusion__field(schema: A)
+            }
+            """);
+    }
 }

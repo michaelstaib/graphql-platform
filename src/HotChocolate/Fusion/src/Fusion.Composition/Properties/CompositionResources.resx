@@ -81,6 +81,9 @@
   <data name="LogEntryHelper_AuthenticatedMismatch" xml:space="preserve">
     <value>The member '{0}' is marked with @authenticated in the source schemas {1} but not in the source schemas {2}. The composed member requires authentication.</value>
   </data>
+  <data name="LogEntryHelper_AuthorizationDirectiveArgumentInvalid" xml:space="preserve">
+    <value>The '{1}' argument of the @{0} directive on '{2}' in schema '{3}' must be a string or a list of strings and string lists, but has the value {4}.</value>
+  </data>
   <data name="LogEntryHelper_AuthorizationGroupCountExceeded" xml:space="preserve">
     <value>The merged {0} requirement of '{1}' has {2} alternative groups, which exceeds the threshold of {3}.</value>
   </data>
