@@ -226,7 +226,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
     }
 
     [Fact]
-    public void Merge_Should_FenceWholeInterface_When_ImplementationIsAnnotatedOnTheType()
+    public void Merge_Should_FoldTypeRequirementThroughFieldsOnly_When_ImplementationIsAnnotatedOnTheType()
     {
         // arrange & act & assert
         AssertMatches(
@@ -260,12 +260,8 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             }
 
             type Query @fusion__type(schema: A) {
-              search: [SearchResult!]!
-                @fusion__authorization(authenticated: true)
-                @fusion__field(schema: A)
-              video: Video
-                @fusion__authorization(authenticated: true)
-                @fusion__field(schema: A)
+              search: [SearchResult!]! @fusion__field(schema: A)
+              video: Video @fusion__field(schema: A)
             }
 
             type Article implements SearchResult
@@ -273,6 +269,58 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
               @fusion__type(schema: A)
               @fusion__implements(schema: A, interface: "SearchResult") {
               title: String
+                @fusion__authorization(authenticated: true)
+                @fusion__field(schema: A)
+            }
+
+            type Video implements SearchResult
+              @fusion__type(schema: A)
+              @fusion__implements(schema: A, interface: "SearchResult") {
+              title: String
+                @fusion__authorization(authenticated: true)
+                @fusion__field(schema: A)
+              url: String @fusion__field(schema: A)
+            }
+
+            interface SearchResult @fusion__type(schema: A) {
+              title: String
+                @fusion__authorization(authenticated: true)
+                @fusion__field(schema: A)
+            }
+            """);
+    }
+
+    [Fact]
+    public void Merge_Should_InheritInterfaceTypeRequirement_When_ImplementationIsUnannotated()
+    {
+        // arrange & act & assert
+        AssertMatches(
+            [
+                $$"""
+                # Schema A
+                type Query {
+                    video: Video
+                }
+
+                interface SearchResult @authenticated {
+                    title: String
+                }
+
+                type Video implements SearchResult {
+                    title: String
+                    url: String
+                }
+
+                {{AuthorizationDirectives}}
+                """
+            ],
+            """
+            schema {
+              query: Query
+            }
+
+            type Query @fusion__type(schema: A) {
+              video: Video
                 @fusion__authorization(authenticated: true)
                 @fusion__field(schema: A)
             }
@@ -573,7 +621,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
     }
 
     [Fact]
-    public void Merge_Should_ProtectCanonicalNodeField_When_NodeImplementationIsAnnotated()
+    public void Merge_Should_NotProtectNodeTypeOrSiblings_When_NodeImplementationIsAnnotated()
     {
         // arrange & act & assert
         AssertMatches(
@@ -582,6 +630,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                 # Schema A
                 type Query {
                     node(id: ID!): Node @lookup
+                    product(id: ID!): Product @lookup
                 }
 
                 interface Node {
@@ -589,6 +638,10 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                 }
 
                 type User implements Node @authenticated {
+                    id: ID!
+                }
+
+                type Product implements Node {
                     id: ID!
                 }
 
@@ -601,9 +654,23 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             }
 
             type Query @fusion__type(schema: A) {
-              node(id: ID!): Node
-                @fusion__authorization(authenticated: true)
-                @fusion__gateway_field
+              node(id: ID!): Node @fusion__gateway_field
+              product(id: ID! @fusion__inputField(schema: A)): Product
+                @fusion__field(schema: A)
+            }
+
+            type Product implements Node
+              @fusion__type(schema: A)
+              @fusion__implements(schema: A, interface: "Node")
+              @fusion__lookup(
+                schema: A
+                key: "id"
+                field: "product(id: ID!): Product"
+                map: ["id"]
+                path: null
+                internal: false
+              ) {
+              id: ID! @fusion__authorization(authenticated: true) @fusion__field(schema: A)
             }
 
             type User implements Node
@@ -614,7 +681,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             }
 
             interface Node
-              @fusion__authorization(authenticated: true)
               @fusion__type(schema: A)
               @fusion__lookup(
                 schema: A

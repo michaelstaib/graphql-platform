@@ -83,7 +83,7 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
     }
 
     [Fact]
-    public void Validate_Should_WarnForUnannotatedTypes_When_ImplementationTypeIsProtected()
+    public void Validate_Should_WarnForFieldsOnly_When_ImplementationTypeIsProtected()
     {
         // arrange & act & assert
         AssertInvalid(
@@ -106,16 +106,46 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The member 'SearchResult' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article -> SearchResult in the source schemas 'A'.",
+                  "message": "The member 'SearchResult.title' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title in the source schemas 'A'.",
                   "code": "AUTHORIZATION_INHERITED",
                   "severity": "Warning",
-                  "coordinate": "SearchResult",
+                  "coordinate": "SearchResult.title",
                   "extensions": {}
                 }
                 """,
                 """
                 {
-                  "message": "The member 'Video' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article -> SearchResult -> Video in the source schemas 'A'.",
+                  "message": "The member 'Video.title' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title -> Video.title in the source schemas 'A'.",
+                  "code": "AUTHORIZATION_INHERITED",
+                  "severity": "Warning",
+                  "coordinate": "Video.title",
+                  "extensions": {}
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public void Validate_Should_WarnForUnannotatedType_When_InterfaceTypeIsProtected()
+    {
+        // arrange & act & assert
+        AssertInvalid(
+            [
+                $$"""
+                # Schema A
+                type Query { video: Video }
+
+                interface SearchResult @authenticated { title: String }
+
+                type Video implements SearchResult { title: String }
+
+                {{Directives}}
+                """
+            ],
+            [
+                """
+                {
+                  "message": "The member 'Video' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from SearchResult -> Video in the source schemas 'A'.",
                   "code": "AUTHORIZATION_INHERITED",
                   "severity": "Warning",
                   "coordinate": "Video",

@@ -14,9 +14,9 @@ namespace HotChocolate.Fusion;
 /// complete requirement.
 /// </summary>
 /// <remarks>
-/// Types connected through the implements relation share one requirement. A field combines its
-/// own requirement with those of its declaring type and its named return type, and shares the
-/// result with the same-named fields it is connected to through the implements relation.
+/// Interface type requirements flow down to implementing types. A field combines its own, its
+/// declaring type and its return type requirements and shares the result with same-named fields
+/// across the implements relation.
 /// </remarks>
 internal static class AuthorizationInheritance
 {
@@ -68,14 +68,10 @@ internal static class AuthorizationInheritance
             return;
         }
 
-        // The implements relation is complete, so one edge per direct entry connects each type
-        // with every interface it implements.
         foreach (var complexType in complexTypes)
         {
             foreach (var interfaceType in complexType.Implements)
             {
-                Link(typeNodes[complexType.Name], typeNodes[interfaceType.Name]);
-
                 foreach (var interfaceField in interfaceType.Fields)
                 {
                     if (fieldNodes.TryGetValue((complexType.Name, interfaceField.Name), out var impl))
@@ -86,9 +82,15 @@ internal static class AuthorizationInheritance
             }
         }
 
-        // Types are closed first, because the requirement of a type feeds every field that
-        // declares or returns it.
-        Close(typeNodes.Values, static n => n.Own);
+        foreach (var complexType in complexTypes)
+        {
+            var typeNode = typeNodes[complexType.Name];
+
+            foreach (var interfaceType in complexType.Implements)
+            {
+                typeNode.Closed = typeNode.Closed.And(typeNodes[interfaceType.Name].Own);
+            }
+        }
 
         foreach (var complexType in complexTypes)
         {
@@ -117,7 +119,7 @@ internal static class AuthorizationInheritance
 
             if (typeNode.Own.Auth.IsEmpty && !typeNode.Closed.Auth.IsEmpty)
             {
-                Report(metadata, typeNode, static n => n.Own, static (_, _) => true);
+                ReportType(metadata, typeNode, complexType, typeNodes);
             }
 
             foreach (var field in complexType.Fields)
@@ -128,12 +130,7 @@ internal static class AuthorizationInheritance
 
                 if (fieldNode.Own.Auth.IsEmpty && !fieldNode.Closed.Auth.Matches(fieldNode.Base.Auth))
                 {
-                    Report(
-                        metadata,
-                        fieldNode,
-                        static n => n.Base,
-                        static (member, origin) =>
-                            !member.Base.And(origin.Base).Auth.Matches(member.Base.Auth));
+                    ReportField(metadata, fieldNode);
                 }
             }
         }
@@ -223,22 +220,47 @@ internal static class AuthorizationInheritance
         }
     }
 
-    private static void Report(
+    private static void ReportType(
         AuthorizationInheritanceMetadata metadata,
         Node member,
-        Func<Node, Tracked> select,
-        Func<Node, Node, bool> contributes)
+        MutableComplexTypeDefinition complexType,
+        Dictionary<string, Node> typeNodes)
+    {
+        var paths = new SortedSet<string>(StringComparer.Ordinal);
+        var sourceNames = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var interfaceType in complexType.Implements)
+        {
+            var origin = typeNodes[interfaceType.Name];
+
+            if (origin.Own.Auth.IsEmpty)
+            {
+                continue;
+            }
+
+            paths.Add(FormatPath([origin, member]));
+            sourceNames.UnionWith(origin.Own.Sources);
+        }
+
+        if (paths.Count > 0)
+        {
+            metadata.Entries.Add(
+                new InheritedAuthorization(member.Coordinate, [.. paths], [.. sourceNames]));
+        }
+    }
+
+    private static void ReportField(AuthorizationInheritanceMetadata metadata, Node member)
     {
         var paths = new SortedSet<string>(StringComparer.Ordinal);
         var sourceNames = new SortedSet<string>(StringComparer.Ordinal);
 
         foreach (var origin in GetComponent(member))
         {
-            var tracked = select(origin);
+            var tracked = origin.Base;
 
             if (ReferenceEquals(origin, member)
                 || tracked.Auth.IsEmpty
-                || !contributes(member, origin))
+                || member.Base.And(tracked).Auth.Matches(member.Base.Auth))
             {
                 continue;
             }
