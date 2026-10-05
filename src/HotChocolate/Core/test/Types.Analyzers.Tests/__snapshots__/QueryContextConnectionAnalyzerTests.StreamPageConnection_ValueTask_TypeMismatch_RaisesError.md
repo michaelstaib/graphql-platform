@@ -83,14 +83,14 @@ namespace HotChocolate.Types.Pagination
                     var naming = field.Context.Naming;
 
                     configuration.Description = GetDescription("A list of edges.", false, field.Context.Options.UseXmlDocumentation);
-                    configuration.Type = typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.ListType<global::HotChocolate.Types.NonNullType<global::HotChocolate.Types.Pagination.ProductEdgeType>>), HotChocolate.Types.TypeContext.Output);
+                    configuration.Type = typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.NonNullType<global::HotChocolate.Types.ListType<global::HotChocolate.Types.NonNullType<global::HotChocolate.Types.Pagination.ProductEdgeType>>>), HotChocolate.Types.TypeContext.Output);
                     configuration.ResultType = typeof(global::System.Collections.Generic.IAsyncEnumerable<global::HotChocolate.Types.Pagination.StreamPageEdge<global::TestNamespace.Product>>);
                     configuration.DeclaringType = context.ThisType;
 
                     configuration.SetSourceGeneratorFlags();
                     configuration.SetConnectionEdgesFieldFlags();
 
-                    configuration.Resolvers = context.Resolvers.Edges();
+                    configuration.Resolvers = context.Resolvers.GetEdgesAsync();
                     configuration.ResultPostProcessor = global::HotChocolate.Execution.ListPostProcessor<global::HotChocolate.Types.Pagination.StreamPageEdge<global::TestNamespace.Product>>.Default;
                 },
                 (Resolvers: resolvers, ThisType: thisType));
@@ -107,37 +107,15 @@ namespace HotChocolate.Types.Pagination
                     configuration.Description = GetDescription("A flattened list of the nodes", false, field.Context.Options.UseXmlDocumentation);
                     configuration.Type = global::HotChocolate.Types.Descriptors.TypeReference.Create(
                         typeInspector.GetTypeRef(typeof(global::TestNamespace.Product), HotChocolate.Types.TypeContext.Output),
-                        new global::HotChocolate.Language.ListTypeNode(new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__TestNamespace_Product"))));
+                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.ListTypeNode(new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__TestNamespace_Product")))));
                     configuration.ResultType = typeof(global::System.Collections.Generic.IAsyncEnumerable<global::TestNamespace.Product>);
                     configuration.DeclaringType = context.ThisType;
 
                     configuration.SetSourceGeneratorFlags();
                     configuration.SetConnectionNodesFieldFlags();
 
-                    configuration.Resolvers = context.Resolvers.Nodes();
+                    configuration.Resolvers = context.Resolvers.GetNodesAsync();
                     configuration.ResultPostProcessor = global::HotChocolate.Execution.ListPostProcessor<global::TestNamespace.Product>.Default;
-                },
-                (Resolvers: resolvers, ThisType: thisType));
-
-            descriptor
-                .Field(naming.GetMemberName("PageInfo", global::HotChocolate.Types.MemberKind.ObjectField))
-                .ExtendWith(static (field, context) =>
-                {
-                    var configuration = field.Configuration;
-                    var typeInspector = field.Context.TypeInspector;
-                    var bindingResolver = field.Context.ParameterBindingResolver;
-                    var naming = field.Context.Naming;
-
-                    configuration.Description = GetDescription("Information to aid in pagination.", false, field.Context.Options.UseXmlDocumentation);
-                    configuration.Type = global::HotChocolate.Types.Descriptors.TypeReference.Create(
-                        typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.Pagination.StreamPageInfo), HotChocolate.Types.TypeContext.Output),
-                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__HotChocolate_Types_Pagination_StreamPageInfo")));
-                    configuration.ResultType = typeof(global::HotChocolate.Types.Pagination.StreamPageInfo<global::TestNamespace.Product>);
-                    configuration.DeclaringType = context.ThisType;
-
-                    configuration.SetSourceGeneratorFlags();
-
-                    configuration.Resolvers = context.Resolvers.PageInfo();
                 },
                 (Resolvers: resolvers, ThisType: thisType));
 
@@ -158,29 +136,63 @@ namespace HotChocolate.Types.Pagination
                     configuration.SetSourceGeneratorFlags();
                     configuration.SetConnectionTotalCountFieldFlags();
 
-                    configuration.Resolvers = context.Resolvers.TotalCount();
+                    configuration.Resolvers = context.Resolvers.GetTotalCountAsync();
+                },
+                (Resolvers: resolvers, ThisType: thisType));
+
+            descriptor
+                .Field(naming.GetMemberName("PageInfo", global::HotChocolate.Types.MemberKind.ObjectField))
+                .ExtendWith(static (field, context) =>
+                {
+                    var configuration = field.Configuration;
+                    var typeInspector = field.Context.TypeInspector;
+                    var bindingResolver = field.Context.ParameterBindingResolver;
+                    var naming = field.Context.Naming;
+
+                    configuration.Description = GetDescription("Information to aid in pagination.", false, field.Context.Options.UseXmlDocumentation);
+                    configuration.Type = global::HotChocolate.Types.Descriptors.TypeReference.Create(
+                        typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.Pagination.StreamPageInfo), HotChocolate.Types.TypeContext.Output),
+                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__HotChocolate_Types_Pagination_StreamPageInfo")));
+                    configuration.ResultType = typeof(global::HotChocolate.Types.Pagination.StreamPageInfo);
+                    configuration.DeclaringType = context.ThisType;
+
+                    configuration.SetSourceGeneratorFlags();
+
+                    configuration.Resolvers = context.Resolvers.PageInfo();
                 },
                 (Resolvers: resolvers, ThisType: thisType));
         }
 
         private sealed class __Resolvers
         {
-            public HotChocolate.Resolvers.FieldResolverDelegates Edges()
-                => new global::HotChocolate.Resolvers.FieldResolverDelegates(resolver: Edges);
+            public HotChocolate.Resolvers.FieldResolverDelegates GetEdgesAsync()
+                => new global::HotChocolate.Resolvers.FieldResolverDelegates(resolver: GetEdgesAsync);
 
-            private global::System.Threading.Tasks.ValueTask<global::System.Object?> Edges(global::HotChocolate.Resolvers.IResolverContext context)
+            private global::System.Threading.Tasks.ValueTask<global::System.Object?> GetEdgesAsync(global::HotChocolate.Resolvers.IResolverContext context)
             {
-                var result = context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().Edges;
+                var args0 = context.RequestAborted;
+                var result = context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().GetEdgesAsync(args0);
                 return new global::System.Threading.Tasks.ValueTask<global::System.Object?>(result);
             }
 
-            public HotChocolate.Resolvers.FieldResolverDelegates Nodes()
-                => new global::HotChocolate.Resolvers.FieldResolverDelegates(resolver: Nodes);
+            public HotChocolate.Resolvers.FieldResolverDelegates GetNodesAsync()
+                => new global::HotChocolate.Resolvers.FieldResolverDelegates(resolver: GetNodesAsync);
 
-            private global::System.Threading.Tasks.ValueTask<global::System.Object?> Nodes(global::HotChocolate.Resolvers.IResolverContext context)
+            private global::System.Threading.Tasks.ValueTask<global::System.Object?> GetNodesAsync(global::HotChocolate.Resolvers.IResolverContext context)
             {
-                var result = context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().Nodes;
+                var args0 = context.RequestAborted;
+                var result = context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().GetNodesAsync(args0);
                 return new global::System.Threading.Tasks.ValueTask<global::System.Object?>(result);
+            }
+
+            public HotChocolate.Resolvers.FieldResolverDelegates GetTotalCountAsync()
+                => new global::HotChocolate.Resolvers.FieldResolverDelegates(resolver: GetTotalCountAsync);
+
+            private async global::System.Threading.Tasks.ValueTask<global::System.Object?> GetTotalCountAsync(global::HotChocolate.Resolvers.IResolverContext context)
+            {
+                var args0 = context.RequestAborted;
+                var result = await context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().GetTotalCountAsync(args0);
+                return result;
             }
 
             public HotChocolate.Resolvers.FieldResolverDelegates PageInfo()
@@ -189,15 +201,6 @@ namespace HotChocolate.Types.Pagination
             private global::System.Object? PageInfo(global::HotChocolate.Resolvers.IResolverContext context)
             {
                 var result = context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().PageInfo;
-                return result;
-            }
-
-            public HotChocolate.Resolvers.FieldResolverDelegates TotalCount()
-                => new global::HotChocolate.Resolvers.FieldResolverDelegates(resolver: TotalCount);
-
-            private async global::System.Threading.Tasks.ValueTask<global::System.Object?> TotalCount(global::HotChocolate.Resolvers.IResolverContext context)
-            {
-                var result = await context.Parent<global::HotChocolate.Types.Pagination.StreamPageConnection<global::TestNamespace.Product>>().TotalCount;
                 return result;
             }
         }
