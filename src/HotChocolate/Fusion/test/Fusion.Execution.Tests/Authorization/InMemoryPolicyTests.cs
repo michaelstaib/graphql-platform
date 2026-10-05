@@ -32,19 +32,55 @@ public class InMemoryPolicyTests : FusionTestBase
     }
 
     [Fact]
-    public async Task AddInMemoryPolicies_Should_LeaveEntriesUnanswered_When_PolicyNameIsNotConfigured()
+    public async Task AddInMemoryPolicies_Should_LeaveEntriesUnanswered_When_PolicyIsConfiguredUnanswered()
     {
         // arrange
-        var (resolver, _) = await CreateResolverAsync(policies => policies.Allow("known"));
+        var (resolver, _) = await CreateResolverAsync(policies => policies.Unanswered("silent"));
         var selections = CreateSelections();
 
         // act
-        var verdicts = await EvaluateAsync(resolver, "unknown", selections[1], selections[2]);
+        var verdicts = await EvaluateAsync(resolver, "silent", selections[1], selections[2]);
 
         // assert
         Assert.Equal(
             [PolicyOutcome.Unanswered, PolicyOutcome.Unanswered],
             verdicts.Select(v => v.Outcome));
+    }
+
+    [Fact]
+    public async Task Resolve_Should_ReturnNull_When_PolicyNameIsNotConfigured()
+    {
+        // arrange
+        var (resolver, _) = await CreateResolverAsync(policies => policies.Allow("known"));
+
+        // act
+        var policy = resolver.Resolve("unknown", PolicyDirectiveNames.Policy);
+
+        // assert
+        Assert.Null(policy);
+    }
+
+    [Fact]
+    public async Task Resolve_Should_FallThroughToSecondInMemoryProvider_When_FirstDoesNotKnowTheName()
+    {
+        // arrange
+        var services = new ServiceCollection();
+        services
+            .AddGraphQLGateway()
+            .AddInMemoryPolicies(policies => policies.Allow("a"))
+            .AddInMemoryPolicies(policies => policies.Deny("b"))
+            .AddInMemoryConfiguration(ComposeSchemaDocument("type Query { field: String! }"));
+        IServiceProvider serviceProvider = services.BuildServiceProvider();
+        var executor = await serviceProvider.GetRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        var resolver = executor.Schema.Services.GetRequiredService<IPolicyResolver>();
+        var selections = CreateSelections();
+
+        // act
+        var verdicts = await EvaluateAsync(resolver, "b", selections[1]);
+
+        // assert
+        Assert.Equal([PolicyOutcome.Denied], verdicts.Select(v => v.Outcome));
     }
 
     [Fact]

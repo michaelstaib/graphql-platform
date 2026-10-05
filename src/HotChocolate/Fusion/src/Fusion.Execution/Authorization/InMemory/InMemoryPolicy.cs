@@ -3,12 +3,12 @@ namespace HotChocolate.Fusion.Authorization.InMemory;
 internal sealed class InMemoryPolicy : IPolicy
 {
     private readonly string _policyName;
-    private readonly Func<PolicyEvaluationContext, PolicyEvaluationEntry, PolicyVerdict>? _evaluate;
+    private readonly Func<PolicyEvaluationContext, PolicyEvaluationEntry, PolicyVerdict> _evaluate;
     private readonly InMemoryPolicyRecorder _recorder;
 
     public InMemoryPolicy(
         string policyName,
-        Func<PolicyEvaluationContext, PolicyEvaluationEntry, PolicyVerdict>? evaluate,
+        Func<PolicyEvaluationContext, PolicyEvaluationEntry, PolicyVerdict> evaluate,
         InMemoryPolicyRecorder recorder)
     {
         _policyName = policyName;
@@ -23,11 +23,6 @@ internal sealed class InMemoryPolicy : IPolicy
         foreach (ref readonly var entry in context.Entries)
         {
             _recorder.Record(_policyName, in entry);
-
-            if (_evaluate is null)
-            {
-                continue;
-            }
 
             var verdict = _evaluate(context, entry);
 

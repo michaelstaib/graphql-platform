@@ -44,6 +44,22 @@ public sealed class InMemoryPolicyBuilder
     }
 
     /// <summary>
+    /// Registers the policy so that it resolves but leaves every entry unanswered.
+    /// </summary>
+    /// <param name="policyName">
+    /// The policy name.
+    /// </param>
+    /// <returns>
+    /// The builder.
+    /// </returns>
+    public InMemoryPolicyBuilder Unanswered(string policyName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(policyName);
+        _evaluators[policyName] = static (_, _) => new PolicyVerdict(PolicyOutcome.Unanswered, null, null);
+        return this;
+    }
+
+    /// <summary>
     /// Allows each entry of the policy for which the delegate returns <c>true</c> and denies the others.
     /// </summary>
     /// <param name="policyName">

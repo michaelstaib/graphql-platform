@@ -2,7 +2,7 @@ namespace HotChocolate.Fusion.Authorization.InMemory;
 
 /// <summary>
 /// Provides the configured in-memory policies for the <c>@policy</c> directive. Policy names
-/// that were not configured resolve to a policy that answers nothing.
+/// that were not configured return <c>null</c>.
 /// </summary>
 public sealed class InMemoryPolicyProvider : IPolicyProvider
 {
@@ -28,7 +28,8 @@ public sealed class InMemoryPolicyProvider : IPolicyProvider
             return null;
         }
 
-        _evaluators.TryGetValue(policyName, out var evaluate);
-        return new InMemoryPolicy(policyName, evaluate, _recorder);
+        return _evaluators.TryGetValue(policyName, out var evaluate)
+            ? new InMemoryPolicy(policyName, evaluate, _recorder)
+            : null;
     }
 }
