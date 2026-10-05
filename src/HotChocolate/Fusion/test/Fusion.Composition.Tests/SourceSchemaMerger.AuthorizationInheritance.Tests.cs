@@ -571,4 +571,118 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             }
             """);
     }
+
+    [Fact]
+    public void Merge_Should_ProtectCanonicalNodeField_When_NodeImplementationIsAnnotated()
+    {
+        // arrange & act & assert
+        AssertMatches(
+            [
+                $$"""
+                # Schema A
+                type Query {
+                    node(id: ID!): Node @lookup
+                }
+
+                interface Node {
+                    id: ID!
+                }
+
+                type User implements Node @authenticated {
+                    id: ID!
+                }
+
+                {{AuthorizationDirectives}}
+                """
+            ],
+            """
+            schema {
+              query: Query
+            }
+
+            type Query @fusion__type(schema: A) {
+              node(id: ID!): Node
+                @fusion__authorization(authenticated: true)
+                @fusion__gateway_field
+            }
+
+            type User implements Node
+              @fusion__authorization(authenticated: true)
+              @fusion__type(schema: A)
+              @fusion__implements(schema: A, interface: "Node") {
+              id: ID! @fusion__authorization(authenticated: true) @fusion__field(schema: A)
+            }
+
+            interface Node
+              @fusion__authorization(authenticated: true)
+              @fusion__type(schema: A)
+              @fusion__lookup(
+                schema: A
+                key: "id"
+                field: "node(id: ID!): Node"
+                map: ["id"]
+                path: null
+                internal: false
+              ) {
+              id: ID! @fusion__authorization(authenticated: true) @fusion__field(schema: A)
+            }
+            """,
+            options => options.EnableGlobalObjectIdentification = true);
+    }
+
+    [Fact]
+    public void Merge_Should_KeepNodeFieldRequirement_When_SourceNodeFieldIsAnnotated()
+    {
+        // arrange & act & assert
+        AssertMatches(
+            [
+                $$"""
+                # Schema A
+                type Query {
+                    node(id: ID!): Node @lookup @requiresScopes(scopes: [["node"]])
+                }
+
+                interface Node {
+                    id: ID!
+                }
+
+                type User implements Node {
+                    id: ID!
+                }
+
+                {{AuthorizationDirectives}}
+                """
+            ],
+            """
+            schema {
+              query: Query
+            }
+
+            type Query @fusion__type(schema: A) {
+              node(id: ID!): Node
+                @fusion__authorization(scopes: [["node"]])
+                @fusion__gateway_field
+            }
+
+            type User implements Node
+              @fusion__type(schema: A)
+              @fusion__implements(schema: A, interface: "Node") {
+              id: ID! @fusion__field(schema: A)
+            }
+
+            interface Node
+              @fusion__type(schema: A)
+              @fusion__lookup(
+                schema: A
+                key: "id"
+                field: "node(id: ID!): Node"
+                map: ["id"]
+                path: null
+                internal: false
+              ) {
+              id: ID! @fusion__field(schema: A)
+            }
+            """,
+            options => options.EnableGlobalObjectIdentification = true);
+    }
 }
