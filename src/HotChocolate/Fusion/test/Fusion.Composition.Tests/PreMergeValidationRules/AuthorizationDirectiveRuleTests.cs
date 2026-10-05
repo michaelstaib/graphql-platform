@@ -12,6 +12,12 @@ public sealed class AuthorizationDirectiveRuleTests : RuleTestBase
             on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
         """;
 
+    private const string PolicyDirective =
+        """
+        directive @policy(policies: [[String!]!]!)
+            on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
+        """;
+
     [Fact]
     public void Validate_Should_Succeed_When_AllSourcesMarkAuthenticated()
     {
@@ -153,6 +159,43 @@ public sealed class AuthorizationDirectiveRuleTests : RuleTestBase
                 """
                 {
                     "message": "The merged scopes requirement of 'Query.field' has 72 alternative groups, which exceeds the threshold of 64.",
+                    "code": "AUTHORIZATION_GROUP_COUNT_EXCEEDED",
+                    "severity": "Warning",
+                    "coordinate": "Query.field",
+                    "schema": "A",
+                    "extensions": {}
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public void Validate_Should_WarnGroupCountExceeded_When_PolicyProductExceedsThreshold()
+    {
+        // arrange
+        var groupsA = string.Join(", ", Enumerable.Range(0, 9).Select(i => $"[\"a{i}\"]"));
+        var groupsB = string.Join(", ", Enumerable.Range(0, 8).Select(i => $"[\"b{i}\"]"));
+
+        // act & assert
+        AssertInvalid(
+            [
+                $$"""
+                # Schema A
+                type Query { field: String @policy(policies: [{{groupsA}}]) }
+
+                {{PolicyDirective}}
+                """,
+                $$"""
+                # Schema B
+                type Query { field: String @policy(policies: [{{groupsB}}]) }
+
+                {{PolicyDirective}}
+                """
+            ],
+            [
+                """
+                {
+                    "message": "The merged policies requirement of 'Query.field' has 72 alternative groups, which exceeds the threshold of 64.",
                     "code": "AUTHORIZATION_GROUP_COUNT_EXCEEDED",
                     "severity": "Warning",
                     "coordinate": "Query.field",
