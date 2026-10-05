@@ -694,6 +694,223 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         ]);
     }
 
+    [Fact]
+    public void Validate_Should_Fail_When_UnionLookupKeyIsNotCoveredByAServedField()
+    {
+        // arrange & act & assert
+        AssertInvalid(
+        [
+            $$"""
+            # Schema A
+            type Query { dogs: [Dog] }
+
+            type Dog @key(fields: "id") {
+                id: ID! @requiresScopes(scopes: [["admin"]])
+            }
+
+            {{Directives}}
+            """,
+            $$"""
+            # Schema B
+            type Query { animalById(id: ID!): Animal @lookup }
+
+            union Animal = Dog | Cat
+
+            type Dog @key(fields: "id") {
+                id: ID!
+                name: String
+            }
+
+            type Cat @key(fields: "id") {
+                id: ID!
+            }
+
+            {{Directives}}
+            """
+        ],
+        [
+            """
+            {
+              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all authorization requirements of 'Dog.id'. Not covered: @requiresScopes.",
+              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "severity": "Error",
+              "coordinate": "Dog.name",
+              "schema": "B",
+              "extensions": {}
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public void Validate_Should_Succeed_When_UnionLookupKeyIsCoveredByTheServedFields()
+    {
+        // arrange & act & assert
+        AssertValid(
+        [
+            $$"""
+            # Schema A
+            type Query { dogs: [Dog] }
+
+            type Dog @key(fields: "id") {
+                id: ID! @requiresScopes(scopes: [["admin"]])
+            }
+
+            {{Directives}}
+            """,
+            $$"""
+            # Schema B
+            type Query { animalById(id: ID!): Animal @lookup }
+
+            union Animal = Dog | Cat
+
+            type Dog @key(fields: "id") {
+                id: ID!
+                name: String @requiresScopes(scopes: [["admin"]])
+            }
+
+            type Cat @key(fields: "id") {
+                id: ID!
+            }
+
+            {{Directives}}
+            """
+        ]);
+    }
+
+    [Fact]
+    public void Validate_Should_Fail_When_InterfaceLookupKeyIsNotCoveredByAServedField()
+    {
+        // arrange & act & assert
+        AssertInvalid(
+        [
+            $$"""
+            # Schema A
+            type Query { dogs: [Dog] }
+
+            type Dog @key(fields: "id") {
+                id: ID! @requiresScopes(scopes: [["admin"]])
+            }
+
+            {{Directives}}
+            """,
+            $$"""
+            # Schema B
+            type Query { animalById(id: ID!): Animal @lookup }
+
+            interface Animal {
+                id: ID!
+            }
+
+            type Dog implements Animal @key(fields: "id") {
+                id: ID!
+                name: String
+            }
+
+            {{Directives}}
+            """
+        ],
+        [
+            """
+            {
+              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all authorization requirements of 'Dog.id'. Not covered: @requiresScopes.",
+              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "severity": "Error",
+              "coordinate": "Dog.name",
+              "schema": "B",
+              "extensions": {}
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public void Validate_Should_Succeed_When_InterfaceLookupKeyIsCoveredByTheServedFields()
+    {
+        // arrange & act & assert
+        AssertValid(
+        [
+            $$"""
+            # Schema A
+            type Query { dogs: [Dog] }
+
+            type Dog @key(fields: "id") {
+                id: ID! @requiresScopes(scopes: [["admin"]])
+            }
+
+            {{Directives}}
+            """,
+            $$"""
+            # Schema B
+            type Query { animalById(id: ID!): Animal @lookup }
+
+            interface Animal {
+                id: ID!
+            }
+
+            type Dog implements Animal @key(fields: "id") {
+                id: ID!
+                name: String @requiresScopes(scopes: [["admin"]])
+            }
+
+            {{Directives}}
+            """
+        ]);
+    }
+
+    [Fact]
+    public void Validate_Should_Fail_When_UnionLookupKeyChoiceStartsWithABranchForAnotherMember()
+    {
+        // arrange & act & assert
+        AssertInvalid(
+        [
+            $$"""
+            # Schema A
+            type Query { dogs: [Dog] cats: [Cat] }
+
+            type Dog @key(fields: "id") {
+                id: ID! @requiresScopes(scopes: [["admin"]])
+            }
+
+            type Cat @key(fields: "id") {
+                id: ID!
+            }
+
+            {{Directives}}
+            """,
+            $$"""
+            # Schema B
+            type Query { animalById(key: ID! @is(field: "<Cat>.id | <Dog>.id")): Animal @lookup }
+
+            union Animal = Dog | Cat
+
+            type Dog @key(fields: "id") {
+                id: ID!
+                name: String
+            }
+
+            type Cat @key(fields: "id") {
+                id: ID!
+                age: Int
+            }
+
+            {{Directives}}
+            """
+        ],
+        [
+            """
+            {
+              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all authorization requirements of 'Dog.id'. Not covered: @requiresScopes.",
+              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "severity": "Error",
+              "coordinate": "Dog.name",
+              "schema": "B",
+              "extensions": {}
+            }
+            """
+        ]);
+    }
+
     private static string[] RequireSchemas(
         [StringSyntax("graphql")] string requiring,
         [StringSyntax("graphql")] string dependency)

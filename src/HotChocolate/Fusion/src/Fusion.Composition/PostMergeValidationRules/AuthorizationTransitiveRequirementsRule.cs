@@ -104,30 +104,44 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
         {
             var lookups = new DiscoverLookupsSchemaVisitor(sourceSchema).Discover();
 
-            foreach (var (typeName, lookupGroup) in lookups)
+            foreach (var (_, lookupGroup) in lookups)
             {
-                if (!schema.Types.TryGetType<MutableComplexTypeDefinition>(typeName, out var mergedType))
-                {
-                    continue;
-                }
-
                 foreach (var (lookupField, _, _) in lookupGroup)
                 {
-                    CheckLookupKey(lookupField, mergedType, sourceSchema);
+                    foreach (var sourceType in GetPossibleTypes(lookupField, sourceSchema))
+                    {
+                        if (schema.Types.TryGetType<MutableComplexTypeDefinition>(
+                                sourceType.Name,
+                                out var mergedType))
+                        {
+                            CheckLookupKey(lookupField, sourceType, mergedType, sourceSchema);
+                        }
+                    }
                 }
             }
         }
 
+        private static IEnumerable<MutableObjectTypeDefinition> GetPossibleTypes(
+            MutableOutputFieldDefinition lookupField,
+            MutableSchemaDefinition sourceSchema)
+        {
+            return lookupField.Type.AsTypeDefinition() switch
+            {
+                MutableObjectTypeDefinition objectType => [objectType],
+                MutableInterfaceTypeDefinition interfaceType
+                    => sourceSchema.GetPossibleTypes(interfaceType).ToArray(),
+                MutableUnionTypeDefinition unionType
+                    => sourceSchema.GetPossibleTypes(unionType).ToArray(),
+                _ => []
+            };
+        }
+
         private void CheckLookupKey(
             MutableOutputFieldDefinition lookupField,
+            MutableObjectTypeDefinition sourceType,
             MutableComplexTypeDefinition mergedType,
             MutableSchemaDefinition sourceSchema)
         {
-            if (lookupField.Type.AsTypeDefinition() is not MutableComplexTypeDefinition sourceType)
-            {
-                return;
-            }
-
             var dependencies = new List<IOutputFieldDefinition>();
 
             foreach (var argument in lookupField.Arguments)
@@ -149,30 +163,13 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
                 .Select(d => d.Coordinate.MemberName)
                 .ToHashSet();
 
-            var servedTypes = new List<MutableComplexTypeDefinition> { sourceType };
-
-            if (sourceType is MutableInterfaceTypeDefinition)
+            foreach (var servedField in sourceType.Fields)
             {
-                servedTypes.AddRange(sourceSchema.GetPossibleTypes(sourceType));
-            }
-
-            foreach (var servedType in servedTypes)
-            {
-                if (!schema.Types.TryGetType<MutableComplexTypeDefinition>(
-                        servedType.Name,
-                        out var mergedServedType))
+                if (servedField is { IsExternal: false, IsInternal: false, IsOverridden: false }
+                    && !keyFieldNames.Contains(servedField.Name)
+                    && mergedType.Fields.TryGetField(servedField.Name, out var mergedField))
                 {
-                    continue;
-                }
-
-                foreach (var servedField in servedType.Fields)
-                {
-                    if (servedField is { IsExternal: false, IsInternal: false, IsOverridden: false }
-                        && !keyFieldNames.Contains(servedField.Name)
-                        && mergedServedType.Fields.TryGetField(servedField.Name, out var mergedField))
-                    {
-                        Check(mergedField, dependencies, lookupField.Coordinate, sourceSchema);
-                    }
+                    Check(mergedField, dependencies, lookupField.Coordinate, sourceSchema);
                 }
             }
         }
@@ -211,11 +208,17 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
 
             var inputType = argument.Type.ToTypeNode().RewriteToType(inputTypeDefinition);
 
-            _validator.Validate(
-                new FieldSelectionMapParser(map).Parse(),
-                inputType,
-                mergedType,
-                out var selectedFields);
+            var selection = new FieldSelectionMapParser(map).Parse();
+            var branches = selection is ChoiceValueSelectionNode choice
+                ? choice.Branches
+                : [selection];
+            var selectedFields = new HashSet<IOutputFieldDefinition>();
+
+            foreach (var branch in branches)
+            {
+                _validator.Validate(branch, inputType, mergedType, out var branchFields);
+                selectedFields.UnionWith(branchFields);
+            }
 
             return [.. selectedFields.OrderBy(f => f.Coordinate.ToString(), StringComparer.Ordinal)];
         }
