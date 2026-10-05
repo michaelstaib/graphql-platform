@@ -2,6 +2,8 @@ namespace HotChocolate.Fusion.Logging;
 
 public static class LogEntryCodes
 {
+    public const string AuthenticatedMismatch = "AUTHENTICATED_MISMATCH";
+    public const string AuthorizationGroupCountExceeded = "AUTHORIZATION_GROUP_COUNT_EXCEEDED";
     public const string ConflictingApolloFederationVersion =
         "CONFLICTING_APOLLO_FEDERATION_VERSION";
     public const string ConflictingSourceSchemaName = "CONFLICTING_SOURCE_SCHEMA_NAME";

@@ -8,6 +8,49 @@ namespace HotChocolate.Fusion.Logging;
 
 internal static class LogEntryHelper
 {
+    public static LogEntry AuthenticatedMismatch(
+        SchemaCoordinate coordinate,
+        MutableSchemaDefinition schema,
+        IEnumerable<string> markedSchemaNames,
+        IEnumerable<string> unmarkedSchemaNames)
+    {
+        return LogEntryBuilder.New()
+            .SetMessage(
+                LogEntryHelper_AuthenticatedMismatch,
+                coordinate,
+                FormatSchemaNames(markedSchemaNames),
+                FormatSchemaNames(unmarkedSchemaNames))
+            .SetCode(LogEntryCodes.AuthenticatedMismatch)
+            .SetSeverity(LogSeverity.Warning)
+            .SetCoordinate(coordinate)
+            .SetSchema(schema)
+            .Build();
+    }
+
+    public static LogEntry AuthorizationGroupCountExceeded(
+        string requirement,
+        SchemaCoordinate coordinate,
+        MutableSchemaDefinition schema,
+        int groupCount,
+        int threshold)
+    {
+        return LogEntryBuilder.New()
+            .SetMessage(
+                LogEntryHelper_AuthorizationGroupCountExceeded,
+                requirement,
+                coordinate,
+                groupCount,
+                threshold)
+            .SetCode(LogEntryCodes.AuthorizationGroupCountExceeded)
+            .SetSeverity(LogSeverity.Warning)
+            .SetCoordinate(coordinate)
+            .SetSchema(schema)
+            .Build();
+    }
+
+    private static string FormatSchemaNames(IEnumerable<string> schemaNames)
+        => string.Join(", ", schemaNames.Select(static n => $"'{n}'"));
+
     public static LogEntry DisallowedInaccessibleBuiltInScalar(
         MutableScalarTypeDefinition scalar,
         MutableSchemaDefinition schema)

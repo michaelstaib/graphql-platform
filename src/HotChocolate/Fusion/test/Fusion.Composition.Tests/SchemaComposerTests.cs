@@ -1163,6 +1163,7 @@ public sealed class SchemaComposerTests
         // assert
         Assert.Equal(
             [
+                "AuthorizationDirectiveRule",
                 "EnumValuesMismatchRule",
                 "ExternalArgumentDefaultMismatchRule",
                 "ExternalArgumentMissingRule",
