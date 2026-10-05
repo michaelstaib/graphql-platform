@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Fusion.Directives;
 using HotChocolate.Fusion.Events;
 using HotChocolate.Fusion.Events.Contracts;
@@ -209,18 +210,110 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
             var inputType = argument.Type.ToTypeNode().RewriteToType(inputTypeDefinition);
 
             var selection = new FieldSelectionMapParser(map).Parse();
-            var branches = selection is ChoiceValueSelectionNode choice
-                ? choice.Branches
-                : [selection];
             var selectedFields = new HashSet<IOutputFieldDefinition>();
 
-            foreach (var branch in branches)
+            foreach (var variant in ExpandChoices(selection))
             {
-                _validator.Validate(branch, inputType, mergedType, out var branchFields);
-                selectedFields.UnionWith(branchFields);
+                _validator.Validate(variant, inputType, mergedType, out var variantFields);
+                selectedFields.UnionWith(variantFields);
             }
 
             return [.. selectedFields.OrderBy(f => f.Coordinate.ToString(), StringComparer.Ordinal)];
+        }
+
+        private static IEnumerable<IValueSelectionNode> ExpandChoices(IValueSelectionNode node)
+        {
+            switch (node)
+            {
+                case ChoiceValueSelectionNode choice:
+                    foreach (var branch in choice.Branches)
+                    {
+                        foreach (var variant in ExpandChoices(branch))
+                        {
+                            yield return variant;
+                        }
+                    }
+
+                    break;
+
+                case ObjectValueSelectionNode objectSelection:
+                    foreach (var variant in ExpandObject(objectSelection))
+                    {
+                        yield return variant;
+                    }
+
+                    break;
+
+                case ListValueSelectionNode listSelection:
+                    foreach (var variant in ExpandList(listSelection))
+                    {
+                        yield return variant;
+                    }
+
+                    break;
+
+                case PathObjectValueSelectionNode pathObject:
+                    foreach (var variant in ExpandObject(pathObject.ObjectValueSelection))
+                    {
+                        yield return new PathObjectValueSelectionNode(
+                            pathObject.Location,
+                            pathObject.Path,
+                            variant);
+                    }
+
+                    break;
+
+                case PathListValueSelectionNode pathList:
+                    foreach (var variant in ExpandList(pathList.ListValueSelection))
+                    {
+                        yield return new PathListValueSelectionNode(
+                            pathList.Location,
+                            pathList.Path,
+                            variant);
+                    }
+
+                    break;
+
+                default:
+                    yield return node;
+                    break;
+            }
+        }
+
+        private static IEnumerable<ObjectValueSelectionNode> ExpandObject(
+            ObjectValueSelectionNode node)
+        {
+            IEnumerable<ImmutableArray<ObjectFieldSelectionNode>> combinations = [[]];
+
+            foreach (var field in node.Fields)
+            {
+                IValueSelectionNode?[] variants = field.ValueSelection is { } valueSelection
+                    ? [.. ExpandChoices(valueSelection)]
+                    : [null];
+                var current = combinations;
+
+                combinations = current.SelectMany(
+                    prefix => variants.Select(
+                        variant => prefix.Add(
+                            new ObjectFieldSelectionNode(
+                                field.Location,
+                                field.Name,
+                                field.Arguments,
+                                variant))));
+            }
+
+            foreach (var fields in combinations)
+            {
+                yield return new ObjectValueSelectionNode(node.Location, fields);
+            }
+        }
+
+        private static IEnumerable<ListValueSelectionNode> ExpandList(ListValueSelectionNode node)
+        {
+            foreach (var variant in ExpandChoices(node.ElementSelection))
+            {
+                yield return new ListValueSelectionNode(node.Location, variant);
+            }
         }
 
         private void Check(

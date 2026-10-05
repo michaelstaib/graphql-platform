@@ -911,6 +911,63 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         ]);
     }
 
+    [Fact]
+    public void Validate_Should_Fail_When_NestedUnionLookupKeyChoiceProtectsALaterMember()
+    {
+        // arrange & act & assert
+        AssertInvalid(
+        [
+            $$"""
+            # Schema A
+            type Query { dogs: [Dog] cats: [Cat] }
+
+            type Dog @key(fields: "id") {
+                id: ID!
+            }
+
+            type Cat @key(fields: "id") {
+                id: ID! @requiresScopes(scopes: [["admin"]])
+            }
+
+            {{Directives}}
+            """,
+            $$"""
+            # Schema B
+            type Query {
+                animalByKey(key: AnimalKey! @is(field: "{ id: <Dog>.id | <Cat>.id }")): Animal @lookup
+            }
+
+            input AnimalKey { id: ID! }
+
+            union Animal = Dog | Cat
+
+            type Dog @key(fields: "id") {
+                id: ID!
+                name: String
+            }
+
+            type Cat @key(fields: "id") {
+                id: ID!
+                age: Int
+            }
+
+            {{Directives}}
+            """
+        ],
+        [
+            """
+            {
+              "message": "The field 'Cat.age' depends on 'Cat.id' through 'Query.animalByKey' in schema 'B', but does not declare all authorization requirements of 'Cat.id'. Not covered: @requiresScopes.",
+              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "severity": "Error",
+              "coordinate": "Cat.age",
+              "schema": "B",
+              "extensions": {}
+            }
+            """
+        ]);
+    }
+
     private static string[] RequireSchemas(
         [StringSyntax("graphql")] string requiring,
         [StringSyntax("graphql")] string dependency)
