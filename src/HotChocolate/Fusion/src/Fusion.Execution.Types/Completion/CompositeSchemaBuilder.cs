@@ -249,7 +249,10 @@ internal static class CompositeSchemaBuilder
             definition.Description?.Value,
             deprecationReason,
             isInaccessible,
-            CreateOutputFields(definition.Fields, isQuery, enableSemanticIntrospection));
+            CreateOutputFields(definition.Fields, isQuery, enableSemanticIntrospection))
+        {
+            Authorization = AuthorizationDirectiveParser.Parse(definition.Directives)
+        };
     }
 
     private static FusionInterfaceTypeDefinition CreateInterfaceType(
@@ -261,7 +264,10 @@ internal static class CompositeSchemaBuilder
             definition.Name.Value,
             definition.Description?.Value,
             isInaccessible,
-            CreateOutputFields(definition.Fields, isQuery: false, enableSemanticIntrospection: false));
+            CreateOutputFields(definition.Fields, isQuery: false, enableSemanticIntrospection: false))
+        {
+            Authorization = AuthorizationDirectiveParser.Parse(definition.Directives)
+        };
     }
 
     private static FusionUnionTypeDefinition CreateUnionType(
@@ -296,7 +302,10 @@ internal static class CompositeSchemaBuilder
             definition.Name.Value,
             definition.Description?.Value,
             isInaccessible,
-            CreateEnumValues(definition.Values));
+            CreateEnumValues(definition.Values))
+        {
+            Authorization = AuthorizationDirectiveParser.Parse(definition.Directives)
+        };
     }
 
     private static FusionScalarTypeDefinition CreateScalarType(
@@ -307,7 +316,10 @@ internal static class CompositeSchemaBuilder
         return new FusionScalarTypeDefinition(
             definition.Name.Value,
             definition.Description?.Value,
-            isInaccessible);
+            isInaccessible)
+        {
+            Authorization = AuthorizationDirectiveParser.Parse(definition.Directives)
+        };
     }
 
     private static FusionDirectiveDefinition CreateDirectiveType(
@@ -458,7 +470,10 @@ internal static class CompositeSchemaBuilder
                     deprecationReason,
                     isInaccessible: isInaccessible,
                     isGatewayField: isGatewayField,
-                    CreateOutputFieldArguments(field.Arguments));
+                    CreateOutputFieldArguments(field.Arguments))
+                {
+                    Authorization = AuthorizationDirectiveParser.Parse(field.Directives)
+                };
             }
         }
         else
@@ -476,7 +491,10 @@ internal static class CompositeSchemaBuilder
                     deprecationReason,
                     isInaccessible: isInaccessible,
                     isGatewayField: isGatewayField,
-                    CreateOutputFieldArguments(field.Arguments));
+                    CreateOutputFieldArguments(field.Arguments))
+                {
+                    Authorization = AuthorizationDirectiveParser.Parse(field.Directives)
+                };
             }
         }
 
@@ -637,6 +655,8 @@ internal static class CompositeSchemaBuilder
         {
             features.Set(CollectOptInFeatures(context));
         }
+
+        features.Set(CollectAuthorizationUsage(context));
 
         context.Interceptor.OnBeforeCompleteSchema(context, ref features);
         features.Set<ValueSelectionToSelectionSetRewriter>(null);
@@ -1431,6 +1451,45 @@ internal static class CompositeSchemaBuilder
                 {
                     features.Add(feature.Value);
                 }
+            }
+        }
+    }
+
+    private static FusionAuthorizationUsage CollectAuthorizationUsage(CompositeSchemaBuilderContext context)
+    {
+        var usage = new FusionAuthorizationUsage();
+
+        foreach (var type in context.TypeDefinitions)
+        {
+            switch (type)
+            {
+                case FusionComplexTypeDefinition complexType:
+                    Add(complexType.Authorization);
+
+                    foreach (var field in complexType.Fields)
+                    {
+                        Add(field.Authorization);
+                    }
+
+                    break;
+
+                case FusionEnumTypeDefinition enumType:
+                    Add(enumType.Authorization);
+                    break;
+
+                case FusionScalarTypeDefinition scalarType:
+                    Add(scalarType.Authorization);
+                    break;
+            }
+        }
+
+        return usage;
+
+        void Add(AuthorizationDirective? authorization)
+        {
+            if (authorization is not null)
+            {
+                usage.Add(authorization);
             }
         }
     }
