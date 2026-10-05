@@ -50,6 +50,8 @@ Parses each source schema into an internal representation. This phase catches sy
 
 Normalizes each source schema for composition. This includes applying tag-based exclusions and any version-specific or interop transformations needed before the validation phases run.
 
+In an Apollo Federation source schema, an `@authenticated`, `@requiresScopes` or `@policy` directive that is not imported through `@link` is treated as the authorization directive when its local definition is compatible or absent. An incompatible local definition fails composition.
+
 ## 3. Enrich Source Schemas
 
 Decorates each schema with metadata extracted from directives, such as key fields, shareability, accessibility flags, and lookup information. The metadata is attached to types and fields so later phases can reason about them efficiently without re-parsing directive arguments.
