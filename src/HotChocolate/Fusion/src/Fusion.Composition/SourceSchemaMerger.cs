@@ -131,6 +131,10 @@ internal sealed partial class SourceSchemaMerger
         ApplyDirectives();
         ApplyImplementsClosure(mergedSchema);
         ProjectInterfaceObjectFields(mergedSchema);
+        AuthorizationInheritance.Apply(
+            mergedSchema,
+            _fusionDirectiveDefinitions[DirectiveNames.FusionAuthorization],
+            _schemas);
         SetOperationTypes(mergedSchema);
         AddFusionLookupDirectives(mergedSchema);
         AddNodeField(mergedSchema);
