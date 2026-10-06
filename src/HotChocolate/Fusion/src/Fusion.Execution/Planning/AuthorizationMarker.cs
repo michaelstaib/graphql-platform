@@ -15,7 +15,7 @@ namespace HotChocolate.Fusion.Planning;
 /// <summary>
 /// Marks the deniable selections of the source schema requests of one operation with synthetic
 /// <c>@skip(if: $__fusion_auth_N)</c> directives and promotes the variables of fully deniable
-/// requests to execution node conditions. The marking never depends on the outcome of a policy.
+/// requests to execution node conditions.
 /// </summary>
 internal sealed class AuthorizationMarker
 {
@@ -309,14 +309,15 @@ internal sealed class AuthorizationMarker
         }
 
         var analysis = new StepAnalysis(step, index, dataSet, contexts);
-        AnalyzeSelectionSet(dataSet, contexts, analysis);
+        AnalyzeSelectionSet(dataSet, contexts, analysis, true);
         return analysis;
     }
 
     private void AnalyzeSelectionSet(
         SelectionSetNode selectionSet,
         List<OperationSelectionSet> contexts,
-        StepAnalysis analysis)
+        StepAnalysis analysis,
+        bool isRoot)
     {
         foreach (var selection in selectionSet.Selections)
         {
@@ -325,9 +326,14 @@ internal sealed class AuthorizationMarker
                 var selections = GetSelections(field, contexts);
                 var variable = GetVariable(selections);
 
+                if (isRoot)
+                {
+                    analysis.AddRootVariable(variable);
+                }
+
                 if (field.SelectionSet is not null)
                 {
-                    AnalyzeSelectionSet(field.SelectionSet, GetChildContexts(selections), analysis);
+                    AnalyzeSelectionSet(field.SelectionSet, GetChildContexts(selections), analysis, false);
                 }
 
                 if (analysis.Step.Requirements.Count > 0)
@@ -337,10 +343,22 @@ internal sealed class AuthorizationMarker
             }
             else if (selection is InlineFragmentNode fragment)
             {
+                var isTransparent = isRoot && fragment.TypeCondition is null;
+
+                if (isRoot && !isTransparent)
+                {
+                    analysis.MarkNotUniformlyGated();
+                }
+
                 AnalyzeSelectionSet(
                     fragment.SelectionSet,
                     NarrowContexts(fragment.TypeCondition, contexts),
-                    analysis);
+                    analysis,
+                    isTransparent);
+            }
+            else if (isRoot)
+            {
+                analysis.MarkNotUniformlyGated();
             }
         }
     }
@@ -951,6 +969,8 @@ internal sealed class AuthorizationMarker
         private Dictionary<string, List<AuthorizationVariable?>>? _usages;
         private Dictionary<string, int>? _usageCounts;
         private Dictionary<string, int>? _totalCounts;
+        private List<AuthorizationVariable>? _rootVariables;
+        private bool _isUniformlyGated = true;
 
         public OperationPlanStep Step { get; } = step;
 
@@ -959,6 +979,20 @@ internal sealed class AuthorizationMarker
         public SelectionSetNode? DataSet { get; } = dataSet;
 
         public List<OperationSelectionSet>? Contexts { get; } = contexts;
+
+        public void AddRootVariable(AuthorizationVariable? variable)
+        {
+            if (variable is null)
+            {
+                _isUniformlyGated = false;
+            }
+            else
+            {
+                (_rootVariables ??= []).Add(variable);
+            }
+        }
+
+        public void MarkNotUniformlyGated() => _isUniformlyGated = false;
 
         public void AddUsages(FieldNode field, AuthorizationVariable? variable)
         {
@@ -991,8 +1025,8 @@ internal sealed class AuthorizationMarker
         }
 
         /// <summary>
-        /// Gets the variable that gates the single use of the requirement variable by deniable
-        /// fields, or <c>null</c> if the requirement is used elsewhere or by unprotected fields.
+        /// Gets the variable that gates the single use of the requirement variable and every root
+        /// selection of the step, or <c>null</c> if no such variable exists.
         /// </summary>
         public AuthorizationVariable? GetGate(string requirementKey)
         {
@@ -1019,6 +1053,19 @@ internal sealed class AuthorizationMarker
             foreach (var variable in variables)
             {
                 if (!ReferenceEquals(variable, gate))
+                {
+                    return null;
+                }
+            }
+
+            if (!_isUniformlyGated || _rootVariables is null)
+            {
+                return null;
+            }
+
+            foreach (var rootVariable in _rootVariables)
+            {
+                if (!ReferenceEquals(rootVariable, gate))
                 {
                     return null;
                 }

@@ -73,6 +73,22 @@ public class AuthorizationPlanningTests : FusionTestBase
         {{Directives}}
         """;
 
+    private const string ProductsSchemaBWithOpenField =
+        $$"""
+        # name: b
+        type Query {
+          productById(id: ID!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "id") {
+          id: ID!
+          open: String
+          shippingEstimate(weight: Int @require(field: "weight")): Int @authenticated
+        }
+
+        {{Directives}}
+        """;
+
     [Fact]
     public void CreatePlan_Should_SkipProtectedFieldsWithSyntheticVariables_When_FieldsCarryAuthorization()
     {
@@ -347,6 +363,119 @@ public class AuthorizationPlanningTests : FusionTestBase
                 conditions:
                   - variable: $__fusion_auth_1
                     passingValue: false
+                dependencies:
+                  - id: 1
+            """);
+    }
+
+    [Fact]
+    public void CreatePlan_Should_NotGateRequirementSelection_When_ConsumerNodeHasDifferentlyProtectedSibling()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductsSchemaA, ProductsSchemaB);
+
+        // act
+        var plan = PlanOperation(schema, "{ products { shippingEstimate note } }");
+
+        // assert
+        MatchNodes(
+            plan,
+            """
+            nodes:
+              - id: 1
+                type: Operation
+                schema: a
+                operation: |
+                  query Op_123456789101112_1 {
+                    products {
+                      id
+                      weight
+                    }
+                  }
+              - id: 2
+                type: Operation
+                schema: b
+                operation: |
+                  query Op_123456789101112_2(
+                    $__fusion_auth_1: Boolean!
+                    $__fusion_auth_2: Boolean!
+                    $__fusion_1_id: ID!
+                    $__fusion_2_weight: Int
+                  ) {
+                    productById(id: $__fusion_1_id) {
+                      note @skip(if: $__fusion_auth_1)
+                      shippingEstimate(weight: $__fusion_2_weight) @skip(if: $__fusion_auth_2)
+                    }
+                  }
+                source: $.productById
+                target: $.products
+                requirements:
+                  - name: __fusion_1_id
+                    selectionMap: >-
+                      id
+                  - name: __fusion_2_weight
+                    selectionMap: >-
+                      weight
+                conditions:
+                  - variable: $__fusion_auth_3
+                    passingValue: false
+                forwardedVariables:
+                  - __fusion_auth_1
+                  - __fusion_auth_2
+                dependencies:
+                  - id: 1
+            """);
+    }
+
+    [Fact]
+    public void CreatePlan_Should_NotGateRequirementSelection_When_ConsumerNodeHasUnprotectedSibling()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductsSchemaA, ProductsSchemaBWithOpenField);
+
+        // act
+        var plan = PlanOperation(schema, "{ products { shippingEstimate open } }");
+
+        // assert
+        MatchNodes(
+            plan,
+            """
+            nodes:
+              - id: 1
+                type: Operation
+                schema: a
+                operation: |
+                  query Op_123456789101112_1 {
+                    products {
+                      id
+                      weight
+                    }
+                  }
+              - id: 2
+                type: Operation
+                schema: b
+                operation: |
+                  query Op_123456789101112_2(
+                    $__fusion_auth_1: Boolean!
+                    $__fusion_1_id: ID!
+                    $__fusion_2_weight: Int
+                  ) {
+                    productById(id: $__fusion_1_id) {
+                      open
+                      shippingEstimate(weight: $__fusion_2_weight) @skip(if: $__fusion_auth_1)
+                    }
+                  }
+                source: $.productById
+                target: $.products
+                requirements:
+                  - name: __fusion_1_id
+                    selectionMap: >-
+                      id
+                  - name: __fusion_2_weight
+                    selectionMap: >-
+                      weight
+                forwardedVariables:
+                  - __fusion_auth_1
                 dependencies:
                   - id: 1
             """);
