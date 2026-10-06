@@ -1457,7 +1457,8 @@ internal static class CompositeSchemaBuilder
 
     private static FusionAuthorizationUsage CollectAuthorizationUsage(CompositeSchemaBuilderContext context)
     {
-        var usage = new FusionAuthorizationUsage();
+        var flags = FusionAuthorizationUsageFlags.None;
+        var policyNames = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var type in context.TypeDefinitions)
         {
@@ -1483,13 +1484,36 @@ internal static class CompositeSchemaBuilder
             }
         }
 
-        return usage;
+        var sortedPolicyNames = new string[policyNames.Count];
+        policyNames.CopyTo(sortedPolicyNames);
+        Array.Sort(sortedPolicyNames, StringComparer.Ordinal);
+
+        return new FusionAuthorizationUsage(flags, AsImmutableArray(sortedPolicyNames));
 
         void Add(AuthorizationDirective? authorization)
         {
-            if (authorization is not null)
+            if (authorization is null)
             {
-                usage.Add(authorization);
+                return;
+            }
+
+            if (authorization.Authenticated)
+            {
+                flags |= FusionAuthorizationUsageFlags.Authenticated;
+            }
+
+            if (authorization.Scopes.Length > 0)
+            {
+                flags |= FusionAuthorizationUsageFlags.Scopes;
+            }
+
+            foreach (var group in authorization.Policies)
+            {
+                foreach (var name in group)
+                {
+                    flags |= FusionAuthorizationUsageFlags.Policies;
+                    policyNames.Add(name);
+                }
             }
         }
     }
