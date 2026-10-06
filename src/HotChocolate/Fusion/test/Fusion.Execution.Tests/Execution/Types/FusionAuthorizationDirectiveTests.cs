@@ -162,7 +162,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
-    public void Create_Should_SetHasAuthorization_When_FieldCarriesFusionAuthorization()
+    public void Create_Should_SetHasAuthorization_When_FieldCarriesOrInheritsFusionAuthorization()
     {
         // arrange
         var schema = ComposeSchema(SchemaA, SchemaB);
@@ -181,8 +181,8 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
             """
             {
               "Secured": true,
-              "Open": false,
-              "InterfaceField": false
+              "Open": true,
+              "InterfaceField": true
             }
             """);
     }
