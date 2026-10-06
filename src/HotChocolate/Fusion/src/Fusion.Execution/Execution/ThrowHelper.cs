@@ -10,6 +10,12 @@ internal static class ThrowHelper
     public static InvalidOperationException PolicyEntryNotPartOfContext()
         => new(FusionExecutionResources.PolicyEvaluationContext_EntryNotPartOfContext);
 
+    public static InvalidOperationException PolicyNotResolved(string directiveName, string? policyName)
+        => new(string.Format(
+            FusionExecutionResources.PolicyResolver_PolicyNotResolved,
+            policyName ?? string.Empty,
+            directiveName));
+
     public static InvalidOperationException MissingBooleanVariable(string variableName)
         => new(string.Format(
             FusionExecutionResources.ExecutionNode_MissingBooleanVariable,

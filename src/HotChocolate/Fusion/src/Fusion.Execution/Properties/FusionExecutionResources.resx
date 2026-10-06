@@ -150,4 +150,7 @@
   <data name="PolicyEvaluationContext_EntryNotPartOfContext" xml:space="preserve">
     <value>The policy entry is not part of this evaluation context.</value>
   </data>
+  <data name="PolicyResolver_PolicyNotResolved" xml:space="preserve">
+    <value>No policy provider knows the policy '{0}' of the directive '@{1}'.</value>
+  </data>
 </root>

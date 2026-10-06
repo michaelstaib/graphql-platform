@@ -13,6 +13,7 @@ using HotChocolate.Execution.Errors;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Pipeline;
 using HotChocolate.Features;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Configuration.Parsers;
 using HotChocolate.Fusion.Diagnostics;
@@ -550,7 +551,9 @@ internal sealed class FusionRequestExecutorManager
             static sp => new OperationPlanner(
                 sp.GetRequiredService<FusionSchemaDefinition>(),
                 sp.GetRequiredService<OperationCompiler>(),
-                sp.GetRequiredService<OperationPlannerOptions>()));
+                sp.GetRequiredService<OperationPlannerOptions>(),
+                sp.GetService<IPolicyResolver>()
+                    ?? new PolicyResolver(new BuiltInPolicyProvider(), sp.GetServices<IPolicyProvider>())));
     }
 
     private static void AddParserServices(IServiceCollection services)

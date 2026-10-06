@@ -188,6 +188,46 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
+    public void Create_Should_SetHasAuthorization_When_InterfaceFieldCarriesFusionAuthorization()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            $$"""
+            type Query {
+              node: Node
+            }
+
+            interface Node {
+              id: Int @authenticated
+              name: String
+            }
+
+            type Item implements Node {
+              id: Int @authenticated
+              name: String
+            }
+
+            {{Directives}}
+            """);
+
+        // act
+        var node = schema.Types.GetType<FusionInterfaceTypeDefinition>("Node");
+
+        // assert
+        new
+        {
+            Id = node.Fields["id"].HasAuthorization,
+            Name = node.Fields["name"].HasAuthorization
+        }.MatchInlineSnapshot(
+            """
+            {
+              "Id": true,
+              "Name": false
+            }
+            """);
+    }
+
+    [Fact]
     public void Create_Should_CollectAuthorizationUsage_When_SchemaUsesAuthorization()
     {
         // arrange

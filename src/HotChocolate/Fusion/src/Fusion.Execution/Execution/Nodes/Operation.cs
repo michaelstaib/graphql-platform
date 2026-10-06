@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using HotChocolate.Execution;
 using HotChocolate.Features;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Types;
@@ -127,6 +128,12 @@ public sealed class Operation : IOperation
     public IFeatureCollection Features => _features;
 
     public bool HasIncrementalParts => _hasIncrementalParts;
+
+    /// <summary>
+    /// Gets the authorization requirements of the operation, or <c>null</c> if no selection of
+    /// the operation is protected.
+    /// </summary>
+    public OperationAuthorization? Authorization { get; internal set; }
 
     /// <summary>
     /// Gets a value indicating whether this operation has more than 64 include
