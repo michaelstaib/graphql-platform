@@ -64,7 +64,11 @@ public class ConnectionPageInfoTests
     {
         // arrange
         var cancellationToken = TestContext.Current.CancellationToken;
-        var pageInfo = new ConnectionPageInfo(hasNextPage: true, hasPreviousPage: true, startCursor: "a", endCursor: "b");
+        var pageInfo = new ConnectionPageInfo(
+            hasNextPage: true,
+            hasPreviousPage: true,
+            startCursor: "a",
+            endCursor: "b");
 
         // act
         var snapshot = new
