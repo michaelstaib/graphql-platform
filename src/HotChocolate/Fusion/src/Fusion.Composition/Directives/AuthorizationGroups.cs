@@ -10,12 +10,6 @@ namespace HotChocolate.Fusion.Directives;
 
 internal static class AuthorizationGroups
 {
-    /// <summary>
-    /// The number of reduced groups above which composition warns about a scopes or policies
-    /// requirement.
-    /// </summary>
-    public const int GroupCountThreshold = 64;
-
     public static MergedAuthorization Merge(IEnumerable<DirectivesProviderInfo> memberDefinitions)
     {
         var authenticated = false;

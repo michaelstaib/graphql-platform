@@ -17,6 +17,12 @@ internal sealed class AuthorizationDirectiveRule
     : IEventHandler<TypeGroupEvent>
     , IEventHandler<OutputFieldGroupEvent>
 {
+    /// <summary>
+    /// The number of reduced groups above which composition warns about a scopes or policies
+    /// requirement.
+    /// </summary>
+    private const int GroupCountThreshold = 64;
+
     public void Handle(TypeGroupEvent @event, CompositionContext context)
     {
         var (typeName, typeGroup) = @event;
@@ -65,7 +71,7 @@ internal sealed class AuthorizationDirectiveRule
         var merged = AuthorizationGroups.Merge(memberDefinitions);
         var schema = memberDefinitions[0].Schema;
 
-        if (merged.Scopes.Length > AuthorizationGroups.GroupCountThreshold)
+        if (merged.Scopes.Length > GroupCountThreshold)
         {
             context.Log.Write(
                 AuthorizationGroupCountExceeded(
@@ -73,10 +79,10 @@ internal sealed class AuthorizationDirectiveRule
                     coordinate,
                     schema,
                     merged.Scopes.Length,
-                    AuthorizationGroups.GroupCountThreshold));
+                    GroupCountThreshold));
         }
 
-        if (merged.Policies.Length > AuthorizationGroups.GroupCountThreshold)
+        if (merged.Policies.Length > GroupCountThreshold)
         {
             context.Log.Write(
                 AuthorizationGroupCountExceeded(
@@ -84,7 +90,7 @@ internal sealed class AuthorizationDirectiveRule
                     coordinate,
                     schema,
                     merged.Policies.Length,
-                    AuthorizationGroups.GroupCountThreshold));
+                    GroupCountThreshold));
         }
     }
 }
