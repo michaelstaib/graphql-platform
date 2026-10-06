@@ -10,6 +10,8 @@ namespace HotChocolate.Fusion.Planning;
 /// </summary>
 internal sealed class AuthorizationPlanContext
 {
+    private const string VariableNamePrefix = "__fusion_auth_";
+
     private readonly IPolicyResolver _resolver;
     private readonly HashSet<string> _reservedNames = new(StringComparer.Ordinal);
     private readonly Dictionary<(string DirectiveName, string? PolicyName), IPolicy> _policies = [];
@@ -56,7 +58,7 @@ internal sealed class AuthorizationPlanContext
 
         do
         {
-            name = AuthorizationVariable.NamePrefix + ++_lastVariableId;
+            name = VariableNamePrefix + ++_lastVariableId;
         }
         while (_reservedNames.Contains(name));
 

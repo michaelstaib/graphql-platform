@@ -9,8 +9,6 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 public sealed class AuthorizationVariable
 {
-    internal const string NamePrefix = "__fusion_auth_";
-
     internal AuthorizationVariable(
         string name,
         ImmutableArray<Selection> selections,
