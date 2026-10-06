@@ -60,7 +60,7 @@ public class StreamPageConnectionTests
 
         // act
         List<object> edges = [];
-        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken))
+        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken)!)
         {
             edges.Add(new { edge.Node.Id, edge.Cursor });
         }
@@ -115,15 +115,16 @@ public class StreamPageConnectionTests
         var connection = new StreamPageConnection<Item>(page, maxRelativeCursorCount: 2);
 
         // act
+        var cancellationToken = TestContext.Current.CancellationToken;
         var pageInfo = connection.PageInfo;
         var snapshot = new
         {
-            HasNextPage = await pageInfo.HasNextPage,
-            HasPreviousPage = await pageInfo.HasPreviousPage,
-            StartCursor = await pageInfo.StartCursor,
-            EndCursor = await pageInfo.EndCursor,
-            ForwardCursors = await pageInfo.ForwardCursors,
-            BackwardCursors = await pageInfo.BackwardCursors
+            HasNextPage = await pageInfo.HasNextPageAsync(cancellationToken),
+            HasPreviousPage = await pageInfo.HasPreviousPageAsync(cancellationToken),
+            StartCursor = await pageInfo.GetStartCursorAsync(cancellationToken),
+            EndCursor = await pageInfo.GetEndCursorAsync(cancellationToken),
+            ForwardCursors = await pageInfo.GetForwardCursorsAsync(cancellationToken),
+            BackwardCursors = await pageInfo.GetBackwardCursorsAsync(cancellationToken)
         };
 
         // assert
@@ -165,12 +166,13 @@ public class StreamPageConnectionTests
         var connection = new StreamPageConnection<Item>(page);
 
         // act
+        var cancellationToken = TestContext.Current.CancellationToken;
         var pageInfo = connection.PageInfo;
         var snapshot = new
         {
-            HasNextPage = await pageInfo.HasNextPage,
-            HasPreviousPage = await pageInfo.HasPreviousPage,
-            BackwardCursors = await pageInfo.BackwardCursors
+            HasNextPage = await pageInfo.HasNextPageAsync(cancellationToken),
+            HasPreviousPage = await pageInfo.HasPreviousPageAsync(cancellationToken),
+            BackwardCursors = await pageInfo.GetBackwardCursorsAsync(cancellationToken)
         };
 
         // assert
@@ -221,7 +223,7 @@ public class StreamPageConnectionTests
         // act
         async Task Enumerate()
         {
-            await foreach (var _ in connection.GetNodesAsync(cts.Token))
+            await foreach (var _ in connection.GetNodesAsync(cts.Token)!)
             {
             }
         }
@@ -245,13 +247,70 @@ public class StreamPageConnectionTests
         // act
         async Task Enumerate()
         {
-            await foreach (var _ in connection.GetEdgesAsync(cts.Token))
+            await foreach (var _ in connection.GetEdgesAsync(cts.Token)!)
             {
             }
         }
 
         // assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(Enumerate);
+    }
+
+    [Fact]
+    public async Task PageInfo_Should_ThrowOperationCanceledException_When_ForwardCursorsTokenIsCancelled()
+    {
+        // arrange
+        await using var database = await TestDatabase.CreateAsync(5);
+        var page = await database.Query.ToStreamPageAsync(
+            new PagingArguments(first: 2, includeTotalCount: true) { EnableRelativeCursors = true },
+            cancellationToken: TestContext.Current.CancellationToken);
+        var pageInfo = new StreamPageConnection<Item>(page).PageInfo;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // act
+        async Task Resolve() => await pageInfo.GetForwardCursorsAsync(cts.Token);
+
+        // assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Resolve);
+    }
+
+    [Fact]
+    public async Task PageInfo_Should_ThrowOperationCanceledException_When_EndCursorTokenIsCancelled()
+    {
+        // arrange
+        await using var database = await TestDatabase.CreateAsync(5);
+        var page = await database.Query.ToStreamPageAsync(
+            new PagingArguments(first: 2),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var pageInfo = new StreamPageConnection<Item>(page).PageInfo;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // act
+        async Task Resolve() => await pageInfo.GetEndCursorAsync(cts.Token);
+
+        // assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Resolve);
+    }
+
+    [Fact]
+    public async Task PageInfo_Should_ThrowOperationCanceledException_When_HasNextPageTokenIsCancelled()
+    {
+        // arrange
+        await using var database = await TestDatabase.CreateAsync(5);
+        var page = await database.Query.ToStreamPageAsync(
+            new PagingArguments(first: 2),
+            cancellationToken: TestContext.Current.CancellationToken);
+        var pageInfo = new StreamPageConnection<Item>(page).PageInfo;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // act
+        async Task Resolve() => await pageInfo.HasNextPageAsync(cts.Token);
+
+        // assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Resolve);
     }
 
     [Fact]
@@ -266,7 +325,7 @@ public class StreamPageConnectionTests
 
         // act
         List<int> ids = [];
-        await foreach (var node in connection.GetNodesAsync(TestContext.Current.CancellationToken))
+        await foreach (var node in connection.GetNodesAsync(TestContext.Current.CancellationToken)!)
         {
             ids.Add(node.Id);
         }
@@ -283,22 +342,23 @@ public class StreamPageConnectionTests
 
         // act
         List<object?> edges = [];
-        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken))
+        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken)!)
         {
             edges.Add(edge);
         }
 
+        var cancellationToken = TestContext.Current.CancellationToken;
         var pageInfo = connection.PageInfo;
         var snapshot = new
         {
             Edges = edges,
             TotalCount = await connection.GetTotalCountAsync(TestContext.Current.CancellationToken),
-            HasNextPage = await pageInfo.HasNextPage,
-            HasPreviousPage = await pageInfo.HasPreviousPage,
-            StartCursor = await pageInfo.StartCursor,
-            EndCursor = await pageInfo.EndCursor,
-            ForwardCursors = await pageInfo.ForwardCursors,
-            BackwardCursors = await pageInfo.BackwardCursors
+            HasNextPage = await pageInfo.HasNextPageAsync(cancellationToken),
+            HasPreviousPage = await pageInfo.HasPreviousPageAsync(cancellationToken),
+            StartCursor = await pageInfo.GetStartCursorAsync(cancellationToken),
+            EndCursor = await pageInfo.GetEndCursorAsync(cancellationToken),
+            ForwardCursors = await pageInfo.GetForwardCursorsAsync(cancellationToken),
+            BackwardCursors = await pageInfo.GetBackwardCursorsAsync(cancellationToken)
         };
 
         // assert
@@ -335,7 +395,7 @@ public class StreamPageConnectionTests
     {
         List<int> ids = [];
 
-        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken))
+        await foreach (var edge in connection.GetEdgesAsync(TestContext.Current.CancellationToken)!)
         {
             ids.Add(edge.Node.Id);
         }

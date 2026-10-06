@@ -14,82 +14,67 @@ public abstract class PageInfo : IPageInfo
     /// Indicates whether more edges exist following
     /// the set defined by the clients arguments.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription(
         "Indicates whether more edges exist following "
         + "the set defined by the clients arguments.")]
-    public abstract bool HasNextPage { get; }
+    public abstract ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Indicates whether more edges exist prior
     /// the set defined by the clients arguments.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription(
         "Indicates whether more edges exist prior "
         + "the set defined by the clients arguments.")]
-    public abstract bool HasPreviousPage { get; }
+    public abstract ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// When paginating backwards, the cursor to continue.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription(
         "When paginating backwards, the cursor to continue.")]
-    public abstract string? StartCursor { get; }
+    public abstract ValueTask<string?> GetStartCursorAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// When paginating forwards, the cursor to continue.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription(
         "When paginating forwards, the cursor to continue.")]
-    public abstract string? EndCursor { get; }
+    public abstract ValueTask<string?> GetEndCursorAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// A list of cursors to continue paginating forwards.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription(
         "A list of cursors to continue paginating forwards.")]
     [GraphQLType<NonNullType<ListType<NonNullType<PageCursorType>>>>]
-    public abstract IReadOnlyList<PageCursor> ForwardCursors { get; }
+    public abstract ValueTask<IReadOnlyList<PageCursor>> GetForwardCursorsAsync(
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// A list of cursors to continue paginating backwards.
     /// </summary>
+    /// <param name="cancellationToken">
+    /// The token that cancels the operation.
+    /// </param>
     [GraphQLDescription(
         "A list of cursors to continue paginating backwards.")]
     [GraphQLType<NonNullType<ListType<NonNullType<PageCursorType>>>>]
-    public abstract IReadOnlyList<PageCursor> BackwardCursors { get; }
-}
-
-/// <summary>
-/// Information about pagination in a connection.
-/// </summary>
-/// <param name="page">
-/// The page that contains the data.
-/// </param>
-/// <param name="maxRelativeCursorCount">
-/// The maximum number of relative cursors to create.
-/// </param>
-/// <typeparam name="TNode">
-/// The type of the node.
-/// </typeparam>
-public class PageInfo<TNode>(Page<TNode> page, int maxRelativeCursorCount = 5) : PageInfo
-{
-    /// <inheritdoc />
-    public override bool HasNextPage => page.HasNextPage;
-
-    /// <inheritdoc />
-    public override bool HasPreviousPage => page.HasPreviousPage;
-
-    /// <inheritdoc />
-    public override string? StartCursor => page.CreateStartCursor();
-
-    /// <inheritdoc />
-    public override string? EndCursor => page.CreateEndCursor();
-
-    /// <inheritdoc />
-    public override IReadOnlyList<PageCursor> ForwardCursors
-        => page.CreateRelativeForwardCursors(maxRelativeCursorCount);
-
-    /// <inheritdoc />
-    public override IReadOnlyList<PageCursor> BackwardCursors
-        => page.CreateRelativeBackwardCursors(maxRelativeCursorCount);
+    public abstract ValueTask<IReadOnlyList<PageCursor>> GetBackwardCursorsAsync(
+        CancellationToken cancellationToken = default);
 }

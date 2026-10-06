@@ -3,6 +3,7 @@ using HotChocolate.Types.Descriptors;
 
 namespace HotChocolate.Types.Pagination;
 
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
 internal sealed class ConditionalShareableAttribute : ObjectTypeDescriptorAttribute
 {
     protected override void OnConfigure(

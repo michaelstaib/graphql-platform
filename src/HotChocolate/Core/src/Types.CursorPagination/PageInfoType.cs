@@ -1,3 +1,4 @@
+using HotChocolate.Resolvers;
 using HotChocolate.Types.Composite;
 
 namespace HotChocolate.Types.Pagination;
@@ -18,33 +19,48 @@ public class PageInfoType : ObjectType<ConnectionPageInfo>
             .BindFields(BindingBehavior.Explicit);
 
         descriptor
-            .Field(t => t.HasNextPage)
+            .Field(t => t.HasNextPageAsync(default))
             .Type<NonNullType<BooleanType>>()
             .Name(Names.HasNextPage)
             .Description(
                 "Indicates whether more edges exist following "
-                + "the set defined by the clients arguments.");
+                + "the set defined by the clients arguments.")
+            .Extend()
+            .OnBeforeCreate(
+                c => c.PureResolver = ctx => GetPageInfo(ctx).HasNextPageAsync(ctx.RequestAborted).Result);
 
         descriptor
-            .Field(t => t.HasPreviousPage)
+            .Field(t => t.HasPreviousPageAsync(default))
             .Type<NonNullType<BooleanType>>()
             .Name(Names.HasPreviousPage)
             .Description(
                 "Indicates whether more edges exist prior "
-                + "the set defined by the clients arguments.");
+                + "the set defined by the clients arguments.")
+            .Extend()
+            .OnBeforeCreate(
+                c => c.PureResolver = ctx => GetPageInfo(ctx).HasPreviousPageAsync(ctx.RequestAborted).Result);
 
         descriptor
-            .Field(t => t.StartCursor)
+            .Field(t => t.GetStartCursorAsync(default))
             .Type<StringType>()
             .Name(Names.StartCursor)
-            .Description("When paginating backwards, the cursor to continue.");
+            .Description("When paginating backwards, the cursor to continue.")
+            .Extend()
+            .OnBeforeCreate(
+                c => c.PureResolver = ctx => GetPageInfo(ctx).GetStartCursorAsync(ctx.RequestAborted).Result);
 
         descriptor
-            .Field(t => t.EndCursor)
+            .Field(t => t.GetEndCursorAsync(default))
             .Type<StringType>()
             .Name(Names.EndCursor)
-            .Description("When paginating forwards, the cursor to continue.");
+            .Description("When paginating forwards, the cursor to continue.")
+            .Extend()
+            .OnBeforeCreate(
+                c => c.PureResolver = ctx => GetPageInfo(ctx).GetEndCursorAsync(ctx.RequestAborted).Result);
     }
+
+    private static ConnectionPageInfo GetPageInfo(IResolverContext context)
+        => context.Parent<ConnectionPageInfo>();
 
     public static class Names
     {

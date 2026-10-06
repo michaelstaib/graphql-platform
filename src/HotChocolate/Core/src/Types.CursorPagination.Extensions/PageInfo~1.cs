@@ -3,7 +3,7 @@ using GreenDonut.Data;
 namespace HotChocolate.Types.Pagination;
 
 /// <summary>
-/// Information about pagination in a streaming connection.
+/// Information about pagination in a connection.
 /// </summary>
 /// <param name="page">
 /// The page that contains the data.
@@ -14,33 +14,31 @@ namespace HotChocolate.Types.Pagination;
 /// <typeparam name="TNode">
 /// The type of the node.
 /// </typeparam>
-public class StreamPageInfo<TNode>(StreamPage<TNode> page, int maxRelativeCursorCount) : PageInfo
+public class PageInfo<TNode>(Page<TNode> page, int maxRelativeCursorCount = 5) : PageInfo
 {
     /// <inheritdoc />
     public override ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default)
-        => page.HasNextPageAsync(cancellationToken);
+        => new(page.HasNextPage);
 
     /// <inheritdoc />
     public override ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default)
-        => page.HasPreviousPageAsync(cancellationToken);
+        => new(page.HasPreviousPage);
 
     /// <inheritdoc />
     public override ValueTask<string?> GetStartCursorAsync(CancellationToken cancellationToken = default)
-        => page.CreateStartCursorAsync(cancellationToken);
+        => new(page.CreateStartCursor());
 
     /// <inheritdoc />
     public override ValueTask<string?> GetEndCursorAsync(CancellationToken cancellationToken = default)
-        => page.CreateEndCursorAsync(cancellationToken);
+        => new(page.CreateEndCursor());
 
     /// <inheritdoc />
-    public override async ValueTask<IReadOnlyList<PageCursor>> GetForwardCursorsAsync(
+    public override ValueTask<IReadOnlyList<PageCursor>> GetForwardCursorsAsync(
         CancellationToken cancellationToken = default)
-        => await page.CreateRelativeForwardCursorsAsync(maxRelativeCursorCount, cancellationToken)
-            .ConfigureAwait(false);
+        => new(page.CreateRelativeForwardCursors(maxRelativeCursorCount));
 
     /// <inheritdoc />
-    public override async ValueTask<IReadOnlyList<PageCursor>> GetBackwardCursorsAsync(
+    public override ValueTask<IReadOnlyList<PageCursor>> GetBackwardCursorsAsync(
         CancellationToken cancellationToken = default)
-        => await page.CreateRelativeBackwardCursorsAsync(maxRelativeCursorCount, cancellationToken)
-            .ConfigureAwait(false);
+        => new(page.CreateRelativeBackwardCursors(maxRelativeCursorCount));
 }

@@ -1,3 +1,4 @@
+using HotChocolate.Resolvers;
 using HotChocolate.Types.Composite;
 
 namespace HotChocolate.Types.Pagination;
@@ -20,19 +21,28 @@ public class CollectionSegmentInfoType : ObjectType<CollectionSegmentInfo>
             .BindFieldsExplicitly();
 
         descriptor
-            .Field(t => t.HasNextPage)
+            .Field(t => t.HasNextPageAsync(default))
             .Type<NonNullType<BooleanType>>()
             .Name("hasNextPage")
             .Description(
                 "Indicates whether more items exist following "
-                + "the set defined by the clients arguments.");
+                + "the set defined by the clients arguments.")
+            .Extend()
+            .OnBeforeCreate(
+                c => c.PureResolver = ctx => GetPageInfo(ctx).HasNextPageAsync(ctx.RequestAborted).Result);
 
         descriptor
-            .Field(t => t.HasPreviousPage)
+            .Field(t => t.HasPreviousPageAsync(default))
             .Type<NonNullType<BooleanType>>()
             .Name("hasPreviousPage")
             .Description(
                 "Indicates whether more items exist prior "
-                + "the set defined by the clients arguments.");
+                + "the set defined by the clients arguments.")
+            .Extend()
+            .OnBeforeCreate(
+                c => c.PureResolver = ctx => GetPageInfo(ctx).HasPreviousPageAsync(ctx.RequestAborted).Result);
     }
+
+    private static CollectionSegmentInfo GetPageInfo(IResolverContext context)
+        => context.Parent<CollectionSegmentInfo>();
 }
