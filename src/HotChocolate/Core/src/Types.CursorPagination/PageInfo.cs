@@ -7,9 +7,20 @@ namespace HotChocolate.Types.Pagination;
 /// </summary>
 [GraphQLDescription(
     "Information about pagination in a connection.")]
-[ConditionalShareable]
 public abstract class PageInfo : IPageInfo
 {
+    /// <summary>
+    /// The GraphQL names of the page info type and its fields.
+    /// </summary>
+    public static class Names
+    {
+        public const string PageInfo = "PageInfo";
+        public const string HasNextPage = "hasNextPage";
+        public const string HasPreviousPage = "hasPreviousPage";
+        public const string StartCursor = "startCursor";
+        public const string EndCursor = "endCursor";
+    }
+
     /// <summary>
     /// Indicates whether more edges exist following
     /// the set defined by the clients arguments.
