@@ -2067,6 +2067,102 @@ public class PagingTests
     }
 
     [Fact]
+    public async Task GenerateSource_PageInfo_Is_Shared_Across_Connection_Backings_With_Async_Custom_Members()
+    {
+        await TestHelper.GetGeneratedSourceSnapshot(
+            """
+            using System.Threading;
+            using System.Threading.Tasks;
+            using GreenDonut.Data;
+            using HotChocolate;
+            using HotChocolate.Types;
+            using HotChocolate.Types.Pagination;
+
+            namespace TestNamespace
+            {
+                public sealed class Author
+                {
+                    public int Id { get; set; }
+                    public string Name { get; set; }
+                }
+
+                public sealed class Book
+                {
+                    public int Id { get; set; }
+                    public string Title { get; set; }
+                }
+
+                public sealed class Magazine
+                {
+                    public int Id { get; set; }
+                    public string Title { get; set; }
+                }
+
+                public sealed class Journal
+                {
+                    public int Id { get; set; }
+                    public string Title { get; set; }
+                }
+
+                public class AuthorConnection : PageConnection<Author>
+                {
+                    public AuthorConnection(Page<Author> page)
+                        : base(page)
+                    {
+                    }
+
+                    public ValueTask<int> GetIssueCountAsync(CancellationToken cancellationToken)
+                        => default;
+
+                    public ValueTask<bool> HasSpecialsAsync(CancellationToken cancellationToken)
+                        => default;
+                }
+
+                public class BookConnection : StreamPageConnection<Book>
+                {
+                    public BookConnection(StreamPage<Book> page)
+                        : base(page)
+                    {
+                    }
+
+                    public ValueTask<int> GetIssueCountAsync(CancellationToken cancellationToken)
+                        => default;
+
+                    public ValueTask<bool> HasSpecialsAsync(CancellationToken cancellationToken)
+                        => default;
+                }
+            }
+
+            namespace TestNamespace.Types.Root
+            {
+                [QueryType]
+                public static partial class Queries
+                {
+                    public static Task<AuthorConnection> GetAuthorsAsync(
+                        PagingArguments pagingArgs,
+                        CancellationToken cancellationToken)
+                        => default!;
+
+                    public static Task<BookConnection> GetBooksAsync(
+                        PagingArguments pagingArgs,
+                        CancellationToken cancellationToken)
+                        => default!;
+
+                    public static Task<PageConnection<Magazine>> GetPagedMagazinesAsync(
+                        PagingArguments pagingArgs,
+                        CancellationToken cancellationToken)
+                        => default!;
+
+                    public static Task<StreamPageConnection<Journal>> GetStreamedJournalsAsync(
+                        PagingArguments pagingArgs,
+                        CancellationToken cancellationToken)
+                        => default!;
+                }
+            }
+            """).MatchMarkdownAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task GenerateSource_StreamPageConnection_With_Different_Node_Types()
     {
         await TestHelper.GetGeneratedSourceSnapshot(
