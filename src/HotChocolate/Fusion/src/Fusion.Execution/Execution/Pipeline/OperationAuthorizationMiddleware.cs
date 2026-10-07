@@ -1,0 +1,224 @@
+using System.Collections.Immutable;
+using System.Runtime.InteropServices;
+using System.Security.Claims;
+using HotChocolate.Execution;
+using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Diagnostics;
+using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Types;
+using HotChocolate.Language;
+using HotChocolate.Types;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace HotChocolate.Fusion.Execution.Pipeline;
+
+internal sealed class OperationAuthorizationMiddleware
+{
+    private const string Key = "FusionOperationAuthorizationMiddleware";
+
+    private readonly AuthorizationEvaluator _evaluator;
+    private readonly FusionAuthorizationOptions _options;
+    private readonly AuthenticationSchemeResolver _schemeResolver;
+    private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
+    private readonly IInputType _variableType;
+
+    private OperationAuthorizationMiddleware(
+        AuthorizationEvaluator evaluator,
+        FusionAuthorizationOptions options,
+        AuthenticationSchemeResolver schemeResolver,
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        IInputType variableType)
+    {
+        _evaluator = evaluator;
+        _options = options;
+        _schemeResolver = schemeResolver;
+        _diagnosticEvents = diagnosticEvents;
+        _variableType = variableType;
+    }
+
+    public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
+    {
+        var plan = context.GetOperationPlan() ?? throw ThrowHelper.OperationAuthorizationRequiresPlan();
+
+        return IsProtected(plan)
+            ? InvokeProtectedAsync(context, plan, next)
+            : next(context);
+    }
+
+    private async ValueTask InvokeProtectedAsync(
+        RequestContext context,
+        OperationPlan plan,
+        RequestDelegate next)
+    {
+        var variableSets = context.VariableValues;
+
+        if (variableSets.IsDefaultOrEmpty)
+        {
+            await next(context);
+            return;
+        }
+
+        var descriptors = GetDescriptors(plan);
+        var variables = GetVariables(plan);
+        var user = GetUser(context);
+        var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
+
+        for (var i = 0; i < variableSets.Length; i++)
+        {
+            var evaluation = await _evaluator.EvaluateAsync(
+                context,
+                user,
+                plan,
+                descriptors,
+                variableSets[i],
+                i,
+                context.RequestAborted);
+
+            if (evaluation.UnresolvedPolicy is { } failure)
+            {
+                _diagnosticEvents.RequestError(context, failure);
+                context.Result = ErrorHelper.AuthorizationFailed();
+                return;
+            }
+
+            var decisions = evaluation.Decisions;
+
+            if (decisions is not null
+                && decisions.TryGetRejection(_options.RejectRequestOn, out var denial))
+            {
+                await RejectAsync(context, denial);
+                return;
+            }
+
+            updatedVariableSets[i] = CreateVariableValues(variableSets[i], variables, decisions);
+        }
+
+        context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
+
+        await next(context);
+    }
+
+    private async ValueTask RejectAsync(RequestContext context, SelectionDenial denial)
+    {
+        var challenge = denial.Kind is AuthorizationDenialKind.Unauthenticated
+            ? await _schemeResolver.GetChallengeAsync(context.RequestAborted)
+            : null;
+
+        var result = ErrorHelper.AuthorizationRejected(denial, _options.EnableAttribution, challenge);
+
+        _diagnosticEvents.RequestError(context, result.Errors[0]);
+        context.Result = result;
+    }
+
+    private IVariableValueCollection CreateVariableValues(
+        IVariableValueCollection variableValues,
+        ImmutableArray<AuthorizationVariable> variables,
+        AuthorizationDecisions? decisions)
+    {
+        var values = new Dictionary<string, VariableValue>();
+
+        foreach (var value in variableValues)
+        {
+            values[value.Name] = value;
+        }
+
+        AuthorizationVariableValues.AddTo(values, variables, decisions, _variableType);
+
+        return new VariableValueCollection(values, decisions);
+    }
+
+    private static bool IsProtected(OperationPlan plan)
+    {
+        if (plan.Operation.Authorization is not null)
+        {
+            return true;
+        }
+
+        foreach (var incrementalPlan in plan.IncrementalPlans)
+        {
+            if (incrementalPlan.Operation.Authorization is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ImmutableArray<PolicyDescriptor> GetDescriptors(OperationPlan plan)
+    {
+        var descriptors = ImmutableArray.CreateBuilder<PolicyDescriptor>();
+
+        if (plan.Operation.Authorization is { } authorization)
+        {
+            descriptors.AddRange(authorization.Descriptors);
+        }
+
+        foreach (var incrementalPlan in plan.IncrementalPlans)
+        {
+            if (incrementalPlan.Operation.Authorization is { } incrementalAuthorization)
+            {
+                descriptors.AddRange(incrementalAuthorization.Descriptors);
+            }
+        }
+
+        return descriptors.ToImmutable();
+    }
+
+    private static ImmutableArray<AuthorizationVariable> GetVariables(OperationPlan plan)
+    {
+        var variables = ImmutableArray.CreateBuilder<AuthorizationVariable>();
+
+        if (plan.Operation.Authorization is { } authorization)
+        {
+            variables.AddRange(authorization.Variables);
+        }
+
+        foreach (var incrementalPlan in plan.IncrementalPlans)
+        {
+            if (incrementalPlan.Operation.Authorization is { } incrementalAuthorization)
+            {
+                variables.AddRange(incrementalAuthorization.Variables);
+            }
+        }
+
+        return variables.ToImmutable();
+    }
+
+    private static ClaimsPrincipal GetUser(RequestContext context)
+        => context.ContextData.TryGetValue(nameof(ClaimsPrincipal), out var value)
+            && value is ClaimsPrincipal user
+                ? user
+                : new ClaimsPrincipal(new ClaimsIdentity());
+
+    public static RequestMiddlewareConfiguration Create()
+        => new RequestMiddlewareConfiguration(
+            (fc, next) =>
+            {
+                var schema = fc.SchemaServices.GetRequiredService<FusionSchemaDefinition>();
+                var options = fc.SchemaServices.GetRequiredService<FusionAuthorizationOptions>();
+                var schemeResolver = fc.SchemaServices.GetRequiredService<AuthenticationSchemeResolver>();
+                var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
+                var variableType = GetVariableType(schema);
+                var middleware = new OperationAuthorizationMiddleware(
+                    new AuthorizationEvaluator(options),
+                    options,
+                    schemeResolver,
+                    diagnosticEvents,
+                    variableType);
+                return requestContext => middleware.InvokeAsync(requestContext, next);
+            },
+            Key);
+
+    private static IInputType GetVariableType(FusionSchemaDefinition schema)
+    {
+        var typeNode = new NonNullTypeNode(new NamedTypeNode(SpecScalarNames.Boolean.Name));
+
+        if (schema.Types.TryGetType(typeNode, out IInputType? type))
+        {
+            return type;
+        }
+
+        throw ThrowHelper.OperationAuthorizationRequiresBooleanType();
+    }
+}

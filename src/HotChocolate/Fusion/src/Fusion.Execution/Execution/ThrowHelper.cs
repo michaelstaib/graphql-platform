@@ -18,6 +18,12 @@ internal static class ThrowHelper
             fieldCoordinate,
             policy));
 
+    public static InvalidOperationException OperationAuthorizationRequiresPlan()
+        => new(FusionExecutionResources.OperationAuthorization_OperationPlanMissing);
+
+    public static InvalidOperationException OperationAuthorizationRequiresBooleanType()
+        => new(FusionExecutionResources.OperationAuthorization_BooleanTypeMissing);
+
     public static InvalidOperationException AuthorizationOptionsAreReadOnly()
         => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
 

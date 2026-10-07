@@ -55,6 +55,10 @@ public sealed partial class OperationPlanContext
         Variables = variables;
         OperationPlan = operationPlan;
 
+        _authorizationDecisions = operationPlan.Operation.Authorization is null
+            ? null
+            : (variables as VariableValueCollection)?.AuthorizationDecisions;
+
         switch (operationPlan)
         {
             case OperationPlan plan:
@@ -166,6 +170,7 @@ public sealed partial class OperationPlanContext
         _currentMemorySource = null!;
         Variables = default!;
         OperationPlan = default!;
+        _authorizationDecisions = null;
         IncludeConditionFlags = default;
         DeferConditionFlags = default;
         // if a custom scope is used we cannot reuse it and have to null it.
