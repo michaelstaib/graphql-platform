@@ -805,19 +805,34 @@ internal sealed class FusionRequestExecutorManager
                     continue;
                 }
 
-                _documentHash = documentHash;
-                _settingsHash = settingsHash;
-                _planningFingerprint = configuration.PlanningFingerprint;
-
                 var previousExecutor = Executor;
                 var previousConfiguration = _currentConfiguration;
-                var nextExecutor = _manager.CreateRequestExecutor(Executor.Schema.Name, configuration);
+                FusionRequestExecutor? nextExecutor = null;
 
-                await ValidateAuthorizationAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
-                await WarmupExecutorAsync(nextExecutor, false, _cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    nextExecutor = _manager.CreateRequestExecutor(previousExecutor.Schema.Name, configuration);
+
+                    await ValidateAuthorizationAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
+                    await WarmupExecutorAsync(nextExecutor, false, _cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+                {
+                    await RejectAsync(nextExecutor, configuration).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticEvents.ExecutorUpdateFailed(previousExecutor.Schema.Name, ex);
+                    await RejectAsync(nextExecutor, configuration).ConfigureAwait(false);
+                    continue;
+                }
 
                 Executor = nextExecutor;
                 _currentConfiguration = configuration;
+                _documentHash = documentHash;
+                _settingsHash = settingsHash;
+                _planningFingerprint = configuration.PlanningFingerprint;
 
                 DiagnosticEvents.ExecutorCreated(nextExecutor.Schema.Name, nextExecutor);
 
@@ -826,6 +841,18 @@ internal sealed class FusionRequestExecutorManager
                 _manager.EvictExecutor(previousExecutor, DiagnosticEvents);
 
                 previousConfiguration.Dispose();
+            }
+        }
+
+        private static async ValueTask RejectAsync(
+            FusionRequestExecutor? executor,
+            FusionConfiguration configuration)
+        {
+            configuration.Dispose();
+
+            if (executor is not null)
+            {
+                await executor.DisposeAsync().ConfigureAwait(false);
             }
         }
 
