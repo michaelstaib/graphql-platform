@@ -6,9 +6,9 @@ namespace HotChocolate.Fusion.Authorization;
 /// <param name="Decisions">
 /// The denied selections, or <c>null</c> if every selection is allowed.
 /// </param>
-/// <param name="UnresolvedPolicy">
+/// <param name="Failure">
 /// The failure of a policy that no provider resolved, or <c>null</c> if every policy was evaluated.
 /// </param>
 internal readonly record struct AuthorizationEvaluation(
     AuthorizationDecisions? Decisions,
-    InvalidOperationException? UnresolvedPolicy);
+    InvalidOperationException? Failure);

@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -13,8 +12,7 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 internal sealed class AuthorizationEvaluator
 {
-    private static readonly FrozenDictionary<string, object?> s_noArguments
-        = FrozenDictionary<string, object?>.Empty;
+    private static readonly ImmutableDictionary<string, object?> s_noArguments = [];
 
     private readonly FusionAuthorizationOptions _options;
 
@@ -132,7 +130,7 @@ internal sealed class AuthorizationEvaluator
     }
 
     private AuthorizationDecisions? CreateDecisions(
-        List<PolicyDescriptor> occurrences,
+        ImmutableArray<PolicyDescriptor> occurrences,
         HashSet<PolicyDescriptor> deniedDescriptors,
         bool isAuthenticated)
     {
@@ -190,11 +188,11 @@ internal sealed class AuthorizationEvaluator
         }
     }
 
-    private static List<PolicyDescriptor> GetOccurrences(
+    private static ImmutableArray<PolicyDescriptor> GetOccurrences(
         ImmutableArray<PolicyDescriptor> descriptors,
         IVariableValueCollection variables)
     {
-        var occurrences = new List<PolicyDescriptor>(descriptors.Length);
+        var occurrences = ImmutableArray.CreateBuilder<PolicyDescriptor>(descriptors.Length);
         var flagsByOperation = new Dictionary<Operation, ConditionFlags>();
 
         foreach (var descriptor in descriptors)
@@ -205,7 +203,7 @@ internal sealed class AuthorizationEvaluator
             }
         }
 
-        return occurrences;
+        return occurrences.ToImmutable();
     }
 
     private static bool IsReachable(
@@ -234,7 +232,7 @@ internal sealed class AuthorizationEvaluator
         return true;
     }
 
-    private static IReadOnlyDictionary<string, object?> CoerceArguments(
+    private static ImmutableDictionary<string, object?> CoerceArguments(
         Selection selection,
         IVariableValueCollection variables)
     {
@@ -246,7 +244,7 @@ internal sealed class AuthorizationEvaluator
         }
 
         var syntaxNode = selection.SyntaxNodes[0].Node;
-        var arguments = new Dictionary<string, object?>(definitions.Count, StringComparer.Ordinal);
+        var arguments = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.Ordinal);
 
         foreach (var definition in definitions)
         {
@@ -269,7 +267,7 @@ internal sealed class AuthorizationEvaluator
             arguments.Add(definition.Name, value ?? definition.DefaultValue ?? NullValueNode.Default);
         }
 
-        return arguments;
+        return arguments.ToImmutable();
     }
 
     private sealed class PolicyGroup(IPolicy policy)
@@ -278,7 +276,8 @@ internal sealed class AuthorizationEvaluator
 
         public int Order { get; private set; } = int.MaxValue;
 
-        public List<PolicyDescriptor> Descriptors { get; } = [];
+        public ImmutableArray<PolicyDescriptor>.Builder Descriptors { get; } =
+            ImmutableArray.CreateBuilder<PolicyDescriptor>();
 
         public void Add(PolicyDescriptor descriptor, int order)
         {

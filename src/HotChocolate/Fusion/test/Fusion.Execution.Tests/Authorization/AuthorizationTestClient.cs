@@ -8,6 +8,7 @@ using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
+using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Authorization;
 
@@ -149,7 +150,7 @@ internal sealed class AuthorizationTestClient(string data) : ISourceSchemaClient
     {
         foreach (var directive in node.Directives)
         {
-            if (directive.Name.Value is "skip"
+            if (directive.Name.Value == DirectiveNames.Skip.Name
                 && directive.Arguments[0].Value is VariableNode variable
                 && variables.GetValueOrDefault(variable.Name.Value))
             {

@@ -74,7 +74,7 @@ internal sealed class OperationAuthorizationMiddleware
                 i,
                 context.RequestAborted);
 
-            if (evaluation.UnresolvedPolicy is { } failure)
+            if (evaluation.Failure is { } failure)
             {
                 _diagnosticEvents.RequestError(context, failure);
                 context.Result = ErrorHelper.AuthorizationFailed();
