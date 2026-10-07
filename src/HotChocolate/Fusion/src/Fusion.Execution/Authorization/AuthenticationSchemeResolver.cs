@@ -18,7 +18,7 @@ internal sealed class AuthenticationSchemeResolver
     /// The authorization options.
     /// </param>
     /// <param name="catalog">
-    /// The registered schemes, or <c>null</c> if the host has no authentication schemes.
+    /// The registered schemes, or <c>null</c> if the host exposes none, which resolves to no registered schemes.
     /// </param>
     public AuthenticationSchemeResolver(
         FusionAuthorizationOptions options,

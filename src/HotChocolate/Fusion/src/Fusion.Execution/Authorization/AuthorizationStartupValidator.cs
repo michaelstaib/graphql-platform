@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Types.Metadata;
 using HotChocolate.Types;
@@ -10,8 +11,8 @@ namespace HotChocolate.Fusion.Authorization;
 internal static class AuthorizationStartupValidator
 {
     /// <summary>
-    /// Validates that a schema that uses authorization has a usable authentication scheme, that
-    /// every listed scheme is registered and that every policy name resolves.
+    /// Validates the Schemes option, and for a schema that uses authorization also that a
+    /// usable authentication scheme exists and that every policy name resolves.
     /// </summary>
     /// <param name="usage">
     /// The authorization requirements the schema uses.
@@ -44,19 +45,17 @@ internal static class AuthorizationStartupValidator
             return;
         }
 
-        if (usage is { IsUsed: true } && !schemeResolver.HasCatalog)
-        {
-            throw ThrowHelper.NoAuthenticationSchemeCatalog();
-        }
-
-        if (schemeResolver.HasCatalog)
-        {
-            await ValidateSchemesAsync(usage, options, schemeResolver, cancellationToken).ConfigureAwait(false);
-        }
+        var registered = await ValidateConfigurationAsync(options, schemeResolver, cancellationToken)
+            .ConfigureAwait(false);
 
         if (usage is null)
         {
             return;
+        }
+
+        if (usage.IsUsed)
+        {
+            ValidateUsage(options, schemeResolver, registered);
         }
 
         var policyNames = usage.PolicyNames;
@@ -70,28 +69,50 @@ internal static class AuthorizationStartupValidator
         }
     }
 
-    private static async ValueTask ValidateSchemesAsync(
-        FusionAuthorizationUsage? usage,
+    private static async ValueTask<ImmutableArray<string>> ValidateConfigurationAsync(
         FusionAuthorizationOptions options,
         AuthenticationSchemeResolver schemeResolver,
         CancellationToken cancellationToken)
     {
         var registered = await schemeResolver.GetRegisteredAsync(cancellationToken).ConfigureAwait(false);
 
-        if (options.Schemes is { } listed)
+        if (options.Schemes is not { } listed)
         {
-            for (var i = 0; i < listed.Length; i++)
+            return registered;
+        }
+
+        if (listed.IsEmpty)
+        {
+            throw ThrowHelper.EmptyAuthenticationSchemes();
+        }
+
+        if (!schemeResolver.HasCatalog)
+        {
+            throw ThrowHelper.AuthenticationSchemesWithoutCatalog();
+        }
+
+        for (var i = 0; i < listed.Length; i++)
+        {
+            if (!registered.Contains(listed[i]))
             {
-                if (!registered.Contains(listed[i]))
-                {
-                    throw ThrowHelper.AuthenticationSchemeNotRegistered(listed[i]);
-                }
+                throw ThrowHelper.AuthenticationSchemeNotRegistered(listed[i]);
             }
         }
 
-        var selected = options.Schemes ?? registered;
+        return registered;
+    }
 
-        if (usage is { IsUsed: true } && selected.IsEmpty)
+    private static void ValidateUsage(
+        FusionAuthorizationOptions options,
+        AuthenticationSchemeResolver schemeResolver,
+        ImmutableArray<string> registered)
+    {
+        if (!schemeResolver.HasCatalog)
+        {
+            throw ThrowHelper.NoAuthenticationSchemeCatalog();
+        }
+
+        if (options.Schemes is null && registered.IsEmpty)
         {
             throw ThrowHelper.NoAuthenticationSchemeRegistered();
         }

@@ -100,12 +100,14 @@ public class AuthorizationStartupValidationTests : FusionTestBase
             exception.Message);
     }
 
-    [Fact]
-    public async Task Startup_Should_Fail_When_SchemesAreEmptyAndSchemaUsesAuthorization()
+    [Theory]
+    [InlineData("secret: String @authenticated")]
+    [InlineData("field: String")]
+    public async Task Startup_Should_Fail_When_SchemesAreEmpty(string field)
     {
         // arrange
         var provider = CreateProvider(
-            "secret: String @authenticated",
+            field,
             catalog: new TestAuthenticationSchemeCatalog("Bearer"),
             configure: o => o.Schemes = ImmutableArray<string>.Empty);
 
@@ -115,7 +117,49 @@ public class AuthorizationStartupValidationTests : FusionTestBase
 
         // assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
-        Assert.Equal(NoSchemeMessage, exception.Message);
+        Assert.Equal(
+            "The Schemes list is empty; omit it to use every registered scheme or list at least one.",
+            exception.Message);
+    }
+
+    [Theory]
+    [InlineData("secret: String @authenticated")]
+    [InlineData("field: String")]
+    public async Task Startup_Should_Fail_When_SchemesAreListedAndHostHasNoAuthenticationSchemeCatalog(string field)
+    {
+        // arrange
+        var provider = CreateProvider(
+            field,
+            catalog: null,
+            configure: o => o.Schemes = ImmutableArray.Create("Bearer"));
+
+        // act
+        var act = async () => await provider.GetRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
+        Assert.Equal(
+            "The Schemes option lists authentication schemes but the host exposes no authentication schemes. "
+            + "Register the catalog through HotChocolate.Fusion.AspNetCore, or do not set Schemes.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task Startup_Should_Succeed_When_SchemaUsesNoAuthorizationAndListedSchemesAreRegistered()
+    {
+        // arrange
+        var provider = CreateProvider(
+            "field: String",
+            catalog: new TestAuthenticationSchemeCatalog("Bearer", "Cookie"),
+            configure: o => o.Schemes = ImmutableArray.Create("Cookie"));
+
+        // act
+        var executor = await provider.GetRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(ISchemaDefinition.DefaultName, executor.Schema.Name);
     }
 
     [Fact]

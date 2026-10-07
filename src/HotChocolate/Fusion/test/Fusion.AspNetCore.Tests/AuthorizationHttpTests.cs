@@ -135,7 +135,7 @@ public class AuthorizationHttpTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_SchemaUsesAuthorizationAndSchemeIsRegistered()
+    public async Task Gateway_Should_ReturnOk_When_SchemaUsesAuthorizationAndSchemeIsRegistered()
     {
         // arrange
         using var server = CreateSourceSchema("A", ProtectedSchema);
@@ -173,7 +173,7 @@ public class AuthorizationHttpTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_ValidationIsDisabledAndNoAuthenticationIsRegistered()
+    public async Task Gateway_Should_ReturnOk_When_ValidationIsDisabledAndNoAuthenticationIsRegistered()
     {
         // arrange
         using var server = CreateSourceSchema("A", ProtectedSchema);

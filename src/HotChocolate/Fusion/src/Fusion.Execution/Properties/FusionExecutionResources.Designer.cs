@@ -344,5 +344,17 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("AuthorizationValidation_NoSchemeCatalog", resourceCulture);
             }
         }
+
+        internal static string AuthorizationValidation_SchemesEmpty {
+            get {
+                return ResourceManager.GetString("AuthorizationValidation_SchemesEmpty", resourceCulture);
+            }
+        }
+
+        internal static string AuthorizationValidation_SchemesWithoutCatalog {
+            get {
+                return ResourceManager.GetString("AuthorizationValidation_SchemesWithoutCatalog", resourceCulture);
+            }
+        }
     }
 }
