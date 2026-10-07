@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization.InMemory;
+using HotChocolate.Language;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Authorization;
@@ -352,6 +353,118 @@ public class DeniedSelectionFinalizationTests : AuthorizationExecutionTestBase
               ],
               "data": {
                 "product": null
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Complete_Should_NullTheFieldAndKeepTheParents_When_DenyHandlingIsErrorAndErrorHandlingModeIsNull()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync(
+            Schema,
+            new AuthorizationTestClient(Data),
+            new InMemoryPolicyRecorder(),
+            policies => policies.Deny("finance"),
+            builder =>
+            {
+                builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error);
+                builder.ModifyRequestOptions(options => options.DefaultErrorHandlingMode = ErrorHandlingMode.Null);
+            });
+        var user = Authenticated();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ products { id cost } }", user).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The current user is not authorized to access this resource.",
+                  "path": [
+                    "products",
+                    0,
+                    "cost"
+                  ],
+                  "extensions": {
+                    "code": "AUTH_NOT_AUTHORIZED"
+                  }
+                },
+                {
+                  "message": "The current user is not authorized to access this resource.",
+                  "path": [
+                    "products",
+                    1,
+                    "cost"
+                  ],
+                  "extensions": {
+                    "code": "AUTH_NOT_AUTHORIZED"
+                  }
+                }
+              ],
+              "data": {
+                "products": [
+                  {
+                    "id": "1",
+                    "cost": null
+                  },
+                  {
+                    "id": "2",
+                    "cost": null
+                  }
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Complete_Should_NullTheFieldAndKeepTheParent_When_DenyHandlingIsNullAndErrorHandlingModeIsNull()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync(
+            Schema,
+            new AuthorizationTestClient(Data),
+            new InMemoryPolicyRecorder(),
+            policies => policies.Deny("finance"),
+            builder =>
+            {
+                builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Null);
+                builder.ModifyRequestOptions(options => options.DefaultErrorHandlingMode = ErrorHandlingMode.Null);
+            });
+        var user = Authenticated();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ product { id cost } }", user).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "product",
+                    "cost"
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ],
+              "data": {
+                "product": {
+                  "id": "1",
+                  "cost": null
+                }
               }
             }
             """);
