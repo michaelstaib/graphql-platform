@@ -436,4 +436,15 @@ public interface IFusionExecutionDiagnosticEvents : ICoreExecutionDiagnosticEven
         ExecutionNode node,
         string schemaName,
         ulong subscriptionId);
+
+    /// <summary>
+    /// Called when a new configuration could not be activated and the previous executor stays active.
+    /// </summary>
+    /// <param name="schemaName">
+    /// The name of the schema.
+    /// </param>
+    /// <param name="exception">
+    /// The exception that rejected the configuration.
+    /// </param>
+    void ExecutorUpdateFailed(string schemaName, Exception exception);
 }
