@@ -7286,6 +7286,45 @@
         },
         {
           "kind": "OBJECT",
+          "name": "FriendsEdge",
+          "description": "An edge in a connection.",
+          "fields": [
+            {
+              "name": "cursor",
+              "description": "A cursor for use in pagination.",
+              "args": [],
+              "type": {
+                "kind": "NON_NULL",
+                "name": null,
+                "ofType": {
+                  "kind": "SCALAR",
+                  "name": "String",
+                  "ofType": null
+                }
+              },
+              "isDeprecated": false,
+              "deprecationReason": null
+            },
+            {
+              "name": "node",
+              "description": "The item at the end of the edge.",
+              "args": [],
+              "type": {
+                "kind": "INTERFACE",
+                "name": "Character",
+                "ofType": null
+              },
+              "isDeprecated": false,
+              "deprecationReason": null
+            }
+          ],
+          "inputFields": null,
+          "interfaces": [],
+          "enumValues": null,
+          "possibleTypes": null
+        },
+        {
+          "kind": "OBJECT",
           "name": "PageInfo",
           "description": "Information about pagination in a connection.",
           "fields": [
@@ -7344,6 +7383,52 @@
               },
               "isDeprecated": false,
               "deprecationReason": null
+            },
+            {
+              "name": "forwardCursors",
+              "description": "A list of cursors to continue paginating forwards.",
+              "args": [],
+              "type": {
+                "kind": "NON_NULL",
+                "name": null,
+                "ofType": {
+                  "kind": "LIST",
+                  "name": null,
+                  "ofType": {
+                    "kind": "NON_NULL",
+                    "name": null,
+                    "ofType": {
+                      "kind": "OBJECT",
+                      "name": "PageCursor"
+                    }
+                  }
+                }
+              },
+              "isDeprecated": false,
+              "deprecationReason": null
+            },
+            {
+              "name": "backwardCursors",
+              "description": "A list of cursors to continue paginating backwards.",
+              "args": [],
+              "type": {
+                "kind": "NON_NULL",
+                "name": null,
+                "ofType": {
+                  "kind": "LIST",
+                  "name": null,
+                  "ofType": {
+                    "kind": "NON_NULL",
+                    "name": null,
+                    "ofType": {
+                      "kind": "OBJECT",
+                      "name": "PageCursor"
+                    }
+                  }
+                }
+              },
+              "isDeprecated": false,
+              "deprecationReason": null
             }
           ],
           "inputFields": null,
@@ -7353,12 +7438,28 @@
         },
         {
           "kind": "OBJECT",
-          "name": "FriendsEdge",
-          "description": "An edge in a connection.",
+          "name": "PageCursor",
+          "description": "A cursor that points to a specific page.",
           "fields": [
             {
+              "name": "page",
+              "description": "The page number.",
+              "args": [],
+              "type": {
+                "kind": "NON_NULL",
+                "name": null,
+                "ofType": {
+                  "kind": "SCALAR",
+                  "name": "Int",
+                  "ofType": null
+                }
+              },
+              "isDeprecated": false,
+              "deprecationReason": null
+            },
+            {
               "name": "cursor",
-              "description": "A cursor for use in pagination.",
+              "description": "The cursor.",
               "args": [],
               "type": {
                 "kind": "NON_NULL",
@@ -7368,18 +7469,6 @@
                   "name": "String",
                   "ofType": null
                 }
-              },
-              "isDeprecated": false,
-              "deprecationReason": null
-            },
-            {
-              "name": "node",
-              "description": "The item at the end of the edge.",
-              "args": [],
-              "type": {
-                "kind": "INTERFACE",
-                "name": "Character",
-                "ofType": null
               },
               "isDeprecated": false,
               "deprecationReason": null
