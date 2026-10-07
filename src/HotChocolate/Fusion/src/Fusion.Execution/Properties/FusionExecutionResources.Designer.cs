@@ -338,5 +338,11 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("AuthorizationValidation_NoSchemeRegistered", resourceCulture);
             }
         }
+
+        internal static string AuthorizationValidation_NoSchemeCatalog {
+            get {
+                return ResourceManager.GetString("AuthorizationValidation_NoSchemeCatalog", resourceCulture);
+            }
+        }
     }
 }

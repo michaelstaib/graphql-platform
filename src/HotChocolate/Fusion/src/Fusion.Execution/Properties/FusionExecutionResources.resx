@@ -165,4 +165,7 @@
   <data name="AuthorizationValidation_NoSchemeRegistered" xml:space="preserve">
     <value>The schema uses authorization directives but no authentication scheme is registered. Register an authentication scheme, or disable the authorization validation.</value>
   </data>
+  <data name="AuthorizationValidation_NoSchemeCatalog" xml:space="preserve">
+    <value>The schema uses authorization directives but the host exposes no authentication schemes. Add the gateway through HotChocolate.Fusion.AspNetCore, or set DisableAuthorizationValidation.</value>
+  </data>
 </root>

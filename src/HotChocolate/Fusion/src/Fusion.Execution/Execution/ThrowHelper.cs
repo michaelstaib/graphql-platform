@@ -21,6 +21,9 @@ internal static class ThrowHelper
     public static InvalidOperationException NoAuthenticationSchemeRegistered()
         => new(FusionExecutionResources.AuthorizationValidation_NoSchemeRegistered);
 
+    public static InvalidOperationException NoAuthenticationSchemeCatalog()
+        => new(FusionExecutionResources.AuthorizationValidation_NoSchemeCatalog);
+
     public static InvalidOperationException PolicyNotResolved(string directiveName, string? policyName)
         => new(string.Format(
             FusionExecutionResources.PolicyResolver_PolicyNotResolved,

@@ -44,6 +44,11 @@ internal static class AuthorizationStartupValidator
             return;
         }
 
+        if (usage is { IsUsed: true } && !schemeResolver.HasCatalog)
+        {
+            throw ThrowHelper.NoAuthenticationSchemeCatalog();
+        }
+
         if (schemeResolver.HasCatalog)
         {
             await ValidateSchemesAsync(usage, options, schemeResolver, cancellationToken).ConfigureAwait(false);

@@ -93,7 +93,11 @@ public class AuthorizationStartupValidationTests : FusionTestBase
             cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
-        await Assert.ThrowsAsync<InvalidOperationException>(act);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
+        Assert.Equal(
+            "The authentication scheme 'Bearer' of the authorization options is not registered. "
+            + "Register it, remove it from the schemes, or disable the authorization validation.",
+            exception.Message);
     }
 
     [Fact]
@@ -148,17 +152,21 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_HostHasNoAuthenticationSchemeCatalog()
+    public async Task Startup_Should_Fail_When_SchemaUsesAuthorizationAndHostHasNoAuthenticationSchemeCatalog()
     {
         // arrange
         var provider = CreateProvider("secret: String @authenticated", catalog: null);
 
         // act
-        var executor = await provider.GetRequestExecutorAsync(
+        var act = async () => await provider.GetRequestExecutorAsync(
             cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(ISchemaDefinition.DefaultName, executor.Schema.Name);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
+        Assert.Equal(
+            "The schema uses authorization directives but the host exposes no authentication schemes. "
+            + "Add the gateway through HotChocolate.Fusion.AspNetCore, or set DisableAuthorizationValidation.",
+            exception.Message);
     }
 
     [Fact]
@@ -167,7 +175,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             """secret: String @policy(policies: [["admin", "auditor"]])""",
-            catalog: null,
+            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
             policies: policies => policies.Allow("admin"));
 
         // act
@@ -187,7 +195,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             """secret: String @policy(policies: [["admin", "auditor"]])""",
-            catalog: null,
+            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
             policies: policies => policies.Allow("admin").Deny("auditor"));
 
         // act
