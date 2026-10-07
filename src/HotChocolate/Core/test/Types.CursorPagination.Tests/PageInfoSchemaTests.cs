@@ -67,6 +67,58 @@ public class PageInfoSchemaTests
               backwardCursors: [PageCursor!]! @cost(weight: "10")
             }
             """);
+        schema.Types.GetType<ObjectType>("PageCursor").ToString().MatchInlineSnapshot(
+            """
+            "A cursor that points to a specific page."
+            type PageCursor @shareable {
+              "The page number."
+              page: Int!
+              "The cursor."
+              cursor: String!
+            }
+            """);
+    }
+
+    [Fact]
+    public void Schema_Should_ApplyShareableOnce_When_SchemaBuilderIsUsed()
+    {
+        // arrange
+        var builder = SchemaBuilder.New()
+            .ModifyOptions(o => o.ApplyShareableToPageInfo = true)
+            .AddQueryType<ClassicQuery>();
+
+        // act
+        var schema = builder.Create();
+
+        // assert
+        schema.Types.GetType<ObjectType>("PageInfo").ToString().MatchInlineSnapshot(
+            """
+            "Information about pagination in a connection."
+            type PageInfo @shareable {
+              "Indicates whether more edges exist following the set defined by the clients arguments."
+              hasNextPage: Boolean!
+              "Indicates whether more edges exist prior the set defined by the clients arguments."
+              hasPreviousPage: Boolean!
+              "When paginating backwards, the cursor to continue."
+              startCursor: String
+              "When paginating forwards, the cursor to continue."
+              endCursor: String
+              "A list of cursors to continue paginating forwards."
+              forwardCursors: [PageCursor!]!
+              "A list of cursors to continue paginating backwards."
+              backwardCursors: [PageCursor!]!
+            }
+            """);
+        schema.Types.GetType<ObjectType>("PageCursor").ToString().MatchInlineSnapshot(
+            """
+            "A cursor that points to a specific page."
+            type PageCursor @shareable {
+              "The page number."
+              page: Int!
+              "The cursor."
+              cursor: String!
+            }
+            """);
     }
 
     [Fact]

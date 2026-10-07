@@ -5,6 +5,7 @@ using HotChocolate.Language;
 using HotChocolate.Properties;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
+using HotChocolate.Types.Composite;
 using HotChocolate.Types.Descriptors;
 using HotChocolate.Types.Interceptors;
 using HotChocolate.Types.Introspection;
@@ -37,6 +38,7 @@ public partial class SchemaBuilder : ISchemaBuilder
         typeInterceptors.TryAdd(new StoreGlobalPagingOptionsTypeInterceptor());
         typeInterceptors.TryAdd(new StoreGlobalSchemaOptionsTypeInterceptor());
         typeInterceptors.TryAdd(new OptInFeaturesTypeInterceptor());
+        typeInterceptors.TryAdd(new PageInfoShareableTypeInterceptor());
 
         Features.Set(typeInterceptors);
     }
