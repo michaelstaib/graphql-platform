@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Features;
+using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Types;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.ObjectPool;
@@ -14,6 +15,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     private readonly IServiceProvider _applicationServices;
     private readonly RequestDelegate _requestDelegate;
     private readonly ObjectPool<PooledRequestContext> _contextPool;
+    private readonly IAuditProvider _auditProvider;
     private List<Task>? _taskList;
 
     public FusionRequestExecutor(
@@ -21,11 +23,13 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
         IServiceProvider applicationServices,
         RequestDelegate requestDelegate,
         ObjectPool<PooledRequestContext> requestContextPool,
+        IAuditProvider auditProvider,
         ulong version)
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(applicationServices);
         ArgumentNullException.ThrowIfNull(requestContextPool);
+        ArgumentNullException.ThrowIfNull(auditProvider);
 
         Schema = schema;
         Version = version;
@@ -33,6 +37,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
         _requestDelegate = requestDelegate;
         _applicationServices = applicationServices;
         _contextPool = requestContextPool;
+        _auditProvider = auditProvider;
     }
 
     /// <summary>
@@ -69,12 +74,13 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        return ExecuteAsync(request, null, cancellationToken);
+        return ExecuteAsync(request, null, null, cancellationToken);
     }
 
     private async Task<IExecutionResult> ExecuteAsync(
         IOperationRequest request,
         int? requestIndex,
+        IAuditTrail? auditTrail,
         CancellationToken cancellationToken)
     {
         IServiceScope? scope = null;
@@ -101,6 +107,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
                 cancellationToken);
 
             context.AttachMemory(new MemoryArena());
+            context.Features.Set(auditTrail ?? _auditProvider.CreateTrail(requestServices));
 
             await _requestDelegate(context).ConfigureAwait(false);
 
@@ -222,7 +229,14 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
 
         try
         {
-            await foreach (var result in ExecuteBatchStream(requestBatch, requestServices, unwrappedResults, ct)
+            var auditTrail = _auditProvider.CreateTrail(requestServices);
+
+            await foreach (var result in ExecuteBatchStream(
+                requestBatch,
+                requestServices,
+                auditTrail,
+                unwrappedResults,
+                ct)
                 .ConfigureAwait(false))
             {
                 yield return result;
@@ -244,6 +258,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     private async IAsyncEnumerable<OperationResult> ExecuteBatchStream(
         OperationRequestBatch requestBatch,
         IServiceProvider services,
+        IAuditTrail auditTrail,
         ConcurrentQueue<IExecutionResult> unwrappedResults,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
@@ -255,7 +270,13 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
 
         for (var i = 0; i < requestCount; i++)
         {
-            tasks.Add(ExecuteBatchItemAsync(WithServices(requests[i], services), i, completed, unwrappedResults, ct));
+            tasks.Add(ExecuteBatchItemAsync(
+                WithServices(requests[i], services),
+                i,
+                auditTrail,
+                completed,
+                unwrappedResults,
+                ct));
         }
 
         var buffer = new OperationResult[Math.Min(16, requestCount)];
@@ -315,11 +336,12 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     private async Task ExecuteBatchItemAsync(
         IOperationRequest request,
         int requestIndex,
+        IAuditTrail auditTrail,
         ConcurrentQueue<OperationResult> completed,
         ConcurrentQueue<IExecutionResult> unwrappedResults,
         CancellationToken cancellationToken)
     {
-        var result = await ExecuteAsync(request, requestIndex, cancellationToken).ConfigureAwait(false);
+        var result = await ExecuteAsync(request, requestIndex, auditTrail, cancellationToken).ConfigureAwait(false);
         await UnwrapBatchItemResultAsync(result, completed, unwrappedResults, cancellationToken);
     }
 
