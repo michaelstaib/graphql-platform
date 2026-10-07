@@ -9,11 +9,13 @@ public class PageInfoSchemaTests
     [Fact]
     public async Task Schema_Should_KeepPageInfoFieldNames_When_StreamPageConnectionIsExposed()
     {
-        // act
-        var schema = await new ServiceCollection()
+        // arrange
+        var builder = new ServiceCollection()
             .AddGraphQLServer()
-            .AddQueryType<Query>()
-            .BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
+            .AddQueryType<Query>();
+
+        // act
+        var schema = await builder.BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
         schema.Types.GetType<ObjectType>("PageInfo").ToString().MatchInlineSnapshot(
@@ -124,12 +126,14 @@ public class PageInfoSchemaTests
     [Fact]
     public async Task Schema_Should_ApplyShareableOnce_When_StreamPageInfoIsComposite()
     {
-        // act
-        var schema = await new ServiceCollection()
+        // arrange
+        var builder = new ServiceCollection()
             .AddGraphQLServer()
             .ModifyOptions(o => o.ApplyShareableToPageInfo = true)
-            .AddQueryType<Query>()
-            .BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
+            .AddQueryType<Query>();
+
+        // act
+        var schema = await builder.BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
         schema.Types.GetType<ObjectType>("PageInfo").ToString().MatchInlineSnapshot(
@@ -228,7 +232,7 @@ public class PageInfoSchemaTests
     }
 
     [Fact]
-    public async Task Schema_Should_ExposeConnectionPageInfoAsSeparateType_When_ClassicPagingAndCustomConnectionAreMixed()
+    public async Task Schema_Should_ExposeSeparateConnectionPageInfo_When_CustomConnectionMixesWithClassicPaging()
     {
         // arrange
         var builder = new ServiceCollection()
@@ -268,7 +272,7 @@ public class PageInfoSchemaTests
         var result = await executor.ExecuteAsync(
             """
             {
-              products {
+              products(first: 2) {
                 pageInfo {
                   hasNextPage
                   hasPreviousPage
@@ -289,10 +293,10 @@ public class PageInfoSchemaTests
               "data": {
                 "products": {
                   "pageInfo": {
-                    "hasNextPage": false,
+                    "hasNextPage": true,
                     "hasPreviousPage": false,
-                    "startCursor": null,
-                    "endCursor": null,
+                    "startCursor": "MA==",
+                    "endCursor": "MQ==",
                     "forwardCursors": [],
                     "backwardCursors": []
                   }
@@ -310,7 +314,8 @@ public class PageInfoSchemaTests
     public sealed class ClassicQuery
     {
         [UsePaging]
-        public IEnumerable<Product> GetProducts() => [];
+        public IEnumerable<Product> GetProducts()
+            => [new Product { Id = 1 }, new Product { Id = 2 }, new Product { Id = 3 }];
     }
 
     public sealed class Order
