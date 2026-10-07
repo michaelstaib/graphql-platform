@@ -153,30 +153,54 @@ public class PageInfoSchemaTests
         // arrange
         var builder = new ServiceCollection()
             .AddGraphQLServer()
-            .AddQueryType<MixedQuery>();
+            .AddQueryType<MixedQueryType>()
+            .AddType<OrderPageConnectionType>();
 
         // act
         var schema = await builder.BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
-        schema.Types.GetType<ObjectType>("PageInfo").ToString().MatchInlineSnapshot(
-            """
-            "Information about pagination in a connection."
-            type PageInfo {
-              "Indicates whether more edges exist following the set defined by the clients arguments."
-              hasNextPage: Boolean! @cost(weight: "10")
-              "Indicates whether more edges exist prior the set defined by the clients arguments."
-              hasPreviousPage: Boolean! @cost(weight: "10")
-              "When paginating backwards, the cursor to continue."
-              startCursor: String @cost(weight: "10")
-              "When paginating forwards, the cursor to continue."
-              endCursor: String @cost(weight: "10")
-              "A list of cursors to continue paginating forwards."
-              forwardCursors: [PageCursor!]! @cost(weight: "10")
-              "A list of cursors to continue paginating backwards."
-              backwardCursors: [PageCursor!]! @cost(weight: "10")
-            }
-            """);
+        var snapshot = Snapshot.Create();
+
+        var types = schema.Types
+            .OfType<ObjectType>()
+            .Where(t => t.Name.Contains("Connection") || t.Name == "PageInfo")
+            .OrderBy(t => t.Name, StringComparer.Ordinal);
+
+        foreach (var type in types)
+        {
+            snapshot.Add(type.ToString(), type.Name, MarkdownLanguages.GraphQL);
+        }
+
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Schema_Should_ExposeConnectionPageInfoAsSeparateType_When_ClassicPagingAndCustomConnectionAreMixed()
+    {
+        // arrange
+        var builder = new ServiceCollection()
+            .AddGraphQLServer()
+            .AddQueryType<CustomMixedQuery>()
+            .AddType<CustomConnectionType>();
+
+        // act
+        var schema = await builder.BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        var snapshot = Snapshot.Create();
+
+        var types = schema.Types
+            .OfType<ObjectType>()
+            .Where(t => t.Name.Contains("Connection") || t.Name.EndsWith("PageInfo"))
+            .OrderBy(t => t.Name, StringComparer.Ordinal);
+
+        foreach (var type in types)
+        {
+            snapshot.Add(type.ToString(), type.Name, MarkdownLanguages.GraphQL);
+        }
+
+        snapshot.MatchMarkdownSnapshot();
     }
 
     [Fact]
@@ -237,17 +261,68 @@ public class PageInfoSchemaTests
         public IEnumerable<Product> GetProducts() => [];
     }
 
+    public sealed class Order
+    {
+        public int Id { get; set; }
+    }
+
     public sealed class MixedQuery
     {
         [UsePaging]
         public IEnumerable<Product> GetProducts() => [];
 
-        public PageConnection<Product> GetPaged()
-            => new(Page<Product>.Empty);
+        public PageConnection<Order> GetPaged()
+            => new(
+                Page<Order>.Create(
+                    [new Order { Id = 1 }, new Order { Id = 2 }],
+                    hasNextPage: true,
+                    hasPreviousPage: false,
+                    order => order.Id.ToString(),
+                    totalCount: 5));
 
         public StreamPageConnection<Product> GetStreamed()
             => new(StreamPage<Product>.Empty);
     }
+
+    public sealed class MixedQueryType : ObjectType<MixedQuery>
+    {
+        protected override void Configure(IObjectTypeDescriptor<MixedQuery> descriptor)
+            => descriptor.Field(t => t.GetPaged()).Type<NonNullType<OrderPageConnectionType>>();
+    }
+
+    public sealed class OrderPageConnectionType : ObjectType<PageConnection<Order>>
+    {
+        protected override void Configure(IObjectTypeDescriptor<PageConnection<Order>> descriptor)
+            => descriptor.Name("OrderConnection");
+    }
+
+    public sealed class CustomMixedQuery
+    {
+        [UsePaging]
+        public IEnumerable<Product> GetProducts() => [];
+
+        public CustomConnection GetCustom()
+            => new(new ConnectionPageInfo(hasNextPage: true, hasPreviousPage: false, "a", "b"));
+    }
+
+    public sealed class CustomConnection(ConnectionPageInfo pageInfo)
+        : ConnectionBase<Product, CustomEdge, ConnectionPageInfo>
+    {
+        public override IReadOnlyList<CustomEdge>? Edges { get; } = [new CustomEdge(new Product { Id = 1 })];
+
+        public override ConnectionPageInfo PageInfo { get; } = pageInfo;
+    }
+
+    public sealed class CustomEdge(Product node) : IEdge<Product>
+    {
+        public string Cursor => node.Id.ToString();
+
+        public Product Node => node;
+
+        object? IEdge.Node => Node;
+    }
+
+    public sealed class CustomConnectionType : ObjectType<CustomConnection>;
 
     public sealed class Query
     {
