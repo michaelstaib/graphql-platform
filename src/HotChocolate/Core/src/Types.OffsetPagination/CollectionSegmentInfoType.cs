@@ -29,7 +29,7 @@ public class CollectionSegmentInfoType : ObjectType<CollectionSegmentInfo>
                 + "the set defined by the clients arguments.")
             .Extend()
             .OnBeforeCreate(
-                c => c.PureResolver = ctx => GetPageInfo(ctx).HasNextPageAsync(ctx.RequestAborted).Result);
+                c => c.PureResolver = ctx => GetPageInfo(ctx).HasNextPage);
 
         descriptor
             .Field(t => t.HasPreviousPageAsync(default))
@@ -40,7 +40,7 @@ public class CollectionSegmentInfoType : ObjectType<CollectionSegmentInfo>
                 + "the set defined by the clients arguments.")
             .Extend()
             .OnBeforeCreate(
-                c => c.PureResolver = ctx => GetPageInfo(ctx).HasPreviousPageAsync(ctx.RequestAborted).Result);
+                c => c.PureResolver = ctx => GetPageInfo(ctx).HasPreviousPage);
     }
 
     private static CollectionSegmentInfo GetPageInfo(IResolverContext context)
