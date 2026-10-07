@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Types;
 
@@ -12,7 +13,12 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 internal sealed class AuthorizationEvaluator
 {
-    private static readonly ImmutableDictionary<string, object?> s_noArguments = [];
+    private static readonly ImmutableDictionary<string, object?> s_noArguments =
+#if NET10_0_OR_GREATER
+        [];
+#else
+        ImmutableDictionary<string, object?>.Empty;
+#endif
 
     private readonly FusionAuthorizationOptions _options;
 
@@ -142,34 +148,90 @@ internal sealed class AuthorizationEvaluator
         var kind = isAuthenticated
             ? AuthorizationDenialKind.Unauthorized
             : AuthorizationDenialKind.Unauthenticated;
-        var denials = ImmutableArray.CreateBuilder<SelectionDenial>();
-        var indexBySelection = new Dictionary<Selection, int>();
+        var selections = new List<Selection>();
+        var descriptorsBySelection = new Dictionary<Selection, List<PolicyDescriptor>>();
 
         foreach (var descriptor in occurrences)
         {
-            if (!deniedDescriptors.Contains(descriptor))
-            {
-                continue;
-            }
-
             var selection = (Selection)descriptor.Selection;
 
-            if (!indexBySelection.TryGetValue(selection, out var index))
+            if (!descriptorsBySelection.TryGetValue(selection, out var descriptors))
             {
-                indexBySelection.Add(selection, denials.Count);
-                denials.Add(new SelectionDenial(selection, kind, descriptor));
+                descriptors = [];
+                descriptorsBySelection.Add(selection, descriptors);
+                selections.Add(selection);
             }
-            else if (PolicyEvaluationOrder.Get(descriptor.DirectiveName)
-                < PolicyEvaluationOrder.Get(denials[index].Descriptor.DirectiveName))
+
+            descriptors.Add(descriptor);
+        }
+
+        var denials = ImmutableArray.CreateBuilder<SelectionDenial>();
+
+        foreach (var selection in selections)
+        {
+            var denying = FindDenyingDescriptor(
+                selection,
+                descriptorsBySelection[selection],
+                deniedDescriptors);
+
+            if (denying is not null)
             {
-                denials[index] = new SelectionDenial(selection, kind, descriptor);
+                denials.Add(new SelectionDenial(selection, kind, denying));
             }
         }
 
-        return new AuthorizationDecisions(
-            denials.ToImmutable(),
-            _options.DenyHandling,
-            _options.EnableAttribution);
+        return denials.Count == 0
+            ? null
+            : new AuthorizationDecisions(
+                denials.ToImmutable(),
+                _options.DenyHandling,
+                _options.EnableAttribution);
+    }
+
+    private static PolicyDescriptor? FindDenyingDescriptor(
+        Selection selection,
+        List<PolicyDescriptor> descriptors,
+        HashSet<PolicyDescriptor> deniedDescriptors)
+    {
+        foreach (var descriptor in descriptors)
+        {
+            if (descriptor.DirectiveName != DirectiveNames.Policy.Name
+                && deniedDescriptors.Contains(descriptor))
+            {
+                return descriptor;
+            }
+        }
+
+        // The policy names of a selection are alternative groups. One group whose
+        // policies all allowed satisfies the requirement.
+        var groups = ((FusionOutputFieldDefinition)selection.Field).Authorization?.Policies ?? [];
+        PolicyDescriptor? firstDenied = null;
+
+        foreach (var group in groups)
+        {
+            var isSatisfied = true;
+
+            foreach (var policyName in group)
+            {
+                foreach (var descriptor in descriptors)
+                {
+                    if (descriptor.DirectiveName == DirectiveNames.Policy.Name
+                        && descriptor.PolicyName == policyName
+                        && deniedDescriptors.Contains(descriptor))
+                    {
+                        isSatisfied = false;
+                        firstDenied ??= descriptor;
+                    }
+                }
+            }
+
+            if (isSatisfied)
+            {
+                return null;
+            }
+        }
+
+        return firstDenied;
     }
 
     private static void CollectDenied(

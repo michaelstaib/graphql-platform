@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Claims;
+using System.Text.Json;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization.InMemory;
 using HotChocolate.Language;
@@ -16,6 +17,8 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
           products: [Product]
           secret: String @authenticated
           guarded: String @policy(policies: [["finance"]])
+          either: String @policy(policies: [["editor"], ["admin"]])
+          both: String @policy(policies: [["editor", "admin"]])
           productById(id: ID!): Product @policy(policies: [["owner"]])
         }
 
@@ -55,6 +58,8 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
           ],
           "secret": "s3cret",
           "guarded": "g",
+          "either": "e",
+          "both": "b",
           "productById": { "id": "1", "name": "Shoe", "price": 10, "cost": 5 }
         }
         """;
@@ -254,6 +259,40 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
             }
             """);
         Assert.Empty(client.Requests);
+    }
+
+    [Theory]
+    [InlineData(true, true, "e", "b")]
+    [InlineData(true, false, "e", null)]
+    [InlineData(false, true, "e", null)]
+    [InlineData(false, false, null, null)]
+    public async Task InvokeAsync_Should_CombinePolicyGroups_When_PoliciesAreAlternativesAndConjunctions(
+        bool editorAllows,
+        bool adminAllows,
+        string? expectedEither,
+        string? expectedBoth)
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            new InMemoryPolicyRecorder(),
+            policies => policies
+                .Evaluate("editor", (_, _) => editorAllows)
+                .Evaluate("admin", (_, _) => adminAllows));
+        var user = Authenticated();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ either both }", user).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        using var document = JsonDocument.Parse(result.ToJson());
+        var data = document.RootElement.GetProperty("data");
+        Assert.Equal(expectedEither, data.GetProperty("either").GetString());
+        Assert.Equal(expectedBoth, data.GetProperty("both").GetString());
     }
 
     [Fact]

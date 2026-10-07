@@ -42,7 +42,7 @@ public abstract class AuthorizationExecutionTestBase : FusionTestBase
             builder.AddInMemoryPolicies(policies);
         }
 
-        builder.AddInMemoryPolicies(fallback => fallback.Allow("finance").Allow("owner"));
+        builder.AddInMemoryPolicies(fallback => fallback.Allow("finance").Allow("owner").Allow("editor").Allow("admin"));
 
         builder.AddInMemoryConfiguration(ComposeSchemaDocument(defaultListSize: 1, sourceSchema + "\n" + Directives));
         builder.Services.AddSingleton<ISourceSchemaClientFactory>(new AuthorizationTestClientFactory(client));
