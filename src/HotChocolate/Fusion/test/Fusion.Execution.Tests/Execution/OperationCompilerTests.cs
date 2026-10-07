@@ -85,7 +85,8 @@ public class OperationCompilerTests : FusionTestBase
             new Dictionary<string, VariableValue>
             {
                 { "if1", new VariableValue("if1", nonNullBooleanType, BooleanValueNode.True) }
-            });
+            },
+            null);
 
         // act
         var compiler = new OperationCompiler(schema, _fieldMapPool);
@@ -134,7 +135,7 @@ public class OperationCompilerTests : FusionTestBase
         var operationDefinition = document.Definitions.OfType<OperationDefinitionNode>().First();
         var schema = CreateSchema();
 
-        var variableValues = new VariableValueCollection([]);
+        var variableValues = new VariableValueCollection([], null);
 
         // act
         var compiler = new OperationCompiler(schema, _fieldMapPool);
@@ -221,7 +222,8 @@ public class OperationCompilerTests : FusionTestBase
             new Dictionary<string, VariableValue>
             {
                 { "if1", new VariableValue("if1", nonNullBooleanType, BooleanValueNode.False) }
-            });
+            },
+            null);
 
         // act
         var compiler = new OperationCompiler(schema, _fieldMapPool);
@@ -261,7 +263,8 @@ public class OperationCompilerTests : FusionTestBase
             new Dictionary<string, VariableValue>
             {
                 { "skip", new VariableValue("skip", nonNullBooleanType, BooleanValueNode.True) }
-            });
+            },
+            null);
 
         // act
         var compiler = new OperationCompiler(schema, _fieldMapPool);
@@ -464,7 +467,8 @@ public class OperationCompilerTests : FusionTestBase
                         booleanType,
                         minimal ? BooleanValueNode.True : BooleanValueNode.False)
                 }
-            });
+            },
+            null);
 
         var compiler = new OperationCompiler(schema, _fieldMapPool);
         var operation = compiler.Compile("1", "1", "1", operationDefinition);

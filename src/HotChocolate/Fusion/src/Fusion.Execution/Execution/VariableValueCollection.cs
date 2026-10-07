@@ -10,11 +10,6 @@ internal sealed class VariableValueCollection : IVariableValueCollection
 {
     private readonly Dictionary<string, VariableValue> _coercedValues;
 
-    public VariableValueCollection(Dictionary<string, VariableValue> coercedValues)
-        : this(coercedValues, null)
-    {
-    }
-
     public VariableValueCollection(
         Dictionary<string, VariableValue> coercedValues,
         AuthorizationDecisions? authorizationDecisions)
@@ -25,7 +20,7 @@ internal sealed class VariableValueCollection : IVariableValueCollection
         AuthorizationDecisions = authorizationDecisions;
     }
 
-    public static VariableValueCollection Empty { get; } = new([]);
+    public static VariableValueCollection Empty { get; } = new([], null);
 
     public bool IsEmpty => _coercedValues.Count == 0;
 

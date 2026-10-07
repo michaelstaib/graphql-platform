@@ -67,7 +67,7 @@ internal sealed class OperationVariableCoercionMiddleware
                     out var coercedValues,
                     out var error))
                 {
-                    context.VariableValues = [new VariableValueCollection(coercedValues)];
+                    context.VariableValues = [new VariableValueCollection(coercedValues, null)];
                     return true;
                 }
 
@@ -95,7 +95,7 @@ internal sealed class OperationVariableCoercionMiddleware
                         out var coercedValues,
                         out var error))
                     {
-                        variableValuesSet[i++] = new VariableValueCollection(coercedValues);
+                        variableValuesSet[i++] = new VariableValueCollection(coercedValues, null);
                     }
                     else
                     {
