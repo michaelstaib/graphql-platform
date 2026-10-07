@@ -335,12 +335,16 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
     {
         // arrange
         var client = new AuthorizationTestClient("""{"ghost":"gh"}""");
+        var listener = new CapturingExecutionDiagnosticEventListener();
         var executor = await CreateExecutorAsync(
             GhostSchema,
             client,
             new InMemoryPolicyRecorder(),
-            configure: builder => builder.ModifyAuthorizationOptions(
-                options => options.DisableAuthorizationValidation = true));
+            configure: builder =>
+            {
+                builder.ModifyAuthorizationOptions(options => options.DisableAuthorizationValidation = true);
+                builder.AddDiagnosticEventListener(_ => listener);
+            });
         var user = Authenticated();
 
         // act
@@ -363,6 +367,50 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
             HttpStatusCode.InternalServerError,
             result.ExpectOperationResult().ContextData[ExecutionContextData.HttpStatusCode]);
         Assert.Empty(client.Requests);
+        Assert.Equal(
+            "No policy provider knows the policy 'ghost' of the directive '@policy'.",
+            Assert.Single(listener.RequestErrors).Message);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Should_ReturnGenericError_When_PolicyIsNotResolvedAndPrincipalIsAnonymous()
+    {
+        // arrange
+        var client = new AuthorizationTestClient("""{"ghost":"gh"}""");
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var executor = await CreateExecutorAsync(
+            GhostSchema,
+            client,
+            new InMemoryPolicyRecorder(),
+            configure: builder =>
+            {
+                builder.ModifyAuthorizationOptions(options => options.DisableAuthorizationValidation = true);
+                builder.AddDiagnosticEventListener(_ => listener);
+            });
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ ghost }").Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The authorization of the request could not be evaluated."
+                }
+              ]
+            }
+            """);
+        Assert.Equal(
+            HttpStatusCode.InternalServerError,
+            result.ExpectOperationResult().ContextData[ExecutionContextData.HttpStatusCode]);
+        Assert.Empty(client.Requests);
+        Assert.Equal(
+            "No policy provider knows the policy 'ghost' of the directive '@policy'.",
+            Assert.Single(listener.RequestErrors).Message);
     }
 
     [Fact]

@@ -47,8 +47,8 @@ internal sealed class AuthorizationEvaluator
     /// <param name="plan">
     /// The plan of the operation.
     /// </param>
-    /// <param name="descriptors">
-    /// The descriptors of the operation and its incremental plans.
+    /// <param name="authorization">
+    /// The authorization requirements of the operation and its incremental plans.
     /// </param>
     /// <param name="variables">
     /// The coerced variable values of the variable set.
@@ -63,7 +63,7 @@ internal sealed class AuthorizationEvaluator
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
-        ImmutableArray<PolicyDescriptor> descriptors,
+        OperationAuthorization authorization,
         IVariableValueCollection variables,
         int requestIndex,
         CancellationToken cancellationToken)
@@ -71,18 +71,22 @@ internal sealed class AuthorizationEvaluator
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(variables);
 
         var isAuthenticated = user.Identity?.IsAuthenticated is true;
-        var occurrences = GetOccurrences(descriptors, variables);
+        var occurrences = GetOccurrences(authorization.Descriptors, variables);
         var deniedDescriptors = new HashSet<PolicyDescriptor>();
         var groups = new List<PolicyGroup>();
         var groupsByPolicy = new Dictionary<IPolicy, PolicyGroup>();
 
         foreach (var descriptor in occurrences)
         {
-            // An anonymous principal never reaches the scope and named policies.
-            if (!isAuthenticated && descriptor.DirectiveName != DirectiveNames.Authenticated.Name)
+            // An anonymous principal never reaches the scope and named policies, except an
+            // unresolved policy, which fails the request as a configuration error.
+            if (!isAuthenticated
+                && descriptor.DirectiveName != DirectiveNames.Authenticated.Name
+                && !(authorization.HasUnresolvedPolicies && descriptor.Policy is UnresolvedPolicy))
             {
                 deniedDescriptors.Add(descriptor);
                 continue;

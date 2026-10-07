@@ -68,7 +68,7 @@ internal sealed class OperationAuthorizationMiddleware
                 context,
                 user,
                 plan,
-                authorization.Descriptors,
+                authorization,
                 variableSets[i],
                 i,
                 context.RequestAborted);
