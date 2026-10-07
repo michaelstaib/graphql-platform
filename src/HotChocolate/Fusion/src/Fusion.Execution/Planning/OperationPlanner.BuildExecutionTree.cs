@@ -56,7 +56,7 @@ public sealed partial class OperationPlanner
         var hasVariables = operationDefinition.VariableDefinitions.Count > 0
             || marker is { HasVariables: true };
 
-        operation.Authorization = marker?.CreateAuthorization();
+        operation.SetAuthorization(marker?.CreateAuthorization());
 
         IndexDependencies(planSteps, ctx);
         BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);

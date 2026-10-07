@@ -162,7 +162,7 @@ public sealed partial class OperationPlanner
                 finalSteps.NextId(),
                 marker);
 
-            deferredOperation.Authorization = marker?.CreateAuthorization();
+            deferredOperation.SetAuthorization(marker?.CreateAuthorization());
 
             var planScopeRequirements = descriptor.Requirements.Count == 0
                 ? ImmutableArray<OperationRequirement>.Empty

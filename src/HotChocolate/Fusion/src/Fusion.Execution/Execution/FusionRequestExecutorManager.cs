@@ -547,13 +547,17 @@ internal sealed class FusionRequestExecutorManager
 
         services.AddSingleton(plannerOptions);
 
+        services.TryAddSingleton<IPolicyResolver>(
+            static sp => new PolicyResolver(
+                new BuiltInPolicyProvider(),
+                sp.GetServices<IPolicyProvider>()));
+
         services.AddSingleton(
             static sp => new OperationPlanner(
                 sp.GetRequiredService<FusionSchemaDefinition>(),
                 sp.GetRequiredService<OperationCompiler>(),
                 sp.GetRequiredService<OperationPlannerOptions>(),
-                sp.GetService<IPolicyResolver>()
-                    ?? new PolicyResolver(new BuiltInPolicyProvider(), sp.GetServices<IPolicyProvider>())));
+                sp.GetRequiredService<IPolicyResolver>()));
     }
 
     private static void AddParserServices(IServiceCollection services)

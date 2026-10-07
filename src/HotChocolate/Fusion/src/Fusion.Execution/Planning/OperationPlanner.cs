@@ -22,9 +22,6 @@ namespace HotChocolate.Fusion.Planning;
 
 public sealed partial class OperationPlanner
 {
-    private static readonly IPolicyResolver s_builtInPolicyResolver =
-        new PolicyResolver(new BuiltInPolicyProvider(), []);
-
     private readonly FusionSchemaDefinition _schema;
     private readonly OperationCompiler _operationCompiler;
     private readonly MergeSelectionSetRewriter _mergeRewriter;
@@ -39,16 +36,9 @@ public sealed partial class OperationPlanner
 
     public OperationPlanner(
         FusionSchemaDefinition schema,
-        OperationCompiler operationCompiler)
-        : this(schema, operationCompiler, OperationPlannerOptions.Default)
-    {
-    }
-
-    public OperationPlanner(
-        FusionSchemaDefinition schema,
         OperationCompiler operationCompiler,
-        OperationPlannerOptions options)
-        : this(schema, operationCompiler, options, s_builtInPolicyResolver)
+        IPolicyResolver policyResolver)
+        : this(schema, operationCompiler, OperationPlannerOptions.Default, policyResolver)
     {
     }
 

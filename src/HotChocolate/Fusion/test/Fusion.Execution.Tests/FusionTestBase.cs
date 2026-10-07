@@ -519,7 +519,7 @@ public abstract class FusionTestBase : IDisposable
             schema,
             operationText,
             options ?? OperationPlannerOptions.Default,
-            new PolicyResolver(new BuiltInPolicyProvider(), []));
+            TestPolicyResolver.Create());
 
     private static OperationPlan PlanOperation(
         FusionSchemaDefinition schema,

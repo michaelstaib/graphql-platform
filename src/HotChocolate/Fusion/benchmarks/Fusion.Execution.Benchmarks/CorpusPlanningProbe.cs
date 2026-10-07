@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -84,7 +85,11 @@ internal static class CorpusPlanningProbe
         {
             MaxPlanningTime = TimeSpan.FromMinutes(3)
         };
-        var planner = new OperationPlanner(schema, compiler, options);
+        var planner = new OperationPlanner(
+            schema,
+            compiler,
+            options,
+            new PolicyResolver(new BuiltInPolicyProvider(), []));
 
         ProbeQuery(planner, rewriter, "Query1", query1Path);
         ProbeQuery(planner, rewriter, "Query2", query2Path);

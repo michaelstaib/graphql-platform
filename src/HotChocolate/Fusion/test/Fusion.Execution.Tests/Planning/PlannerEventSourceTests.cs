@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
@@ -215,8 +216,8 @@ public sealed class PlannerEventSourceTests : FusionTestBase
         var compiler = new OperationCompiler(schema, pool);
 
         return options is null
-            ? new OperationPlanner(schema, compiler)
-            : new OperationPlanner(schema, compiler, options);
+            ? new OperationPlanner(schema, compiler, TestPolicyResolver.Create())
+            : new OperationPlanner(schema, compiler, options, TestPolicyResolver.Create());
     }
 
     private static OperationPlan CreatePlan(

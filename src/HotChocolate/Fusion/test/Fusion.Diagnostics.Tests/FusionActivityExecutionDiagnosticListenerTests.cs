@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Diagnostics;
 using System.Text.Json;
 using HotChocolate.Diagnostics;
@@ -1339,7 +1340,10 @@ public class FusionActivityExecutionDiagnosticListenerTests : FusionTestBase
         var rewritten = rewriter.RewriteDocument(operationDocument, operationName: null);
         var operation = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
         var compiler = new OperationCompiler(schema, pool);
-        var planner = new OperationPlanner(schema, compiler);
+        var planner = new OperationPlanner(
+            schema,
+            compiler,
+            new PolicyResolver(new BuiltInPolicyProvider(), []));
 
         return planner.CreatePlan("123456789101112", "123456789101112", "123456789101112", operation);
     }

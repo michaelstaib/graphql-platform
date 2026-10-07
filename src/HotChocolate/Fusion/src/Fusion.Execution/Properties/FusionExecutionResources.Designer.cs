@@ -314,5 +314,11 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("PolicyResolver_PolicyNotResolved", resourceCulture);
             }
         }
+
+        internal static string Operation_AuthorizationAlreadySet {
+            get {
+                return ResourceManager.GetString("Operation_AuthorizationAlreadySet", resourceCulture);
+            }
+        }
     }
 }

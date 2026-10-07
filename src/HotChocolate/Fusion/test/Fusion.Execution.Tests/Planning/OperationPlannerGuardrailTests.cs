@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
@@ -130,7 +131,7 @@ public sealed class OperationPlannerGuardrailTests : FusionTestBase
             new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
         var compiler = new OperationCompiler(schema, pool);
 
-        return new OperationPlanner(schema, compiler, options);
+        return new OperationPlanner(schema, compiler, options, TestPolicyResolver.Create());
     }
 
     private static OperationDefinitionNode ParseOperation([StringSyntax("graphql")] string operationText)

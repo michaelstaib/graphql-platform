@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Diagnostics;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
@@ -51,7 +52,10 @@ public class CorpusPlanningBenchmark
         var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
             new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
         var compiler = new OperationCompiler(schema, pool);
-        _planner = new OperationPlanner(schema, compiler);
+        _planner = new OperationPlanner(
+            schema,
+            compiler,
+            new PolicyResolver(new BuiltInPolicyProvider(), []));
 
         _operation1 = LoadOperation(rewriter, s_query1Path);
         _operation2 = LoadOperation(rewriter, s_query2Path);

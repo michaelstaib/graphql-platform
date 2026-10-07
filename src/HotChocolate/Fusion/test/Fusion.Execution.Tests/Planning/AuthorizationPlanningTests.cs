@@ -1015,6 +1015,23 @@ public class AuthorizationPlanningTests : FusionTestBase
     }
 
     [Fact]
+    public void SetAuthorization_Should_Throw_When_PlannerAlreadySetAuthorization()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema);
+        var plan = PlanOperation(schema, "{ product { id } }");
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => plan.Operation.SetAuthorization(null));
+
+        // assert
+        Assert.Equal(
+            "The authorization of the operation was already set and cannot be set again.",
+            exception.Message);
+    }
+
+    [Fact]
     public void CreatePlan_Should_FlagProtectedSelections_When_FieldsCarryAuthorization()
     {
         // arrange

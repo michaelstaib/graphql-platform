@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Collections.Immutable;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -44,7 +45,7 @@ public class OperationPlannerCostModelTests : FusionTestBase
             new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
         var compiler = new OperationCompiler(schema, pool);
 
-        var defaultPlanner = new OperationPlanner(schema, compiler);
+        var defaultPlanner = new OperationPlanner(schema, compiler, TestPolicyResolver.Create());
 
         Assert.Equal(15.0, defaultPlanner.Options.DepthWeight);
         Assert.Equal(1.5, defaultPlanner.Options.OperationWeight);
@@ -59,7 +60,7 @@ public class OperationPlannerCostModelTests : FusionTestBase
             FanoutPenaltyThreshold = 4
         };
 
-        var customPlanner = new OperationPlanner(schema, compiler, customOptions);
+        var customPlanner = new OperationPlanner(schema, compiler, customOptions, TestPolicyResolver.Create());
 
         Assert.Equal(customOptions.DepthWeight, customPlanner.Options.DepthWeight);
         Assert.Equal(customOptions.OperationWeight, customPlanner.Options.OperationWeight);

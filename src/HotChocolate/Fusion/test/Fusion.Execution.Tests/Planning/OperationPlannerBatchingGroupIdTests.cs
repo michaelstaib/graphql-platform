@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Authorization;
 using System.Collections.Immutable;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -293,7 +294,8 @@ public class OperationPlannerBatchingGroupIdTests : FusionTestBase
             new OperationPlannerOptions
             {
                 EnableRequestGrouping = enableRequestGrouping
-            });
+            },
+            TestPolicyResolver.Create());
         const string id = "123456789101112";
         return planner.CreatePlan(id, id, id, operation);
     }
