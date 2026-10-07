@@ -140,13 +140,15 @@ public class AuthorizationHttpTests : FusionTestBase
         // arrange
         using var server = CreateSourceSchema("A", ProtectedSchema);
 
-        // act
         using var gateway = await CreateCompositeSchemaAsync(
             [("A", server)],
             configureServices: AddCookieSchemes);
 
+        // act
+        using var response = await PostAsync(gateway);
+
         // assert
-        Assert.NotNull(gateway.Services);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
@@ -176,14 +178,16 @@ public class AuthorizationHttpTests : FusionTestBase
         // arrange
         using var server = CreateSourceSchema("A", ProtectedSchema);
 
-        // act
         using var gateway = await CreateCompositeSchemaAsync(
             [("A", server)],
             configureGatewayBuilder: b => b.ModifyAuthorizationOptions(
                 o => o.DisableAuthorizationValidation = true));
 
+        // act
+        using var response = await PostAsync(gateway);
+
         // assert
-        Assert.NotNull(gateway.Services);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     private static IFusionGatewayBuilder UseEscalation(
