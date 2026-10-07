@@ -1,6 +1,5 @@
 using System.Net;
 using System.Security.Claims;
-using System.Text.Json;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization.InMemory;
 using HotChocolate.Language;
@@ -270,15 +269,42 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
     }
 
     [Theory]
-    [InlineData(true, true, "e", "b")]
-    [InlineData(true, false, "e", null)]
-    [InlineData(false, true, "e", null)]
-    [InlineData(false, false, null, null)]
+    [InlineData(true, true, """
+        {
+          "data": {
+            "either": "e",
+            "both": "b"
+          }
+        }
+        """)]
+    [InlineData(true, false, """
+        {
+          "data": {
+            "either": "e",
+            "both": null
+          }
+        }
+        """)]
+    [InlineData(false, true, """
+        {
+          "data": {
+            "either": "e",
+            "both": null
+          }
+        }
+        """)]
+    [InlineData(false, false, """
+        {
+          "data": {
+            "either": null,
+            "both": null
+          }
+        }
+        """)]
     public async Task InvokeAsync_Should_CombinePolicyGroups_When_PoliciesAreAlternativesAndConjunctions(
         bool editorAllows,
         bool adminAllows,
-        string? expectedEither,
-        string? expectedBoth)
+        string expected)
     {
         // arrange
         var client = new AuthorizationTestClient(Data);
@@ -297,10 +323,7 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
             TestContext.Current.CancellationToken);
 
         // assert
-        using var document = JsonDocument.Parse(result.ToJson());
-        var data = document.RootElement.GetProperty("data");
-        Assert.Equal(expectedEither, data.GetProperty("either").GetString());
-        Assert.Equal(expectedBoth, data.GetProperty("both").GetString());
+        result.MatchInlineSnapshot(expected);
     }
 
     [Fact]
@@ -579,11 +602,29 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
     }
 
     [Theory]
-    [InlineData(true, 0)]
-    [InlineData(false, 1)]
+    [InlineData(true, 0, """
+        {
+          "data": {
+            "product": {
+              "id": "1"
+            }
+          }
+        }
+        """)]
+    [InlineData(false, 1, """
+        {
+          "data": {
+            "product": {
+              "id": "1"
+            },
+            "guarded": "g"
+          }
+        }
+        """)]
     public async Task InvokeAsync_Should_OnlyEvaluateIncludedSelections_When_SelectionIsSkippedByTheClient(
         bool skip,
-        int expectedRecords)
+        int expectedRecords,
+        string expected)
     {
         // arrange
         var client = new AuthorizationTestClient(Data);
@@ -603,6 +644,7 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
             TestContext.Current.CancellationToken);
 
         // assert
+        result.MatchInlineSnapshot(expected);
         Assert.Equal(expectedRecords, recorder.Records.Count);
     }
 }
