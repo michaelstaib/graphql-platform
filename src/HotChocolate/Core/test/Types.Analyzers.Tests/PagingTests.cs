@@ -2424,7 +2424,8 @@ public class PagingTests
                     {
                     }
 
-                    public override IAsyncEnumerable<Author> GetNodesAsync(CancellationToken cancellationToken = default)
+                    public override IAsyncEnumerable<Author>? GetNodesAsync(
+                        CancellationToken cancellationToken = default)
                         => base.GetNodesAsync(cancellationToken);
                 }
             }

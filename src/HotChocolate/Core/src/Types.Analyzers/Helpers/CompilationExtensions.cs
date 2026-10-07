@@ -199,9 +199,6 @@ public static class CompilationExtensions
     public static INamedTypeSymbol? GetStreamPageConnectionSymbol(this Compilation compilation)
         => compilation.GetTypeByMetadataName("HotChocolate.Types.Pagination.StreamPageConnection`1");
 
-    public static INamedTypeSymbol? GetStreamPageInfoSymbol(this Compilation compilation)
-        => compilation.GetTypeByMetadataName("HotChocolate.Types.Pagination.StreamPageInfo");
-
     public static INamedTypeSymbol? GetEdgeInterfaceSymbol(this Compilation compilation)
         => compilation.GetTypeByMetadataName("HotChocolate.Types.Pagination.IEdge`1");
 

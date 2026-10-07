@@ -597,7 +597,7 @@ namespace HotChocolate.Types.Pagination
                     var naming = field.Context.Naming;
 
                     configuration.Description = GetDescription("A list of edges.", false, field.Context.Options.UseXmlDocumentation);
-                    configuration.Type = typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.NonNullType<global::HotChocolate.Types.ListType<global::HotChocolate.Types.NonNullType<global::HotChocolate.Types.Pagination.StreamPageConnection>>>), HotChocolate.Types.TypeContext.Output);
+                    configuration.Type = typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.ListType<global::HotChocolate.Types.NonNullType<global::HotChocolate.Types.Pagination.StreamPageConnection>>), HotChocolate.Types.TypeContext.Output);
                     configuration.ResultType = typeof(global::System.Collections.Generic.IAsyncEnumerable<global::HotChocolate.Types.Pagination.StreamPageEdge<global::TestNamespace.Author>>);
                     configuration.DeclaringType = context.ThisType;
 
@@ -621,7 +621,7 @@ namespace HotChocolate.Types.Pagination
                     configuration.Description = GetDescription("A flattened list of the nodes", false, field.Context.Options.UseXmlDocumentation);
                     configuration.Type = global::HotChocolate.Types.Descriptors.TypeReference.Create(
                         typeInspector.GetTypeRef(typeof(global::TestNamespace.Author), HotChocolate.Types.TypeContext.Output),
-                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.ListTypeNode(new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__TestNamespace_Author")))));
+                        new global::HotChocolate.Language.ListTypeNode(new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__TestNamespace_Author"))));
                     configuration.ResultType = typeof(global::System.Collections.Generic.IAsyncEnumerable<global::TestNamespace.Author>);
                     configuration.DeclaringType = context.ThisType;
 
@@ -665,9 +665,9 @@ namespace HotChocolate.Types.Pagination
 
                     configuration.Description = GetDescription("Information to aid in pagination.", false, field.Context.Options.UseXmlDocumentation);
                     configuration.Type = global::HotChocolate.Types.Descriptors.TypeReference.Create(
-                        typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.Pagination.StreamPageInfo), HotChocolate.Types.TypeContext.Output),
-                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__HotChocolate_Types_Pagination_StreamPageInfo")));
-                    configuration.ResultType = typeof(global::HotChocolate.Types.Pagination.StreamPageInfo);
+                        typeInspector.GetTypeRef(typeof(global::HotChocolate.Types.Pagination.PageInfo), HotChocolate.Types.TypeContext.Output),
+                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__HotChocolate_Types_Pagination_PageInfo")));
+                    configuration.ResultType = typeof(global::HotChocolate.Types.Pagination.PageInfo);
                     configuration.DeclaringType = context.ThisType;
 
                     configuration.SetSourceGeneratorFlags();
@@ -755,7 +755,7 @@ namespace HotChocolate.Types.Pagination
     "Title": "",
     "Severity": "Error",
     "WarningLevel": 0,
-    "Location": "StreamPageConnectionType.GMN8-ZMy56jZWutjKaKAXQ.hc.g.cs: (42,225)-(42,245)",
+    "Location": "StreamPageConnectionType.GMN8-ZMy56jZWutjKaKAXQ.hc.g.cs: (42,186)-(42,206)",
     "HelpLinkUri": "https://msdn.microsoft.com/query/roslyn.query?appId=roslyn&k=k(CS0305)",
     "MessageFormat": "Using the generic {1} '{0}' requires {2} type arguments",
     "Message": "Using the generic type 'StreamPageConnection<TNode>' requires 1 type arguments",

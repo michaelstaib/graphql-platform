@@ -75,9 +75,6 @@ public static class TypeReferenceBuilder
         // First, we unwrap any non-essential wrapper types and IFieldResult implementations.
         var unwrapped = UnwrapNonEssentialTypes(member.GetReturnType()!, compilation);
 
-        // Stream page info types of all node types share the non-generic stream page info contract.
-        unwrapped = ToStreamPageInfoContract(unwrapped, compilation);
-
         // For batch resolvers, the return type is a list (e.g. List<string>) and we need
         // to unwrap to the element type (e.g. string) for the GraphQL field type.
         if (isBatchResolver)
@@ -291,17 +288,6 @@ public static class TypeReferenceBuilder
         }
 
         return null;
-    }
-
-    private static ITypeSymbol ToStreamPageInfoContract(ITypeSymbol typeSymbol, Compilation compilation)
-    {
-        if (typeSymbol is INamedTypeSymbol { IsGenericType: true, BaseType: { IsGenericType: false } baseType }
-            && SymbolEqualityComparer.Default.Equals(baseType, compilation.GetStreamPageInfoSymbol()))
-        {
-            return baseType.WithNullableAnnotation(typeSymbol.NullableAnnotation);
-        }
-
-        return typeSymbol;
     }
 
     private static ITypeSymbol UnwrapNonEssentialTypes(ITypeSymbol typeSymbol, Compilation compilation)
