@@ -5,6 +5,7 @@ using HotChocolate.Execution;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Policies;
+using HotChocolate.Fusion.Policies.Audit;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Types;
@@ -60,19 +61,27 @@ internal sealed class OperationPolicyMiddleware
         }
 
         var user = GetUser(context);
+        var trail = context.Features.Get<IAuditTrail>() ?? throw ThrowHelper.OperationPolicyRequiresAuditTrail();
         PolicyDecisions?[]? decisionSets = null;
         IVariableValueCollection[]? updatedVariableSets = null;
 
         for (var i = 0; i < variableSets.Length; i++)
         {
+            var scope = trail.BeginRequest(
+                new AuditScopeInfo(plan.Operation.Id, plan.Id, context.RequestIndex, i),
+                user);
+
             var evaluation = await _evaluator.EvaluateAsync(
                 context,
                 user,
                 plan,
                 policies,
                 variableSets[i],
+                scope,
                 i,
                 context.RequestAborted);
+
+            await scope.CommitAsync(context.RequestAborted);
 
             if (evaluation.Failure is { } failure)
             {
