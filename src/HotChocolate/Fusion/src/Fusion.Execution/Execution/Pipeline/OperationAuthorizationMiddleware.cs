@@ -40,14 +40,15 @@ internal sealed class OperationAuthorizationMiddleware
     {
         var plan = context.GetOperationPlan() ?? throw ThrowHelper.OperationAuthorizationRequiresPlan();
 
-        return IsProtected(plan)
-            ? InvokeProtectedAsync(context, plan, next)
+        return plan.Authorization is { } authorization
+            ? InvokeProtectedAsync(context, plan, authorization, next)
             : next(context);
     }
 
     private async ValueTask InvokeProtectedAsync(
         RequestContext context,
         OperationPlan plan,
+        OperationAuthorization authorization,
         RequestDelegate next)
     {
         var variableSets = context.VariableValues;
@@ -58,8 +59,6 @@ internal sealed class OperationAuthorizationMiddleware
             return;
         }
 
-        var descriptors = GetDescriptors(plan);
-        var variables = GetVariables(plan);
         var user = GetUser(context);
         var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
 
@@ -69,7 +68,7 @@ internal sealed class OperationAuthorizationMiddleware
                 context,
                 user,
                 plan,
-                descriptors,
+                authorization.Descriptors,
                 variableSets[i],
                 i,
                 context.RequestAborted);
@@ -90,7 +89,7 @@ internal sealed class OperationAuthorizationMiddleware
                 return;
             }
 
-            updatedVariableSets[i] = CreateVariableValues(variableSets[i], variables, decisions);
+            updatedVariableSets[i] = CreateVariableValues(variableSets[i], authorization.Variables, decisions);
         }
 
         context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
@@ -125,64 +124,6 @@ internal sealed class OperationAuthorizationMiddleware
         AuthorizationVariableValues.AddTo(values, variables, decisions, _variableType);
 
         return new VariableValueCollection(values, decisions);
-    }
-
-    private static bool IsProtected(OperationPlan plan)
-    {
-        if (plan.Operation.Authorization is not null)
-        {
-            return true;
-        }
-
-        foreach (var incrementalPlan in plan.IncrementalPlans)
-        {
-            if (incrementalPlan.Operation.Authorization is not null)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static ImmutableArray<PolicyDescriptor> GetDescriptors(OperationPlan plan)
-    {
-        var descriptors = ImmutableArray.CreateBuilder<PolicyDescriptor>();
-
-        if (plan.Operation.Authorization is { } authorization)
-        {
-            descriptors.AddRange(authorization.Descriptors);
-        }
-
-        foreach (var incrementalPlan in plan.IncrementalPlans)
-        {
-            if (incrementalPlan.Operation.Authorization is { } incrementalAuthorization)
-            {
-                descriptors.AddRange(incrementalAuthorization.Descriptors);
-            }
-        }
-
-        return descriptors.ToImmutable();
-    }
-
-    private static ImmutableArray<AuthorizationVariable> GetVariables(OperationPlan plan)
-    {
-        var variables = ImmutableArray.CreateBuilder<AuthorizationVariable>();
-
-        if (plan.Operation.Authorization is { } authorization)
-        {
-            variables.AddRange(authorization.Variables);
-        }
-
-        foreach (var incrementalPlan in plan.IncrementalPlans)
-        {
-            if (incrementalPlan.Operation.Authorization is { } incrementalAuthorization)
-            {
-                variables.AddRange(incrementalAuthorization.Variables);
-            }
-        }
-
-        return variables.ToImmutable();
     }
 
     private static ClaimsPrincipal GetUser(RequestContext context)
