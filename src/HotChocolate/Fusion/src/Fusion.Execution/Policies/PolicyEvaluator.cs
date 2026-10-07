@@ -1,9 +1,11 @@
 using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Policies.Audit;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
+using HotChocolate.Language.Utilities;
 using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Policies;
@@ -13,11 +15,20 @@ namespace HotChocolate.Fusion.Policies;
 /// </summary>
 internal sealed class PolicyEvaluator
 {
+    private const string UnauthenticatedReason = "unauthenticated";
+
     private static readonly ImmutableDictionary<string, object?> s_noArguments =
 #if NET10_0_OR_GREATER
         [];
 #else
         ImmutableDictionary<string, object?>.Empty;
+#endif
+
+    private static readonly ImmutableDictionary<string, string> s_noArgumentValues =
+#if NET10_0_OR_GREATER
+        [];
+#else
+        ImmutableDictionary<string, string>.Empty;
 #endif
 
     private readonly FusionAuthorizationOptions _options;
@@ -53,6 +64,9 @@ internal sealed class PolicyEvaluator
     /// <param name="variables">
     /// The coerced variable values of the variable set.
     /// </param>
+    /// <param name="scope">
+    /// The audit scope of the variable set that receives one entry per evaluated occurrence.
+    /// </param>
     /// <param name="requestIndex">
     /// The index of the variable set within the request.
     /// </param>
@@ -65,6 +79,7 @@ internal sealed class PolicyEvaluator
         OperationPlan plan,
         PolicyPlan policies,
         IVariableValueCollection variables,
+        IAuditScope scope,
         int requestIndex,
         CancellationToken cancellationToken)
     {
@@ -73,6 +88,7 @@ internal sealed class PolicyEvaluator
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
+        ArgumentNullException.ThrowIfNull(scope);
 
         var isAuthenticated = user.Identity?.IsAuthenticated is true;
         var occurrences = GetOccurrences(plan, policies.Descriptors, variables);
@@ -89,6 +105,19 @@ internal sealed class PolicyEvaluator
                 && !(policies.HasUnresolvedPolicies && descriptor.Policy is UnresolvedPolicy))
             {
                 deniedDescriptors.Add(descriptor);
+
+                if (scope.IsRecording)
+                {
+                    var entry = new PolicyEvaluationEntry(
+                        descriptor,
+                        CoerceArguments((Selection)descriptor.Selection, variables));
+
+                    scope.Record(
+                        CreateAuditEntry(
+                            entry,
+                            new PolicyVerdict(PolicyOutcome.Denied, UnauthenticatedReason, null)));
+                }
+
                 continue;
             }
 
@@ -128,7 +157,23 @@ internal sealed class PolicyEvaluator
             }
             catch (InvalidOperationException ex) when (group.Policy is UnresolvedPolicy)
             {
+                if (scope.IsRecording)
+                {
+                    foreach (var entry in policyContext.Entries)
+                    {
+                        scope.Record(
+                            CreateAuditEntry(
+                                entry,
+                                new PolicyVerdict(PolicyOutcome.Unanswered, ex.Message, null)));
+                    }
+                }
+
                 return new PolicyEvaluation(null, ex);
+            }
+
+            if (scope.IsRecording)
+            {
+                Record(scope, policyContext);
             }
 
             CollectDenied(policyContext, deniedDescriptors);
@@ -236,6 +281,57 @@ internal sealed class PolicyEvaluator
         }
 
         return firstDenied;
+    }
+
+    private static void Record(IAuditScope scope, PolicyEvaluationContext policyContext)
+    {
+        var entries = policyContext.Entries;
+        var verdicts = policyContext.Verdicts;
+
+        for (var i = 0; i < entries.Length; i++)
+        {
+            scope.Record(CreateAuditEntry(entries[i], verdicts[i]));
+        }
+    }
+
+    private static AuditLogEntry CreateAuditEntry(PolicyEvaluationEntry entry, PolicyVerdict verdict)
+    {
+        var descriptor = entry.Descriptor;
+
+        return new AuditLogEntry(
+            descriptor.Selection.Field.Coordinate,
+            descriptor.DirectiveName,
+            descriptor.PolicyName,
+            descriptor.Scopes,
+            CreateArgumentValues(entry.Arguments),
+            verdict.Outcome,
+            verdict.Reason,
+            verdict.AuditData);
+    }
+
+    private static ImmutableDictionary<string, string> CreateArgumentValues(
+        IReadOnlyDictionary<string, object?> arguments)
+    {
+        if (arguments.Count == 0)
+        {
+            return s_noArgumentValues;
+        }
+
+        var values = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+
+        foreach (var (name, value) in arguments)
+        {
+            values.Add(
+                name,
+                value switch
+                {
+                    IValueNode node => node.Print(indented: false),
+                    null => NullValueNode.Default.Print(indented: false),
+                    _ => value.ToString() ?? string.Empty
+                });
+        }
+
+        return values.ToImmutable();
     }
 
     private static void CollectDenied(
