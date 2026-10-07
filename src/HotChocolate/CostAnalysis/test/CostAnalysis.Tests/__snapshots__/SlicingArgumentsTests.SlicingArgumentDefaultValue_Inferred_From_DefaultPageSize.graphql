@@ -40,17 +40,41 @@ type FoosEdge {
   node: Int!
 }
 
+"A cursor that points to a specific page."
+type PageCursor {
+  "The page number."
+  page: Int!
+  "The cursor."
+  cursor: String!
+}
+
 "Information about pagination in a connection."
 type PageInfo {
   "Indicates whether more edges exist following the set defined by the clients arguments."
-  hasNextPage: Boolean!
+  hasNextPage: Boolean! @cost(weight: "10")
   "Indicates whether more edges exist prior the set defined by the clients arguments."
-  hasPreviousPage: Boolean!
+  hasPreviousPage: Boolean! @cost(weight: "10")
   "When paginating backwards, the cursor to continue."
-  startCursor: String
+  startCursor: String @cost(weight: "10")
   "When paginating forwards, the cursor to continue."
-  endCursor: String
+  endCursor: String @cost(weight: "10")
+  "A list of cursors to continue paginating forwards."
+  forwardCursors: [PageCursor!]! @cost(weight: "10")
+  "A list of cursors to continue paginating backwards."
+  backwardCursors: [PageCursor!]! @cost(weight: "10")
 }
+
+"The purpose of the `cost` directive is to define a `weight` for GraphQL types, fields, and arguments. Static analysis can use these weights when calculating the overall cost of a query or response."
+directive @cost(
+  "The `weight` argument defines what value to add to the overall cost for every appearance, or possible appearance, of a type, field, argument, etc."
+  weight: String!
+) on
+  | SCALAR
+  | OBJECT
+  | FIELD_DEFINITION
+  | ARGUMENT_DEFINITION
+  | ENUM
+  | INPUT_FIELD_DEFINITION
 
 "The purpose of the `@listSize` directive is to either inform the static analysis about the size of returned lists (if that information is statically available), or to point the analysis to where to find that information."
 directive @listSize(

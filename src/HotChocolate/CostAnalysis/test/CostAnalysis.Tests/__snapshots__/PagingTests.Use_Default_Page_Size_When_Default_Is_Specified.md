@@ -214,16 +214,28 @@ type CollectionSegmentInfo {
   hasPreviousPage: Boolean!
 }
 
+"A cursor that points to a specific page."
+type PageCursor {
+  "The page number."
+  page: Int!
+  "The cursor."
+  cursor: String!
+}
+
 "Information about pagination in a connection."
 type PageInfo {
   "Indicates whether more edges exist following the set defined by the clients arguments."
-  hasNextPage: Boolean!
+  hasNextPage: Boolean! @cost(weight: "10")
   "Indicates whether more edges exist prior the set defined by the clients arguments."
-  hasPreviousPage: Boolean!
+  hasPreviousPage: Boolean! @cost(weight: "10")
   "When paginating backwards, the cursor to continue."
-  startCursor: String
+  startCursor: String @cost(weight: "10")
   "When paginating forwards, the cursor to continue."
-  endCursor: String
+  endCursor: String @cost(weight: "10")
+  "A list of cursors to continue paginating forwards."
+  forwardCursors: [PageCursor!]! @cost(weight: "10")
+  "A list of cursors to continue paginating backwards."
+  backwardCursors: [PageCursor!]! @cost(weight: "10")
 }
 
 input BookFilterInput {
