@@ -173,6 +173,14 @@ type Starship {
   length(unit: Unit): Float!
 }
 
+"An edge in a connection."
+type FriendsEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: Character
+}
+
 "Information about pagination in a connection."
 type PageInfo {
   "Indicates whether more edges exist following the set defined by the clients arguments."
@@ -183,14 +191,18 @@ type PageInfo {
   startCursor: String
   "When paginating forwards, the cursor to continue."
   endCursor: String
+  "A list of cursors to continue paginating forwards."
+  forwardCursors: [PageCursor!]!
+  "A list of cursors to continue paginating backwards."
+  backwardCursors: [PageCursor!]!
 }
 
-"An edge in a connection."
-type FriendsEdge {
-  "A cursor for use in pagination."
+"A cursor that points to a specific page."
+type PageCursor {
+  "The page number."
+  page: Int!
+  "The cursor."
   cursor: String!
-  "The item at the end of the edge."
-  node: Character
 }
 
 "The `Long` scalar type represents a signed 64-bit integer."
