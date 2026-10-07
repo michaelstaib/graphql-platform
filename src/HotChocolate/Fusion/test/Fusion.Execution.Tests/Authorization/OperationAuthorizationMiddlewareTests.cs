@@ -20,6 +20,12 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
           either: String @policy(policies: [["editor"], ["admin"]])
           both: String @policy(policies: [["editor", "admin"]])
           productById(id: ID!): Product @policy(policies: [["owner"]])
+          productByFilter(filter: ProductFilter!): Product @policy(policies: [["owner"]])
+          productsByIds(ids: [ID!]!): [Product] @policy(policies: [["owner"]])
+        }
+
+        input ProductFilter {
+          ownerId: ID
         }
 
         type Product {
@@ -60,7 +66,9 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
           "guarded": "g",
           "either": "e",
           "both": "b",
-          "productById": { "id": "1", "name": "Shoe", "price": 10, "cost": 5 }
+          "productById": { "id": "1", "name": "Shoe", "price": 10, "cost": 5 },
+          "productByFilter": { "id": "1", "name": "Shoe", "price": 10, "cost": 5 },
+          "productsByIds": [{ "id": "1", "name": "Shoe", "price": 10, "cost": 5 }]
         }
         """;
 
@@ -418,6 +426,104 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
                 {
                   "data": {
                     "productById": null
+                  }
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Should_PassResolvedArguments_When_VariableIsNestedInAnInputObject()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            new InMemoryPolicyRecorder(),
+            policies => policies.Evaluate(
+                "owner",
+                (_, entry) => entry.Arguments["filter"] is ObjectValueNode
+                {
+                    Fields: [{ Value: StringValueNode { Value: "1" } }]
+                }));
+        var request = CreateRequest(
+                "query($id: ID!) { productByFilter(filter: { ownerId: $id }) { id } }",
+                Authenticated())
+            .SetVariableValues("""[{"id":"1"},{"id":"2"}]""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResultBatch().Results.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "productByFilter": {
+                      "id": "1"
+                    }
+                  }
+                }
+                """,
+                """
+                {
+                  "data": {
+                    "productByFilter": null
+                  }
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Should_PassResolvedArguments_When_VariableIsNestedInAList()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            new InMemoryPolicyRecorder(),
+            policies => policies.Evaluate(
+                "owner",
+                (_, entry) => entry.Arguments["ids"] is ListValueNode
+                {
+                    Items: [StringValueNode { Value: "1" }]
+                }));
+        var request = CreateRequest(
+                "query($id: ID!) { productsByIds(ids: [$id]) { id } }",
+                Authenticated())
+            .SetVariableValues("""[{"id":"1"},{"id":"2"}]""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResultBatch().Results.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "productsByIds": [
+                      {
+                        "id": "1"
+                      }
+                    ]
+                  }
+                }
+                """,
+                """
+                {
+                  "data": {
+                    "productsByIds": null
                   }
                 }
                 """

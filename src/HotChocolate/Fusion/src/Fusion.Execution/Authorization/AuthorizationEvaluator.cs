@@ -321,15 +321,95 @@ internal sealed class AuthorizationEvaluator
                 }
             }
 
-            if (value is VariableNode variable)
+            if (value is not null)
             {
-                variables.TryGetValue(variable.Name.Value, out value);
+                value = ResolveVariables(value, variables);
             }
 
             arguments.Add(definition.Name, value ?? definition.DefaultValue ?? NullValueNode.Default);
         }
 
         return arguments.ToImmutable();
+    }
+
+    private static IValueNode? ResolveVariables(IValueNode value, IVariableValueCollection variables)
+    {
+        switch (value)
+        {
+            case VariableNode variable:
+                return variables.TryGetValue<IValueNode>(variable.Name.Value, out var resolved)
+                    ? resolved
+                    : null;
+
+            case ObjectValueNode objectValue:
+                List<ObjectFieldNode>? fields = null;
+
+                for (var i = 0; i < objectValue.Fields.Count; i++)
+                {
+                    var field = objectValue.Fields[i];
+                    var fieldValue = ResolveVariables(field.Value, variables);
+
+                    if (fields is null && ReferenceEquals(fieldValue, field.Value))
+                    {
+                        continue;
+                    }
+
+                    if (fields is null)
+                    {
+                        fields = new List<ObjectFieldNode>(objectValue.Fields.Count);
+
+                        for (var j = 0; j < i; j++)
+                        {
+                            fields.Add(objectValue.Fields[j]);
+                        }
+                    }
+
+                    if (fieldValue is not null)
+                    {
+                        fields.Add(
+                            ReferenceEquals(fieldValue, field.Value)
+                                ? field
+                                : new ObjectFieldNode(field.Location, field.Name, fieldValue));
+                    }
+                }
+
+                return fields is null
+                    ? objectValue
+                    : new ObjectValueNode(objectValue.Location, fields);
+
+            case ListValueNode listValue:
+                List<IValueNode>? items = null;
+
+                for (var i = 0; i < listValue.Items.Count; i++)
+                {
+                    var item = listValue.Items[i];
+                    var itemValue = ResolveVariables(item, variables) ?? NullValueNode.Default;
+
+                    if (items is null && ReferenceEquals(itemValue, item))
+                    {
+                        continue;
+                    }
+
+                    if (items is null)
+                    {
+                        items = new List<IValueNode>(listValue.Items.Count);
+
+                        for (var j = 0; j < i; j++)
+                        {
+                            items.Add(listValue.Items[j]);
+                        }
+                    }
+
+                    items.Add(itemValue);
+                }
+
+                return items is null
+                    ? listValue
+                    : new ListValueNode(listValue.Location, items);
+
+            default:
+                return value;
+        }
     }
 
     private sealed class PolicyGroup(IPolicy policy)
