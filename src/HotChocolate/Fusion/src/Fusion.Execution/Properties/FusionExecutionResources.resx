@@ -177,4 +177,7 @@
   <data name="AuthorizationValidation_SchemesWithoutLookup" xml:space="preserve">
     <value>The Schemes option lists authentication schemes but the host exposes no authentication schemes. Register the authentication scheme lookup through HotChocolate.Fusion.AspNetCore, or do not set Schemes.</value>
   </data>
+  <data name="PolicyEvaluationContext_EntryAlreadyAnswered" xml:space="preserve">
+    <value>The policy '{1}' already answered the entry of the field '{0}'. An entry takes exactly one verdict.</value>
+  </data>
 </root>

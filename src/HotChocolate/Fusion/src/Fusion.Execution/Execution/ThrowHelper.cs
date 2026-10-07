@@ -10,6 +10,14 @@ internal static class ThrowHelper
     public static InvalidOperationException PolicyEntryNotPartOfContext()
         => new(FusionExecutionResources.PolicyEvaluationContext_EntryNotPartOfContext);
 
+    public static InvalidOperationException PolicyEntryAlreadyAnswered(
+        string fieldCoordinate,
+        string policy)
+        => new(string.Format(
+            FusionExecutionResources.PolicyEvaluationContext_EntryAlreadyAnswered,
+            fieldCoordinate,
+            policy));
+
     public static InvalidOperationException AuthorizationOptionsAreReadOnly()
         => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
 

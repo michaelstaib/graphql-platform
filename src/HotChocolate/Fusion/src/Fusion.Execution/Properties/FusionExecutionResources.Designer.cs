@@ -362,5 +362,11 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("AuthorizationValidation_SchemesWithoutLookup", resourceCulture);
             }
         }
+
+        internal static string PolicyEvaluationContext_EntryAlreadyAnswered {
+            get {
+                return ResourceManager.GetString("PolicyEvaluationContext_EntryAlreadyAnswered", resourceCulture);
+            }
+        }
     }
 }
