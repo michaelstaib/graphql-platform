@@ -41,9 +41,9 @@ public sealed class FusionAuthorizationOptions
     } = RejectRequestOn.Off;
 
     /// <summary>
-    /// Gets or sets the names of the authentication schemes the gateway authenticates against.
-    /// <c>null</c> by default, which selects every registered scheme. An empty list is a configuration
-    /// error, and every listed name must be a registered scheme.
+    /// Gets or sets the names of the authentication schemes the gateway authenticates against, or
+    /// <c>null</c> (the default) for every registered scheme. An empty list is a configuration error,
+    /// and every listed name must be a registered scheme.
     /// </summary>
     public ImmutableArray<string>? Schemes
     {
