@@ -274,6 +274,69 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         Assert.Equal(ISchemaDefinition.DefaultName, executor.Schema.Name);
     }
 
+    [Fact]
+    public async Task Startup_Should_Succeed_When_ValidationIsDisabledAndSchemesAreEmpty()
+    {
+        // arrange
+        var provider = CreateProvider(
+            "field: String",
+            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            configure: o =>
+            {
+                o.Schemes = ImmutableArray<string>.Empty;
+                o.DisableAuthorizationValidation = true;
+            });
+
+        // act
+        var executor = await provider.GetRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(ISchemaDefinition.DefaultName, executor.Schema.Name);
+    }
+
+    [Fact]
+    public async Task Startup_Should_Succeed_When_ValidationIsDisabledAndListedSchemeIsNotRegistered()
+    {
+        // arrange
+        var provider = CreateProvider(
+            "field: String",
+            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            configure: o =>
+            {
+                o.Schemes = ImmutableArray.Create("Bearer", "Cookie");
+                o.DisableAuthorizationValidation = true;
+            });
+
+        // act
+        var executor = await provider.GetRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(ISchemaDefinition.DefaultName, executor.Schema.Name);
+    }
+
+    [Fact]
+    public async Task Startup_Should_Succeed_When_ValidationIsDisabledAndSchemesAreListedWithoutCatalog()
+    {
+        // arrange
+        var provider = CreateProvider(
+            "field: String",
+            catalog: null,
+            configure: o =>
+            {
+                o.Schemes = ImmutableArray.Create("Bearer");
+                o.DisableAuthorizationValidation = true;
+            });
+
+        // act
+        var executor = await provider.GetRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(ISchemaDefinition.DefaultName, executor.Schema.Name);
+    }
+
     private static IServiceProvider CreateProvider(
         string fields,
         IAuthenticationSchemeCatalog? catalog,
