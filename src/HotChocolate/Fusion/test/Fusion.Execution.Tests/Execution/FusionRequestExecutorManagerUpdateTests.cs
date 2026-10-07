@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
@@ -142,6 +143,219 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         Assert.Throws<ObjectDisposedException>(() => rejectedConfiguration.Settings.Document.RootElement.ValueKind);
     }
 
+    [Fact]
+    public async Task Update_Should_ReportFailureAndApplyLaterConfiguration_When_HashingTheConfigurationThrows()
+    {
+        // arrange
+        var listener = new UpdateFailureListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        var initialExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        var created = ObserveCreatedExecutors(manager);
+        var unreadableConfiguration = CreateConfiguration("unreadable");
+        unreadableConfiguration.Dispose();
+
+        // act
+        configProvider.UpdateConfiguration(unreadableConfiguration);
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterFailure = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        configProvider.UpdateConfiguration(CreateConfiguration("accepted"));
+        var executorAfterRecovery = await created.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<ObjectDisposedException>(failure.Exception);
+        Assert.Same(initialExecutor, executorAfterFailure);
+        Assert.True(executorAfterRecovery.Schema.QueryType.Fields.ContainsName("accepted"));
+    }
+
+    [Fact]
+    public async Task Update_Should_DisposeRejectedExecutorAndApplyLaterConfiguration_When_FailureListenerThrows()
+    {
+        // arrange
+        var failWarmup = false;
+        DisposalProbe? rejectedProbe = null;
+        var listener = new ThrowingUpdateFailureListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<DisposalProbe>())
+                .AddWarmupTask((executor, _) =>
+                {
+                    if (failWarmup)
+                    {
+                        rejectedProbe = executor.Schema.Services.GetRequiredService<DisposalProbe>();
+                        throw new InvalidOperationException("warmup failed");
+                    }
+
+                    return Task.CompletedTask;
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var created = ObserveCreatedExecutors(manager);
+
+        // act
+        failWarmup = true;
+        configProvider.UpdateConfiguration(CreateConfiguration("rejected"));
+        await listener.Invoked.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await rejectedProbe!.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        failWarmup = false;
+        configProvider.UpdateConfiguration(CreateConfiguration("accepted"));
+        var executorAfterRecovery = await created.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.True(executorAfterRecovery.Schema.QueryType.Fields.ContainsName("accepted"));
+    }
+
+    [Fact]
+    public async Task Update_Should_ApplyLaterConfiguration_When_DisposingTheRejectedExecutorThrows()
+    {
+        // arrange
+        var failWarmup = false;
+        ThrowingDisposable? rejectedDisposable = null;
+        var listener = new UpdateFailureListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
+                .AddWarmupTask((executor, _) =>
+                {
+                    if (failWarmup)
+                    {
+                        rejectedDisposable = executor.Schema.Services.GetRequiredService<ThrowingDisposable>();
+                        throw new InvalidOperationException("warmup failed");
+                    }
+
+                    return Task.CompletedTask;
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var created = ObserveCreatedExecutors(manager);
+
+        // act
+        failWarmup = true;
+        configProvider.UpdateConfiguration(CreateConfiguration("rejected"));
+        await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await rejectedDisposable!.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        failWarmup = false;
+        configProvider.UpdateConfiguration(CreateConfiguration("accepted"));
+        var executorAfterRecovery = await created.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.True(executorAfterRecovery.Schema.QueryType.Fields.ContainsName("accepted"));
+    }
+
+    [Fact]
+    public async Task Update_Should_DisposeSchemaServices_When_ExecutorCreationFailsAfterBuildingThem()
+    {
+        // arrange
+        var failPipeline = false;
+        DisposalProbe? builtProbe = null;
+        var listener = new UpdateFailureListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<DisposalProbe>())
+                .UseRequest((context, next) =>
+                {
+                    if (failPipeline)
+                    {
+                        builtProbe = context.Schema.Services.GetRequiredService<DisposalProbe>();
+                        throw new InvalidOperationException("pipeline failed");
+                    }
+
+                    return next;
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        failPipeline = true;
+        configProvider.UpdateConfiguration(CreateConfiguration("rejected"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await builtProbe!.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal("pipeline failed", failure.Exception.Message);
+    }
+
+    [Fact]
+    public async Task Update_Should_DisposeCandidateAndRaiseNoEvent_When_ManagerIsDisposedDuringWarmup()
+    {
+        // arrange
+        var blockWarmup = false;
+        DisposalProbe? candidateProbe = null;
+        var warmupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var listener = new RecordingListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<DisposalProbe>())
+                .AddWarmupTask(async (executor, cancellationToken) =>
+                {
+                    if (blockWarmup)
+                    {
+                        candidateProbe = executor.Schema.Services.GetRequiredService<DisposalProbe>();
+                        warmupStarted.TrySetResult();
+                        await Task.Delay(Timeout.Infinite, cancellationToken);
+                    }
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        listener.Events.Clear();
+
+        // act
+        blockWarmup = true;
+        configProvider.UpdateConfiguration(CreateConfiguration("candidate"));
+        await warmupStarted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await manager.DisposeAsync();
+        await candidateProbe!.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Empty(listener.Events);
+    }
+
     private static Task<IRequestExecutor> ObserveCreatedExecutors(FusionRequestExecutorManager manager)
     {
         var created = new TaskCompletionSource<IRequestExecutor>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,5 +397,45 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         public Task Disposed => _disposed.Task;
 
         public void Dispose() => _disposed.TrySetResult();
+    }
+
+    private sealed class ThrowingUpdateFailureListener : FusionExecutionDiagnosticEventListener
+    {
+        private readonly TaskCompletionSource _invoked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Invoked => _invoked.Task;
+
+        public override void ExecutorUpdateFailed(string schemaName, Exception exception)
+        {
+            _invoked.TrySetResult();
+            throw new InvalidOperationException("listener failed");
+        }
+    }
+
+    private sealed class RecordingListener : FusionExecutionDiagnosticEventListener
+    {
+        public ConcurrentQueue<string> Events { get; } = [];
+
+        public override void ExecutorCreated(string name, IRequestExecutor executor)
+            => Events.Enqueue($"created:{name}");
+
+        public override void ExecutorEvicted(string name, IRequestExecutor executor)
+            => Events.Enqueue($"evicted:{name}");
+
+        public override void ExecutorUpdateFailed(string schemaName, Exception exception)
+            => Events.Enqueue($"failed:{schemaName}");
+    }
+
+    private sealed class ThrowingDisposable : IDisposable
+    {
+        private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Disposed => _disposed.Task;
+
+        public void Dispose()
+        {
+            _disposed.TrySetResult();
+            throw new InvalidOperationException("disposal failed");
+        }
     }
 }
