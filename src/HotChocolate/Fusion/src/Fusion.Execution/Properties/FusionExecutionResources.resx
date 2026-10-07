@@ -156,4 +156,13 @@
   <data name="Operation_AuthorizationAlreadySet" xml:space="preserve">
     <value>The authorization of the operation was already set and cannot be set again.</value>
   </data>
+  <data name="FusionAuthorizationOptions_ReadOnly" xml:space="preserve">
+    <value>The authorization options are read-only.</value>
+  </data>
+  <data name="AuthorizationValidation_SchemeNotRegistered" xml:space="preserve">
+    <value>The authentication scheme '{0}' of the authorization options is not registered. Register it, remove it from the schemes, or disable the authorization validation.</value>
+  </data>
+  <data name="AuthorizationValidation_NoSchemeRegistered" xml:space="preserve">
+    <value>The schema uses authorization directives but no authentication scheme is registered. Register an authentication scheme, or disable the authorization validation.</value>
+  </data>
 </root>

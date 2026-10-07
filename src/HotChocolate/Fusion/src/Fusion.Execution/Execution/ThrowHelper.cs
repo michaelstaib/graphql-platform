@@ -10,6 +10,17 @@ internal static class ThrowHelper
     public static InvalidOperationException PolicyEntryNotPartOfContext()
         => new(FusionExecutionResources.PolicyEvaluationContext_EntryNotPartOfContext);
 
+    public static InvalidOperationException AuthorizationOptionsAreReadOnly()
+        => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
+
+    public static InvalidOperationException AuthenticationSchemeNotRegistered(string schemeName)
+        => new(string.Format(
+            FusionExecutionResources.AuthorizationValidation_SchemeNotRegistered,
+            schemeName));
+
+    public static InvalidOperationException NoAuthenticationSchemeRegistered()
+        => new(FusionExecutionResources.AuthorizationValidation_NoSchemeRegistered);
+
     public static InvalidOperationException PolicyNotResolved(string directiveName, string? policyName)
         => new(string.Format(
             FusionExecutionResources.PolicyResolver_PolicyNotResolved,

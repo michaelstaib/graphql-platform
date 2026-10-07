@@ -320,5 +320,23 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("Operation_AuthorizationAlreadySet", resourceCulture);
             }
         }
+
+        internal static string FusionAuthorizationOptions_ReadOnly {
+            get {
+                return ResourceManager.GetString("FusionAuthorizationOptions_ReadOnly", resourceCulture);
+            }
+        }
+
+        internal static string AuthorizationValidation_SchemeNotRegistered {
+            get {
+                return ResourceManager.GetString("AuthorizationValidation_SchemeNotRegistered", resourceCulture);
+            }
+        }
+
+        internal static string AuthorizationValidation_NoSchemeRegistered {
+            get {
+                return ResourceManager.GetString("AuthorizationValidation_NoSchemeRegistered", resourceCulture);
+            }
+        }
     }
 }
