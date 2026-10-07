@@ -404,5 +404,11 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("OperationAuthorization_BooleanTypeMissing", resourceCulture);
             }
         }
+
+        internal static string DeliveryGroup_InvalidIfVariable {
+            get {
+                return ResourceManager.GetString("DeliveryGroup_InvalidIfVariable", resourceCulture);
+            }
+        }
     }
 }

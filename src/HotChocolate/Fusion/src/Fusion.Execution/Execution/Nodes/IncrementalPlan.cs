@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HotChocolate.Execution;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
 
@@ -149,6 +150,91 @@ public sealed class IncrementalPlan : IOperationPlan
         }
 
         throw ThrowHelper.NodeNotFound(planNode.Id);
+    }
+
+    /// <summary>
+    /// Collects the operations of the incremental plans that do not run for the variable set.
+    /// A plan runs when one of its delivery groups is active and the plan owning the parent
+    /// delivery group, if any, also runs.
+    /// </summary>
+    internal static HashSet<Operation> GetOperationsThatDoNotRun(
+        ImmutableArray<IncrementalPlan> incrementalPlans,
+        IVariableValueCollection variables)
+    {
+        var active = new HashSet<IncrementalPlan>();
+
+        foreach (var incrementalPlan in incrementalPlans)
+        {
+            foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
+            {
+                if (deliveryGroup.IsActive(variables))
+                {
+                    active.Add(incrementalPlan);
+                    break;
+                }
+            }
+        }
+
+        var running = new HashSet<IncrementalPlan>();
+        var changed = true;
+
+        while (changed)
+        {
+            changed = false;
+
+            foreach (var incrementalPlan in active)
+            {
+                if (!running.Contains(incrementalPlan)
+                    && IsParentRunning(incrementalPlan, incrementalPlans, running))
+                {
+                    running.Add(incrementalPlan);
+                    changed = true;
+                }
+            }
+        }
+
+        var operations = new HashSet<Operation>();
+
+        foreach (var incrementalPlan in incrementalPlans)
+        {
+            if (!running.Contains(incrementalPlan))
+            {
+                operations.Add(incrementalPlan.Operation);
+            }
+        }
+
+        return operations;
+    }
+
+    private static bool IsParentRunning(
+        IncrementalPlan incrementalPlan,
+        ImmutableArray<IncrementalPlan> incrementalPlans,
+        HashSet<IncrementalPlan> running)
+    {
+        var parent = incrementalPlan.DeliveryGroups[0].Parent;
+
+        if (parent is null)
+        {
+            return true;
+        }
+
+        foreach (var candidate in incrementalPlans)
+        {
+            if (!running.Contains(candidate))
+            {
+                continue;
+            }
+
+            foreach (var deliveryGroup in candidate.DeliveryGroups)
+            {
+                if (ReferenceEquals(deliveryGroup, parent))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static ExecutionNode?[] CreateNodeLookup(

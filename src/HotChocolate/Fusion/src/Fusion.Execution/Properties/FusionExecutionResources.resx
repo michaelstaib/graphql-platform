@@ -198,4 +198,7 @@
   <data name="OperationAuthorization_BooleanTypeMissing" xml:space="preserve">
     <value>The schema does not define the Boolean type that the authorization variables require.</value>
   </data>
+  <data name="DeliveryGroup_InvalidIfVariable" xml:space="preserve">
+    <value>The variable {0} has an invalid value.</value>
+  </data>
 </root>

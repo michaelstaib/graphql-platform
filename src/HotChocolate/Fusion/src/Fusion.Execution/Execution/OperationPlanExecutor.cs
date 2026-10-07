@@ -109,7 +109,7 @@ internal static partial class OperationPlanExecutor
             var deliveryPaths = CreateDeliveryPaths(operationPlan);
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (IsDeliveryGroupActive(deliveryGroup, variables))
+                if (deliveryGroup.IsActive(variables))
                 {
                     activeDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
@@ -646,22 +646,6 @@ internal static partial class OperationPlanExecutor
                 collected.Add(requirement);
             }
         }
-    }
-
-    private static bool IsDeliveryGroupActive(DeliveryGroup deliveryGroup, IVariableValueCollection variables)
-    {
-        if (deliveryGroup.IfVariable is null)
-        {
-            return true;
-        }
-
-        if (!variables.TryGetValue<BooleanValueNode>(deliveryGroup.IfVariable, out var boolValue))
-        {
-            throw new InvalidOperationException(
-                $"The variable {deliveryGroup.IfVariable} has an invalid value.");
-        }
-
-        return boolValue.Value;
     }
 
     private static bool IsIncrementalPlanActive(IncrementalPlan incrementalPlan, HashSet<int> activeDeliveryGroupIds)

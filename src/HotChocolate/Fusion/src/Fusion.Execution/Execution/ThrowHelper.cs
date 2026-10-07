@@ -51,6 +51,11 @@ internal static class ThrowHelper
     public static InvalidOperationException AuthenticationSchemesWithoutLookup()
         => new(FusionExecutionResources.AuthorizationValidation_SchemesWithoutLookup);
 
+    public static InvalidOperationException InvalidDeferIfVariable(string variableName)
+        => new(string.Format(
+            FusionExecutionResources.DeliveryGroup_InvalidIfVariable,
+            variableName));
+
     public static InvalidOperationException PolicyNotResolved(string directiveName, string? policyName)
         => new(string.Format(
             FusionExecutionResources.PolicyResolver_PolicyNotResolved,

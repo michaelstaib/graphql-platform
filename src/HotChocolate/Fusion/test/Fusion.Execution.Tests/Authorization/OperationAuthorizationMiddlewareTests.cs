@@ -32,6 +32,7 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
           name: String @authenticated
           price: Int @requiresScopes(scopes: [["read"]])
           cost: Int! @policy(policies: [["finance"]])
+          margin: Int @policy(policies: [["finance"]])
         }
         """;
 
@@ -56,7 +57,7 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
     private const string Data =
         """
         {
-          "product": { "id": "1", "name": "Shoe", "price": 10, "cost": 5 },
+          "product": { "id": "1", "name": "Shoe", "price": 10, "cost": 5, "margin": 3 },
           "products": [
             { "id": "1", "name": "Shoe", "price": 10, "cost": 5 },
             { "id": "2", "name": "Boot", "price": 20, "cost": 8 }
@@ -646,5 +647,77 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
         // assert
         result.MatchInlineSnapshot(expected);
         Assert.Equal(expectedRecords, recorder.Records.Count);
+    }
+
+    [Theory]
+    [InlineData(true, """
+        {
+          "data": {
+            "product": {
+              "id": "1"
+            }
+          },
+          "pending": [
+            {
+              "id": "0",
+              "path": [
+                "product"
+              ]
+            }
+          ],
+          "incremental": [
+            {
+              "id": "0",
+              "data": {
+                "margin": 3
+              }
+            }
+          ],
+          "completed": [
+            {
+              "id": "0"
+            }
+          ],
+          "hasNext": false
+        }
+
+        """)]
+    [InlineData(false, """
+        {
+          "data": {
+            "product": {
+              "id": "1",
+              "margin": 3
+            }
+          },
+          "hasNext": false
+        }
+        """)]
+    public async Task InvokeAsync_Should_EvaluateEachOccurrenceOnce_When_DeferIsConditional(
+        bool defer,
+        string expected)
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var recorder = new InMemoryPolicyRecorder();
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            recorder,
+            policies => policies.Allow("finance"));
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer(if: $d) { margin } } }",
+                Authenticated())
+            .SetVariableValues($$"""{"d":{{(defer ? "true" : "false")}}}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(expected);
+        Assert.Single(recorder.Records);
     }
 }

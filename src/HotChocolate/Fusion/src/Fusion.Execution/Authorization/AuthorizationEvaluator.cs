@@ -75,7 +75,7 @@ internal sealed class AuthorizationEvaluator
         ArgumentNullException.ThrowIfNull(variables);
 
         var isAuthenticated = user.Identity?.IsAuthenticated is true;
-        var occurrences = GetOccurrences(authorization.Descriptors, variables);
+        var occurrences = GetOccurrences(plan, authorization.Descriptors, variables);
         var deniedDescriptors = new HashSet<PolicyDescriptor>();
         var groups = new List<PolicyGroup>();
         var groupsByPolicy = new Dictionary<IPolicy, PolicyGroup>();
@@ -255,14 +255,24 @@ internal sealed class AuthorizationEvaluator
     }
 
     private static ImmutableArray<PolicyDescriptor> GetOccurrences(
+        OperationPlan plan,
         ImmutableArray<PolicyDescriptor> descriptors,
         IVariableValueCollection variables)
     {
         var occurrences = ImmutableArray.CreateBuilder<PolicyDescriptor>(descriptors.Length);
         var flagsByOperation = new Dictionary<Operation, ConditionFlags>();
+        var operationsThatDoNotRun = plan.IncrementalPlans.IsEmpty
+            ? null
+            : IncrementalPlan.GetOperationsThatDoNotRun(plan.IncrementalPlans, variables);
 
         foreach (var descriptor in descriptors)
         {
+            if (operationsThatDoNotRun?.Contains(
+                    ((Selection)descriptor.Selection).DeclaringSelectionSet.DeclaringOperation) is true)
+            {
+                continue;
+            }
+
             if (IsReachable((Selection)descriptor.Selection, variables, flagsByOperation))
             {
                 occurrences.Add(descriptor);
