@@ -102,6 +102,14 @@ sourceSchemas:
         node: Book!
       }
 
+      "A cursor that points to a specific page."
+      type PageCursor @shareable {
+        "The page number."
+        page: Int!
+        "The cursor."
+        cursor: String!
+      }
+
       "Information about pagination in a connection."
       type PageInfo @shareable {
         "Indicates whether more edges exist following the set defined by the clients arguments."
@@ -112,6 +120,10 @@ sourceSchemas:
         startCursor: String
         "When paginating forwards, the cursor to continue."
         endCursor: String
+        "A list of cursors to continue paginating forwards."
+        forwardCursors: [PageCursor!]!
+        "A list of cursors to continue paginating backwards."
+        backwardCursors: [PageCursor!]!
       }
     interactions:
       - request:
@@ -220,6 +232,14 @@ sourceSchemas:
         author: Author! @shareable
       }
 
+      "A cursor that points to a specific page."
+      type PageCursor @shareable {
+        "The page number."
+        page: Int!
+        "The cursor."
+        cursor: String!
+      }
+
       "Information about pagination in a connection."
       type PageInfo @shareable {
         "Indicates whether more edges exist following the set defined by the clients arguments."
@@ -230,6 +250,10 @@ sourceSchemas:
         startCursor: String
         "When paginating forwards, the cursor to continue."
         endCursor: String
+        "A list of cursors to continue paginating forwards."
+        forwardCursors: [PageCursor!]!
+        "A list of cursors to continue paginating backwards."
+        backwardCursors: [PageCursor!]!
       }
     interactions:
       - request:
