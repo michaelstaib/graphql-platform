@@ -15,6 +15,7 @@ using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Pipeline;
 using HotChocolate.Features;
 using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Configuration.Parsers;
 using HotChocolate.Fusion.Diagnostics;
@@ -247,7 +248,13 @@ internal sealed class FusionRequestExecutorManager
             var pipeline = CreatePipeline(setup, schema, schemaServices, requestOptions);
 
             var contextPool = schemaServices.GetRequiredService<ObjectPool<PooledRequestContext>>();
-            var executor = new FusionRequestExecutor(schema, _applicationServices, pipeline, contextPool, version);
+            var executor = new FusionRequestExecutor(
+                schema,
+                _applicationServices,
+                pipeline,
+                contextPool,
+                schemaServices.GetRequiredService<IAuditProvider>(),
+                version);
             var requestExecutorAccessor = schemaServices.GetRequiredService<RequestExecutorAccessor>();
             requestExecutorAccessor.RequestExecutor = executor;
 
@@ -587,6 +594,7 @@ internal sealed class FusionRequestExecutorManager
             static sp => new AuthenticationSchemeResolver(
                 sp.GetRequiredService<FusionAuthorizationOptions>(),
                 sp.GetService<IAuthenticationSchemeLookup>()));
+        services.TryAddSingleton<IAuditProvider>(NoOpAuditProvider.Instance);
         services.TryAddSingleton<IPolicyResolver>(
             static sp =>
             {

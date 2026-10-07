@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
@@ -60,18 +61,26 @@ internal sealed class OperationAuthorizationMiddleware
         }
 
         var user = GetUser(context);
+        var trail = context.Features.Get<IAuditTrail>() ?? throw ThrowHelper.OperationAuthorizationRequiresAuditTrail();
         var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
 
         for (var i = 0; i < variableSets.Length; i++)
         {
+            var scope = trail.BeginRequest(
+                new AuditScopeInfo(plan.Operation.Id, plan.Id, context.RequestIndex, i),
+                user);
+
             var evaluation = await _evaluator.EvaluateAsync(
                 context,
                 user,
                 plan,
                 authorization,
                 variableSets[i],
+                scope,
                 i,
                 context.RequestAborted);
+
+            await scope.CommitAsync(context.RequestAborted);
 
             if (evaluation.Failure is { } failure)
             {
