@@ -2071,6 +2071,7 @@ public class PagingTests
     {
         await TestHelper.GetGeneratedSourceSnapshot(
             """
+            using System.Collections.Generic;
             using System.Threading;
             using System.Threading.Tasks;
             using GreenDonut.Data;
@@ -2099,6 +2100,12 @@ public class PagingTests
                 }
 
                 public sealed class Journal
+                {
+                    public int Id { get; set; }
+                    public string Title { get; set; }
+                }
+
+                public sealed class Newsletter
                 {
                     public int Id { get; set; }
                     public string Title { get; set; }
@@ -2157,6 +2164,9 @@ public class PagingTests
                         PagingArguments pagingArgs,
                         CancellationToken cancellationToken)
                         => default!;
+
+                    [UsePaging]
+                    public static IEnumerable<Newsletter> GetClassicNewsletters() => [];
                 }
             }
             """).MatchMarkdownAsync(TestContext.Current.CancellationToken);

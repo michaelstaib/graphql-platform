@@ -1532,6 +1532,41 @@ namespace TestNamespace.Types.Root
                 },
                 (Resolvers: resolvers, ThisType: thisType));
 
+            descriptor
+                .Field(naming.GetMemberName("ClassicNewsletters", global::HotChocolate.Types.MemberKind.ObjectField))
+                .ExtendWith(static (field, context) =>
+                {
+                    var configuration = field.Configuration;
+                    var typeInspector = field.Context.TypeInspector;
+                    var bindingResolver = field.Context.ParameterBindingResolver;
+                    var naming = field.Context.Naming;
+
+                    configuration.Type = global::HotChocolate.Types.Descriptors.TypeReference.Create(
+                        typeInspector.GetTypeRef(typeof(global::TestNamespace.Newsletter), HotChocolate.Types.TypeContext.Output),
+                        new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.ListTypeNode(new global::HotChocolate.Language.NonNullTypeNode(new global::HotChocolate.Language.NamedTypeNode("global__TestNamespace_Newsletter")))));
+                    configuration.ResultType = typeof(global::System.Collections.Generic.IEnumerable<global::TestNamespace.Newsletter>);
+                    configuration.DeclaringType = context.ThisType;
+
+                    configuration.SetSourceGeneratorFlags();
+
+                    configuration.Member = context.ThisType.GetMethod(
+                        "GetClassicNewsletters",
+                        global::HotChocolate.Utilities.ReflectionUtils.StaticMemberFlags,
+                        global::System.Array.Empty<global::System.Type>());
+
+                    var fieldDescriptor = global::HotChocolate.Types.Descriptors.ObjectFieldDescriptor.From(field.Context, configuration);
+                    HotChocolate.Internal.ConfigurationHelper.ApplyConfiguration(
+                        field.Context,
+                        fieldDescriptor,
+                        configuration.Member,
+                        new global::HotChocolate.Types.UsePagingAttribute(null, 95));
+                    configuration.ConfigurationsAreApplied = true;
+                    fieldDescriptor.CreateConfiguration();
+
+                    configuration.Resolvers = context.Resolvers.GetClassicNewsletters();
+                },
+                (Resolvers: resolvers, ThisType: thisType));
+
             Configure(descriptor);
         }
 
@@ -1712,6 +1747,17 @@ namespace TestNamespace.Types.Root
                     };
                 var args1 = context.RequestAborted;
                 var result = await global::TestNamespace.Types.Root.Queries.GetStreamedJournalsAsync(args0, args1);
+                return result;
+            }
+
+            public HotChocolate.Resolvers.FieldResolverDelegates GetClassicNewsletters()
+            {
+                return new global::HotChocolate.Resolvers.FieldResolverDelegates(pureResolver: GetClassicNewsletters);
+            }
+
+            private global::System.Object? GetClassicNewsletters(global::HotChocolate.Resolvers.IResolverContext context)
+            {
+                var result = global::TestNamespace.Types.Root.Queries.GetClassicNewsletters();
                 return result;
             }
         }
