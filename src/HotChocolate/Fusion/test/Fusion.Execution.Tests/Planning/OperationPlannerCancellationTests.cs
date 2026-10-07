@@ -1,6 +1,6 @@
-using HotChocolate.Fusion.Authorization;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Tracing;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;

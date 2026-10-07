@@ -1,6 +1,6 @@
-using HotChocolate.Fusion.Authorization;
 using System.Collections.Immutable;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Language;
 using Microsoft.Extensions.ObjectPool;

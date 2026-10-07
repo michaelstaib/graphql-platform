@@ -1,9 +1,9 @@
-using HotChocolate.Fusion.Authorization;
 using System.Diagnostics;
 using System.Text.Json;
 using HotChocolate.Diagnostics;
 using HotChocolate.Execution;
 using HotChocolate.Features;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Planning;

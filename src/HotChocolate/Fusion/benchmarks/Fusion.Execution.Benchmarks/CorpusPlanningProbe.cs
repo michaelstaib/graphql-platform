@@ -1,7 +1,7 @@
-using HotChocolate.Fusion.Authorization;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Planning;
