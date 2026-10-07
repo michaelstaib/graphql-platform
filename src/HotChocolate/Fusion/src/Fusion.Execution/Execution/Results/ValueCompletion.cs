@@ -8,6 +8,7 @@ using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Properties;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Types.Collections;
 using HotChocolate.Fusion.Text.Json;
@@ -915,7 +916,7 @@ internal sealed class ValueCompletion
             {
                 var path = target.CompactPath.ToPath(target.Operation);
                 error = ErrorBuilder.New()
-                    .SetMessage("Cannot return null for non-nullable field.")
+                    .SetMessage(FusionExecutionResources.ErrorHelper_NonNullViolation)
                     .SetCode(ErrorCodes.Execution.NonNullViolation)
                     .SetPath(path)
                     .Build();
