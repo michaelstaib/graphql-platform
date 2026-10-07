@@ -174,6 +174,54 @@ public class IntegrationTests
             """);
     }
 
+    [Fact]
+    public async Task Query_PageInfo_Across_Connection_Backings()
+    {
+        // arrange
+        var services = CreateApplicationServices();
+        var executor = await services.GetRequiredService<IRequestExecutorProvider>().GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            """
+            {
+                authors {
+                    pageInfo {
+                        ...PageInfoFields
+                    }
+                }
+                publishers {
+                    pageInfo {
+                        ...PageInfoFields
+                    }
+                }
+                magazines {
+                    pageInfo {
+                        ...PageInfoFields
+                    }
+                }
+            }
+
+            fragment PageInfoFields on PageInfo {
+                hasNextPage
+                hasPreviousPage
+                startCursor
+                endCursor
+                forwardCursors {
+                    page
+                }
+                backwardCursors {
+                    page
+                }
+            }
+            """,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchMarkdownSnapshot();
+    }
+
     private static IServiceProvider CreateApplicationServices(
         Action<IServiceCollection>? configure = null)
     {
