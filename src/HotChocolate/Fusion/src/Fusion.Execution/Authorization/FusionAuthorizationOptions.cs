@@ -69,7 +69,7 @@ public sealed class FusionAuthorizationOptions
 
             field = value;
         }
-    } = "scope";
+    } = RequiresScopesPolicy.DefaultScopeClaimType;
 
     /// <summary>
     /// Gets or sets how the scopes are stored in the scope claim.

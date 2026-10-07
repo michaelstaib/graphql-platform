@@ -8,7 +8,7 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 public sealed class RequiresScopesPolicy : IPolicy
 {
-    private const string DefaultScopeClaimType = "scope";
+    internal const string DefaultScopeClaimType = "scope";
 
     private readonly string _scopeClaimType;
     private readonly ScopeClaimFormat _scopeClaimFormat;

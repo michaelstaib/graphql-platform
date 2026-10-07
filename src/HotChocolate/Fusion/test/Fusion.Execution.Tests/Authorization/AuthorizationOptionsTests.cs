@@ -109,7 +109,8 @@ public class AuthorizationOptionsTests : FusionTestBase
         var act = () => options.ScopeClaimName = string.Empty;
 
         // assert
-        Assert.Throws<ArgumentException>(act);
+        var exception = Assert.Throws<ArgumentException>(act);
+        Assert.Equal("value", exception.ParamName);
     }
 
     [Fact]
