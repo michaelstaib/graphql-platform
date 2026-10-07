@@ -599,11 +599,6 @@ internal sealed class FusionRequestExecutorManager
 
         services.AddSingleton(plannerOptions);
 
-        services.TryAddSingleton<IPolicyResolver>(
-            static sp => new PolicyResolver(
-                new BuiltInPolicyProvider(),
-                sp.GetServices<IPolicyProvider>()));
-
         services.AddSingleton(
             static sp => new OperationPlanner(
                 sp.GetRequiredService<FusionSchemaDefinition>(),
