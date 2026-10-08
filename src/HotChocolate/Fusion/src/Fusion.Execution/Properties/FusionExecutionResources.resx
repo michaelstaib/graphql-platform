@@ -213,9 +213,6 @@
   <data name="PolicyPlan_OperandNotFound" xml:space="preserve">
     <value>The policy variable '{0}' combines the variable '{1}', which is not defined before it.</value>
   </data>
-  <data name="OperationPolicy_AuditTrailMissing" xml:space="preserve">
-    <value>There is no audit trail available to record the authorization decisions.</value>
-  </data>
   <data name="AuditScope_AlreadyCommitted" xml:space="preserve">
     <value>The audit scope is already committed and cannot be changed or committed again.</value>
   </data>
