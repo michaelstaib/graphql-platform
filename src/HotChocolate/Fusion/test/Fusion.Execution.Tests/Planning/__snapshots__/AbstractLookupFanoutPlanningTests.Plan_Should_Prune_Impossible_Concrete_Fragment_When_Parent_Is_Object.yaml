@@ -9,7 +9,6 @@ operation:
             product {
               __typename @fusion__requirement
               sku
-              id @fusion__requirement
               ... on Magazine {
                 title
                 id @fusion__requirement
@@ -17,6 +16,7 @@ operation:
               ... on Book {
                 reviewsCount
               }
+              id @fusion__requirement
             }
           }
         }

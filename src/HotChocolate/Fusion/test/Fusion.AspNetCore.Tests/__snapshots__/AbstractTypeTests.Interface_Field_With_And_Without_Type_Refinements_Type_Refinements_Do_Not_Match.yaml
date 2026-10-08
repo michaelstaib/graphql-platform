@@ -207,10 +207,10 @@ operationPlan:
           abstractTypes {
             __typename @fusion__requirement
             upvotes
-            id @fusion__requirement
             ... on Discussion {
               score
             }
+            id @fusion__requirement
           }
         }
       hash: 7028707ab1fc36d5df264f08e38deb99

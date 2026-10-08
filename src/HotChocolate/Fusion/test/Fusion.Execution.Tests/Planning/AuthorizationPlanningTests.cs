@@ -824,8 +824,8 @@ public class AuthorizationPlanningTests : FusionTestBase
                     $__fusion_auth_3: Boolean!
                   ) {
                     product {
-                      price @skip(if: $__fusion_auth_2)
-                      name @include(if: $__fusion_auth_1) @skip(if: $__fusion_auth_3)
+                      name @include(if: $__fusion_auth_1) @skip(if: $__fusion_auth_2)
+                      price @skip(if: $__fusion_auth_3)
                     }
                   }
                 forwardedVariables:
