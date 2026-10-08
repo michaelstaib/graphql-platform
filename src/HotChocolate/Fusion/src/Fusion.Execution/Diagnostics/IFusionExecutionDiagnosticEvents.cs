@@ -438,7 +438,8 @@ public interface IFusionExecutionDiagnosticEvents : ICoreExecutionDiagnosticEven
         ulong subscriptionId);
 
     /// <summary>
-    /// Called when a new configuration could not be activated and the previous executor stays active.
+    /// Called when the executor for a new configuration could not be activated and the previous executor stays
+    /// active.
     /// </summary>
     /// <param name="schemaName">
     /// The name of the schema.
@@ -447,4 +448,18 @@ public interface IFusionExecutionDiagnosticEvents : ICoreExecutionDiagnosticEven
     /// The exception that rejected the configuration.
     /// </param>
     void ExecutorUpdateFailed(string schemaName, Exception exception);
+
+    /// <summary>
+    /// Called when the executor for a new configuration is active, but a step after the swap failed.
+    /// </summary>
+    /// <param name="schemaName">
+    /// The name of the schema.
+    /// </param>
+    /// <param name="executor">
+    /// The executor that is active.
+    /// </param>
+    /// <param name="exception">
+    /// The exception thrown by the step.
+    /// </param>
+    void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor executor, Exception exception);
 }

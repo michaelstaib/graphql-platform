@@ -124,7 +124,10 @@ internal sealed class FusionRequestExecutorManager
     private SemaphoreSlim GetSemaphoreForSchema(string schemaName)
         => _semaphoreBySchema.GetOrAdd(schemaName, _ => new SemaphoreSlim(1, 1));
 
-    private void EvictExecutor(FusionRequestExecutor executor, IFusionExecutionDiagnosticEvents diagnosticEvents)
+    private void EvictExecutor(
+        FusionRequestExecutor executor,
+        FusionRequestExecutor activeExecutor,
+        IFusionExecutionDiagnosticEvents diagnosticEvents)
     {
         try
         {
@@ -134,19 +137,44 @@ internal sealed class FusionRequestExecutorManager
         }
         finally
         {
-            EvictRequestExecutorAsync(executor).FireAndForget();
+            EvictRequestExecutorAsync(executor, activeExecutor, diagnosticEvents).FireAndForget();
         }
     }
 
-    private static async Task EvictRequestExecutorAsync(FusionRequestExecutor previousExecutor)
+    private static async Task EvictRequestExecutorAsync(
+        FusionRequestExecutor previousExecutor,
+        FusionRequestExecutor activeExecutor,
+        IFusionExecutionDiagnosticEvents diagnosticEvents)
     {
-        var evictionTimeout = previousExecutor.Schema.GetOptions().EvictionTimeout;
+        try
+        {
+            var evictionTimeout = previousExecutor.Schema.GetOptions().EvictionTimeout;
 
-        // we will give the request executor some grace period to finish all requests
-        // in the pipeline.
-        await Task.Delay(evictionTimeout).ConfigureAwait(false);
+            // we will give the request executor some grace period to finish all requests
+            // in the pipeline.
+            await Task.Delay(evictionTimeout).ConfigureAwait(false);
 
-        await previousExecutor.DisposeAsync().ConfigureAwait(false);
+            await previousExecutor.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ReportCleanupFailure(diagnosticEvents, activeExecutor, ex);
+        }
+    }
+
+    private static void ReportCleanupFailure(
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        FusionRequestExecutor activeExecutor,
+        Exception exception)
+    {
+        try
+        {
+            diagnosticEvents.ExecutorUpdateCleanupFailed(activeExecutor.Schema.Name, activeExecutor, exception);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private async ValueTask<RequestExecutorRegistration> CreateInitialRegistrationAsync(
@@ -222,32 +250,50 @@ internal sealed class FusionRequestExecutorManager
 
             return executor;
         }
-        catch
+        catch (Exception creationException)
         {
-            await DisposeSchemaServicesAsync(schemaName, schemaServices, diagnosticEvents).ConfigureAwait(false);
+            var disposalException = await DisposeSchemaServicesAsync(schemaServices).ConfigureAwait(false);
+
+            if (disposalException is null)
+            {
+                throw;
+            }
+
+            if (diagnosticEvents is null)
+            {
+                throw ThrowHelper.ExecutorCreationAndDisposalFailed(creationException, disposalException);
+            }
+
+            ReportUpdateFailure(diagnosticEvents, schemaName, disposalException);
             throw;
         }
     }
 
-    private static async ValueTask DisposeSchemaServicesAsync(
-        string schemaName,
-        ServiceProvider schemaServices,
-        IFusionExecutionDiagnosticEvents? diagnosticEvents)
+    private static async ValueTask<Exception?> DisposeSchemaServicesAsync(ServiceProvider schemaServices)
     {
         try
         {
             await schemaServices.DisposeAsync().ConfigureAwait(false);
+            return null;
         }
         catch (Exception ex)
         {
-            try
-            {
-                diagnosticEvents?.ExecutorUpdateFailed(schemaName, ex);
-            }
-            catch
-            {
-                // ignore
-            }
+            return ex;
+        }
+    }
+
+    private static void ReportUpdateFailure(
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        string schemaName,
+        Exception exception)
+    {
+        try
+        {
+            diagnosticEvents.ExecutorUpdateFailed(schemaName, exception);
+        }
+        catch
+        {
+            // ignore
         }
     }
 
@@ -861,7 +907,7 @@ internal sealed class FusionRequestExecutorManager
                 }
                 catch (Exception ex)
                 {
-                    ReportUpdateFailure(previousExecutor.Schema.Name, ex);
+                    ReportUpdateFailure(DiagnosticEvents, previousExecutor.Schema.Name, ex);
                     await RejectAsync(nextExecutor, configuration).ConfigureAwait(false);
                     continue;
                 }
@@ -875,14 +921,18 @@ internal sealed class FusionRequestExecutorManager
                 var activeExecutor = nextExecutor;
                 var schemaName = activeExecutor.Schema.Name;
 
-                RunGuarded(schemaName, () => DiagnosticEvents.ExecutorCreated(schemaName, activeExecutor));
-                RunGuarded(schemaName, () => _manager._events.RaiseEvent(RequestExecutorEvent.Created(activeExecutor)));
-                RunGuarded(schemaName, () => _manager.EvictExecutor(previousExecutor, DiagnosticEvents));
-                RunGuarded(schemaName, previousConfiguration.Dispose);
+                RunGuarded(activeExecutor, () => DiagnosticEvents.ExecutorCreated(schemaName, activeExecutor));
+                RunGuarded(
+                    activeExecutor,
+                    () => _manager._events.RaiseEvent(RequestExecutorEvent.Created(activeExecutor)));
+                RunGuarded(
+                    activeExecutor,
+                    () => _manager.EvictExecutor(previousExecutor, activeExecutor, DiagnosticEvents));
+                RunGuarded(activeExecutor, previousConfiguration.Dispose);
             }
         }
 
-        private void RunGuarded(string schemaName, Action action)
+        private void RunGuarded(FusionRequestExecutor activeExecutor, Action action)
         {
             try
             {
@@ -890,19 +940,7 @@ internal sealed class FusionRequestExecutorManager
             }
             catch (Exception ex)
             {
-                ReportUpdateFailure(schemaName, ex);
-            }
-        }
-
-        private void ReportUpdateFailure(string schemaName, Exception exception)
-        {
-            try
-            {
-                DiagnosticEvents.ExecutorUpdateFailed(schemaName, exception);
-            }
-            catch
-            {
-                // ignore
+                ReportCleanupFailure(DiagnosticEvents, activeExecutor, ex);
             }
         }
 
