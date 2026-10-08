@@ -177,7 +177,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
                 "Query.owned | @policy(owner) | scopes=[] | args={id:\"1\"} | Unanswered | reason=- | data=-",
                 "Query.guarded | @policy(finance) | scopes=[] | args={id:\"7\"} | Unanswered | reason=- | data=-"
             ]);
-        Assert.Equal("HotChocolate.Fusion.Authorization.AuditTrailTests+PolicyFault: boom", scope.FailureReason);
+        Assert.Equal("HotChocolate.Fusion.Policies.AuditTrailTests+PolicyFault: boom", scope.FailureReason);
         Assert.Equal(1, scope.CommitCount);
         result.MatchInlineSnapshot(
             """
