@@ -7,8 +7,6 @@ internal sealed class AuditDataPolicy : IPolicy, IPolicyProvider
     public IPolicy? GetPolicy(string policyName, string directiveName)
         => policyName == "audited" ? this : null;
 
-    public bool ReevaluatesPerEvent => false;
-
     public ValueTask EvaluateAsync(
         PolicyEvaluationContext context,
         CancellationToken cancellationToken)
