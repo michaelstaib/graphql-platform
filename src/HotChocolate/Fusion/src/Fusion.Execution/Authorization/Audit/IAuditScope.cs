@@ -3,11 +3,17 @@ using System.Collections.Immutable;
 namespace HotChocolate.Fusion.Authorization.Audit;
 
 /// <summary>
-/// The policy decisions of one variable set. The gateway commits the scope exactly once before
-/// it executes the variable set, and the scope is immutable afterwards.
+/// The policy decisions of one variable set, which the gateway commits exactly once before it
+/// executes the variable set. A scope is owned by the evaluation of its variable set and is not
+/// thread-safe.
 /// </summary>
 public interface IAuditScope
 {
+    /// <summary>
+    /// Gets the trail that opened the scope.
+    /// </summary>
+    IAuditTrail Trail { get; }
+
     /// <summary>
     /// Gets the identity of the variable set.
     /// </summary>

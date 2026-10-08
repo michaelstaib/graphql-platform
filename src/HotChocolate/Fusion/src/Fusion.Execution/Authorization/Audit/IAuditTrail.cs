@@ -8,7 +8,13 @@ namespace HotChocolate.Fusion.Authorization.Audit;
 public interface IAuditTrail
 {
     /// <summary>
-    /// Opens the scope that records the policy decisions of one variable set.
+    /// Gets the identity of the executor invocation, which is empty when the provider assigns none.
+    /// </summary>
+    string InvocationId { get; }
+
+    /// <summary>
+    /// Opens the scope that records the policy decisions of one variable set. The method must be
+    /// safe for concurrent calls.
     /// </summary>
     /// <param name="info">
     /// The identity of the variable set.
