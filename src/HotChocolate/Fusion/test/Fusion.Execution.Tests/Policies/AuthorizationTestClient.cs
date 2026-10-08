@@ -35,9 +35,6 @@ internal sealed class AuthorizationTestClient(string data) : ISourceSchemaClient
     public void Publish(string eventData)
         => _events.Writer.TryWrite(eventData);
 
-    public void CompleteEvents()
-        => _events.Writer.TryComplete();
-
     public async IAsyncEnumerable<SourceSchemaResult> ExecuteAsync(
         OperationPlanContext context,
         SourceSchemaClientRequest request,
