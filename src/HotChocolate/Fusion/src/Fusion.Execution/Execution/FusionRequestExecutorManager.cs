@@ -255,7 +255,6 @@ internal sealed class FusionRequestExecutorManager
         }
         catch
         {
-            // the first creation has no registration yet, so its events come from the services about to be disposed.
             var firstCreationEvents = diagnosticEvents is null ? TryGetDiagnosticEvents(schemaServices) : null;
             var disposalException = await DisposeSchemaServicesAsync(schemaServices).ConfigureAwait(false);
 
