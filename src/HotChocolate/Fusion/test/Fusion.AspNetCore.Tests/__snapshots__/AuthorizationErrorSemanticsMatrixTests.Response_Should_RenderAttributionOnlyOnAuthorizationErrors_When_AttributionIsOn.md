@@ -1,4 +1,4 @@
-# Response_Should_RenderAttribution_When_AttributionIsOn
+# Response_Should_RenderAttributionOnlyOnAuthorizationErrors_When_AttributionIsOn
 
 ## Error with attribution: Unauthenticated nullable field (anonymous) -> 200 OK
 
@@ -258,7 +258,7 @@
 }
 ```
 
-## Error with attribution: Denied non-null field in nullable list elements (reader) -> 200 OK
+## Error with attribution: Denied non-null field in nullable list elements, one error per element (reader) -> 200 OK
 
 ```json
 {
@@ -313,7 +313,7 @@
 }
 ```
 
-## Error with attribution: Denied non-null field in non-null list elements (reader) -> 200 OK
+## Error with attribution: Denied non-null field in non-null list elements, one error at the first violated index and the list is nulled (reader) -> 200 OK
 
 ```json
 {
@@ -468,7 +468,7 @@
 }
 ```
 
-## Null with attribution: Denied non-null field in nullable list elements (reader) -> 200 OK
+## Null with attribution: Denied non-null field in nullable list elements, one error per element (reader) -> 200 OK
 
 ```json
 {
@@ -517,7 +517,7 @@
 }
 ```
 
-## Null with attribution: Denied non-null field in non-null list elements (reader) -> 200 OK
+## Null with attribution: Denied non-null field in non-null list elements, one error at the first violated index and the list is nulled (reader) -> 200 OK
 
 ```json
 {
