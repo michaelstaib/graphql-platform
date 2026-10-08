@@ -26,17 +26,24 @@ internal sealed class AuthorizationDecisions
     /// <param name="isAttributed">
     /// Whether the errors of denied selections name the directive, policy and required scopes.
     /// </param>
+    /// <param name="alwaysFinalize">
+    /// Whether the result is always completed with the denied selections, even when no error
+    /// or non-null selection requires it.
+    /// </param>
     public AuthorizationDecisions(
         ImmutableArray<SelectionDenial> denials,
         DenyHandling denyHandling,
-        bool isAttributed)
+        bool isAttributed,
+        bool alwaysFinalize)
     {
         Denials = denials;
         _denialsBySelection = denials.ToFrozenDictionary(static d => d.Selection);
         _denyHandling = denyHandling;
         _isAttributed = isAttributed;
 
-        RequiresFinalization = denyHandling is DenyHandling.Error || ContainsNonNullSelection(denials);
+        RequiresFinalization = alwaysFinalize
+            || denyHandling is DenyHandling.Error
+            || ContainsNonNullSelection(denials);
     }
 
     /// <summary>
@@ -89,6 +96,32 @@ internal sealed class AuthorizationDecisions
         }
 
         return selection.IsNonNull ? ErrorHelper.DeniedNonNullField(path) : null;
+    }
+
+    /// <summary>
+    /// Gets the first denial of a selection that is part of the selection set.
+    /// </summary>
+    /// <param name="selectionSet">
+    /// The selection set that declares the denied selection.
+    /// </param>
+    /// <param name="denial">
+    /// The first denial of a selection of the selection set.
+    /// </param>
+    public bool TryGetDenial(SelectionSet selectionSet, out SelectionDenial denial)
+    {
+        ArgumentNullException.ThrowIfNull(selectionSet);
+
+        foreach (var current in Denials)
+        {
+            if (ReferenceEquals(current.Selection.DeclaringSelectionSet, selectionSet))
+            {
+                denial = current;
+                return true;
+            }
+        }
+
+        denial = default;
+        return false;
     }
 
     /// <summary>

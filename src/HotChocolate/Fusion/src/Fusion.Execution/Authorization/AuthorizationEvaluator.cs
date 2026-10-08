@@ -79,6 +79,10 @@ internal sealed class AuthorizationEvaluator
     /// <param name="requestIndex">
     /// The index of the variable set within the request.
     /// </param>
+    /// <param name="frozenDenied">
+    /// The descriptors denied by an earlier evaluation, or <c>null</c> to ask every policy.
+    /// A policy that does not reevaluate per event keeps its earlier verdict instead of being asked.
+    /// </param>
     /// <param name="cancellationToken">
     /// The token that signals that the request was aborted.
     /// </param>
@@ -90,6 +94,7 @@ internal sealed class AuthorizationEvaluator
         IVariableValueCollection variables,
         IAuditScope scope,
         int requestIndex,
+        IReadOnlySet<PolicyDescriptor>? frozenDenied,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -111,6 +116,17 @@ internal sealed class AuthorizationEvaluator
         {
             foreach (var descriptor in occurrences)
             {
+                if (frozenDenied is not null && !descriptor.Policy.ReevaluatesPerEvent)
+                {
+                    if (frozenDenied.Contains(descriptor))
+                    {
+                        deniedDescriptors.Add(descriptor);
+                    }
+
+                    answered?.Add(descriptor);
+                    continue;
+                }
+
                 // An anonymous principal never reaches the scope and named policies, except an
                 // unresolved policy, which fails the request as a configuration error.
                 if (!isAuthenticated
@@ -187,7 +203,7 @@ internal sealed class AuthorizationEvaluator
                         RecordUnanswered(scope, occurrences, groups, answered, variables);
                     }
 
-                    return new AuthorizationEvaluation(null, ex);
+                    return new AuthorizationEvaluation(null, ex, deniedDescriptors);
                 }
 
                 if (answered is not null)
@@ -200,13 +216,99 @@ internal sealed class AuthorizationEvaluator
             }
 
             return new AuthorizationEvaluation(
-                CreateDecisions(occurrences, deniedDescriptors, isAuthenticated),
-                null);
+                CreateDecisions(occurrences, deniedDescriptors, isAuthenticated, frozenDenied is not null),
+                null,
+                deniedDescriptors);
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
             RecordFault(context, scope, evaluating, isAuthenticated, occurrences, groups, answered, variables);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Records the fault in the scope and commits it. A failure of the scope itself is reported to
+    /// the diagnostic events so that it does not replace the fault.
+    /// </summary>
+    /// <param name="context">
+    /// The request context.
+    /// </param>
+    /// <param name="scope">
+    /// The audit scope of the faulted evaluation.
+    /// </param>
+    /// <param name="fault">
+    /// The fault that ended the evaluation.
+    /// </param>
+    public async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope, Exception fault)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(fault);
+
+        try
+        {
+            scope.Fail(fault);
+        }
+        catch (Exception failFailure)
+        {
+            _diagnosticEvents.RequestError(context, failFailure);
+        }
+
+        try
+        {
+            await scope.CommitAsync(context.RequestAborted);
+        }
+        catch (Exception commitFailure)
+        {
+            _diagnosticEvents.RequestError(context, commitFailure);
+        }
+    }
+
+    /// <summary>
+    /// Records a denied entry with the given reason for every occurrence of the variable set,
+    /// without asking any policy.
+    /// </summary>
+    /// <param name="scope">
+    /// The audit scope that receives the entries.
+    /// </param>
+    /// <param name="plan">
+    /// The plan of the operation.
+    /// </param>
+    /// <param name="authorization">
+    /// The authorization requirements of the operation.
+    /// </param>
+    /// <param name="variables">
+    /// The coerced variable values of the variable set.
+    /// </param>
+    /// <param name="reason">
+    /// The reason of the denial.
+    /// </param>
+    public void RecordDenied(
+        IAuditScope scope,
+        OperationPlan plan,
+        OperationAuthorization authorization,
+        IVariableValueCollection variables,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(variables);
+        ArgumentException.ThrowIfNullOrEmpty(reason);
+
+        if (!scope.IsRecording)
+        {
+            return;
+        }
+
+        foreach (var descriptor in GetOccurrences(plan, authorization.Descriptors, variables))
+        {
+            var entry = new PolicyEvaluationEntry(
+                descriptor,
+                CoerceArguments((Selection)descriptor.Selection, variables));
+
+            scope.Record(CreateAuditEntry(entry, new PolicyVerdict(PolicyOutcome.Denied, reason, null)));
         }
     }
 
@@ -226,7 +328,8 @@ internal sealed class AuthorizationEvaluator
     private AuthorizationDecisions? CreateDecisions(
         ImmutableArray<PolicyDescriptor> occurrences,
         HashSet<PolicyDescriptor> deniedDescriptors,
-        bool isAuthenticated)
+        bool isAuthenticated,
+        bool alwaysFinalize)
     {
         if (deniedDescriptors.Count == 0)
         {
@@ -273,7 +376,8 @@ internal sealed class AuthorizationEvaluator
             : new AuthorizationDecisions(
                 denials.ToImmutable(),
                 _options.DenyHandling,
-                _options.EnableAttribution);
+                _options.EnableAttribution,
+                alwaysFinalize);
     }
 
     private static PolicyDescriptor? FindDenyingDescriptor(
