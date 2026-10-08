@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -23,6 +22,7 @@ internal sealed class OperationPolicyMiddleware
     private readonly AuthenticationSchemeResolver _schemeResolver;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly IInputType _booleanType;
+    private readonly TimeProvider _timeProvider;
 
     private OperationPolicyMiddleware(
         PolicyEvaluator evaluator,
@@ -30,7 +30,8 @@ internal sealed class OperationPolicyMiddleware
         FusionAuthorizationOptions options,
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
-        IInputType booleanType)
+        IInputType booleanType,
+        TimeProvider timeProvider)
     {
         _evaluator = evaluator;
         _auditProvider = auditProvider;
@@ -38,6 +39,7 @@ internal sealed class OperationPolicyMiddleware
         _schemeResolver = schemeResolver;
         _diagnosticEvents = diagnosticEvents;
         _booleanType = booleanType;
+        _timeProvider = timeProvider;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
@@ -69,6 +71,7 @@ internal sealed class OperationPolicyMiddleware
             : _auditProvider.CreateTrail(context.RequestServices);
         PolicyDecisions?[]? decisionSets = null;
         IVariableValueCollection[]? updatedVariableSets = null;
+        var isSubscription = plan.Operation.Definition.Operation is OperationType.Subscription;
 
         for (var i = 0; i < variableSets.Length; i++)
         {
@@ -88,11 +91,12 @@ internal sealed class OperationPolicyMiddleware
                     variableSets[i],
                     scope,
                     i,
+                    null,
                     context.RequestAborted);
             }
             catch (Exception ex) when (PolicyEvaluator.IsFault(ex, context.RequestAborted))
             {
-                await CommitFaultedScopeAsync(context, scope, ex);
+                await _evaluator.CommitFaultedScopeAsync(context, scope, ex);
 
                 if (ex is OperationCanceledException)
                 {
@@ -133,6 +137,38 @@ internal sealed class OperationPolicyMiddleware
                 decisionSets[i] = decisions;
             }
 
+            if (isSubscription
+                && decisions is not null
+                && decisions.TryGetDenial(plan.Operation.RootSelectionSet, out var rootDenial))
+            {
+                await RejectAsync(context, rootDenial);
+                return;
+            }
+
+            if (isSubscription)
+            {
+                var variableValues = PolicyVariableValues.Create(
+                    variableSets[i],
+                    policies.Variables,
+                    decisions,
+                    _booleanType);
+
+                updatedVariableSets ??= [.. variableSets];
+                updatedVariableSets[i] = variableValues;
+
+                TrackSubscription(
+                    context,
+                    user,
+                    plan,
+                    policies,
+                    scope,
+                    variableSets[i],
+                    variableValues,
+                    decisions,
+                    evaluation.DeniedDescriptors);
+                continue;
+            }
+
             if (policies.Variables.IsEmpty)
             {
                 continue;
@@ -145,7 +181,11 @@ internal sealed class OperationPolicyMiddleware
             else
             {
                 updatedVariableSets ??= [.. variableSets];
-                updatedVariableSets[i] = CreateVariableValues(variableSets[i], policies.Variables, decisions);
+                updatedVariableSets[i] = PolicyVariableValues.Create(
+                    variableSets[i],
+                    policies.Variables,
+                    decisions,
+                    _booleanType);
             }
         }
 
@@ -162,25 +202,34 @@ internal sealed class OperationPolicyMiddleware
         await next(context);
     }
 
-    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope, Exception fault)
+    private void TrackSubscription(
+        RequestContext context,
+        ClaimsPrincipal user,
+        OperationPlan plan,
+        OperationPolicies policies,
+        IAuditScope scope,
+        IVariableValueCollection variables,
+        VariableValueCollection variableValues,
+        PolicyDecisions? decisions,
+        IReadOnlySet<PolicyDescriptor> deniedDescriptors)
     {
-        try
+        if (!policies.HasReevaluatedPolicies && SubscriptionPolicies.GetExpiry(user) is null)
         {
-            scope.Fail(fault);
-        }
-        catch (Exception failFailure)
-        {
-            _diagnosticEvents.RequestError(context, failFailure);
+            return;
         }
 
-        try
-        {
-            await scope.CommitAsync(context.RequestAborted);
-        }
-        catch (Exception commitFailure)
-        {
-            _diagnosticEvents.RequestError(context, commitFailure);
-        }
+        context.Features.Set(
+            new SubscriptionPolicies(
+                _evaluator,
+                scope,
+                plan,
+                policies,
+                variables,
+                variableValues,
+                decisions,
+                deniedDescriptors,
+                _booleanType,
+                _timeProvider));
     }
 
     private async ValueTask RejectAsync(RequestContext context, SelectionDenial denial)
@@ -195,31 +244,7 @@ internal sealed class OperationPolicyMiddleware
         context.Result = result;
     }
 
-    private VariableValueCollection CreateVariableValues(
-        IVariableValueCollection variableValues,
-        ImmutableArray<PolicyVariable> variables,
-        PolicyDecisions? decisions)
-    {
-        var count = 0;
-
-        foreach (var _ in variableValues)
-        {
-            count++;
-        }
-
-        var values = new Dictionary<string, VariableValue>(count + variables.Length);
-
-        foreach (var value in variableValues)
-        {
-            values[value.Name] = value;
-        }
-
-        var collection = new VariableValueCollection(values);
-        PolicyVariableValues.AddTo(collection, variables, decisions, _booleanType);
-        return collection;
-    }
-
-    private static ClaimsPrincipal GetUser(RequestContext context)
+    internal static ClaimsPrincipal GetUser(RequestContext context)
         => context.ContextData.TryGetValue(nameof(ClaimsPrincipal), out var value)
             && value is ClaimsPrincipal user
                 ? user
@@ -235,13 +260,15 @@ internal sealed class OperationPolicyMiddleware
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
                 var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var booleanType = GetBooleanType(schema);
+                var timeProvider = fc.SchemaServices.GetService<TimeProvider>() ?? TimeProvider.System;
                 var middleware = new OperationPolicyMiddleware(
                     new PolicyEvaluator(options, diagnosticEvents),
                     auditProvider,
                     options,
                     schemeResolver,
                     diagnosticEvents,
-                    booleanType);
+                    booleanType,
+                    timeProvider);
                 return requestContext => middleware.InvokeAsync(requestContext, next);
             },
             Key);

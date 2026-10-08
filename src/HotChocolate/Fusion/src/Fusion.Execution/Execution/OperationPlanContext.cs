@@ -884,6 +884,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     internal PooledArrayWriter CreateRentedBuffer()
         => _resultStore.CreateRentedBuffer();
 
+    internal void ApplyAuthorization(VariableValueCollection variables, PolicyDecisions? policyDecisions)
+    {
+        Variables = variables;
+        PolicyDecisions = policyDecisions;
+    }
+
     internal void Begin(long? start = null, string? traceId = null)
     {
         ResetNodeState();
