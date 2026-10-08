@@ -103,7 +103,7 @@ internal sealed class OperationSession : IOperationSession
 
             if (closeUnauthorized)
             {
-                await _session.Connection.CloseUnauthorizedAsync(CloseReasons.UnauthorizedMessage, ct);
+                await _session.Connection.CloseUnauthorizedAsync(ct);
             }
             else if (!errorSent && !ct.IsCancellationRequested)
             {
