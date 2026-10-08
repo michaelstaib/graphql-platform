@@ -17,7 +17,7 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 internal sealed class AuthorizationEvaluator
 {
-    private const string UnauthenticatedReason = "unauthenticated";
+    internal const string UnauthenticatedReason = "unauthenticated";
     private const string SubscribeDecisionStandsReason = "subscribe-time decision stands";
     private const string FrozenReason = "frozen";
 
