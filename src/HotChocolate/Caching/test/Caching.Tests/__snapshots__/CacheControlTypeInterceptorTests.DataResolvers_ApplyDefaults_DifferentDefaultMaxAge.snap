@@ -123,17 +123,17 @@ type PageCursor {
 "Information about pagination in a connection."
 type PageInfo {
   "Indicates whether more edges exist following the set defined by the clients arguments."
-  hasNextPage: Boolean! @cacheControl(maxAge: 100)
+  hasNextPage: Boolean!
   "Indicates whether more edges exist prior the set defined by the clients arguments."
-  hasPreviousPage: Boolean! @cacheControl(maxAge: 100)
+  hasPreviousPage: Boolean!
   "When paginating backwards, the cursor to continue."
-  startCursor: String @cacheControl(maxAge: 100)
+  startCursor: String
   "When paginating forwards, the cursor to continue."
-  endCursor: String @cacheControl(maxAge: 100)
+  endCursor: String
   "A list of cursors to continue paginating forwards."
-  forwardCursors: [PageCursor!]! @cacheControl(maxAge: 100)
+  forwardCursors: [PageCursor!]!
   "A list of cursors to continue paginating backwards."
-  backwardCursors: [PageCursor!]! @cacheControl(maxAge: 100)
+  backwardCursors: [PageCursor!]!
 }
 
 "A segment of a collection."
