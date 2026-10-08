@@ -161,8 +161,6 @@ internal sealed class SubscriptionAuthorization
                 await _evaluator.CommitFaultedScopeAsync(context, buffer.Replay(), ex);
             }
 
-            _evaluator.ReportError(context, ex);
-
             if (ex is OperationCanceledException)
             {
                 throw ThrowHelper.OperationAuthorizationFaulted(ex);
@@ -182,10 +180,9 @@ internal sealed class SubscriptionAuthorization
             {
                 await buffer.Replay().CommitAsync(cancellationToken);
             }
-            catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))
+            catch (OperationCanceledException ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))
             {
-                _evaluator.ReportError(context, ex);
-                throw;
+                throw ThrowHelper.OperationAuthorizationFaulted(ex);
             }
         }
 
@@ -215,17 +212,23 @@ internal sealed class SubscriptionAuthorization
     /// <param name="expiry">
     /// The expiry of the token when the subscription started.
     /// </param>
+    /// <param name="reportFailure">
+    /// The callback that receives the failure to commit the audit scope of the expiry before the
+    /// failure ends the stream.
+    /// </param>
     public IAsyncEnumerable<EventMessageResult> EndOnExpiry(
         IAsyncEnumerable<EventMessageResult> events,
         IExecutionResult result,
         RequestContext context,
-        DateTimeOffset expiry)
+        DateTimeOffset expiry,
+        Action<Exception> reportFailure)
     {
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(result);
         ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(reportFailure);
 
-        return new ExpiringEventStream(events, result, this, context, expiry, _timeProvider);
+        return new ExpiringEventStream(events, result, this, context, expiry, reportFailure, _timeProvider);
     }
 
     /// <summary>
@@ -244,10 +247,16 @@ internal sealed class SubscriptionAuthorization
     /// <param name="context">
     /// The request context of the subscription.
     /// </param>
+    /// <param name="reportFailure">
+    /// The callback that receives a failure to commit the scope.
+    /// </param>
     /// <param name="cancellationToken">
     /// The token that signals that the request was aborted.
     /// </param>
-    internal async ValueTask RecordExpiryAsync(RequestContext context, CancellationToken cancellationToken)
+    internal async ValueTask RecordExpiryAsync(
+        RequestContext context,
+        Action<Exception> reportFailure,
+        CancellationToken cancellationToken)
     {
         if (!_recordsAudit)
         {
@@ -263,7 +272,7 @@ internal sealed class SubscriptionAuthorization
         }
         catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))
         {
-            _evaluator.ReportError(context, ex);
+            reportFailure(ex);
             throw;
         }
     }
