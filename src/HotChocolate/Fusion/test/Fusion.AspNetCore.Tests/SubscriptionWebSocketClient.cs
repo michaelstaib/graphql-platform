@@ -15,8 +15,6 @@ public sealed class SubscriptionWebSocketClient : IDisposable
 
     private SubscriptionWebSocketClient(WebSocket socket) => _socket = socket;
 
-    public WebSocketState State => _socket.State;
-
     public static async Task<SubscriptionWebSocketClient> ConnectAsync(
         WebSocketClient client,
         string? user = null,
