@@ -1,5 +1,6 @@
 using System.Net;
 using HotChocolate.AspNetCore.Subscriptions.Protocols.GraphQLOverWebSocket;
+using HotChocolate.AspNetCore.Utilities;
 using HotChocolate.Language;
 
 namespace HotChocolate.AspNetCore.Subscriptions;
@@ -89,9 +90,7 @@ internal sealed class OperationSession : IOperationSession
                     // instead of completing the operation.
                     closeUnauthorized =
                         !ct.IsCancellationRequested
-                        && responseStream.ContextData.TryGetValue(
-                            ExecutionContextData.HttpStatusCode,
-                            out var requestedStatusCode)
+                        && RequestedStatusCode.TryGet(responseStream.ContextData, out var requestedStatusCode)
                         && requestedStatusCode is HttpStatusCode.Unauthorized;
                     break;
             }

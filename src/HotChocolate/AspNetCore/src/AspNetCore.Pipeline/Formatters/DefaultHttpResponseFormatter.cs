@@ -606,17 +606,22 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
                 : HttpStatusCode.OK;
         }
 
+        // a text/event-stream response of a request error without data that requests
+        // 401 or 403 keeps that status.
+        if (format.Kind is ResponseContentType.EventStream
+            && !result.Data.HasValue
+            && RequestedStatusCode.TryGet(result.ContextData, out var requested)
+            && requested is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            return requested;
+        }
+
         // if we are sending a single result with the multipart/mixed header or
         // with a text/event-stream response content-type, we as well will just
-        // respond with an OK status code. A request error without data that requests
-        // 401 or 403 keeps that status.
+        // respond with an OK status code.
         if (format.Kind is ResponseContentType.MultiPartMixed or ResponseContentType.EventStream)
         {
-            return !result.Data.HasValue
-                && result.ContextData.TryGetValue(ExecutionContextData.HttpStatusCode, out var requested)
-                && requested is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                    ? (HttpStatusCode)requested
-                    : HttpStatusCode.OK;
+            return HttpStatusCode.OK;
         }
 
         // in the case of the application/graphql-response+json, and of application/json from
@@ -656,17 +661,9 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
             if (result.ContextData is { Count: > 0 } contextData)
             {
                 // First, we check if there is an explicit HTTP status code override by the user.
-                if (contextData.TryGetValue(ExecutionContextData.HttpStatusCode, out var value))
+                if (RequestedStatusCode.TryGet(contextData, out var statusCode))
                 {
-                    if (value is HttpStatusCode statusCode)
-                    {
-                        return statusCode;
-                    }
-
-                    if (value is int statusCodeInt)
-                    {
-                        return (HttpStatusCode)statusCodeInt;
-                    }
+                    return statusCode;
                 }
 
                 // Next, we check if the validation of the request failed. Such a request is
