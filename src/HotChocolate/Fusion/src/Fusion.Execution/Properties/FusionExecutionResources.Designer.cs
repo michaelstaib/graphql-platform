@@ -416,5 +416,11 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("AuditScope_AlreadyCommitted", resourceCulture);
             }
         }
+
+        internal static string OperationAuthorization_EvaluationFaulted {
+            get {
+                return ResourceManager.GetString("OperationAuthorization_EvaluationFaulted", resourceCulture);
+            }
+        }
     }
 }

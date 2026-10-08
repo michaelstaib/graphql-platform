@@ -9,10 +9,11 @@ internal sealed class RecordingAuditScope(
     AuditScopeInfo info,
     ClaimsPrincipal user,
     ImmutableDictionary<string, string> context,
-    Func<int> countSourceSchemaRequests)
+    Func<int> countSourceSchemaRequests,
+    Exception? commitFailure)
     : AuditScope(trail, info, user, context)
 {
-    public ImmutableArray<AuditLogEntry> Entries { get; private set; }
+    public ImmutableArray<AuditLogEntry> Entries { get; private set; } = [];
 
     public int CommitCount { get; private set; }
 
@@ -25,6 +26,9 @@ internal sealed class RecordingAuditScope(
         Entries = entries;
         CommitCount++;
         SourceSchemaRequestsAtCommit = countSourceSchemaRequests();
-        return ValueTask.CompletedTask;
+
+        return commitFailure is null
+            ? ValueTask.CompletedTask
+            : ValueTask.FromException(commitFailure);
     }
 }

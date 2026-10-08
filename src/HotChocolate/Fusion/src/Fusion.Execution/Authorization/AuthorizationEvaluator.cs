@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.ExceptionServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization.Audit;
@@ -95,110 +96,124 @@ internal sealed class AuthorizationEvaluator
         var deniedDescriptors = new HashSet<PolicyDescriptor>();
         var groups = new List<PolicyGroup>();
         var groupsByPolicy = new Dictionary<IPolicy, PolicyGroup>();
+        var answered = scope.IsRecording ? new HashSet<PolicyDescriptor>() : null;
+        PolicyEvaluationContext? evaluating = null;
 
-        foreach (var descriptor in occurrences)
+        try
         {
-            // An anonymous principal never reaches the scope and named policies, except an
-            // unresolved policy, which fails the request as a configuration error.
-            if (!isAuthenticated
-                && descriptor.DirectiveName != DirectiveNames.Authenticated.Name
-                && !(authorization.HasUnresolvedPolicies && descriptor.Policy is UnresolvedPolicy))
+            foreach (var descriptor in occurrences)
             {
-                deniedDescriptors.Add(descriptor);
-
-                if (scope.IsRecording)
+                // An anonymous principal never reaches the scope and named policies, except an
+                // unresolved policy, which fails the request as a configuration error.
+                if (!isAuthenticated
+                    && descriptor.DirectiveName != DirectiveNames.Authenticated.Name
+                    && !(authorization.HasUnresolvedPolicies && descriptor.Policy is UnresolvedPolicy))
                 {
-                    var entry = new PolicyEvaluationEntry(
-                        descriptor,
-                        CoerceArguments((Selection)descriptor.Selection, variables));
+                    deniedDescriptors.Add(descriptor);
 
-                    scope.Record(
-                        CreateAuditEntry(
-                            entry,
-                            new PolicyVerdict(PolicyOutcome.Denied, UnauthenticatedReason, null)));
-                }
-
-                continue;
-            }
-
-            if (!groupsByPolicy.TryGetValue(descriptor.Policy, out var group))
-            {
-                group = new PolicyGroup(descriptor.Policy);
-                groupsByPolicy.Add(descriptor.Policy, group);
-                groups.Add(group);
-            }
-
-            group.Add(descriptor, PolicyEvaluationOrder.Get(descriptor.DirectiveName));
-        }
-
-        var evaluatedGroups = 0;
-
-        foreach (var group in groups.OrderBy(static g => g.Order))
-        {
-            var entries = new PolicyEvaluationEntry[group.Descriptors.Count];
-
-            for (var i = 0; i < entries.Length; i++)
-            {
-                var descriptor = group.Descriptors[i];
-                entries[i] = new PolicyEvaluationEntry(
-                    descriptor,
-                    CoerceArguments((Selection)descriptor.Selection, variables));
-            }
-
-            var policyContext = new PolicyEvaluationContext(
-                user,
-                context.Features,
-                context.RequestServices,
-                plan,
-                requestIndex,
-                entries);
-
-            try
-            {
-                await group.Policy.EvaluateAsync(policyContext, cancellationToken);
-            }
-            catch (InvalidOperationException ex) when (group.Policy is UnresolvedPolicy)
-            {
-                if (scope.IsRecording)
-                {
-                    foreach (var entry in policyContext.Entries)
+                    if (answered is not null)
                     {
+                        var entry = new PolicyEvaluationEntry(
+                            descriptor,
+                            CoerceArguments((Selection)descriptor.Selection, variables));
+
                         scope.Record(
                             CreateAuditEntry(
                                 entry,
-                                new PolicyVerdict(PolicyOutcome.Unanswered, ex.Message, null)));
+                                new PolicyVerdict(PolicyOutcome.Denied, UnauthenticatedReason, null)));
+                        answered.Add(descriptor);
                     }
 
-                    RecordUnanswered(scope, groups, evaluatedGroups + 1, variables);
+                    continue;
                 }
 
-                return new AuthorizationEvaluation(null, ex);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                if (scope.IsRecording)
+                if (!groupsByPolicy.TryGetValue(descriptor.Policy, out var group))
                 {
-                    Record(scope, policyContext, isAuthenticated);
-                    RecordUnanswered(scope, groups, evaluatedGroups + 1, variables);
+                    group = new PolicyGroup(descriptor.Policy);
+                    groupsByPolicy.Add(descriptor.Policy, group);
+                    groups.Add(group);
                 }
 
-                throw;
+                group.Add(descriptor, PolicyEvaluationOrder.Get(descriptor.DirectiveName));
             }
 
-            evaluatedGroups++;
-
-            if (scope.IsRecording)
+            foreach (var group in groups.OrderBy(static g => g.Order))
             {
-                Record(scope, policyContext, isAuthenticated);
+                var entries = new PolicyEvaluationEntry[group.Descriptors.Count];
+
+                for (var i = 0; i < entries.Length; i++)
+                {
+                    var descriptor = group.Descriptors[i];
+                    entries[i] = new PolicyEvaluationEntry(
+                        descriptor,
+                        CoerceArguments((Selection)descriptor.Selection, variables));
+                }
+
+                var policyContext = new PolicyEvaluationContext(
+                    user,
+                    context.Features,
+                    context.RequestServices,
+                    plan,
+                    requestIndex,
+                    entries);
+
+                evaluating = policyContext;
+
+                try
+                {
+                    await group.Policy.EvaluateAsync(policyContext, cancellationToken);
+                }
+                catch (InvalidOperationException ex) when (group.Policy is UnresolvedPolicy)
+                {
+                    if (answered is not null)
+                    {
+                        foreach (var entry in policyContext.Entries)
+                        {
+                            scope.Record(
+                                CreateAuditEntry(
+                                    entry,
+                                    new PolicyVerdict(PolicyOutcome.Unanswered, ex.Message, null)));
+                            answered.Add(entry.Descriptor);
+                        }
+
+                        RecordUnanswered(scope, occurrences, groups, answered, variables);
+                    }
+
+                    return new AuthorizationEvaluation(null, ex);
+                }
+
+                if (answered is not null)
+                {
+                    Record(scope, policyContext, isAuthenticated, answered);
+                }
+
+                evaluating = null;
+                CollectDenied(policyContext, deniedDescriptors);
             }
 
-            CollectDenied(policyContext, deniedDescriptors);
+            return new AuthorizationEvaluation(
+                CreateDecisions(occurrences, deniedDescriptors, isAuthenticated),
+                null);
         }
-
-        return new AuthorizationEvaluation(
-            CreateDecisions(occurrences, deniedDescriptors, isAuthenticated),
-            null);
+        catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
+        {
+            RecordFault(scope, ex, evaluating, isAuthenticated, occurrences, groups, answered, variables);
+            throw;
+        }
     }
+
+    /// <summary>
+    /// Determines whether an exception that ended the evaluation is a fault of the evaluation
+    /// instead of the cancellation of the request.
+    /// </summary>
+    /// <param name="exception">
+    /// The exception that ended the evaluation.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// The token that signals that the request was aborted.
+    /// </param>
+    public static bool IsFault(Exception exception, CancellationToken cancellationToken)
+        => exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested;
 
     private AuthorizationDecisions? CreateDecisions(
         ImmutableArray<PolicyDescriptor> occurrences,
@@ -302,13 +317,19 @@ internal sealed class AuthorizationEvaluator
     private static void Record(
         IAuditScope scope,
         PolicyEvaluationContext policyContext,
-        bool isAuthenticated)
+        bool isAuthenticated,
+        HashSet<PolicyDescriptor> answered)
     {
         var entries = policyContext.Entries;
         var verdicts = policyContext.Verdicts;
 
         for (var i = 0; i < entries.Length; i++)
         {
+            if (answered.Contains(entries[i].Descriptor))
+            {
+                continue;
+            }
+
             var verdict = verdicts[i];
 
             if (!isAuthenticated
@@ -319,26 +340,73 @@ internal sealed class AuthorizationEvaluator
             }
 
             scope.Record(CreateAuditEntry(entries[i], verdict));
+            answered.Add(entries[i].Descriptor);
+        }
+    }
+
+    private static void RecordFault(
+        IAuditScope scope,
+        Exception fault,
+        PolicyEvaluationContext? evaluating,
+        bool isAuthenticated,
+        ImmutableArray<PolicyDescriptor> occurrences,
+        List<PolicyGroup> groups,
+        HashSet<PolicyDescriptor> answered,
+        IVariableValueCollection variables)
+    {
+        try
+        {
+            if (evaluating is not null)
+            {
+                Record(scope, evaluating, isAuthenticated, answered);
+            }
+
+            RecordUnanswered(scope, occurrences, groups, answered, variables);
+        }
+        catch (Exception)
+        {
+            ExceptionDispatchInfo.Capture(fault).Throw();
         }
     }
 
     private static void RecordUnanswered(
         IAuditScope scope,
+        ImmutableArray<PolicyDescriptor> occurrences,
         List<PolicyGroup> groups,
-        int evaluatedGroups,
+        HashSet<PolicyDescriptor> answered,
         IVariableValueCollection variables)
     {
-        foreach (var group in groups.OrderBy(static g => g.Order).Skip(evaluatedGroups))
+        foreach (var group in groups.OrderBy(static g => g.Order))
         {
             foreach (var descriptor in group.Descriptors)
             {
-                var entry = new PolicyEvaluationEntry(
-                    descriptor,
-                    CoerceArguments((Selection)descriptor.Selection, variables));
-
-                scope.Record(CreateAuditEntry(entry, default));
+                RecordUnanswered(scope, descriptor, answered, variables);
             }
         }
+
+        foreach (var descriptor in occurrences)
+        {
+            RecordUnanswered(scope, descriptor, answered, variables);
+        }
+    }
+
+    private static void RecordUnanswered(
+        IAuditScope scope,
+        PolicyDescriptor descriptor,
+        HashSet<PolicyDescriptor> answered,
+        IVariableValueCollection variables)
+    {
+        if (answered.Contains(descriptor))
+        {
+            return;
+        }
+
+        var entry = new PolicyEvaluationEntry(
+            descriptor,
+            CoerceArguments((Selection)descriptor.Selection, variables));
+
+        scope.Record(CreateAuditEntry(entry, default));
+        answered.Add(descriptor);
     }
 
     private static AuditLogEntry CreateAuditEntry(PolicyEvaluationEntry entry, PolicyVerdict verdict)
