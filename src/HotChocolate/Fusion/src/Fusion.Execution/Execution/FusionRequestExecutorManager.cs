@@ -126,25 +126,23 @@ internal sealed class FusionRequestExecutorManager
 
     private void EvictExecutor(
         FusionRequestExecutor executor,
-        FusionRequestExecutor activeExecutor,
-        IFusionExecutionDiagnosticEvents diagnosticEvents)
+        RequestExecutorRegistration registration)
     {
         try
         {
-            diagnosticEvents.ExecutorEvicted(executor.Schema.Name, executor);
+            registration.DiagnosticEvents.ExecutorEvicted(executor.Schema.Name, executor);
 
             _events.RaiseEvent(RequestExecutorEvent.Evicted(executor));
         }
         finally
         {
-            EvictRequestExecutorAsync(executor, activeExecutor, diagnosticEvents).FireAndForget();
+            EvictRequestExecutorAsync(executor, registration).FireAndForget();
         }
     }
 
     private static async Task EvictRequestExecutorAsync(
         FusionRequestExecutor previousExecutor,
-        FusionRequestExecutor activeExecutor,
-        IFusionExecutionDiagnosticEvents diagnosticEvents)
+        RequestExecutorRegistration registration)
     {
         try
         {
@@ -158,18 +156,23 @@ internal sealed class FusionRequestExecutorManager
         }
         catch (Exception ex)
         {
-            ReportCleanupFailure(diagnosticEvents, activeExecutor, ex);
+            ReportCleanupFailure(
+                registration.DiagnosticEvents,
+                previousExecutor.Schema.Name,
+                registration.Executor,
+                ex);
         }
     }
 
     private static void ReportCleanupFailure(
         IFusionExecutionDiagnosticEvents diagnosticEvents,
-        FusionRequestExecutor activeExecutor,
+        string schemaName,
+        FusionRequestExecutor? activeExecutor,
         Exception exception)
     {
         try
         {
-            diagnosticEvents.ExecutorUpdateCleanupFailed(activeExecutor.Schema.Name, activeExecutor, exception);
+            diagnosticEvents.ExecutorUpdateCleanupFailed(schemaName, activeExecutor, exception);
         }
         catch
         {
@@ -250,22 +253,37 @@ internal sealed class FusionRequestExecutorManager
 
             return executor;
         }
-        catch (Exception creationException)
+        catch
         {
+            // the first creation has no registration yet, so its events come from the services about to be disposed.
+            var firstCreationEvents = diagnosticEvents is null ? TryGetDiagnosticEvents(schemaServices) : null;
             var disposalException = await DisposeSchemaServicesAsync(schemaServices).ConfigureAwait(false);
 
-            if (disposalException is null)
+            if (disposalException is not null)
             {
-                throw;
+                if (diagnosticEvents is not null)
+                {
+                    ReportUpdateFailure(diagnosticEvents, schemaName, disposalException);
+                }
+                else if (firstCreationEvents is not null)
+                {
+                    ReportCleanupFailure(firstCreationEvents, schemaName, null, disposalException);
+                }
             }
 
-            if (diagnosticEvents is null)
-            {
-                throw ThrowHelper.ExecutorCreationAndDisposalFailed(creationException, disposalException);
-            }
-
-            ReportUpdateFailure(diagnosticEvents, schemaName, disposalException);
             throw;
+        }
+    }
+
+    private static IFusionExecutionDiagnosticEvents? TryGetDiagnosticEvents(ServiceProvider schemaServices)
+    {
+        try
+        {
+            return schemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -925,9 +943,7 @@ internal sealed class FusionRequestExecutorManager
                 RunGuarded(
                     activeExecutor,
                     () => _manager._events.RaiseEvent(RequestExecutorEvent.Created(activeExecutor)));
-                RunGuarded(
-                    activeExecutor,
-                    () => _manager.EvictExecutor(previousExecutor, activeExecutor, DiagnosticEvents));
+                RunGuarded(activeExecutor, () => _manager.EvictExecutor(previousExecutor, this));
                 RunGuarded(activeExecutor, previousConfiguration.Dispose);
             }
         }
@@ -940,7 +956,7 @@ internal sealed class FusionRequestExecutorManager
             }
             catch (Exception ex)
             {
-                ReportCleanupFailure(DiagnosticEvents, activeExecutor, ex);
+                ReportCleanupFailure(DiagnosticEvents, activeExecutor.Schema.Name, activeExecutor, ex);
             }
         }
 

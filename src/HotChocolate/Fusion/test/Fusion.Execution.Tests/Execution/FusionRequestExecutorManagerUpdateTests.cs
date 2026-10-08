@@ -588,15 +588,55 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
     }
 
     [Fact]
-    public async Task GetExecutor_Should_ThrowBothFailures_When_FirstCreationDisposalThrows()
+    public async Task Update_Should_ReportCurrentlyActiveExecutor_When_SecondUpdateLandsBeforeDelayedDisposalFails()
     {
         // arrange
+        var listener = new PostSwapListener();
         var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
 
         var services =
             new ServiceCollection()
                 .AddGraphQLGateway()
                 .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
+                .ModifyOptions(o => o.EvictionTimeout = TimeSpan.FromSeconds(2))
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        var initialExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        _ = initialExecutor.Schema.Services.GetRequiredService<ThrowingDisposable>();
+        var firstSwap = ObserveCreatedExecutors(manager);
+
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var executorAfterFirstSwap = await firstSwap.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var secondSwap = ObserveCreatedExecutors(manager);
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swappedAgain"));
+        var executorAfterSecondSwap = await secondSwap.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal("disposal failed", failure.Exception.Message);
+        Assert.NotSame(executorAfterFirstSwap, executorAfterSecondSwap);
+        Assert.Same(executorAfterSecondSwap, failure.Executor);
+    }
+
+    [Fact]
+    public async Task GetExecutor_Should_ThrowCreationExceptionAndReportDisposal_When_FirstCreationDisposalThrows()
+    {
+        // arrange
+        var listener = new PostSwapListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
                 .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
                 .UseRequest((context, next) =>
                 {
@@ -609,13 +649,15 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         var manager = services.GetRequiredService<FusionRequestExecutorManager>();
 
         // act
-        var exception = await Assert.ThrowsAsync<AggregateException>(
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(
-            ["pipeline failed", "disposal failed"],
-            exception.InnerExceptions.Select(e => e.Message));
+        Assert.Equal("pipeline failed", exception.Message);
+        Assert.Equal(ISchemaDefinition.DefaultName, failure.SchemaName);
+        Assert.Equal("disposal failed", failure.Exception.Message);
+        Assert.Null(failure.Executor);
     }
 
     [Fact]
@@ -771,7 +813,7 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
 
     private sealed class PostSwapListener : FusionExecutionDiagnosticEventListener
     {
-        private readonly TaskCompletionSource<(string SchemaName, IRequestExecutor Executor, Exception Exception)>
+        private readonly TaskCompletionSource<(string SchemaName, IRequestExecutor? Executor, Exception Exception)>
             _failure = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<IRequestExecutor> _evicted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -791,7 +833,7 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
             set => _throwOnEvicted = value;
         }
 
-        public Task<(string SchemaName, IRequestExecutor Executor, Exception Exception)> Failure => _failure.Task;
+        public Task<(string SchemaName, IRequestExecutor? Executor, Exception Exception)> Failure => _failure.Task;
 
         public Task<IRequestExecutor> Evicted => _evicted.Task;
 
@@ -815,7 +857,7 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
 
         public override void ExecutorUpdateCleanupFailed(
             string schemaName,
-            IRequestExecutor executor,
+            IRequestExecutor? executor,
             Exception exception)
             => _failure.TrySetResult((schemaName, executor, exception));
     }
