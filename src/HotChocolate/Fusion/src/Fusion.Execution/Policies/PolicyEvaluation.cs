@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace HotChocolate.Fusion.Policies;
 
 /// <summary>
@@ -16,4 +18,4 @@ namespace HotChocolate.Fusion.Policies;
 internal readonly record struct PolicyEvaluation(
     PolicyDecisions? Decisions,
     InvalidOperationException? Failure,
-    IReadOnlySet<PolicyDescriptor> DeniedDescriptors);
+    FrozenSet<PolicyDescriptor> DeniedDescriptors);
