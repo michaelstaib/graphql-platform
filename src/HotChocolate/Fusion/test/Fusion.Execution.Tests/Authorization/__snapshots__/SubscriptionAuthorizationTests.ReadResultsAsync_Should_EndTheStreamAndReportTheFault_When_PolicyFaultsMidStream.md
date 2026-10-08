@@ -10,8 +10,8 @@ System.InvalidOperationException: boom
 
 ```json
 [
-  "commits=1 | Item.name @policy(live) Allowed -",
-  "commits=1 | Item.name @policy(live) Unanswered -"
+  "commits=1 | Item.name @policy(live) Allowed - | failure=-",
+  "commits=1 | Item.name @policy(live) Unanswered - | failure=System.InvalidOperationException: boom"
 ]
 ```
 

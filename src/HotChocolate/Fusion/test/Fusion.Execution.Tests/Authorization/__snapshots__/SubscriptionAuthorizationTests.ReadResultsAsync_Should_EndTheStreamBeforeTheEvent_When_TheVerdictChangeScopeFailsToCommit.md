@@ -10,8 +10,8 @@ System.InvalidOperationException: commit
 
 ```json
 [
-  "commits=1 | Item.name @policy(live) Allowed -",
-  "commits=1 | Item.name @policy(live) Denied revoked"
+  "commits=1 | Item.name @policy(live) Allowed - | failure=-",
+  "commits=1 | Item.name @policy(live) Denied revoked | failure=-"
 ]
 ```
 

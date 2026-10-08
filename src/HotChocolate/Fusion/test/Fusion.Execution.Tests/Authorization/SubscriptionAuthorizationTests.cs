@@ -983,7 +983,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         var entries = scope.Entries.Select(
             e => $"{e.Coordinate} @{e.DirectiveName}({e.PolicyName}) {e.Outcome} {e.Reason ?? "-"}");
 
-        return $"commits={scope.CommitCount} | {string.Join("; ", entries)}";
+        return $"commits={scope.CommitCount} | {string.Join("; ", entries)} | failure={scope.FailureReason ?? "-"}";
     }
 
     private sealed class RequestContextHolder
