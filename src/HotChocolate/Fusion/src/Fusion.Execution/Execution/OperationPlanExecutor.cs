@@ -76,6 +76,8 @@ internal static partial class OperationPlanExecutor
         // Execute the main (non-deferred) plan nodes first.
         var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         OperationPlanContext? rootContext = null;
+        var activeDeliveryGroups = default(ActivationBits);
+        var runningIncrementalPlans = default(ActivationBits);
 
         try
         {
@@ -107,11 +109,10 @@ internal static partial class OperationPlanExecutor
             // Compute the active delivery groups (one per @defer occurrence whose
             // @defer(if:) evaluates to true) and the incremental plans that will actually run.
             // The running plans come from the rule the policy evaluator shares.
-            var activeDeliveryGroups = GetActiveDeliveryGroups(operationPlan, variables);
-
-            var runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
+            activeDeliveryGroups = DeliveryGroup.GetActive(operationPlan.DeliveryGroups, variables);
+            runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
                 operationPlan.IncrementalPlans,
-                variables);
+                activeDeliveryGroups);
 
             // Mark top-level active delivery groups as pending on the initial
             // result. Nested delivery groups are marked pending after their
@@ -124,7 +125,7 @@ internal static partial class OperationPlanExecutor
                     continue;
                 }
 
-                if (!activeDeliveryGroups[deliveryGroup.Id])
+                if (!activeDeliveryGroups.Get(deliveryGroup.Id))
                 {
                     continue;
                 }
@@ -143,6 +144,8 @@ internal static partial class OperationPlanExecutor
                 // No active top-level delivery groups. Transfer retained
                 // result resources to the initial result.
                 rootContext.TransferRetainedMemoryTo(initialResult);
+                activeDeliveryGroups.Return();
+                runningIncrementalPlans.Return();
                 executionCts.Dispose();
                 await rootContext.DisposeAsync();
                 return initialResult;
@@ -171,6 +174,8 @@ internal static partial class OperationPlanExecutor
         }
         catch (Exception)
         {
+            activeDeliveryGroups.Return();
+            runningIncrementalPlans.Return();
             executionCts.Dispose();
 
             if (rootContext is not null)
@@ -188,8 +193,8 @@ internal static partial class OperationPlanExecutor
         PolicyDecisions? policyDecisions,
         OperationPlan operationPlan,
         OperationResult initialResult,
-        bool[] activeDeliveryGroups,
-        bool[] runningIncrementalPlans,
+        ActivationBits activeDeliveryGroups,
+        ActivationBits runningIncrementalPlans,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -206,14 +211,14 @@ internal static partial class OperationPlanExecutor
         var pendingCountByDeliveryGroup = new Dictionary<int, int>();
         for (var i = 0; i < incrementalPlans.Length; i++)
         {
-            if (!runningIncrementalPlans[i])
+            if (!runningIncrementalPlans.Get(i))
             {
                 continue;
             }
 
             foreach (var deliveryGroup in incrementalPlans[i].DeliveryGroups)
             {
-                if (!activeDeliveryGroups[deliveryGroup.Id])
+                if (!activeDeliveryGroups.Get(deliveryGroup.Id))
                 {
                     continue;
                 }
@@ -240,7 +245,7 @@ internal static partial class OperationPlanExecutor
             {
                 var incrementalPlan = incrementalPlans[i];
 
-                if (!runningIncrementalPlans[i] || incrementalPlan.DeliveryGroups[0].Parent is not null)
+                if (!runningIncrementalPlans.Get(i) || incrementalPlan.DeliveryGroups[0].Parent is not null)
                 {
                     continue;
                 }
@@ -264,7 +269,7 @@ internal static partial class OperationPlanExecutor
             var announcedDeliveryGroupIds = new HashSet<int>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (deliveryGroup.Parent is null && activeDeliveryGroups[deliveryGroup.Id])
+                if (deliveryGroup.Parent is null && activeDeliveryGroups.Get(deliveryGroup.Id))
                 {
                     announcedDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
@@ -292,7 +297,7 @@ internal static partial class OperationPlanExecutor
                 {
                     var candidate = incrementalPlans[i];
 
-                    if (!runningIncrementalPlans[i])
+                    if (!runningIncrementalPlans.Get(i))
                     {
                         continue;
                     }
@@ -342,7 +347,7 @@ internal static partial class OperationPlanExecutor
 
                     foreach (var deliveryGroup in candidate.DeliveryGroups)
                     {
-                        if (!activeDeliveryGroups[deliveryGroup.Id])
+                        if (!activeDeliveryGroups.Get(deliveryGroup.Id))
                         {
                             continue;
                         }
@@ -457,6 +462,9 @@ internal static partial class OperationPlanExecutor
         }
         finally
         {
+            activeDeliveryGroups.Return();
+            runningIncrementalPlans.Return();
+
             // Dispose completed incremental plan contexts after the stream
             // finishes. The root context is owned by the surrounding stream.
             foreach (var incrementalPlanContext in incrementalPlanContexts.Values)
@@ -675,38 +683,16 @@ internal static partial class OperationPlanExecutor
         return best;
     }
 
-    private static bool[] GetActiveDeliveryGroups(
-        OperationPlan operationPlan,
-        IVariableValueCollection variables)
-    {
-        var deliveryGroups = operationPlan.DeliveryGroups;
-        var maxId = -1;
-
-        foreach (var deliveryGroup in deliveryGroups)
-        {
-            maxId = Math.Max(maxId, deliveryGroup.Id);
-        }
-
-        var active = new bool[maxId + 1];
-
-        foreach (var deliveryGroup in deliveryGroups)
-        {
-            active[deliveryGroup.Id] = deliveryGroup.IsActive(variables);
-        }
-
-        return active;
-    }
-
     private static void CompleteDeliveryGroupsForIncrementalPlan(
         IncrementalPlan incrementalPlan,
-        bool[] activeDeliveryGroups,
+        ActivationBits activeDeliveryGroups,
         Dictionary<int, int> pendingCountByDeliveryGroup,
         ImmutableList<CompletedResult>.Builder completed,
         IReadOnlyList<IError>? errors)
     {
         foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
         {
-            if (!activeDeliveryGroups[deliveryGroup.Id])
+            if (!activeDeliveryGroups.Get(deliveryGroup.Id))
             {
                 continue;
             }
