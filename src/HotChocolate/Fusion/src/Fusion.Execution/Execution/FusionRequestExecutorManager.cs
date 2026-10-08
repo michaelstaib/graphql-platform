@@ -161,7 +161,7 @@ internal sealed class FusionRequestExecutorManager
                 cancellationToken)
                 .ConfigureAwait(false);
 
-        var executor = await CreateRequestExecutorAsync(schemaName, configuration).ConfigureAwait(false);
+        var executor = await CreateRequestExecutorAsync(schemaName, configuration, null).ConfigureAwait(false);
 
         await ValidateAuthorizationAsync(executor, cancellationToken).ConfigureAwait(false);
         await WarmupExecutorAsync(executor, true, cancellationToken).ConfigureAwait(false);
@@ -176,7 +176,8 @@ internal sealed class FusionRequestExecutorManager
 
     private async ValueTask<FusionRequestExecutor> CreateRequestExecutorAsync(
         string schemaName,
-        FusionConfiguration configuration)
+        FusionConfiguration configuration,
+        IFusionExecutionDiagnosticEvents? diagnosticEvents)
     {
         ulong version;
 
@@ -223,18 +224,18 @@ internal sealed class FusionRequestExecutorManager
         }
         catch
         {
-            await DisposeSchemaServicesAsync(schemaName, schemaServices).ConfigureAwait(false);
+            await DisposeSchemaServicesAsync(schemaName, schemaServices, diagnosticEvents).ConfigureAwait(false);
             throw;
         }
     }
 
-    private static async ValueTask DisposeSchemaServicesAsync(string schemaName, ServiceProvider schemaServices)
+    private static async ValueTask DisposeSchemaServicesAsync(
+        string schemaName,
+        ServiceProvider schemaServices,
+        IFusionExecutionDiagnosticEvents? diagnosticEvents)
     {
-        IFusionExecutionDiagnosticEvents? diagnosticEvents = null;
-
         try
         {
-            diagnosticEvents = schemaServices.GetService<IFusionExecutionDiagnosticEvents>();
             await schemaServices.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -846,7 +847,8 @@ internal sealed class FusionRequestExecutorManager
 
                     nextExecutor = await _manager.CreateRequestExecutorAsync(
                         previousExecutor.Schema.Name,
-                        configuration)
+                        configuration,
+                        DiagnosticEvents)
                         .ConfigureAwait(false);
 
                     await ValidateAuthorizationAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
