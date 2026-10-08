@@ -1,3 +1,5 @@
+using System.Net;
+using HotChocolate.AspNetCore.Subscriptions.Protocols.GraphQLOverWebSocket;
 using HotChocolate.Language;
 
 namespace HotChocolate.AspNetCore.Subscriptions;
@@ -41,6 +43,7 @@ internal sealed class OperationSession : IOperationSession
         var ct = cts.Token;
         var completeTry = false;
         var errorSent = false;
+        var closeUnauthorized = false;
 
         try
         {
@@ -81,6 +84,15 @@ internal sealed class OperationSession : IOperationSession
                             await item.DisposeAsync();
                         }
                     }
+
+                    // a stream that ends while requesting 401 ended for authorization reasons, so the
+                    // connection is closed as unauthorized instead of completing the operation.
+                    closeUnauthorized =
+                        !ct.IsCancellationRequested
+                        && responseStream.ContextData.TryGetValue(
+                            ExecutionContextData.HttpStatusCode,
+                            out var requestedStatusCode)
+                        && requestedStatusCode is HttpStatusCode.Unauthorized;
                     break;
             }
 
@@ -89,7 +101,11 @@ internal sealed class OperationSession : IOperationSession
             // message again.
             completeTry = true;
 
-            if (!errorSent && !ct.IsCancellationRequested)
+            if (closeUnauthorized)
+            {
+                await _session.Connection.CloseUnauthorizedAsync(CloseReasons.UnauthorizedMessage, ct);
+            }
+            else if (!errorSent && !ct.IsCancellationRequested)
             {
                 await _session.Protocol.SendCompleteMessageAsync(_session, Id, ct);
             }
