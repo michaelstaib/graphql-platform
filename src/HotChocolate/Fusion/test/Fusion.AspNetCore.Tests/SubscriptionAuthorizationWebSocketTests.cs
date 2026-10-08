@@ -1,4 +1,3 @@
-using System.Net.WebSockets;
 using HotChocolate.Fusion.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -65,24 +64,43 @@ public class SubscriptionAuthorizationWebSocketTests : SubscriptionAuthorization
         // act
         await socket.SendSubscribeAsync("1", "subscription { scoped { id } }");
         var denied = await socket.ReceiveAsync();
+        await socket.SendSubscribeAsync("2", "subscription { changed { id tag } }");
+        await gateway.Feed.WaitForOpenedAsync(1);
+        gateway.Feed.Publish(Event);
+        var allowed = await socket.ReceiveAsync();
 
         // assert
-        denied.MatchInlineSnapshot(
-            """
-            {
-              "id": "1",
-              "type": "error",
-              "payload": [
+        new[] { denied, allowed }.MatchInlineSnapshots(
+            [
+                """
                 {
-                  "message": "The current user is not authorized to access this resource.",
-                  "extensions": {
-                    "code": "AUTH_NOT_AUTHORIZED"
+                  "id": "1",
+                  "type": "error",
+                  "payload": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ]
+                }
+                """,
+                """
+                {
+                  "id": "2",
+                  "type": "next",
+                  "payload": {
+                    "data": {
+                      "changed": {
+                        "id": "1",
+                        "tag": "tag"
+                      }
+                    }
                   }
                 }
-              ]
-            }
-            """);
-        Assert.Equal(WebSocketState.Open, socket.State);
+                """
+            ]);
     }
 
     [Fact]
