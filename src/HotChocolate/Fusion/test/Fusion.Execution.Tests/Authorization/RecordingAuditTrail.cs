@@ -23,8 +23,8 @@ internal sealed class RecordingAuditTrail(
 
         provider.AddScope(scope);
 
-        return provider.RecordFailure is { } recordFailure
-            ? new FaultingAuditScope(scope, recordFailure.Call, recordFailure.Failure)
+        return provider.RecordFailure is not null || provider.FailFailure is not null
+            ? new FaultingAuditScope(scope, provider.RecordFailure, provider.FailFailure)
             : scope;
     }
 }

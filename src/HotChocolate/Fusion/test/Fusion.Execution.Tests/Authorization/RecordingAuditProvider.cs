@@ -15,6 +15,8 @@ internal sealed class RecordingAuditProvider(AuthorizationTestClient client) : I
 
     public (int Call, Exception Failure)? RecordFailure { get; init; }
 
+    public Exception? FailFailure { get; init; }
+
     public ImmutableArray<RecordingAuditScope> Scopes => [.. _scopes];
 
     public IAuditTrail CreateTrail(IServiceProvider requestServices)

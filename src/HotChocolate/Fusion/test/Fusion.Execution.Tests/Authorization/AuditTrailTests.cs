@@ -387,6 +387,97 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_PropagateThePolicyFaultAndReportTheFailFailure_When_FailThrowsAfterAFault()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var audit = new RecordingAuditProvider(client)
+        {
+            FailFailure = new InvalidOperationException("fail")
+        };
+        var executor = await CreateAuditedExecutorAsync(
+            Schema,
+            client,
+            audit,
+            policies => policies.Evaluate("owner", (_, _) => throw new InvalidOperationException("boom")),
+            builder => builder.AddDiagnosticEventListener(_ => listener));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ owned(id: \"1\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=1 | failure=-
+              Query.owned | @policy(owner) | scopes=[] | args={id:"1"} | Unanswered | reason=- | data=-
+            """);
+        listener.RequestErrors.Select(e => $"{e.GetType().FullName}: {e.Message}").MatchInlineSnapshots(
+            [
+                "System.InvalidOperationException: fail",
+                "System.InvalidOperationException: boom"
+            ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_PropagateThePolicyFaultAndReportTheRecordingFailure_When_RecordingFailsAfterAFault()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var audit = new RecordingAuditProvider(client)
+        {
+            RecordFailure = (1, new InvalidOperationException("record"))
+        };
+        var executor = await CreateAuditedExecutorAsync(
+            Schema,
+            client,
+            audit,
+            policies => policies.Evaluate("owner", (_, _) => throw new InvalidOperationException("boom")),
+            builder => builder.AddDiagnosticEventListener(_ => listener));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ owned(id: \"1\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=1 | failure=System.InvalidOperationException: boom
+            """);
+        listener.RequestErrors.Select(e => $"{e.GetType().FullName}: {e.Message}").MatchInlineSnapshots(
+            [
+                "System.InvalidOperationException: record",
+                "System.InvalidOperationException: boom"
+            ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_FailClosed_When_CommitFailsWithoutAFault()
     {
         // arrange
