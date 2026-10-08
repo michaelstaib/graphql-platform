@@ -476,6 +476,52 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         Assert.Equal(["disposal failed", "pipeline failed"], failures);
     }
 
+    [Fact]
+    public async Task Update_Should_DisposeCandidateSchemaServices_When_DiagnosticListenerResolutionThrows()
+    {
+        // arrange
+        var failPipeline = false;
+        DisposalProbe? candidateProbe = null;
+        var listener = new UpdateFailureListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ =>
+                {
+                    return failPipeline
+                        ? throw new InvalidOperationException("listener resolution failed")
+                        : listener;
+                })
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<DisposalProbe>())
+                .UseRequest((context, next) =>
+                {
+                    if (failPipeline)
+                    {
+                        candidateProbe = context.Schema.Services.GetRequiredService<DisposalProbe>();
+                        throw new InvalidOperationException("pipeline failed");
+                    }
+
+                    return next;
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        failPipeline = true;
+        configProvider.UpdateConfiguration(CreateConfiguration("rejected"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await candidateProbe!.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal("pipeline failed", failure.Exception.Message);
+    }
+
     private static Task<IRequestExecutor> ObserveCreatedExecutors(FusionRequestExecutorManager manager)
     {
         var created = new TaskCompletionSource<IRequestExecutor>(TaskCreationOptions.RunContinuationsAsynchronously);
