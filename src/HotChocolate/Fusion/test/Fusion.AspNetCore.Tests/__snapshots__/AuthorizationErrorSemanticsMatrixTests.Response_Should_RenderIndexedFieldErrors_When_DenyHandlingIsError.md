@@ -220,7 +220,7 @@
 }
 ```
 
-## Error: Denied non-null field in nullable list elements (reader) -> 200 OK
+## Error: Denied non-null field in nullable list elements, one error per element (reader) -> 200 OK
 
 ```json
 {
@@ -269,7 +269,7 @@
 }
 ```
 
-## Error: Denied non-null field in non-null list elements (reader) -> 200 OK
+## Error: Denied non-null field in non-null list elements, one error at the first violated index and the list is nulled (reader) -> 200 OK
 
 ```json
 {

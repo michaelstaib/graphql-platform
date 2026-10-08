@@ -1,9 +1,11 @@
+using System.Collections.Immutable;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using HotChocolate.Fusion.Authorization;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
@@ -43,7 +45,7 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
         }
         """;
 
-    private static readonly (string Name, string Query, string? User)[] s_fieldCells =
+    private static readonly ImmutableArray<(string Name, string Query, string? User)> s_fieldCells =
     [
         ("Unauthenticated nullable field", "{ me }", null),
         ("Unauthorized nullable field", "{ admin }", Member),
@@ -54,11 +56,15 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
         ("Denied non-null field under a nullable parent", "{ product { id cost } }", Reader),
         ("Denied non-null field under a non-null parent", "{ strictProduct { id cost } }", Reader),
         ("Denied nullable field in every list element", "{ products { id price } }", Member),
-        ("Denied non-null field in nullable list elements", "{ products { id cost } }", Reader),
-        ("Denied non-null field in non-null list elements", "{ strictProducts { id cost } }", Reader)
+        ("Denied non-null field in nullable list elements, one error per element", "{ products { id cost } }", Reader),
+        (
+            "Denied non-null field in non-null list elements, "
+                + "one error at the first violated index and the list is nulled",
+            "{ strictProducts { id cost } }",
+            Reader)
     ];
 
-    private static readonly (string Name, string Query, string? User)[] s_escalationCells =
+    private static readonly ImmutableArray<(string Name, string Query, string? User)> s_escalationCells =
     [
         ("Unauthenticated denial", "{ open me }", null),
         ("Unauthorized denial", "{ open admin }", Member),
@@ -72,13 +78,13 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
     {
         // arrange
         var snapshot = Snapshot.Create();
+        using var server = CreateSourceSchema("A", MatrixSchema);
+        using var gateway = await CreateGatewayAsync(
+            server,
+            o => o.DenyHandling = DenyHandling.Null);
 
         // act
-        await AddScenarioAsync(
-            snapshot,
-            "Null",
-            o => o.DenyHandling = DenyHandling.Null,
-            s_fieldCells);
+        await AddScenarioAsync(snapshot, gateway, "Null", s_fieldCells);
 
         // assert
         snapshot.MatchMarkdownSnapshot();
@@ -89,43 +95,42 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
     {
         // arrange
         var snapshot = Snapshot.Create();
+        using var server = CreateSourceSchema("A", MatrixSchema);
+        using var gateway = await CreateGatewayAsync(
+            server,
+            o => o.DenyHandling = DenyHandling.Error);
 
         // act
-        await AddScenarioAsync(
-            snapshot,
-            "Error",
-            o => o.DenyHandling = DenyHandling.Error,
-            s_fieldCells);
+        await AddScenarioAsync(snapshot, gateway, "Error", s_fieldCells);
 
         // assert
         snapshot.MatchMarkdownSnapshot();
     }
 
     [Fact]
-    public async Task Response_Should_RenderAttribution_When_AttributionIsOn()
+    public async Task Response_Should_RenderAttributionOnlyOnAuthorizationErrors_When_AttributionIsOn()
     {
         // arrange
         var snapshot = Snapshot.Create();
-
-        // act
-        await AddScenarioAsync(
-            snapshot,
-            "Error with attribution",
+        using var server = CreateSourceSchema("A", MatrixSchema);
+        using var errorGateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Error;
                 o.EnableAttribution = true;
-            },
-            s_fieldCells);
-        await AddScenarioAsync(
-            snapshot,
-            "Null with attribution",
+            });
+        using var nullGateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Null;
                 o.EnableAttribution = true;
-            },
-            s_fieldCells);
+            });
+
+        // act
+        await AddScenarioAsync(snapshot, errorGateway, "Error with attribution", s_fieldCells);
+        await AddScenarioAsync(snapshot, nullGateway, "Null with attribution", s_fieldCells);
 
         // assert
         snapshot.MatchMarkdownSnapshot();
@@ -136,26 +141,29 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
     {
         // arrange
         var snapshot = Snapshot.Create();
-
-        // act
-        await AddScenarioAsync(
-            snapshot,
-            "OnUnauthenticated",
+        using var server = CreateSourceSchema("A", MatrixSchema);
+        using var gateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Error;
                 o.RejectRequestOn = RejectRequestOn.OnUnauthenticated;
-            },
-            s_escalationCells);
-        await AddScenarioAsync(
-            snapshot,
-            "OnUnauthenticated with attribution",
+            });
+        using var attributedGateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Error;
                 o.RejectRequestOn = RejectRequestOn.OnUnauthenticated;
                 o.EnableAttribution = true;
-            },
+            });
+
+        // act
+        await AddScenarioAsync(snapshot, gateway, "OnUnauthenticated", s_escalationCells);
+        await AddScenarioAsync(
+            snapshot,
+            attributedGateway,
+            "OnUnauthenticated with attribution",
             s_escalationCells);
 
         // assert
@@ -167,49 +175,49 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
     {
         // arrange
         var snapshot = Snapshot.Create();
-
-        // act
-        await AddScenarioAsync(
-            snapshot,
-            "OnUnauthorized",
+        using var server = CreateSourceSchema("A", MatrixSchema);
+        using var gateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Error;
                 o.RejectRequestOn = RejectRequestOn.OnUnauthorized;
-            },
-            s_escalationCells);
-        await AddScenarioAsync(
-            snapshot,
-            "OnUnauthorized with attribution",
+            });
+        using var attributedGateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Error;
                 o.RejectRequestOn = RejectRequestOn.OnUnauthorized;
                 o.EnableAttribution = true;
-            },
-            s_escalationCells);
-        await AddScenarioAsync(
-            snapshot,
-            "OnUnauthorized with null deny handling",
+            });
+        using var nullGateway = await CreateGatewayAsync(
+            server,
             o =>
             {
                 o.DenyHandling = DenyHandling.Null;
                 o.RejectRequestOn = RejectRequestOn.OnUnauthorized;
-            },
+            });
+
+        // act
+        await AddScenarioAsync(snapshot, gateway, "OnUnauthorized", s_escalationCells);
+        await AddScenarioAsync(
+            snapshot,
+            attributedGateway,
+            "OnUnauthorized with attribution",
+            s_escalationCells);
+        await AddScenarioAsync(
+            snapshot,
+            nullGateway,
+            "OnUnauthorized with null deny handling",
             s_escalationCells);
 
         // assert
         snapshot.MatchMarkdownSnapshot();
     }
 
-    private async Task AddScenarioAsync(
-        Snapshot snapshot,
-        string scenario,
-        Action<FusionAuthorizationOptions> configure,
-        (string Name, string Query, string? User)[] cells)
-    {
-        using var server = CreateSourceSchema("A", MatrixSchema);
-        using var gateway = await CreateCompositeSchemaAsync(
+    private Task<Gateway> CreateGatewayAsync(TestServer server, Action<FusionAuthorizationOptions> configure)
+        => CreateCompositeSchemaAsync(
             [("A", server)],
             configureServices: AddCookieSchemes,
             configureApplication: UseTestUser,
@@ -217,6 +225,13 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
                 .ModifyAuthorizationOptions(configure)
                 .AddInMemoryPolicies(p => p.Deny("finance")),
             includeOperationPlan: false);
+
+    private static async Task AddScenarioAsync(
+        Snapshot snapshot,
+        Gateway gateway,
+        string scenario,
+        ImmutableArray<(string Name, string Query, string? User)> cells)
+    {
         using var client = gateway.CreateClient();
 
         foreach (var (name, query, user) in cells)
@@ -226,11 +241,10 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
             var challenge = response.Headers.TryGetValues("WWW-Authenticate", out var values)
                 ? $", WWW-Authenticate: {string.Join(", ", values)}"
                 : string.Empty;
+            var status = $"{(int)response.StatusCode} {response.StatusCode}{challenge}";
+            var title = $"{scenario}: {name} ({user ?? "anonymous"}) -> {status}";
 
-            snapshot.Add(
-                Format(body),
-                $"{scenario}: {name} ({user ?? "anonymous"}) -> {(int)response.StatusCode} {response.StatusCode}{challenge}",
-                MarkdownLanguages.Json);
+            snapshot.Add(Format(body), title, MarkdownLanguages.Json);
         }
     }
 
