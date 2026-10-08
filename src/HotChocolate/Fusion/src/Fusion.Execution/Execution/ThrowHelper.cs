@@ -273,9 +273,4 @@ internal static class ThrowHelper
 
     public static AggregateException EventObserversFailed(IEnumerable<Exception> exceptions)
         => new(exceptions);
-
-    public static AggregateException ExecutorCreationAndDisposalFailed(
-        Exception creationException,
-        Exception disposalException)
-        => new(creationException, disposalException);
 }
