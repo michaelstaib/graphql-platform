@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Pipeline;
 using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Text.Json;
@@ -941,6 +942,7 @@ internal static partial class OperationPlanExecutor
                 context,
                 root,
                 subscriptionResult,
+                requestContext.Features.TryGet(out SubscriptionPolicies? authorization) ? authorization : null,
                 requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>(),
                 requestContext.Schema.GetRequestOptions().ExecutionTimeout,
                 executionCts.Token,
@@ -1110,6 +1112,7 @@ internal static partial class OperationPlanExecutor
         OperationPlanContext context,
         ExecutionNode subscriptionNode,
         SubscriptionResult subscriptionResult,
+        SubscriptionPolicies? authorization,
         ExecutionConcurrencyGate? concurrencyGate,
         TimeSpan eventTimeout,
         [EnumeratorCancellation] CancellationToken executionCancellationToken,
@@ -1130,11 +1133,18 @@ internal static partial class OperationPlanExecutor
         var (eventCts, eventCtsRegistration) = CreateEventCancellation();
 
         var schemaName = GetSubscriptionSchemaName(context, subscriptionNode);
+        var events = subscriptionResult.ReadStreamAsync();
+
+        if (authorization is not null
+            && SubscriptionPolicies.GetExpiry(OperationPolicyMiddleware.GetUser(context.RequestContext))
+                is { } expiry)
+        {
+            events = authorization.EndOnExpiry(events, context.RequestContext, expiry);
+        }
 
         try
         {
-            await foreach (var eventArgs in subscriptionResult.ReadStreamAsync()
-                .WithCancellation(executionCancellationToken))
+            await foreach (var eventArgs in events.WithCancellation(executionCancellationToken))
             {
                 using var scope = context.DiagnosticEvents.OnSubscriptionEvent(
                     context,
@@ -1171,6 +1181,12 @@ internal static partial class OperationPlanExecutor
                     }
 
                     context.Begin(eventArgs.StartTimestamp, eventArgs.Activity?.TraceId.ToHexString());
+
+                    if (authorization is { ReevaluatesPerEvent: true })
+                    {
+                        var variables = await authorization.ReevaluateAsync(context.RequestContext, eventToken);
+                        context.ApplyAuthorization(variables, authorization.CurrentDecisions);
+                    }
 
                     executionState.Reset();
 
