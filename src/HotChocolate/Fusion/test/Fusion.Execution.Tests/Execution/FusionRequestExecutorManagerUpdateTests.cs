@@ -1,7 +1,9 @@
+using System.Threading.Channels;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 
 namespace HotChocolate.Fusion.Execution;
 
@@ -146,7 +148,7 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
     public async Task Update_Should_DisposePreviousExecutor_When_EvictionWindowElapsesOnTheTimeProvider()
     {
         // arrange
-        var timeProvider = new ManualTimeProvider();
+        var timeProvider = new TimerTrackingFakeTimeProvider();
         var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
 
         var services =
@@ -168,7 +170,10 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         // act
         configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
         await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
-        await timeProvider.WaitForTimersAsync(1).WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await timeProvider.TimerCreations
+            .ReadAsync(TestContext.Current.CancellationToken)
+            .AsTask()
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         timeProvider.Advance(TimeSpan.FromMinutes(5));
 
         // assert
@@ -216,5 +221,23 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         public Task Disposed => _disposed.Task;
 
         public void Dispose() => _disposed.TrySetResult();
+    }
+
+    private sealed class TimerTrackingFakeTimeProvider : FakeTimeProvider
+    {
+        private readonly Channel<TimeSpan> _timerCreations = Channel.CreateUnbounded<TimeSpan>();
+
+        public ChannelReader<TimeSpan> TimerCreations => _timerCreations.Reader;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            _timerCreations.Writer.TryWrite(dueTime);
+            return timer;
+        }
     }
 }
