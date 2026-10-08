@@ -952,6 +952,44 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task ReadResultsAsync_Should_EndTheStreamWithAFault_When_TheVerdictChangeCommitThrowsCancellation()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var audit = new RecordingAuditProvider(client);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: true);
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder =>
+            {
+                builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<IAuditProvider>(audit));
+                builder.AddDiagnosticEventListener(_ => listener);
+            });
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+        client.Publish(Event);
+        await ReadNextAsync(events);
+        audit.CommitFailure = new OperationCanceledException("commit");
+        policy.Allowed = false;
+
+        // act
+        client.Publish(Event);
+        var failure = await ReadFailureAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(failure, "Failure")
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
+            .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
     public async Task ReadResultsAsync_Should_EndTheStreamAndReportTheFailure_When_TheExpiryScopeFailsToCommit()
     {
         // arrange
