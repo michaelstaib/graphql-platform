@@ -125,9 +125,7 @@ public static class FusionServerServiceCollectionExtensions
         => builder
             .ConfigureSchemaServices((_, s) =>
             {
-                s.TryAddSingleton<ISocketSessionInterceptor>(
-                    sp => new FusionSocketSessionInterceptor(
-                        sp.GetRequiredService<FusionAuthorizationOptions>()));
+                s.TryAddSingleton<ISocketSessionInterceptor, DefaultSocketSessionInterceptor>();
                 s.TryAddSingleton<IWebSocketPayloadFormatter>(_ => new DefaultWebSocketPayloadFormatter());
             })
             .AddApolloProtocol()
