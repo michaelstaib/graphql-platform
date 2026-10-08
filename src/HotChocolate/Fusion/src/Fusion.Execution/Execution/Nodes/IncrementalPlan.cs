@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
@@ -161,13 +162,14 @@ public sealed class IncrementalPlan : IOperationPlan
     /// <summary>
     /// Determines which incremental plans run, indexed like <paramref name="incrementalPlans"/>. A plan
     /// runs when one of its delivery groups is active and the plan owning its nearest active enclosing
-    /// delivery group, if any, also runs.
+    /// delivery group, if any, also runs. The result is rented from <paramref name="pool"/>.
     /// </summary>
     internal static ActivationBits GetRunningPlans(
         ImmutableArray<IncrementalPlan> incrementalPlans,
-        ActivationBits activeDeliveryGroups)
+        ActivationBits activeDeliveryGroups,
+        ArrayPool<ulong> pool)
     {
-        var running = new ActivationBits(incrementalPlans.Length);
+        var running = new ActivationBits(incrementalPlans.Length, pool);
 
         try
         {
@@ -193,7 +195,7 @@ public sealed class IncrementalPlan : IOperationPlan
         }
         catch
         {
-            running.Return();
+            running.Return(pool);
             throw;
         }
     }
