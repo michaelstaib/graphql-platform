@@ -75,4 +75,23 @@ public abstract class AuthorizationExecutionTestBase : FusionTestBase
 
     protected static ClaimsPrincipal Anonymous()
         => PolicyTestHelper.Anonymous();
+
+    protected static async Task<List<string>> ReadPayloadsAsync(
+        IExecutionResult result,
+        CancellationToken cancellationToken)
+    {
+        if (result is not ResponseStream stream)
+        {
+            return [result.ExpectOperationResult().ToJson()];
+        }
+
+        var payloads = new List<string>();
+
+        await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cancellationToken))
+        {
+            payloads.Add(payload.ToJson());
+        }
+
+        return payloads;
+    }
 }

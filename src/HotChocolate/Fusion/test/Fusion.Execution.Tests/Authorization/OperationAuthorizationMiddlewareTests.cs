@@ -742,9 +742,48 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
         await using var result = await executor.ExecuteAsync(
             request,
             TestContext.Current.CancellationToken);
-        await DrainAsync(result, TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
 
         // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "data": {
+                        "margin": null
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
         client.Requests.MatchInlineSnapshots(
             [
                 """
@@ -789,9 +828,23 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
         await using var result = await executor.ExecuteAsync(
             request,
             TestContext.Current.CancellationToken);
-        await DrainAsync(result, TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
 
         // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1",
+                      "margin": null
+                    }
+                  },
+                  "hasNext": false
+                }
+                """
+            ]);
         client.Requests.MatchInlineSnapshots(
             [
                 """
@@ -806,15 +859,5 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
                 """
             ]);
         Assert.Single(recorder.Records);
-    }
-
-    private static async Task DrainAsync(IExecutionResult result, CancellationToken cancellationToken)
-    {
-        if (result is ResponseStream stream)
-        {
-            await foreach (var _ in stream.ReadResultsAsync().WithCancellation(cancellationToken))
-            {
-            }
-        }
     }
 }

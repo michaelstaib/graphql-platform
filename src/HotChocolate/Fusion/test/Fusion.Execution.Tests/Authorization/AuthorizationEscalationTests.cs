@@ -43,25 +43,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        result.MatchInlineSnapshot(
-            """
-            {
-              "errors": [
-                {
-                  "message": "The current user is not authenticated.",
-                  "extensions": {
-                    "code": "AUTH_NOT_AUTHENTICATED"
-                  }
-                }
-              ]
-            }
-            """);
-        DescribeTransport(result).MatchInlineSnapshot(
-            """
-            status: Unauthorized
-            challenge: Bearer
-            """);
-        Assert.Empty(client.Requests);
+        Snapshot.Create()
+            .Add(result, "Response")
+            .Add(DescribeTransport(result), "Transport")
+            .Add(client.Requests.Length, "Source Schema Requests")
+            .MatchMarkdownSnapshot();
     }
 
     [Fact]
@@ -78,23 +64,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        result.MatchInlineSnapshot(
-            """
-            {
-              "data": {
-                "product": {
-                  "id": "1",
-                  "price": null
-                }
-              }
-            }
-            """);
-        DescribeTransport(result).MatchInlineSnapshot(
-            """
-            status: <none>
-            challenge: <none>
-            """);
-        Assert.Single(client.Requests);
+        Snapshot.Create()
+            .Add(result, "Response")
+            .Add(DescribeTransport(result), "Transport")
+            .Add(client.Requests.Length, "Source Schema Requests")
+            .MatchMarkdownSnapshot();
     }
 
     [Fact]
@@ -111,25 +85,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        result.MatchInlineSnapshot(
-            """
-            {
-              "errors": [
-                {
-                  "message": "The current user is not authorized to access this resource.",
-                  "extensions": {
-                    "code": "AUTH_NOT_AUTHORIZED"
-                  }
-                }
-              ]
-            }
-            """);
-        DescribeTransport(result).MatchInlineSnapshot(
-            """
-            status: Forbidden
-            challenge: <none>
-            """);
-        Assert.Empty(client.Requests);
+        Snapshot.Create()
+            .Add(result, "Response")
+            .Add(DescribeTransport(result), "Transport")
+            .Add(client.Requests.Length, "Source Schema Requests")
+            .MatchMarkdownSnapshot();
     }
 
     [Fact]
@@ -154,11 +114,9 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        DescribeTransport(result).MatchInlineSnapshot(
-            """
-            status: Unauthorized
-            challenge: <none>
-            """);
+        Snapshot.Create()
+            .Add(DescribeTransport(result), "Transport")
+            .MatchMarkdownSnapshot();
     }
 
     [Fact]
@@ -224,33 +182,22 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        result.MatchInlineSnapshot(
-            """
-            {
-              "errors": [
-                {
-                  "message": "The current user is not authorized to access this resource.",
-                  "extensions": {
-                    "code": "AUTH_NOT_AUTHORIZED"
-                  }
-                }
-              ]
-            }
-            """);
-        Assert.Empty(client.Requests);
+        Snapshot.Create()
+            .Add(result, "Response")
+            .Add(DescribeTransport(result), "Transport")
+            .Add(client.Requests.Length, "Source Schema Requests")
+            .MatchMarkdownSnapshot();
     }
 
-    private static string DescribeTransport(IExecutionResult result)
+    private static object DescribeTransport(IExecutionResult result)
     {
         var contextData = result.ExpectOperationResult().ContextData;
-        var status = contextData.TryGetValue(ExecutionContextData.HttpStatusCode, out var statusCode)
-            ? statusCode
-            : "<none>";
-        var challenge = contextData.TryGetValue(ExecutionContextData.WwwAuthenticateHeaderValue, out var header)
-            ? header
-            : "<none>";
 
-        return $"status: {status}\nchallenge: {challenge}";
+        return new
+        {
+            Status = contextData.GetValueOrDefault(ExecutionContextData.HttpStatusCode)?.ToString(),
+            Challenge = contextData.GetValueOrDefault(ExecutionContextData.WwwAuthenticateHeaderValue)?.ToString()
+        };
     }
 
     private static Task<IRequestExecutor> CreateEscalatingExecutorAsync(

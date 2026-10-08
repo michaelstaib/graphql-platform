@@ -811,25 +811,6 @@ public class DeniedSelectionFinalizationTests : AuthorizationExecutionTestBase
             """);
     }
 
-    private static async Task<List<string>> ReadPayloadsAsync(
-        IExecutionResult result,
-        CancellationToken cancellationToken)
-    {
-        if (result is not ResponseStream stream)
-        {
-            return [result.ExpectOperationResult().ToJson()];
-        }
-
-        var payloads = new List<string>();
-
-        await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cancellationToken))
-        {
-            payloads.Add(payload.ToJson());
-        }
-
-        return payloads;
-    }
-
     private static Task<IRequestExecutor> CreateErrorExecutorAsync(
         Action<InMemoryPolicyBuilder>? policies = null)
         => CreateExecutorAsync(
