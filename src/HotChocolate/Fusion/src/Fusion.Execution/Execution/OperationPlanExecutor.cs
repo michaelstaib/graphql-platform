@@ -1098,17 +1098,26 @@ internal static partial class OperationPlanExecutor
             // and the unsealed arena is abandoned instead.
             requestContext.Memory?.Seal();
 
-            var subscriptionEnumerable = CreateResponseStream(
-                context,
-                root,
-                subscriptionResult,
-                requestContext.Features.TryGet(out SubscriptionAuthorization? authorization) ? authorization : null,
-                requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>(),
-                requestContext.Schema.GetRequestOptions().ExecutionTimeout,
-                executionCts.Token,
-                cancellationToken);
+            var authorization =
+                requestContext.Features.TryGet(out SubscriptionAuthorization? subscriptionAuthorization)
+                    ? subscriptionAuthorization
+                    : null;
+            var concurrencyGate = requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>();
+            var eventTimeout = requestContext.Schema.GetRequestOptions().ExecutionTimeout;
+            var executionToken = executionCts.Token;
 
-            var stream = new ResponseStream(() => subscriptionEnumerable);
+            ResponseStream? stream = null;
+            stream = new ResponseStream(
+                () => CreateResponseStream(
+                    context,
+                    root,
+                    subscriptionResult,
+                    authorization,
+                    concurrencyGate,
+                    eventTimeout,
+                    stream!,
+                    executionToken,
+                    cancellationToken));
             stream.RegisterForCleanup(context);
             stream.RegisterForCleanup(executionCts);
             return stream;
@@ -1275,6 +1284,7 @@ internal static partial class OperationPlanExecutor
         SubscriptionAuthorization? authorization,
         ExecutionConcurrencyGate? concurrencyGate,
         TimeSpan eventTimeout,
+        IExecutionResult responseStream,
         [EnumeratorCancellation] CancellationToken executionCancellationToken,
         CancellationToken requestCancellationToken)
     {
@@ -1299,7 +1309,7 @@ internal static partial class OperationPlanExecutor
             && SubscriptionAuthorization.GetExpiry(OperationAuthorizationMiddleware.GetUser(context.RequestContext))
                 is { } expiry)
         {
-            events = authorization.EndOnExpiry(events, context.RequestContext, expiry);
+            events = authorization.EndOnExpiry(events, responseStream, context.RequestContext, expiry);
         }
 
         try

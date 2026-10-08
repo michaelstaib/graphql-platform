@@ -498,6 +498,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         Snapshot.Create()
             .Add(first, "Event")
             .Add(hasNext, "Has Next")
+            .Add(GetRequestedStatusCode(result), "Requested Status Code")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .MatchMarkdownSnapshot();
     }
@@ -538,6 +539,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         time.Advance(TimeSpan.FromMinutes(10));
         client.Publish(Event);
         var renewed = await ReadNextAsync(events);
+        var statusAfterRenewal = GetRequestedStatusCode(result);
         time.Advance(TimeSpan.FromMinutes(20));
         var hasNext = await events.MoveNextAsync();
 
@@ -546,6 +548,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
             .Add(first, "Event before the first expiry")
             .Add(renewed, "Event after the first expiry")
             .Add(hasNext, "Has Next after the renewed expiry")
+            .Add(statusAfterRenewal, "Requested Status Code after the first expiry")
             .MatchMarkdownSnapshot();
     }
 
@@ -614,6 +617,9 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
                     });
                 configure?.Invoke(builder);
             });
+
+    private static object? GetRequestedStatusCode(IExecutionResult result)
+        => result.ContextData.GetValueOrDefault(ExecutionContextData.HttpStatusCode);
 
     private static IAsyncEnumerator<OperationResult> ReadEvents(IExecutionResult result)
         => ((ResponseStream)result).ReadResultsAsync().GetAsyncEnumerator(TestContext.Current.CancellationToken);

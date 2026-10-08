@@ -33,3 +33,9 @@
 ```json
 false
 ```
+
+## Requested Status Code after the first expiry
+
+```json
+null
+```

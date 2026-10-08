@@ -1,3 +1,4 @@
+using System.Net;
 using System.Runtime.CompilerServices;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -9,6 +10,7 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 internal sealed class ExpiringEventStream(
     IAsyncEnumerable<EventMessageResult> events,
+    IExecutionResult result,
     SubscriptionAuthorization authorization,
     RequestContext context,
     DateTimeOffset expiry,
@@ -16,10 +18,11 @@ internal sealed class ExpiringEventStream(
     : IAsyncEnumerable<EventMessageResult>
 {
     public IAsyncEnumerator<EventMessageResult> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-        => new Enumerator(events, authorization, context, expiry, timeProvider, cancellationToken);
+        => new Enumerator(events, result, authorization, context, expiry, timeProvider, cancellationToken);
 
     private sealed class Enumerator : IAsyncEnumerator<EventMessageResult>
     {
+        private readonly IExecutionResult _result;
         private readonly SubscriptionAuthorization _authorization;
         private readonly RequestContext _context;
         private readonly TimeProvider _timeProvider;
@@ -32,12 +35,14 @@ internal sealed class ExpiringEventStream(
 
         public Enumerator(
             IAsyncEnumerable<EventMessageResult> events,
+            IExecutionResult result,
             SubscriptionAuthorization authorization,
             RequestContext context,
             DateTimeOffset expiry,
             TimeProvider timeProvider,
             CancellationToken cancellationToken)
         {
+            _result = result;
             _authorization = authorization;
             _context = context;
             _timeProvider = timeProvider;
@@ -69,6 +74,9 @@ internal sealed class ExpiringEventStream(
             if (!hasNext && IsExpired && !_recorded)
             {
                 _recorded = true;
+                _result.ContextData = _result.ContextData.SetItem(
+                    ExecutionContextData.HttpStatusCode,
+                    HttpStatusCode.Unauthorized);
                 await _authorization.RecordExpiryAsync(_context, _callerToken);
             }
 

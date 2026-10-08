@@ -191,10 +191,13 @@ internal sealed class SubscriptionAuthorization
 
     /// <summary>
     /// Wraps the events so that the stream ends when the token of the principal expires without
-    /// having been renewed.
+    /// having been renewed. The ending marks the result as requesting 401 Unauthorized.
     /// </summary>
     /// <param name="events">
     /// The events of the subscription.
+    /// </param>
+    /// <param name="result">
+    /// The result that delivers the events.
     /// </param>
     /// <param name="context">
     /// The request context of the subscription.
@@ -204,13 +207,15 @@ internal sealed class SubscriptionAuthorization
     /// </param>
     public IAsyncEnumerable<EventMessageResult> EndOnExpiry(
         IAsyncEnumerable<EventMessageResult> events,
+        IExecutionResult result,
         RequestContext context,
         DateTimeOffset expiry)
     {
         ArgumentNullException.ThrowIfNull(events);
+        ArgumentNullException.ThrowIfNull(result);
         ArgumentNullException.ThrowIfNull(context);
 
-        return new ExpiringEventStream(events, this, context, expiry, _timeProvider);
+        return new ExpiringEventStream(events, result, this, context, expiry, _timeProvider);
     }
 
     /// <summary>
