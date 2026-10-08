@@ -18,9 +18,7 @@ System.InvalidOperationException: boom
 ## Request Errors
 
 ```json
-[
-  "System.InvalidOperationException: boom"
-]
+[]
 ```
 
 ## Subscription Event Errors

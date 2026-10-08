@@ -14,17 +14,27 @@ internal sealed class ExpiringEventStream(
     SubscriptionAuthorization authorization,
     RequestContext context,
     DateTimeOffset expiry,
+    Action<Exception> reportFailure,
     TimeProvider timeProvider)
     : IAsyncEnumerable<EventMessageResult>
 {
     public IAsyncEnumerator<EventMessageResult> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-        => new Enumerator(events, result, authorization, context, expiry, timeProvider, cancellationToken);
+        => new Enumerator(
+            events,
+            result,
+            authorization,
+            context,
+            expiry,
+            reportFailure,
+            timeProvider,
+            cancellationToken);
 
     private sealed class Enumerator : IAsyncEnumerator<EventMessageResult>
     {
         private readonly IExecutionResult _result;
         private readonly SubscriptionAuthorization _authorization;
         private readonly RequestContext _context;
+        private readonly Action<Exception> _reportFailure;
         private readonly TimeProvider _timeProvider;
         private readonly CancellationToken _callerToken;
         private readonly CancellationTokenSource _expired = new();
@@ -39,12 +49,14 @@ internal sealed class ExpiringEventStream(
             SubscriptionAuthorization authorization,
             RequestContext context,
             DateTimeOffset expiry,
+            Action<Exception> reportFailure,
             TimeProvider timeProvider,
             CancellationToken cancellationToken)
         {
             _result = result;
             _authorization = authorization;
             _context = context;
+            _reportFailure = reportFailure;
             _timeProvider = timeProvider;
             _callerToken = cancellationToken;
             _linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _expired.Token);
@@ -77,7 +89,7 @@ internal sealed class ExpiringEventStream(
                 _result.ContextData = _result.ContextData.SetItem(
                     ExecutionContextData.HttpStatusCode,
                     HttpStatusCode.Unauthorized);
-                await _authorization.RecordExpiryAsync(_context, _callerToken);
+                await _authorization.RecordExpiryAsync(_context, _reportFailure, _callerToken);
             }
 
             return hasNext;
