@@ -153,8 +153,7 @@ public sealed class IncrementalPlan : IOperationPlan
 
     /// <summary>
     /// Determines which incremental plans run, indexed like <paramref name="incrementalPlans"/>. A plan
-    /// runs when one of its delivery groups is active and the plan owning the parent delivery group, if
-    /// any, also runs. The caller returns the result with <see cref="ActivationBits.Return"/>.
+    /// runs when one of its delivery groups is active and its parent plan, if any, also runs.
     /// </summary>
     internal static ActivationBits GetRunningPlans(
         ImmutableArray<IncrementalPlan> incrementalPlans,
@@ -189,25 +188,6 @@ public sealed class IncrementalPlan : IOperationPlan
             running.Return();
             throw;
         }
-    }
-
-    /// <summary>
-    /// Determines whether the operation belongs to an incremental plan that does not run.
-    /// </summary>
-    internal static bool DoesNotRun(
-        ImmutableArray<IncrementalPlan> incrementalPlans,
-        ActivationBits running,
-        Operation operation)
-    {
-        for (var i = 0; i < incrementalPlans.Length; i++)
-        {
-            if (!running.Get(i) && ReferenceEquals(incrementalPlans[i].Operation, operation))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static bool IsAnyDeliveryGroupActive(

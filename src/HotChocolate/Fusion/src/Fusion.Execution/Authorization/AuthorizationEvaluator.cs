@@ -273,8 +273,7 @@ internal sealed class AuthorizationEvaluator
 
             foreach (var descriptor in descriptors)
             {
-                if (IncrementalPlan.DoesNotRun(
-                        plan.IncrementalPlans,
+                if (plan.DoesNotRun(
                         runningIncrementalPlans,
                         ((Selection)descriptor.Selection).DeclaringSelectionSet.DeclaringOperation))
                 {
