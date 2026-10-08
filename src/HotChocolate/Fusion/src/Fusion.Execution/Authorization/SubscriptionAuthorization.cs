@@ -28,6 +28,7 @@ internal sealed class SubscriptionAuthorization
     private readonly IVariableValueCollection _variables;
     private readonly IInputType _variableType;
     private readonly TimeProvider _timeProvider;
+    private readonly FrozenSet<PolicyDescriptor> _startDenied;
     private FrozenSet<PolicyDescriptor> _deniedDescriptors;
     private VariableValueCollection _current;
 
@@ -90,6 +91,7 @@ internal sealed class SubscriptionAuthorization
         _authorization = authorization;
         _variables = variables;
         _current = current;
+        _startDenied = deniedDescriptors;
         _deniedDescriptors = deniedDescriptors;
         _variableType = variableType;
         _timeProvider = timeProvider;
@@ -149,7 +151,7 @@ internal sealed class SubscriptionAuthorization
                 _variables,
                 scope,
                 _info.VariableSetIndex,
-                _deniedDescriptors,
+                _startDenied,
                 cancellationToken);
         }
         catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))

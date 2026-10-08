@@ -31,6 +31,23 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         }
         """;
 
+    private const string TwoPolicySchema =
+        """
+        type Query {
+          open: Int
+        }
+
+        type Subscription {
+          changed: Item
+        }
+
+        type Item {
+          id: ID!
+          name: String @policy(policies: [["live"]])
+          note: String @policy(policies: [["flip"]])
+        }
+        """;
+
     private const string Event =
         """
         { "changed": { "id": "1", "name": "n", "tag": "t" } }
@@ -308,6 +325,112 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task ReadResultsAsync_Should_RenderTheDenialErrorOnEveryEvent_When_VerdictFlipsToAllowInErrorMode()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: true) { Allowed = false };
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+
+        // act
+        client.Publish(Event);
+        var first = await ReadNextAsync(events);
+        policy.Allowed = true;
+        client.Publish(Event);
+        var second = await ReadNextAsync(events);
+
+        // assert
+        new[] { first, second }.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "errors": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "path": [
+                        "changed",
+                        "name"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ],
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": null,
+                      "tag": "t"
+                    }
+                  }
+                }
+                """,
+                """
+                {
+                  "errors": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "path": [
+                        "changed",
+                        "name"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ],
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": null,
+                      "tag": "t"
+                    }
+                  }
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ReadResultsAsync_Should_RecordDecisionStands_When_DeniedSelectionFlipsToAllow()
+    {
+        // arrange
+        const string subscription = "subscription { changed { id name note } }";
+        const string changed = """{ "changed": { "id": "1", "name": "n", "note": "x" } }""";
+        var client = new AuthorizationTestClient(changed);
+        var audit = new RecordingAuditProvider(client);
+        var live = new ToggledPolicy("live", reevaluatesPerEvent: true) { Allowed = false };
+        var flip = new ToggledPolicy("flip", reevaluatesPerEvent: true);
+        var executor = await CreateSubscriptionExecutorAsync(
+            TwoPolicySchema,
+            client,
+            [live, flip],
+            builder => builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<IAuditProvider>(audit)));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+
+        // act
+        live.Allowed = true;
+        flip.Allowed = false;
+        client.Publish(changed);
+        await ReadNextAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
     public async Task ReadResultsAsync_Should_CommitOneScopePerVerdictChange_When_PolicyReevaluates()
     {
         // arrange
@@ -450,18 +573,45 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         Assert.Equal(1, policy.Evaluations);
     }
 
+    [Fact]
+    public void ReevaluatesPerEvent_Should_BeFalse_When_ThePolicyDoesNotOverrideIt()
+    {
+        // arrange
+        IPolicy[] policies = [AuthenticatedPolicy.Instance, new AuditDataPolicy()];
+
+        // act
+        var values = policies.Select(static p => p.ReevaluatesPerEvent).ToArray();
+
+        // assert
+        Assert.Equal([false, false], values);
+    }
+
     private static Task<IRequestExecutor> CreateSubscriptionExecutorAsync(
         AuthorizationTestClient client,
         ToggledPolicy policy,
         Action<IFusionGatewayBuilder>? configure = null)
+        => CreateSubscriptionExecutorAsync(Schema, client, [policy], configure);
+
+    private static Task<IRequestExecutor> CreateSubscriptionExecutorAsync(
+        string schema,
+        AuthorizationTestClient client,
+        ToggledPolicy[] policies,
+        Action<IFusionGatewayBuilder>? configure)
         => CreateExecutorAsync(
-            Schema,
+            schema,
             client,
             new InMemoryPolicyRecorder(),
             null,
             builder =>
             {
-                builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<IPolicyProvider>(policy));
+                builder.ConfigureSchemaServices(
+                    (_, sc) =>
+                    {
+                        foreach (var policy in policies)
+                        {
+                            sc.AddSingleton<IPolicyProvider>(policy);
+                        }
+                    });
                 configure?.Invoke(builder);
             });
 
