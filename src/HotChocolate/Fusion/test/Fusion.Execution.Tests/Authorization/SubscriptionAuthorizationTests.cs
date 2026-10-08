@@ -431,6 +431,148 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task
+        ReadResultsAsync_Should_RenderTheDenialErrorOnEveryEvent_When_FrozenPolicyDeniedAtSubscribeInErrorMode()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: false) { Allowed = false };
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+
+        // act
+        client.Publish(Event);
+        var first = await ReadNextAsync(events);
+        policy.Allowed = true;
+        client.Publish(Event);
+        var second = await ReadNextAsync(events);
+
+        // assert
+        new[] { first, second }.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "errors": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "path": [
+                        "changed",
+                        "name"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ],
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": null,
+                      "tag": "t"
+                    }
+                  }
+                }
+                """,
+                """
+                {
+                  "errors": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "path": [
+                        "changed",
+                        "name"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ],
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": null,
+                      "tag": "t"
+                    }
+                  }
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ReadResultsAsync_Should_ApplyOnlyTheReevaluatedVerdict_When_FrozenAndReevaluatedPoliciesFlip()
+    {
+        // arrange
+        const string subscription = "subscription { changed { id name note } }";
+        const string changed = """{ "changed": { "id": "1", "name": "n", "note": "x" } }""";
+        var client = new AuthorizationTestClient(changed);
+        var live = new ToggledPolicy("live", reevaluatesPerEvent: true);
+        var flip = new ToggledPolicy("flip", reevaluatesPerEvent: false);
+        var executor = await CreateSubscriptionExecutorAsync(
+            TwoPolicySchema,
+            client,
+            [live, flip],
+            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+
+        // act
+        client.Publish(changed);
+        var first = await ReadNextAsync(events);
+        live.Allowed = false;
+        flip.Allowed = false;
+        client.Publish(changed);
+        var second = await ReadNextAsync(events);
+
+        // assert
+        new[] { first, second }.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": "n",
+                      "note": "x"
+                    }
+                  }
+                }
+                """,
+                """
+                {
+                  "errors": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "path": [
+                        "changed",
+                        "name"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ],
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": null,
+                      "note": "x"
+                    }
+                  }
+                }
+                """
+            ]);
+    }
+
+    [Fact]
     public async Task ReadResultsAsync_Should_RecordThatTheSubscribeDecisionStands_When_AnotherVerdictChanges()
     {
         // arrange
