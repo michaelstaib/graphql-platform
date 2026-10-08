@@ -1,8 +1,8 @@
 using System.Collections.Immutable;
-using System.Runtime.ExceptionServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Policies.Audit;
+using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
@@ -33,6 +33,7 @@ internal sealed class PolicyEvaluator
 #endif
 
     private readonly FusionAuthorizationOptions _options;
+    private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
 
     /// <summary>
     /// Initializes a new instance of <see cref="PolicyEvaluator"/>.
@@ -40,11 +41,18 @@ internal sealed class PolicyEvaluator
     /// <param name="options">
     /// The authorization options.
     /// </param>
-    public PolicyEvaluator(FusionAuthorizationOptions options)
+    /// <param name="diagnosticEvents">
+    /// The diagnostic events that receive the failures that must not replace an original fault.
+    /// </param>
+    public PolicyEvaluator(
+        FusionAuthorizationOptions options,
+        IFusionExecutionDiagnosticEvents diagnosticEvents)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(diagnosticEvents);
 
         _options = options;
+        _diagnosticEvents = diagnosticEvents;
     }
 
     /// <summary>
@@ -197,7 +205,7 @@ internal sealed class PolicyEvaluator
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
-            RecordFault(scope, ex, evaluating, isAuthenticated, occurrences, groups, answered, variables);
+            RecordFault(context, scope, evaluating, isAuthenticated, occurrences, groups, answered, variables);
             throw;
         }
     }
@@ -344,9 +352,9 @@ internal sealed class PolicyEvaluator
         }
     }
 
-    private static void RecordFault(
+    private void RecordFault(
+        RequestContext context,
         IAuditScope scope,
-        Exception fault,
         PolicyEvaluationContext? evaluating,
         bool isAuthenticated,
         ImmutableArray<PolicyDescriptor> occurrences,
@@ -363,9 +371,9 @@ internal sealed class PolicyEvaluator
 
             RecordUnanswered(scope, occurrences, groups, answered, variables);
         }
-        catch (Exception)
+        catch (Exception recordingFailure)
         {
-            ExceptionDispatchInfo.Capture(fault).Throw();
+            _diagnosticEvents.RequestError(context, recordingFailure);
         }
     }
 
