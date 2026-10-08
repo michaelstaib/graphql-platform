@@ -123,4 +123,43 @@ public class ConditionalSelectionOrderTests : AuthorizationExecutionTestBase
         // assert
         result.MatchInlineSnapshot(expected);
     }
+
+    [Theory]
+    [InlineData(false, """
+        {
+          "data": {
+            "second": "b",
+            "first": "a"
+          }
+        }
+        """)]
+    [InlineData(true, """
+        {
+          "data": {
+            "second": "b",
+            "first": "a"
+          }
+        }
+        """)]
+    public async Task ExecuteAsync_Should_PlaceFieldAtUnconditionalOccurrence_When_FieldAppearsFirstUnderCondition(
+        bool variable,
+        string expected)
+    {
+        // arrange
+        var executor = await CreateExecutorAsync(
+            Schema,
+            new AuthorizationTestClient(Data),
+            new InMemoryPolicyRecorder());
+        var request = CreateRequest("query($v: Boolean!) { first @skip(if: $v) second first }")
+            .SetVariableValues($$"""{"v":{{(variable ? "true" : "false")}}}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(expected);
+    }
 }
