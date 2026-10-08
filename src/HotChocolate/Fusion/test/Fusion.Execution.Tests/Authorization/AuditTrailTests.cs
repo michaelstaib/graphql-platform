@@ -117,7 +117,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             [
                 "Query.scoped | @requiresScopes | scopes=[[admin],[read,write]] | args={} | Denied | reason=unauthenticated | data=-",
                 "Query.guarded | @policy(finance) | scopes=[] | args={id:\"7\"} | Denied | reason=unauthenticated | data=-",
-                "Query.secret | @authenticated | scopes=[] | args={} | Denied | reason=- | data=-"
+                "Query.secret | @authenticated | scopes=[] | args={} | Denied | reason=unauthenticated | data=-"
             ]);
     }
 
@@ -384,7 +384,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
         Assert.Equal(1, scope.CommitCount);
         scope.Entries.Select(Format).MatchInlineSnapshots(
             [
-                "Query.secret | @authenticated | scopes=[] | args={} | Denied | reason=- | data=-"
+                "Query.secret | @authenticated | scopes=[] | args={} | Denied | reason=unauthenticated | data=-"
             ]);
         Assert.Empty(client.Requests);
     }
