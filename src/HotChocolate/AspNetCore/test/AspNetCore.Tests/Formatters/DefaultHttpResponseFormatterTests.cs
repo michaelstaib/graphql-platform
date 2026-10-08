@@ -2,8 +2,8 @@ using System.Net;
 using System.Text.Json;
 using HotChocolate.AspNetCore.Utilities;
 using HotChocolate.Execution;
-using Microsoft.AspNetCore.Http;
 using HotChocolate.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 
 namespace HotChocolate.AspNetCore.Formatters;
