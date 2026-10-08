@@ -96,6 +96,38 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task Subscribe_Should_RefuseWithUnauthorized_When_TheTokenExpiredBeforeTheSubscription()
+    {
+        // arrange
+        var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddHours(1));
+        var client = new AuthorizationTestClient(Event);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            new ToggledPolicy("live", reevaluatesPerEvent: false),
+            builder => builder.ConfigureSchemaServices(
+                (_, sc) =>
+                {
+                    sc.AddSingleton<TimeProvider>(time);
+                    sc.AddSingleton<IAuditProvider>(audit);
+                }));
+        var user = Authenticated(CreateExpiryClaim(time.GetUtcNow().AddMinutes(-1)));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, user).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Snapshot.Create()
+            .Add(result, "Response")
+            .Add(DescribeTransport(result), "Transport")
+            .Add(client.SubscribeCalls, "Source Schema Subscriptions")
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
     public async Task ReadResultsAsync_Should_KeepStartDecision_When_PolicyDoesNotReevaluate()
     {
         // arrange

@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -72,6 +73,14 @@ internal sealed class OperationAuthorizationMiddleware
             : _auditProvider.CreateTrail(context.RequestServices);
         var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
         var isSubscription = plan.Operation.Definition.Operation is OperationType.Subscription;
+
+        if (isSubscription
+            && SubscriptionAuthorization.GetExpiry(user) is { } expiry
+            && expiry <= _timeProvider.GetUtcNow())
+        {
+            await RefuseExpiredAsync(context, trail, user, plan, authorization, variableSets);
+            return;
+        }
 
         for (var i = 0; i < variableSets.Length; i++)
         {
@@ -164,6 +173,36 @@ internal sealed class OperationAuthorizationMiddleware
         context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
 
         await next(context);
+    }
+
+    private async ValueTask RefuseExpiredAsync(
+        RequestContext context,
+        IAuditTrail trail,
+        ClaimsPrincipal user,
+        OperationPlan plan,
+        OperationAuthorization authorization,
+        ImmutableArray<IVariableValueCollection> variableSets)
+    {
+        for (var i = 0; i < variableSets.Length; i++)
+        {
+            var scope = trail.BeginRequest(
+                new AuditScopeInfo(plan.Operation.Id, plan.Id, context.RequestIndex, i),
+                user);
+
+            _evaluator.RecordDenied(
+                scope,
+                plan,
+                authorization,
+                variableSets[i],
+                AuthorizationEvaluator.UnauthenticatedReason);
+            await scope.CommitAsync(context.RequestAborted);
+        }
+
+        var challenge = await _schemeResolver.GetChallengeAsync(context.RequestAborted);
+        var result = ErrorHelper.TokenExpired(challenge);
+
+        _diagnosticEvents.RequestError(context, result.Errors[0]);
+        context.Result = result;
     }
 
     private void TrackSubscription(
