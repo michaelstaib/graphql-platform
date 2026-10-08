@@ -432,6 +432,37 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task ReadResultsAsync_Should_RecordEveryOccurrence_When_AReevaluatedVerdictChangesBesideAFrozenPolicy()
+    {
+        // arrange
+        const string subscription = "subscription { changed { id name note } }";
+        const string changed = """{ "changed": { "id": "1", "name": "n", "note": "x" } }""";
+        var client = new AuthorizationTestClient(changed);
+        var audit = new RecordingAuditProvider(client);
+        var live = new ToggledPolicy("live", reevaluatesPerEvent: false);
+        var flip = new ToggledPolicy("flip", reevaluatesPerEvent: true);
+        var executor = await CreateSubscriptionExecutorAsync(
+            TwoPolicySchema,
+            client,
+            [live, flip],
+            builder => builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<IAuditProvider>(audit)));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+
+        // act
+        flip.Allowed = false;
+        client.Publish(changed);
+        await ReadNextAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
     public async Task ReadResultsAsync_Should_CommitOneScopePerVerdictChange_When_PolicyReevaluates()
     {
         // arrange
