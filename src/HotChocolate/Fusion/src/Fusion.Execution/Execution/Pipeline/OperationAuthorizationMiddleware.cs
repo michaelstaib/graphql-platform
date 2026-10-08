@@ -18,6 +18,7 @@ internal sealed class OperationAuthorizationMiddleware
     private const string Key = "FusionOperationAuthorizationMiddleware";
 
     private readonly AuthorizationEvaluator _evaluator;
+    private readonly IAuditProvider _auditProvider;
     private readonly FusionAuthorizationOptions _options;
     private readonly AuthenticationSchemeResolver _schemeResolver;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
@@ -25,12 +26,14 @@ internal sealed class OperationAuthorizationMiddleware
 
     private OperationAuthorizationMiddleware(
         AuthorizationEvaluator evaluator,
+        IAuditProvider auditProvider,
         FusionAuthorizationOptions options,
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
         IInputType variableType)
     {
         _evaluator = evaluator;
+        _auditProvider = auditProvider;
         _options = options;
         _schemeResolver = schemeResolver;
         _diagnosticEvents = diagnosticEvents;
@@ -61,7 +64,8 @@ internal sealed class OperationAuthorizationMiddleware
         }
 
         var user = GetUser(context);
-        var trail = context.Features.Get<IAuditTrail>() ?? throw ThrowHelper.OperationAuthorizationRequiresAuditTrail();
+        var trail = context.Features.Get<AuditTrailSource>()?.GetOrCreate(_auditProvider, context.RequestServices)
+            ?? _auditProvider.CreateTrail(context.RequestServices);
         var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
 
         for (var i = 0; i < variableSets.Length; i++)
@@ -167,9 +171,11 @@ internal sealed class OperationAuthorizationMiddleware
                 var options = fc.SchemaServices.GetRequiredService<FusionAuthorizationOptions>();
                 var schemeResolver = fc.SchemaServices.GetRequiredService<AuthenticationSchemeResolver>();
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
+                var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var variableType = GetVariableType(schema);
                 var middleware = new OperationAuthorizationMiddleware(
                     new AuthorizationEvaluator(options),
+                    auditProvider,
                     options,
                     schemeResolver,
                     diagnosticEvents,

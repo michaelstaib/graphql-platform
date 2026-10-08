@@ -21,9 +21,6 @@ internal static class ThrowHelper
     public static InvalidOperationException OperationAuthorizationRequiresPlan()
         => new(FusionExecutionResources.OperationAuthorization_OperationPlanMissing);
 
-    public static InvalidOperationException OperationAuthorizationRequiresAuditTrail()
-        => new(FusionExecutionResources.OperationAuthorization_AuditTrailMissing);
-
     public static InvalidOperationException AuditScopeAlreadyCommitted()
         => new(FusionExecutionResources.AuditScope_AlreadyCommitted);
 
