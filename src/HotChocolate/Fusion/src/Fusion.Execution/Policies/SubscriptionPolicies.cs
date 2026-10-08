@@ -210,8 +210,8 @@ internal sealed class SubscriptionPolicies
     }
 
     /// <summary>
-    /// Wraps the events so that the stream ends when the token of the principal expires without
-    /// having been renewed. The ending marks the result as requesting 401 Unauthorized.
+    /// Returns the events of the subscription, ending when the token of the principal expires without
+    /// renewal. The ending marks the result as requesting 401 Unauthorized.
     /// </summary>
     /// <param name="events">
     /// The events of the subscription.
