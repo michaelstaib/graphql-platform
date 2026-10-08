@@ -168,6 +168,8 @@ internal sealed class PolicyEvaluator
                                 entry,
                                 new PolicyVerdict(PolicyOutcome.Unanswered, ex.Message, null)));
                     }
+
+                    RecordUnanswered(scope, groups, evaluatedGroups + 1, variables);
                 }
 
                 return new PolicyEvaluation(null, ex);
