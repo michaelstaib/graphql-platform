@@ -6,6 +6,12 @@ namespace HotChocolate.Fusion.Authorization;
 /// <summary>
 /// Represents the authorization options of the Fusion gateway.
 /// </summary>
+/// <remarks>
+/// A selection denied when a subscription started keeps that decision for the stream, so an allow flip of a
+/// policy that reevaluates per event applies on resubscribe only. A host refuses a WebSocket connection without
+/// identity at <c>connection_init</c> with an <c>ISocketSessionInterceptor</c> that returns
+/// <c>ConnectionStatus.Unauthorized</c>.
+/// </remarks>
 public sealed class FusionAuthorizationOptions
 {
     private bool _isReadOnly;
