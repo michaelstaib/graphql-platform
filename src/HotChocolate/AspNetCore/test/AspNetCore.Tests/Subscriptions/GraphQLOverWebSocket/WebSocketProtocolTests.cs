@@ -778,8 +778,11 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
                     "No complete message may be sent after an error.");
             });
 
-    [Fact]
-    public Task SendSubscribeAsync_Should_CloseWith4401_When_ResponseStreamEndsRequestingUnauthorized()
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(401)]
+    public Task SendSubscribeAsync_Should_CloseWith4401_When_ResponseStreamEndsRequestingUnauthorized(
+        object requestedStatusCode)
         => TryTest(
             async ct =>
             {
@@ -790,44 +793,8 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
                         .UseRequest(_ => context =>
                         {
                             ResponseStream? stream = null;
-                            stream = new ResponseStream(() => ReadUnauthorizedEndingEventsAsync(stream!, HttpStatusCode.Unauthorized));
-                            context.Result = stream;
-                            return ValueTask.CompletedTask;
-                        }));
-                var client = CreateWebSocketClient(testServer);
-                using var webSocket = await ConnectToServerAsync(client, ct);
-
-                var payload = new SubscribePayload("subscription { onReview(episode: NEW_HOPE) { stars } }");
-                const string subscriptionId = "abc";
-
-                // act
-                await webSocket.SendSubscribeAsync(subscriptionId, payload, ct);
-
-                // assert
-                var message = await WaitForMessage(webSocket, Messages.Next, ct);
-                Assert.NotNull(message);
-                Assert.Equal(
-                    """{"id":"abc","type":"next","payload":{"extensions":{"event":1}}}""",
-                    message.RootElement.GetRawText());
-                await webSocket.ReceiveServerMessageAsync(ct);
-                Assert.True(webSocket.CloseStatus.HasValue, "Connection is closed.");
-                Assert.Equal(CloseReasons.Unauthorized, (int)webSocket.CloseStatus.Value);
-                Assert.Equal("Unauthorized", webSocket.CloseStatusDescription);
-            });
-
-    [Fact]
-    public Task SendSubscribeAsync_Should_CloseWith4401_When_ResponseStreamEndsRequestingUnauthorizedAsInteger()
-        => TryTest(
-            async ct =>
-            {
-                // arrange
-                using var testServer = CreateStarWarsServer(
-                    configureServices: s => s
-                        .AddGraphQL()
-                        .UseRequest(_ => context =>
-                        {
-                            ResponseStream? stream = null;
-                            stream = new ResponseStream(() => ReadUnauthorizedEndingEventsAsync(stream!, 401));
+                            stream = new ResponseStream(
+                                () => ReadUnauthorizedEndingEventsAsync(stream!, requestedStatusCode));
                             context.Result = stream;
                             return ValueTask.CompletedTask;
                         }));
