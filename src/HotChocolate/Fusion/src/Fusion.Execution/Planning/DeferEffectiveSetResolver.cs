@@ -15,7 +15,7 @@ internal static class DeferEffectiveSetResolver
     /// Groups occurrences by <see cref="FieldLocation"/> and computes the
     /// effective <see cref="DeliveryGroupSetKey"/> per location.
     /// </summary>
-    public static Dictionary<FieldLocation, DeliveryGroupSetKey> Resolve(List<FieldOccurrence> occurrences)
+    public static Dictionary<FieldLocation, DeliveryGroupSetKey> Resolve(ImmutableArray<FieldOccurrence> occurrences)
     {
         var leavesByLocation = new Dictionary<FieldLocation, LeavesAccumulator>();
 
