@@ -153,40 +153,33 @@ public sealed class IncrementalPlan : IOperationPlan
     }
 
     /// <summary>
-    /// Collects the incremental plans that run for the variable set. A plan runs when one of its
-    /// delivery groups is active and the plan owning the parent delivery group, if any, also runs.
+    /// Determines which incremental plans run for the variable set, indexed like
+    /// <paramref name="incrementalPlans"/>. A plan runs when one of its delivery groups is active
+    /// and the plan owning the parent delivery group, if any, also runs.
     /// </summary>
-    internal static HashSet<IncrementalPlan> GetRunningPlans(
+    internal static bool[] GetRunningPlans(
         ImmutableArray<IncrementalPlan> incrementalPlans,
         IVariableValueCollection variables)
     {
-        var active = new HashSet<IncrementalPlan>();
-
-        foreach (var incrementalPlan in incrementalPlans)
+        if (incrementalPlans.IsEmpty)
         {
-            foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
-            {
-                if (deliveryGroup.IsActive(variables))
-                {
-                    active.Add(incrementalPlan);
-                    break;
-                }
-            }
+            return [];
         }
 
-        var running = new HashSet<IncrementalPlan>();
+        var running = new bool[incrementalPlans.Length];
         var changed = true;
 
         while (changed)
         {
             changed = false;
 
-            foreach (var incrementalPlan in active)
+            for (var i = 0; i < incrementalPlans.Length; i++)
             {
-                if (!running.Contains(incrementalPlan)
-                    && IsParentRunning(incrementalPlan, incrementalPlans, running))
+                if (!running[i]
+                    && IsAnyDeliveryGroupActive(incrementalPlans[i], variables)
+                    && IsParentRunning(incrementalPlans[i], incrementalPlans, running))
                 {
-                    running.Add(incrementalPlan);
+                    running[i] = true;
                     changed = true;
                 }
             }
@@ -205,21 +198,36 @@ public sealed class IncrementalPlan : IOperationPlan
         var running = GetRunningPlans(incrementalPlans, variables);
         var operations = new HashSet<Operation>();
 
-        foreach (var incrementalPlan in incrementalPlans)
+        for (var i = 0; i < incrementalPlans.Length; i++)
         {
-            if (!running.Contains(incrementalPlan))
+            if (!running[i])
             {
-                operations.Add(incrementalPlan.Operation);
+                operations.Add(incrementalPlans[i].Operation);
             }
         }
 
         return operations;
     }
 
+    private static bool IsAnyDeliveryGroupActive(
+        IncrementalPlan incrementalPlan,
+        IVariableValueCollection variables)
+    {
+        foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
+        {
+            if (deliveryGroup.IsActive(variables))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsParentRunning(
         IncrementalPlan incrementalPlan,
         ImmutableArray<IncrementalPlan> incrementalPlans,
-        HashSet<IncrementalPlan> running)
+        bool[] running)
     {
         var parent = incrementalPlan.DeliveryGroups[0].Parent;
 
@@ -228,14 +236,14 @@ public sealed class IncrementalPlan : IOperationPlan
             return true;
         }
 
-        foreach (var candidate in incrementalPlans)
+        for (var i = 0; i < incrementalPlans.Length; i++)
         {
-            if (!running.Contains(candidate))
+            if (!running[i])
             {
                 continue;
             }
 
-            foreach (var deliveryGroup in candidate.DeliveryGroups)
+            foreach (var deliveryGroup in incrementalPlans[i].DeliveryGroups)
             {
                 if (ReferenceEquals(deliveryGroup, parent))
                 {
