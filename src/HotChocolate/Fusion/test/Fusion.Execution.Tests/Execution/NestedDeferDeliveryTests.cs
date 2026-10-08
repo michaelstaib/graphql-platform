@@ -231,6 +231,386 @@ public class NestedDeferDeliveryTests : AuthorizationExecutionTestBase
             ]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverTheConditionalInnerDeferWithItsParent_When_TheInnerConditionIsFalse()
+    {
+        // arrange
+        var executor = await CreateNestedDeferExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean!) "
+                + "{ product { id ... @defer { name ... @defer(if: $d) { price } } } }")
+            .SetVariableValues("""{"d":false}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "data": {
+                        "name": "Shoe",
+                        "price": 10
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverTheConditionalInnerDeferAfterItsParent_When_TheInnerConditionIsTrue()
+    {
+        // arrange
+        var executor = await CreateNestedDeferExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean!) "
+                + "{ product { id ... @defer { name ... @defer(if: $d) { price } } } }")
+            .SetVariableValues("""{"d":true}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "pending": [
+                    {
+                      "id": "1",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "data": {
+                        "name": "Shoe"
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "1",
+                      "data": {
+                        "price": 10
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "1"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverTheConditionalInnerDeferWithItsParent_When_BothConditionsAreMixed()
+    {
+        // arrange
+        var executor = await CreateNestedDeferExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean! $e: Boolean!) "
+                + "{ product { id ... @defer(if: $d) { name ... @defer(if: $e) { price } } } }")
+            .SetVariableValues("""{"d":true,"e":false}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "data": {
+                        "name": "Shoe",
+                        "price": 10
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverEveryFieldInTheInitialResult_When_BothConditionsAreFalse()
+    {
+        // arrange
+        var executor = await CreateNestedDeferExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean! $e: Boolean!) "
+                + "{ product { id ... @defer(if: $d) { name ... @defer(if: $e) { price } } } }")
+            .SetVariableValues("""{"d":false,"e":false}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1",
+                      "name": "Shoe",
+                      "price": 10
+                    }
+                  },
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverTheConditionalInnerDeferWithItsParent_When_TheParentHasNoOwnFields()
+    {
+        // arrange
+        var executor = await CreateNestedDeferExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer { ... @defer(if: $d) { price } } } }")
+            .SetVariableValues("""{"d":false}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "data": {
+                        "price": 10
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverTheConditionalInnerDeferAfterItsParent_When_TheParentHasNoOwnFields()
+    {
+        // arrange
+        var executor = await CreateNestedDeferExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer { ... @defer(if: $d) { price } } } }")
+            .SetVariableValues("""{"d":true}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "pending": [
+                    {
+                      "id": "1",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "data": {}
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "1",
+                      "data": {
+                        "price": 10
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "1"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
     private static Task<IRequestExecutor> CreateNestedDeferExecutorAsync()
         => CreateExecutorAsync(Schema, new AuthorizationTestClient(Data), new InMemoryPolicyRecorder());
 }
