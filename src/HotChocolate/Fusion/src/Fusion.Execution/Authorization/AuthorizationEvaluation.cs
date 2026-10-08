@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace HotChocolate.Fusion.Authorization;
 
 /// <summary>
@@ -16,4 +18,4 @@ namespace HotChocolate.Fusion.Authorization;
 internal readonly record struct AuthorizationEvaluation(
     AuthorizationDecisions? Decisions,
     InvalidOperationException? Failure,
-    IReadOnlySet<PolicyDescriptor> DeniedDescriptors);
+    FrozenSet<PolicyDescriptor> DeniedDescriptors);

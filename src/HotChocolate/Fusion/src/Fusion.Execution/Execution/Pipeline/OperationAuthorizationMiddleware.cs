@@ -174,7 +174,7 @@ internal sealed class OperationAuthorizationMiddleware
         IAuditScope scope,
         IVariableValueCollection variables,
         VariableValueCollection variableValues,
-        IReadOnlySet<PolicyDescriptor> deniedDescriptors)
+        FrozenSet<PolicyDescriptor> deniedDescriptors)
     {
         if (!authorization.HasReevaluatedPolicies && SubscriptionAuthorization.GetExpiry(user) is null)
         {
@@ -189,7 +189,7 @@ internal sealed class OperationAuthorizationMiddleware
                 authorization,
                 variables,
                 variableValues,
-                deniedDescriptors.ToFrozenSet(),
+                deniedDescriptors,
                 _variableType,
                 _timeProvider));
     }
