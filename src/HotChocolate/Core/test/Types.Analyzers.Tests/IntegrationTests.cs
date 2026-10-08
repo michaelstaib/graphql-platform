@@ -222,6 +222,40 @@ public class IntegrationTests
         result.MatchMarkdownSnapshot();
     }
 
+    [Fact]
+    public async Task Schema_With_Cost_Analysis_And_Cache_Control_Has_No_Directives_On_PageInfo()
+    {
+        // arrange
+        var services = CreateApplicationServicesWithCostAndCacheControl();
+
+        // act
+        var executor = await services.GetRequiredService<IRequestExecutorProvider>().GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        executor.Schema.MatchSnapshot();
+    }
+
+    private static IServiceProvider CreateApplicationServicesWithCostAndCacheControl()
+    {
+        var serviceCollection = new ServiceCollection();
+
+        serviceCollection
+            .AddSingleton<AuthorRepository>()
+            .AddScoped<AuthorAddressRepository>()
+            .AddSingleton<BookRepository>()
+            .AddSingleton<ChapterRepository>();
+
+        serviceCollection
+            .AddGraphQLServer()
+            .AddCustomModule()
+            .AddGlobalObjectIdentification()
+            .AddMutationConventions()
+            .AddCacheControl();
+
+        return serviceCollection.BuildServiceProvider();
+    }
+
     private static IServiceProvider CreateApplicationServices(
         Action<IServiceCollection>? configure = null)
     {
