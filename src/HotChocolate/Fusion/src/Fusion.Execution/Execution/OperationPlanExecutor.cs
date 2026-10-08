@@ -76,8 +76,6 @@ internal static partial class OperationPlanExecutor
         // Execute the main (non-deferred) plan nodes first.
         var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         OperationPlanContext? rootContext = null;
-        var activeDeliveryGroups = default(ActivationBits);
-        var runningIncrementalPlans = default(ActivationBits);
 
         try
         {
@@ -109,10 +107,8 @@ internal static partial class OperationPlanExecutor
             // Compute the active delivery groups (one per @defer occurrence whose
             // @defer(if:) evaluates to true) and the incremental plans that will actually run.
             // The running plans come from the rule the policy evaluator shares.
-            activeDeliveryGroups = DeliveryGroup.GetActive(operationPlan.DeliveryGroups, variables);
-            runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
-                operationPlan.IncrementalPlans,
-                activeDeliveryGroups);
+            rootContext.ActivateIncrementalPlans(operationPlan, variables);
+            var activeDeliveryGroups = rootContext.ActiveDeliveryGroups;
 
             // Mark top-level active delivery groups as pending on the initial
             // result. Nested delivery groups are marked pending after their
@@ -144,8 +140,6 @@ internal static partial class OperationPlanExecutor
                 // No active top-level delivery groups. Transfer retained
                 // result resources to the initial result.
                 rootContext.TransferRetainedMemoryTo(initialResult);
-                activeDeliveryGroups.Return();
-                runningIncrementalPlans.Return();
                 executionCts.Dispose();
                 await rootContext.DisposeAsync();
                 return initialResult;
@@ -162,8 +156,6 @@ internal static partial class OperationPlanExecutor
                     policyDecisions,
                     operationPlan,
                     initialResult,
-                    activeDeliveryGroups,
-                    runningIncrementalPlans,
                     rootContext,
                     cancellationToken),
                 ExecutionResultKind.DeferredResult);
@@ -174,8 +166,6 @@ internal static partial class OperationPlanExecutor
         }
         catch (Exception)
         {
-            activeDeliveryGroups.Return();
-            runningIncrementalPlans.Return();
             executionCts.Dispose();
 
             if (rootContext is not null)
@@ -193,8 +183,6 @@ internal static partial class OperationPlanExecutor
         PolicyDecisions? policyDecisions,
         OperationPlan operationPlan,
         OperationResult initialResult,
-        ActivationBits activeDeliveryGroups,
-        ActivationBits runningIncrementalPlans,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -203,6 +191,8 @@ internal static partial class OperationPlanExecutor
 
         var requestArena = rootContext.Memory;
         var incrementalPlans = operationPlan.IncrementalPlans;
+        var activeDeliveryGroups = rootContext.ActiveDeliveryGroups;
+        var runningIncrementalPlans = rootContext.RunningIncrementalPlans;
 
         // Per-delivery-group completion tracking. A delivery group is considered
         // complete when every incremental plan whose DeliveryGroups contains it has
@@ -462,9 +452,6 @@ internal static partial class OperationPlanExecutor
         }
         finally
         {
-            activeDeliveryGroups.Return();
-            runningIncrementalPlans.Return();
-
             // Dispose completed incremental plan contexts after the stream
             // finishes. The root context is owned by the surrounding stream.
             foreach (var incrementalPlanContext in incrementalPlanContexts.Values)
