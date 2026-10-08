@@ -356,6 +356,123 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         Assert.Empty(listener.Events);
     }
 
+    [Fact]
+    public async Task Update_Should_KeepNewExecutorActiveAndLoopAlive_When_ExecutorCreatedListenerThrows()
+    {
+        // arrange
+        var listener = new PostSwapListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var swapped = ObserveCreatedExecutors(manager);
+        listener.ThrowOnCreated = true;
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterSwap = await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var activeExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        listener.ThrowOnCreated = false;
+        var recovered = ObserveCreatedExecutors(manager);
+        configProvider.UpdateConfiguration(CreateConfiguration("recovered"));
+        var executorAfterRecovery = await recovered.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal("created failed", failure.Exception.Message);
+        Assert.True(executorAfterSwap.Schema.QueryType.Fields.ContainsName("swapped"));
+        Assert.Same(executorAfterSwap, activeExecutor);
+        Assert.True(executorAfterRecovery.Schema.QueryType.Fields.ContainsName("recovered"));
+    }
+
+    [Fact]
+    public async Task Update_Should_EvictPreviousExecutorAndKeepNewExecutorActive_When_EventObserverThrows()
+    {
+        // arrange
+        var listener = new PostSwapListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        var initialExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        manager.Subscribe(new RequestExecutorEventObserver(@event =>
+        {
+            if (@event.Type == RequestExecutorEventType.Created)
+            {
+                throw new InvalidOperationException("observer failed");
+            }
+        }));
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var evicted = await listener.Evicted.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var activeExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal("observer failed", failure.Exception.Message);
+        Assert.Same(initialExecutor, evicted);
+        Assert.True(activeExecutor.Schema.QueryType.Fields.ContainsName("swapped"));
+    }
+
+    [Fact]
+    public async Task Update_Should_ReportDisposalFailureAndSurfaceCreationException_When_DisposingSchemaServicesThrows()
+    {
+        // arrange
+        var failPipeline = false;
+        var listener = new FailureCollectingListener(expectedCount: 2);
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
+                .UseRequest((context, next) =>
+                {
+                    if (failPipeline)
+                    {
+                        _ = context.Schema.Services.GetRequiredService<ThrowingDisposable>();
+                        throw new InvalidOperationException("pipeline failed");
+                    }
+
+                    return next;
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        failPipeline = true;
+        configProvider.UpdateConfiguration(CreateConfiguration("rejected"));
+        var failures = await listener.Completed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(["disposal failed", "pipeline failed"], failures);
+    }
+
     private static Task<IRequestExecutor> ObserveCreatedExecutors(FusionRequestExecutorManager manager)
     {
         var created = new TaskCompletionSource<IRequestExecutor>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -409,6 +526,59 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         {
             _invoked.TrySetResult();
             throw new InvalidOperationException("listener failed");
+        }
+    }
+
+    private sealed class PostSwapListener : FusionExecutionDiagnosticEventListener
+    {
+        private readonly TaskCompletionSource<(string SchemaName, Exception Exception)> _failure =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<IRequestExecutor> _evicted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private volatile bool _throwOnCreated;
+
+        public bool ThrowOnCreated
+        {
+            get => _throwOnCreated;
+            set => _throwOnCreated = value;
+        }
+
+        public Task<(string SchemaName, Exception Exception)> Failure => _failure.Task;
+
+        public Task<IRequestExecutor> Evicted => _evicted.Task;
+
+        public override void ExecutorCreated(string name, IRequestExecutor executor)
+        {
+            if (ThrowOnCreated)
+            {
+                throw new InvalidOperationException("created failed");
+            }
+        }
+
+        public override void ExecutorEvicted(string name, IRequestExecutor executor)
+            => _evicted.TrySetResult(executor);
+
+        public override void ExecutorUpdateFailed(string schemaName, Exception exception)
+            => _failure.TrySetResult((schemaName, exception));
+    }
+
+    private sealed class FailureCollectingListener(int expectedCount) : FusionExecutionDiagnosticEventListener
+    {
+        private readonly ConcurrentQueue<string> _messages = [];
+        private readonly TaskCompletionSource<string[]> _completed =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<string[]> Completed => _completed.Task;
+
+        public override void ExecutorUpdateFailed(string schemaName, Exception exception)
+        {
+            _messages.Enqueue(exception.Message);
+
+            if (_messages.Count >= expectedCount)
+            {
+                _completed.TrySetResult([.. _messages]);
+            }
         }
     }
 
