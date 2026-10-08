@@ -11,6 +11,8 @@ internal sealed class ToggledPolicy(string name, bool reevaluatesPerEvent) : IPo
         set => Volatile.Write(ref _allowed, value ? 1 : 0);
     }
 
+    public Exception? Fault { get; set; }
+
     public int Evaluations => Volatile.Read(ref _evaluations);
 
     public bool ReevaluatesPerEvent => reevaluatesPerEvent;
@@ -23,6 +25,11 @@ internal sealed class ToggledPolicy(string name, bool reevaluatesPerEvent) : IPo
         CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _evaluations);
+
+        if (Fault is { } fault)
+        {
+            throw fault;
+        }
 
         foreach (ref readonly var entry in context.Entries)
         {
