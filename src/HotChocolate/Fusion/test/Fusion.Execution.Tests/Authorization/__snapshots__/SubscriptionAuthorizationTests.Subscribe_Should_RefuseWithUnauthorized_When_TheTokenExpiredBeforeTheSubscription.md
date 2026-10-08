@@ -33,6 +33,6 @@
 
 ```json
 [
-  "commits=1 | Item.name @policy(live) Denied unauthenticated"
+  "commits=1 | Item.name @policy(live) Denied unauthenticated | failure=-"
 ]
 ```
