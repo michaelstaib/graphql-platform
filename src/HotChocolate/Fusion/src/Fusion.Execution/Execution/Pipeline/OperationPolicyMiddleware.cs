@@ -212,7 +212,7 @@ internal sealed class OperationPolicyMiddleware
         IVariableValueCollection variables,
         VariableValueCollection variableValues,
         PolicyDecisions? decisions,
-        IReadOnlySet<PolicyDescriptor> deniedDescriptors)
+        FrozenSet<PolicyDescriptor> deniedDescriptors)
     {
         if (!policies.HasReevaluatedPolicies && SubscriptionPolicies.GetExpiry(user) is null)
         {
@@ -228,7 +228,7 @@ internal sealed class OperationPolicyMiddleware
                 variables,
                 variableValues,
                 decisions,
-                deniedDescriptors.ToFrozenSet(),
+                deniedDescriptors,
                 _booleanType,
                 _timeProvider));
     }

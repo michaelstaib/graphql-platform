@@ -188,7 +188,7 @@ internal sealed class SubscriptionPolicies
             await buffer.Replay().CommitAsync(cancellationToken);
         }
 
-        _deniedDescriptors = evaluation.DeniedDescriptors.ToFrozenSet();
+        _deniedDescriptors = evaluation.DeniedDescriptors;
         _currentDecisions = evaluation.Decisions;
         _current = PolicyVariableValues.Create(
             _variables,
