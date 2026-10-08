@@ -396,7 +396,7 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Update_Should_EvictPreviousExecutorAndKeepNewExecutorActive_When_EventObserverThrows()
+    public async Task Update_Should_NotifyLaterObserversAndEvictPreviousExecutor_When_EventObserverThrows()
     {
         // arrange
         var listener = new PostSwapListener();
@@ -420,17 +420,20 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
                 throw new InvalidOperationException("observer failed");
             }
         }));
+        var swapped = ObserveCreatedExecutors(manager);
 
         // act
         configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
         var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         var evicted = await listener.Evicted.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterSwap = await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         var activeExecutor = await manager.GetExecutorAsync(
             cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
         Assert.Equal("observer failed", failure.Exception.Message);
         Assert.Same(initialExecutor, evicted);
+        Assert.Same(activeExecutor, executorAfterSwap);
         Assert.True(activeExecutor.Schema.QueryType.Fields.ContainsName("swapped"));
     }
 
