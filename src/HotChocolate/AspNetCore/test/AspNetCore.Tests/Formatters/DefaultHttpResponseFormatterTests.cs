@@ -76,6 +76,53 @@ public sealed class DefaultHttpResponseFormatterTests
         Assert.Equal((int)requested, context.Response.StatusCode);
     }
 
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    public async Task FormatAsync_Should_WriteRequestedStatus_When_EventStreamResultRequestsAnIntegerStatus(
+        int requested)
+    {
+        // arrange
+        var formatter = new DefaultHttpResponseFormatter(new HttpResponseFormatterOptions());
+        var context = new DefaultHttpContext();
+        var result = OperationResult.FromError(ErrorBuilder.New().SetMessage("Denied.").Build());
+        result.ContextData = result.ContextData.Add(ExecutionContextData.HttpStatusCode, requested);
+
+        // act
+        await formatter.FormatAsync(
+            context.Response,
+            result,
+            [CreateEventStreamAcceptMediaType()],
+            null,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(requested, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task FormatAsync_Should_WriteOk_When_MultipartResultIsRequestErrorRequestingUnauthorized()
+    {
+        // arrange
+        var formatter = new DefaultHttpResponseFormatter(new HttpResponseFormatterOptions());
+        var context = new DefaultHttpContext();
+        var result = OperationResult.FromError(ErrorBuilder.New().SetMessage("Denied.").Build());
+        result.ContextData = result.ContextData.Add(
+            ExecutionContextData.HttpStatusCode,
+            HttpStatusCode.Unauthorized);
+
+        // act
+        await formatter.FormatAsync(
+            context.Response,
+            result,
+            [CreateMultipartMixedAcceptMediaType()],
+            null,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal((int)HttpStatusCode.OK, context.Response.StatusCode);
+    }
+
     [Fact]
     public async Task FormatAsync_Should_WriteOk_When_EventStreamResultHasDataAndRequestsAStatus()
     {
@@ -103,6 +150,9 @@ public sealed class DefaultHttpResponseFormatterTests
 
     private static AcceptMediaType CreateEventStreamAcceptMediaType()
         => new(new StringSegment("text"), new StringSegment("event-stream"), null, default);
+
+    private static AcceptMediaType CreateMultipartMixedAcceptMediaType()
+        => new(new StringSegment("multipart"), new StringSegment("mixed"), null, default);
 
     private sealed class DictionaryJsonFormatter(object value) : IRawJsonFormatter
     {
