@@ -411,12 +411,6 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string OperationAuthorization_AuditTrailMissing {
-            get {
-                return ResourceManager.GetString("OperationAuthorization_AuditTrailMissing", resourceCulture);
-            }
-        }
-
         internal static string AuditScope_AlreadyCommitted {
             get {
                 return ResourceManager.GetString("AuditScope_AlreadyCommitted", resourceCulture);

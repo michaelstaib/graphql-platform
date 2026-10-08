@@ -248,13 +248,7 @@ internal sealed class FusionRequestExecutorManager
             var pipeline = CreatePipeline(setup, schema, schemaServices, requestOptions);
 
             var contextPool = schemaServices.GetRequiredService<ObjectPool<PooledRequestContext>>();
-            var executor = new FusionRequestExecutor(
-                schema,
-                _applicationServices,
-                pipeline,
-                contextPool,
-                schemaServices.GetRequiredService<IAuditProvider>(),
-                version);
+            var executor = new FusionRequestExecutor(schema, _applicationServices, pipeline, contextPool, version);
             var requestExecutorAccessor = schemaServices.GetRequiredService<RequestExecutorAccessor>();
             requestExecutorAccessor.RequestExecutor = executor;
 
