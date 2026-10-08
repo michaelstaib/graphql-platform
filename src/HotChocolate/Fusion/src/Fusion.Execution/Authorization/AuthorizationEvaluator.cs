@@ -19,6 +19,7 @@ internal sealed class AuthorizationEvaluator
 {
     private const string UnauthenticatedReason = "unauthenticated";
     private const string SubscribeDecisionStandsReason = "subscribe-time decision stands";
+    private const string FrozenReason = "frozen";
 
     private static readonly ImmutableDictionary<string, object?> s_noArguments =
 #if NET10_0_OR_GREATER
@@ -132,18 +133,20 @@ internal sealed class AuthorizationEvaluator
 
                     if (answered is not null)
                     {
-                        if (isDenied && descriptor.Policy.ReevaluatesPerEvent)
-                        {
-                            var entry = new PolicyEvaluationEntry(
-                                descriptor,
-                                CoerceArguments((Selection)descriptor.Selection, variables));
+                        var entry = new PolicyEvaluationEntry(
+                            descriptor,
+                            CoerceArguments((Selection)descriptor.Selection, variables));
+                        var reason = descriptor.Policy.ReevaluatesPerEvent
+                            ? SubscribeDecisionStandsReason
+                            : FrozenReason;
 
-                            scope.Record(
-                                CreateAuditEntry(
-                                    entry,
-                                    new PolicyVerdict(PolicyOutcome.Denied, SubscribeDecisionStandsReason, null)));
-                        }
-
+                        scope.Record(
+                            CreateAuditEntry(
+                                entry,
+                                new PolicyVerdict(
+                                    isDenied ? PolicyOutcome.Denied : PolicyOutcome.Allowed,
+                                    reason,
+                                    null)));
                         answered.Add(descriptor);
                     }
 
