@@ -222,8 +222,30 @@ internal sealed class FusionRequestExecutorManager
         }
         catch
         {
-            await schemaServices.DisposeAsync().ConfigureAwait(false);
+            await DisposeSchemaServicesAsync(schemaName, schemaServices).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private static async ValueTask DisposeSchemaServicesAsync(string schemaName, ServiceProvider schemaServices)
+    {
+        IFusionExecutionDiagnosticEvents? diagnosticEvents = null;
+
+        try
+        {
+            diagnosticEvents = schemaServices.GetService<IFusionExecutionDiagnosticEvents>();
+            await schemaServices.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                diagnosticEvents?.ExecutorUpdateFailed(schemaName, ex);
+            }
+            catch
+            {
+                // ignore
+            }
         }
     }
 
@@ -847,13 +869,25 @@ internal sealed class FusionRequestExecutorManager
                 _settingsHash = settingsHash;
                 _planningFingerprint = configuration.PlanningFingerprint;
 
-                DiagnosticEvents.ExecutorCreated(nextExecutor.Schema.Name, nextExecutor);
+                var activeExecutor = nextExecutor;
+                var schemaName = activeExecutor.Schema.Name;
 
-                _manager._events.RaiseEvent(RequestExecutorEvent.Created(nextExecutor));
+                RunGuarded(schemaName, () => DiagnosticEvents.ExecutorCreated(schemaName, activeExecutor));
+                RunGuarded(schemaName, () => _manager._events.RaiseEvent(RequestExecutorEvent.Created(activeExecutor)));
+                RunGuarded(schemaName, () => _manager.EvictExecutor(previousExecutor, DiagnosticEvents));
+                RunGuarded(schemaName, previousConfiguration.Dispose);
+            }
+        }
 
-                _manager.EvictExecutor(previousExecutor, DiagnosticEvents);
-
-                previousConfiguration.Dispose();
+        private void RunGuarded(string schemaName, Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                ReportUpdateFailure(schemaName, ex);
             }
         }
 
