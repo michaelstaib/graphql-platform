@@ -268,4 +268,7 @@ internal static class ThrowHelper
                 .AddLocation(fragmentSpread)
                 .Build());
     }
+
+    public static AggregateException EventObserversFailed(IEnumerable<Exception> exceptions)
+        => new(exceptions);
 }
