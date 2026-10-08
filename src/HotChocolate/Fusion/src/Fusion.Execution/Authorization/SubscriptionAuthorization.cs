@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -27,7 +28,7 @@ internal sealed class SubscriptionAuthorization
     private readonly IVariableValueCollection _variables;
     private readonly IInputType _variableType;
     private readonly TimeProvider _timeProvider;
-    private IReadOnlySet<PolicyDescriptor> _deniedDescriptors;
+    private FrozenSet<PolicyDescriptor> _deniedDescriptors;
     private VariableValueCollection _current;
 
     /// <summary>
@@ -67,7 +68,7 @@ internal sealed class SubscriptionAuthorization
         OperationAuthorization authorization,
         IVariableValueCollection variables,
         VariableValueCollection current,
-        IReadOnlySet<PolicyDescriptor> deniedDescriptors,
+        FrozenSet<PolicyDescriptor> deniedDescriptors,
         IInputType variableType,
         TimeProvider timeProvider)
     {
@@ -176,7 +177,7 @@ internal sealed class SubscriptionAuthorization
             await buffer.Replay().CommitAsync(cancellationToken);
         }
 
-        _deniedDescriptors = evaluation.DeniedDescriptors;
+        _deniedDescriptors = evaluation.DeniedDescriptors.ToFrozenSet();
         _current = AuthorizationVariableValues.Create(
             _variables,
             _authorization.Variables,

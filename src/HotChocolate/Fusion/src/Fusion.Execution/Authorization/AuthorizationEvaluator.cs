@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -94,7 +95,7 @@ internal sealed class AuthorizationEvaluator
         IVariableValueCollection variables,
         IAuditScope scope,
         int requestIndex,
-        IReadOnlySet<PolicyDescriptor>? frozenDenied,
+        FrozenSet<PolicyDescriptor>? frozenDenied,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
