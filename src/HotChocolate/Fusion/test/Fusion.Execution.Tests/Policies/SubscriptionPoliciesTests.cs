@@ -399,7 +399,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ReadResultsAsync_Should_RecordDecisionStands_When_DeniedSelectionFlipsToAllow()
+    public async Task ReadResultsAsync_Should_RecordThatTheSubscribeDecisionStands_When_AnotherVerdictChanges()
     {
         // arrange
         const string subscription = "subscription { changed { id name note } }";
@@ -427,6 +427,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
         // assert
         Snapshot.Create()
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .Add(live.Evaluations, "Live Policy Evaluations")
             .MatchMarkdownSnapshot();
     }
 
