@@ -142,6 +142,39 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         Assert.Throws<ObjectDisposedException>(() => rejectedConfiguration.Settings.Document.RootElement.ValueKind);
     }
 
+    [Fact]
+    public async Task Update_Should_DisposePreviousExecutor_When_EvictionWindowElapsesOnTheTimeProvider()
+    {
+        // arrange
+        var timeProvider = new ManualTimeProvider();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<DisposalProbe>())
+                .ModifyOptions(o => o.EvictionTimeout = TimeSpan.FromMinutes(5))
+                .Services
+                .AddSingleton<TimeProvider>(timeProvider)
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        var initialExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        var previousProbe = initialExecutor.Schema.Services.GetRequiredService<DisposalProbe>();
+        var swapped = ObserveCreatedExecutors(manager);
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await timeProvider.WaitForTimersAsync(1).WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+
+        // assert
+        await previousProbe.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+    }
+
     private static Task<IRequestExecutor> ObserveCreatedExecutors(FusionRequestExecutorManager manager)
     {
         var created = new TaskCompletionSource<IRequestExecutor>(TaskCreationOptions.RunContinuationsAsynchronously);
