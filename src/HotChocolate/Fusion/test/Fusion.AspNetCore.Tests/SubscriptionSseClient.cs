@@ -12,15 +12,18 @@ namespace HotChocolate.Fusion;
 public sealed class SubscriptionSseClient : IDisposable
 {
     private readonly HttpResponseMessage _response;
-    private readonly StreamReader? _reader;
+    private readonly StreamReader _reader;
 
-    private SubscriptionSseClient(HttpResponseMessage response, StreamReader? reader)
+    private SubscriptionSseClient(HttpResponseMessage response, StreamReader reader)
     {
         _response = response;
         _reader = reader;
     }
 
     public HttpStatusCode StatusCode => _response.StatusCode;
+
+    public string? Challenge
+        => _response.Headers.TryGetValues("WWW-Authenticate", out var values) ? string.Join(", ", values) : null;
 
     public static async Task<SubscriptionSseClient> StartAsync(
         HttpClient client,
@@ -65,7 +68,7 @@ public sealed class SubscriptionSseClient : IDisposable
         string? name = null;
         string? data = null;
 
-        while (await _reader!.ReadLineAsync(TestContext.Current.CancellationToken) is { } line)
+        while (await _reader.ReadLineAsync(TestContext.Current.CancellationToken) is { } line)
         {
             if (line.Length == 0)
             {
@@ -105,12 +108,9 @@ public sealed class SubscriptionSseClient : IDisposable
         return events.ToImmutable();
     }
 
-    public string? Challenge
-        => _response.Headers.TryGetValues("WWW-Authenticate", out var values) ? string.Join(", ", values) : null;
-
     public void Dispose()
     {
-        _reader?.Dispose();
+        _reader.Dispose();
         _response.Dispose();
     }
 }
