@@ -450,7 +450,8 @@ public interface IFusionExecutionDiagnosticEvents : ICoreExecutionDiagnosticEven
     void ExecutorUpdateFailed(string schemaName, Exception exception);
 
     /// <summary>
-    /// Called when the executor for a new configuration is active, but a step after the swap failed.
+    /// Called when a cleanup step fails after an executor update activated a new executor, or after the first
+    /// executor could not be created.
     /// </summary>
     /// <param name="schemaName">
     /// The name of the schema.

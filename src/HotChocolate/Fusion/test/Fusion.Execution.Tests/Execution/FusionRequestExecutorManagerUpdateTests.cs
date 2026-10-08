@@ -600,7 +600,7 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
                 .AddConfigurationProvider(_ => configProvider)
                 .AddDiagnosticEventListener(_ => listener)
                 .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
-                .ModifyOptions(o => o.EvictionTimeout = TimeSpan.FromSeconds(2))
+                .ModifyOptions(o => o.EvictionTimeout = TimeSpan.FromSeconds(5))
                 .Services
                 .BuildServiceProvider();
 
