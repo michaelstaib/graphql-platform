@@ -187,7 +187,15 @@ internal sealed class SubscriptionPolicies
 
         if (buffer is not null)
         {
-            await buffer.Replay().CommitAsync(cancellationToken);
+            try
+            {
+                await buffer.Replay().CommitAsync(cancellationToken);
+            }
+            catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
+            {
+                _evaluator.ReportError(context, ex);
+                throw;
+            }
         }
 
         _deniedDescriptors = evaluation.DeniedDescriptors;
