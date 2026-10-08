@@ -20,6 +20,12 @@
 false
 ```
 
+## Requested Status Code
+
+```json
+"Unauthorized"
+```
+
 ## Scopes
 
 ```json
