@@ -71,19 +71,37 @@ internal sealed class OperationPolicyMiddleware
                 new AuditScopeInfo(plan.Operation.Id, plan.Id, context.RequestIndex, i),
                 user);
 
-            var evaluation = await _evaluator.EvaluateAsync(
-                context,
-                user,
-                plan,
-                policies,
-                variableSets[i],
-                scope,
-                i,
-                context.RequestAborted);
+            PolicyEvaluation evaluation;
+
+            try
+            {
+                evaluation = await _evaluator.EvaluateAsync(
+                    context,
+                    user,
+                    plan,
+                    policies,
+                    variableSets[i],
+                    scope,
+                    i,
+                    context.RequestAborted);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                scope.Fail(ex);
+                await scope.CommitAsync(context.RequestAborted);
+                throw;
+            }
+
+            var failure = evaluation.Failure;
+
+            if (failure is not null)
+            {
+                scope.Fail(failure);
+            }
 
             await scope.CommitAsync(context.RequestAborted);
 
-            if (evaluation.Failure is { } failure)
+            if (failure is not null)
             {
                 _diagnosticEvents.RequestError(context, failure);
                 context.Result = ErrorHelper.AuthorizationFailed();
