@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using HotChocolate.Fusion.Authorization.Audit;
 
 namespace HotChocolate.Fusion.Authorization;
@@ -10,7 +11,7 @@ internal sealed class RecordingAuditProvider(AuthorizationTestClient client) : I
 
     public int TrailCount => _trailCount;
 
-    public IReadOnlyCollection<RecordingAuditScope> Scopes => _scopes;
+    public ImmutableArray<RecordingAuditScope> Scopes => [.. _scopes];
 
     public IAuditTrail CreateTrail(IServiceProvider requestServices)
         => new RecordingAuditTrail(

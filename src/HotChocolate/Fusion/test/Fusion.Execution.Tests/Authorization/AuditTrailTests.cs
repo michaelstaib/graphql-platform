@@ -5,6 +5,7 @@ using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Authorization.InMemory;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Language;
+using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Authorization;
@@ -399,14 +400,14 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     {
         // arrange
         var scope = CreateScope();
-        scope.Record(CreateEntry() with { DirectiveName = "first" });
-        scope.Record(CreateEntry() with { DirectiveName = "second" });
+        scope.Record(CreateEntry() with { DirectiveName = DirectiveNames.Authenticated.Name });
+        scope.Record(CreateEntry() with { DirectiveName = DirectiveNames.RequiresScopes.Name });
 
         // act
         await scope.CommitAsync(TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(["first", "second"], scope.Entries.Select(e => e.DirectiveName));
+        Assert.Equal([DirectiveNames.Authenticated.Name, DirectiveNames.RequiresScopes.Name], scope.Entries.Select(e => e.DirectiveName));
     }
 
     [Fact]
@@ -481,7 +482,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     private static AuditLogEntry CreateEntry()
         => new(
             new SchemaCoordinate("Query", "secret"),
-            "authenticated",
+            DirectiveNames.Authenticated.Name,
             null,
             [],
             ImmutableDictionary.Create<string, string>(),
