@@ -161,6 +161,8 @@ internal sealed class SubscriptionAuthorization
                 await _evaluator.CommitFaultedScopeAsync(context, buffer.Replay(), ex);
             }
 
+            _evaluator.ReportError(context, ex);
+
             if (ex is OperationCanceledException)
             {
                 throw ThrowHelper.OperationAuthorizationFaulted(ex);
@@ -244,9 +246,17 @@ internal sealed class SubscriptionAuthorization
             return;
         }
 
-        var scope = _trail.BeginRequest(_info, OperationAuthorizationMiddleware.GetUser(context));
+        try
+        {
+            var scope = _trail.BeginRequest(_info, OperationAuthorizationMiddleware.GetUser(context));
 
-        _evaluator.RecordDenied(scope, _plan, _authorization, _variables, ExpiredReason);
-        await scope.CommitAsync(cancellationToken);
+            _evaluator.RecordDenied(scope, _plan, _authorization, _variables, ExpiredReason);
+            await scope.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))
+        {
+            _evaluator.ReportError(context, ex);
+            throw;
+        }
     }
 }

@@ -578,6 +578,119 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task ReadResultsAsync_Should_EndTheStreamAndReportTheFault_When_PolicyFaultsMidStream()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var audit = new RecordingAuditProvider(client);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: true);
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder =>
+            {
+                builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<IAuditProvider>(audit));
+                builder.AddDiagnosticEventListener(_ => listener);
+            });
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+        client.Publish(Event);
+        await ReadNextAsync(events);
+        policy.Fault = new InvalidOperationException("boom");
+
+        // act
+        client.Publish(Event);
+        var failure = await ReadFailureAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(failure, "Failure")
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task ReadResultsAsync_Should_EndTheStreamBeforeTheEvent_When_TheVerdictChangeScopeFailsToCommit()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var audit = new RecordingAuditProvider(client);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: true);
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder =>
+            {
+                builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<IAuditProvider>(audit));
+                builder.AddDiagnosticEventListener(_ => listener);
+            });
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+        client.Publish(Event);
+        await ReadNextAsync(events);
+        audit.CommitFailure = new InvalidOperationException("commit");
+        policy.Allowed = false;
+
+        // act
+        client.Publish(Event);
+        var failure = await ReadFailureAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(failure, "Failure")
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task ReadResultsAsync_Should_EndTheStreamAndReportTheFailure_When_TheExpiryScopeFailsToCommit()
+    {
+        // arrange
+        var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddHours(1));
+        var client = new AuthorizationTestClient(Event);
+        var audit = new RecordingAuditProvider(client);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            new ToggledPolicy("live", reevaluatesPerEvent: false),
+            builder =>
+            {
+                builder.ConfigureSchemaServices(
+                    (_, sc) =>
+                    {
+                        sc.AddSingleton<TimeProvider>(time);
+                        sc.AddSingleton<IAuditProvider>(audit);
+                    });
+                builder.AddDiagnosticEventListener(_ => listener);
+            });
+        var user = Authenticated(CreateExpiryClaim(time.GetUtcNow().AddMinutes(10)));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, user).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+        audit.CommitFailure = new InvalidOperationException("commit");
+        time.Advance(TimeSpan.FromMinutes(10));
+
+        // act
+        var failure = await ReadFailureAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(failure, "Failure")
+            .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
     public void ReevaluatesPerEvent_Should_BeFalse_When_ThePolicyDoesNotOverrideIt()
     {
         // arrange
@@ -633,6 +746,16 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         return current.ToJson();
     }
+
+    private static async Task<string> ReadFailureAsync(IAsyncEnumerator<OperationResult> events)
+    {
+        var failure = await Assert.ThrowsAnyAsync<Exception>(async () => await events.MoveNextAsync());
+
+        return Describe(failure);
+    }
+
+    private static string Describe(Exception exception)
+        => $"{exception.GetType().FullName}: {exception.Message}";
 
     private static Claim CreateExpiryClaim(DateTimeOffset expiry)
         => new("exp", expiry.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));

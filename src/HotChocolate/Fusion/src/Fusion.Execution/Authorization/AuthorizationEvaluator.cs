@@ -291,6 +291,23 @@ internal sealed class AuthorizationEvaluator
     }
 
     /// <summary>
+    /// Reports an error of the authorization of a request to the diagnostic events.
+    /// </summary>
+    /// <param name="context">
+    /// The request context.
+    /// </param>
+    /// <param name="error">
+    /// The error to report.
+    /// </param>
+    public void ReportError(RequestContext context, Exception error)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(error);
+
+        _diagnosticEvents.RequestError(context, error);
+    }
+
+    /// <summary>
     /// Records a denied entry with the given reason for every occurrence of the variable set,
     /// without asking any policy.
     /// </summary>
