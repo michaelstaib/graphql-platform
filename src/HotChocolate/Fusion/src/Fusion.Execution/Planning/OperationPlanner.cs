@@ -69,7 +69,7 @@ public sealed partial class OperationPlanner
         }
     }
 
-    public static Version Version { get; } = new(2, 3, 0);
+    public static Version Version { get; } = new(2, 4, 0);
 
     private static FrozenSet<string> CollectProtectedFieldNames(FusionSchemaDefinition schema)
     {
