@@ -179,7 +179,7 @@ internal sealed class SubscriptionAuthorization
             await buffer.Replay().CommitAsync(cancellationToken);
         }
 
-        _deniedDescriptors = evaluation.DeniedDescriptors.ToFrozenSet();
+        _deniedDescriptors = evaluation.DeniedDescriptors;
         _current = AuthorizationVariableValues.Create(
             _variables,
             _authorization.Variables,
