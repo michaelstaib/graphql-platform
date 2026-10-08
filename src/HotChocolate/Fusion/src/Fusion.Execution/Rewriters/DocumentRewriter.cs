@@ -348,6 +348,9 @@ public sealed partial class DocumentRewriter(
                 fieldContext = context.AddField(fieldNode, fieldType);
             }
 
+            // Known limitation: a field collected earlier under a condition and again unconditionally
+            // keeps the position of the unconditional occurrence. The specification position of the field
+            // is the earlier occurrence when the condition does not exclude it.
             if (context.TryGetConditionalContextsWithReferences(fieldNode, out var conditionalContexts))
             {
                 foreach (var conditionalContext in conditionalContexts)
