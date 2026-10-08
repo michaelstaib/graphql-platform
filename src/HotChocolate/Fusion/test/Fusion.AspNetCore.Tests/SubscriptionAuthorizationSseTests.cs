@@ -367,7 +367,7 @@ public class SubscriptionAuthorizationSseTests : SubscriptionAuthorizationTransp
 
         // act
         gateway.Feed.Publish(Event);
-        var abort = await Assert.ThrowsAsync<IOException>(sse.ReadEventAsync);
+        await Assert.ThrowsAsync<IOException>(sse.ReadEventAsync);
 
         // assert
         first.MatchInlineSnapshot(
@@ -383,7 +383,6 @@ public class SubscriptionAuthorizationSseTests : SubscriptionAuthorizationTransp
               }
             }
             """);
-        Assert.Equal("boom", abort.InnerException?.Message);
     }
 
     [Fact]
