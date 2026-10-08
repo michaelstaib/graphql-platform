@@ -815,6 +815,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
             .Add(failure, "Failure")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
+            .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
             .MatchMarkdownSnapshot();
     }
 
@@ -851,6 +852,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         Snapshot.Create()
             .Add(failure, "Failure")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
+            .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
             .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
             .MatchMarkdownSnapshot();
     }
@@ -892,6 +894,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
             .Add(failure, "Failure")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
+            .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
             .MatchMarkdownSnapshot();
     }
 
