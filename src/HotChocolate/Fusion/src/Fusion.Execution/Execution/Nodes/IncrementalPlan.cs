@@ -153,11 +153,10 @@ public sealed class IncrementalPlan : IOperationPlan
     }
 
     /// <summary>
-    /// Collects the operations of the incremental plans that do not run for the variable set.
-    /// A plan runs when one of its delivery groups is active and the plan owning the parent
-    /// delivery group, if any, also runs.
+    /// Collects the incremental plans that run for the variable set. A plan runs when one of its
+    /// delivery groups is active and the plan owning the parent delivery group, if any, also runs.
     /// </summary>
-    internal static HashSet<Operation> GetOperationsThatDoNotRun(
+    internal static HashSet<IncrementalPlan> GetRunningPlans(
         ImmutableArray<IncrementalPlan> incrementalPlans,
         IVariableValueCollection variables)
     {
@@ -193,6 +192,17 @@ public sealed class IncrementalPlan : IOperationPlan
             }
         }
 
+        return running;
+    }
+
+    /// <summary>
+    /// Collects the operations of the incremental plans that do not run for the variable set.
+    /// </summary>
+    internal static HashSet<Operation> GetOperationsThatDoNotRun(
+        ImmutableArray<IncrementalPlan> incrementalPlans,
+        IVariableValueCollection variables)
+    {
+        var running = GetRunningPlans(incrementalPlans, variables);
         var operations = new HashSet<Operation>();
 
         foreach (var incrementalPlan in incrementalPlans)

@@ -104,7 +104,7 @@ internal static partial class OperationPlanExecutor
 
             // Compute the active delivery groups (one per @defer occurrence whose
             // @defer(if:) evaluates to true) and the incremental plans that will actually run.
-            // An incremental plan is active if at least one of its delivery groups is active.
+            // The running plans come from the rule the authorization evaluator shares.
             var activeDeliveryGroupIds = new HashSet<int>();
             var deliveryPaths = CreateDeliveryPaths(operationPlan);
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
@@ -114,6 +114,10 @@ internal static partial class OperationPlanExecutor
                     activeDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
             }
+
+            var runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
+                operationPlan.IncrementalPlans,
+                variables);
 
             // Mark top-level active delivery groups as pending on the initial
             // result. Nested delivery groups are marked pending after their
@@ -161,6 +165,7 @@ internal static partial class OperationPlanExecutor
                     operationPlan,
                     initialResult,
                     activeDeliveryGroupIds,
+                    runningIncrementalPlans,
                     deliveryPaths,
                     rootContext,
                     cancellationToken),
@@ -189,6 +194,7 @@ internal static partial class OperationPlanExecutor
         OperationPlan operationPlan,
         OperationResult initialResult,
         HashSet<int> activeDeliveryGroupIds,
+        HashSet<IncrementalPlan> runningIncrementalPlans,
         IReadOnlyDictionary<int, DeliveryPath> deliveryPaths,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -206,7 +212,7 @@ internal static partial class OperationPlanExecutor
         var pendingCountByDeliveryGroup = new Dictionary<int, int>();
         foreach (var incrementalPlan in incrementalPlans)
         {
-            if (!IsIncrementalPlanActive(incrementalPlan, activeDeliveryGroupIds))
+            if (!runningIncrementalPlans.Contains(incrementalPlan))
             {
                 continue;
             }
@@ -238,7 +244,7 @@ internal static partial class OperationPlanExecutor
         {
             foreach (var incrementalPlan in incrementalPlans)
             {
-                if (!IsIncrementalPlanActive(incrementalPlan, activeDeliveryGroupIds))
+                if (!runningIncrementalPlans.Contains(incrementalPlan))
                 {
                     continue;
                 }
@@ -292,7 +298,7 @@ internal static partial class OperationPlanExecutor
                 var childPending = ImmutableList.CreateBuilder<PendingResult>();
                 foreach (var candidate in incrementalPlans)
                 {
-                    if (!IsIncrementalPlanActive(candidate, activeDeliveryGroupIds))
+                    if (!runningIncrementalPlans.Contains(candidate))
                     {
                         continue;
                     }
@@ -646,19 +652,6 @@ internal static partial class OperationPlanExecutor
                 collected.Add(requirement);
             }
         }
-    }
-
-    private static bool IsIncrementalPlanActive(IncrementalPlan incrementalPlan, HashSet<int> activeDeliveryGroupIds)
-    {
-        foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
-        {
-            if (activeDeliveryGroupIds.Contains(deliveryGroup.Id))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>
