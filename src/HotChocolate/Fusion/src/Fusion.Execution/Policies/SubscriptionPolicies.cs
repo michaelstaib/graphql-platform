@@ -28,6 +28,7 @@ internal sealed class SubscriptionPolicies
     private readonly IVariableValueCollection _variables;
     private readonly IInputType _booleanType;
     private readonly TimeProvider _timeProvider;
+    private readonly FrozenSet<PolicyDescriptor> _startDenied;
     private FrozenSet<PolicyDescriptor> _deniedDescriptors;
     private VariableValueCollection _current;
     private PolicyDecisions? _currentDecisions;
@@ -94,6 +95,7 @@ internal sealed class SubscriptionPolicies
         _authorization = authorization;
         _variables = variables;
         _current = current;
+        _startDenied = deniedDescriptors;
         _deniedDescriptors = deniedDescriptors;
         _booleanType = booleanType;
         _timeProvider = timeProvider;
@@ -158,7 +160,7 @@ internal sealed class SubscriptionPolicies
                 _variables,
                 scope,
                 _info.VariableSetIndex,
-                _deniedDescriptors,
+                _startDenied,
                 cancellationToken);
         }
         catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
