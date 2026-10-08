@@ -85,8 +85,8 @@ internal sealed class OperationSession : IOperationSession
                         }
                     }
 
-                    // a stream that ends while requesting 401 ended for authorization reasons, so the
-                    // connection is closed as unauthorized instead of completing the operation.
+                    // a stream that ends requesting 401 closes the connection as unauthorized
+                    // instead of completing the operation.
                     closeUnauthorized =
                         !ct.IsCancellationRequested
                         && responseStream.ContextData.TryGetValue(

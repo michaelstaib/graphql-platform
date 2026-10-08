@@ -254,7 +254,7 @@ internal sealed class AuthorizationEvaluator
 
     /// <summary>
     /// Records the fault in the scope and commits it. A failure of the scope itself is reported to
-    /// the diagnostic events so that it does not replace the fault.
+    /// the diagnostic events.
     /// </summary>
     /// <param name="context">
     /// The request context.
