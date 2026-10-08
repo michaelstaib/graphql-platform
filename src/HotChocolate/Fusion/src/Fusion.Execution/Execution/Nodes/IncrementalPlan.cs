@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using HotChocolate.Execution;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
 
@@ -153,69 +152,71 @@ public sealed class IncrementalPlan : IOperationPlan
     }
 
     /// <summary>
-    /// Determines which incremental plans run for the variable set, indexed like
-    /// <paramref name="incrementalPlans"/>. A plan runs when one of its delivery groups is active
-    /// and the plan owning the parent delivery group, if any, also runs.
+    /// Determines which incremental plans run, indexed like <paramref name="incrementalPlans"/>. A plan
+    /// runs when one of its delivery groups is active and the plan owning the parent delivery group, if
+    /// any, also runs. The caller returns the result with <see cref="ActivationBits.Return"/>.
     /// </summary>
-    internal static bool[] GetRunningPlans(
+    internal static ActivationBits GetRunningPlans(
         ImmutableArray<IncrementalPlan> incrementalPlans,
-        IVariableValueCollection variables)
+        ActivationBits activeDeliveryGroups)
     {
-        if (incrementalPlans.IsEmpty)
+        var running = new ActivationBits(incrementalPlans.Length);
+
+        try
         {
-            return [];
-        }
+            var changed = true;
 
-        var running = new bool[incrementalPlans.Length];
-        var changed = true;
-
-        while (changed)
-        {
-            changed = false;
-
-            for (var i = 0; i < incrementalPlans.Length; i++)
+            while (changed)
             {
-                if (!running[i]
-                    && IsAnyDeliveryGroupActive(incrementalPlans[i], variables)
-                    && IsParentRunning(incrementalPlans[i], incrementalPlans, running))
+                changed = false;
+
+                for (var i = 0; i < incrementalPlans.Length; i++)
                 {
-                    running[i] = true;
-                    changed = true;
+                    if (!running.Get(i)
+                        && IsAnyDeliveryGroupActive(incrementalPlans[i], activeDeliveryGroups)
+                        && IsParentRunning(incrementalPlans[i], incrementalPlans, running))
+                    {
+                        running.Set(i);
+                        changed = true;
+                    }
                 }
             }
-        }
 
-        return running;
+            return running;
+        }
+        catch
+        {
+            running.Return();
+            throw;
+        }
     }
 
     /// <summary>
-    /// Collects the operations of the incremental plans that do not run for the variable set.
+    /// Determines whether the operation belongs to an incremental plan that does not run.
     /// </summary>
-    internal static HashSet<Operation> GetOperationsThatDoNotRun(
+    internal static bool DoesNotRun(
         ImmutableArray<IncrementalPlan> incrementalPlans,
-        IVariableValueCollection variables)
+        ActivationBits running,
+        Operation operation)
     {
-        var running = GetRunningPlans(incrementalPlans, variables);
-        var operations = new HashSet<Operation>();
-
         for (var i = 0; i < incrementalPlans.Length; i++)
         {
-            if (!running[i])
+            if (!running.Get(i) && ReferenceEquals(incrementalPlans[i].Operation, operation))
             {
-                operations.Add(incrementalPlans[i].Operation);
+                return true;
             }
         }
 
-        return operations;
+        return false;
     }
 
     private static bool IsAnyDeliveryGroupActive(
         IncrementalPlan incrementalPlan,
-        IVariableValueCollection variables)
+        ActivationBits activeDeliveryGroups)
     {
         foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
         {
-            if (deliveryGroup.IsActive(variables))
+            if (activeDeliveryGroups.Get(deliveryGroup.Id))
             {
                 return true;
             }
@@ -227,7 +228,7 @@ public sealed class IncrementalPlan : IOperationPlan
     private static bool IsParentRunning(
         IncrementalPlan incrementalPlan,
         ImmutableArray<IncrementalPlan> incrementalPlans,
-        bool[] running)
+        ActivationBits running)
     {
         var parent = incrementalPlan.DeliveryGroups[0].Parent;
 
@@ -238,7 +239,7 @@ public sealed class IncrementalPlan : IOperationPlan
 
         for (var i = 0; i < incrementalPlans.Length; i++)
         {
-            if (!running[i])
+            if (!running.Get(i))
             {
                 continue;
             }
