@@ -226,7 +226,7 @@ internal sealed class PolicyEvaluator
                         RecordUnanswered(scope, occurrences, groups, answered, variables);
                     }
 
-                    return new PolicyEvaluation(null, ex, deniedDescriptors);
+                    return new PolicyEvaluation(null, ex, Freeze(deniedDescriptors));
                 }
 
                 if (answered is not null)
@@ -241,7 +241,7 @@ internal sealed class PolicyEvaluator
             return new PolicyEvaluation(
                 CreateDecisions(occurrences, deniedDescriptors, isAuthenticated, frozenDenied is not null),
                 null,
-                deniedDescriptors);
+                Freeze(deniedDescriptors));
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
@@ -617,6 +617,15 @@ internal sealed class PolicyEvaluator
 
         return values.ToImmutable();
     }
+
+    private static FrozenSet<PolicyDescriptor> Freeze(HashSet<PolicyDescriptor> deniedDescriptors)
+        => deniedDescriptors.Count == 0
+#if NET9_0_OR_GREATER
+            ? []
+#else
+            ? FrozenSet<PolicyDescriptor>.Empty
+#endif
+            : deniedDescriptors.ToFrozenSet();
 
     private static void CollectDenied(
         PolicyEvaluationContext policyContext,
