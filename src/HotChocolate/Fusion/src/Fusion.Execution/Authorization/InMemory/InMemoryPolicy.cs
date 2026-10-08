@@ -16,6 +16,8 @@ internal sealed class InMemoryPolicy : IPolicy
         _recorder = recorder;
     }
 
+    public bool ReevaluatesPerEvent => false;
+
     public ValueTask EvaluateAsync(
         PolicyEvaluationContext context,
         CancellationToken cancellationToken)
