@@ -156,7 +156,7 @@ internal sealed class GraphQLOverWebSocketProtocolHandler(
         // then we will close the connection with an unauthorized error.
         if (!connected)
         {
-            await connection.CloseUnauthorizedAsync(CloseReasons.UnauthorizedMessage, cancellationToken);
+            await connection.CloseUnauthorizedAsync(cancellationToken);
             return;
         }
 
