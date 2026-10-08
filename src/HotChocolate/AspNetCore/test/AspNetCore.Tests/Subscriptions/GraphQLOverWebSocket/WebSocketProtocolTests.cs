@@ -790,7 +790,44 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
                         .UseRequest(_ => context =>
                         {
                             ResponseStream? stream = null;
-                            stream = new ResponseStream(() => ReadUnauthorizedEndingEventsAsync(stream!));
+                            stream = new ResponseStream(() => ReadUnauthorizedEndingEventsAsync(stream!, HttpStatusCode.Unauthorized));
+                            context.Result = stream;
+                            return ValueTask.CompletedTask;
+                        }));
+                var client = CreateWebSocketClient(testServer);
+                using var webSocket = await ConnectToServerAsync(client, ct);
+
+                var payload = new SubscribePayload("subscription { onReview(episode: NEW_HOPE) { stars } }");
+                const string subscriptionId = "abc";
+
+                // act
+                await webSocket.SendSubscribeAsync(subscriptionId, payload, ct);
+
+                // assert
+                var message = await WaitForMessage(webSocket, Messages.Next, ct);
+                Assert.NotNull(message);
+                Assert.Equal(
+                    """{"id":"abc","type":"next","payload":{"extensions":{"event":1}}}""",
+                    message.RootElement.GetRawText());
+                await webSocket.ReceiveServerMessageAsync(ct);
+                Assert.True(webSocket.CloseStatus.HasValue, "Connection is closed.");
+                Assert.Equal(CloseReasons.Unauthorized, (int)webSocket.CloseStatus.Value);
+                Assert.Equal("Unauthorized", webSocket.CloseStatusDescription);
+            });
+
+    [Fact]
+    public Task SendSubscribeAsync_Should_CloseWith4401_When_ResponseStreamEndsRequestingUnauthorizedAsInteger()
+        => TryTest(
+            async ct =>
+            {
+                // arrange
+                using var testServer = CreateStarWarsServer(
+                    configureServices: s => s
+                        .AddGraphQL()
+                        .UseRequest(_ => context =>
+                        {
+                            ResponseStream? stream = null;
+                            stream = new ResponseStream(() => ReadUnauthorizedEndingEventsAsync(stream!, 401));
                             context.Result = stream;
                             return ValueTask.CompletedTask;
                         }));
@@ -1234,14 +1271,15 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
     }
 
     private static async IAsyncEnumerable<OperationResult> ReadUnauthorizedEndingEventsAsync(
-        ResponseStream stream)
+        ResponseStream stream,
+        object statusCode)
     {
         yield return new OperationResult(
             ImmutableOrderedDictionary<string, object?>.Empty.Add("event", 1));
 
         stream.ContextData = stream.ContextData.SetItem(
             ExecutionContextData.HttpStatusCode,
-            HttpStatusCode.Unauthorized);
+            statusCode);
 
         await Task.CompletedTask;
     }
