@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
+using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
@@ -432,9 +434,188 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
 
         // assert
         Assert.Equal("observer failed", failure.Exception.Message);
+        Assert.Same(executorAfterSwap, failure.Executor);
         Assert.Same(initialExecutor, evicted);
         Assert.Same(activeExecutor, executorAfterSwap);
         Assert.True(activeExecutor.Schema.QueryType.Fields.ContainsName("swapped"));
+    }
+
+    [Fact]
+    public async Task Update_Should_ReportCleanupFailureAndDisposePreviousExecutor_When_EvictedListenerThrows()
+    {
+        // arrange
+        var listener = new PostSwapListener { ThrowOnEvicted = true };
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<DisposalProbe>())
+                .ModifyOptions(o => o.EvictionTimeout = TimeSpan.Zero)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        var initialExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        var previousProbe = initialExecutor.Schema.Services.GetRequiredService<DisposalProbe>();
+        var swapped = ObserveCreatedExecutors(manager);
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterSwap = await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await previousProbe.Disposed.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(ISchemaDefinition.DefaultName, failure.SchemaName);
+        Assert.Equal("evicted failed", failure.Exception.Message);
+        Assert.Same(executorAfterSwap, failure.Executor);
+    }
+
+    [Fact]
+    public async Task Update_Should_ReportCleanupFailure_When_PreviousConfigurationDisposalThrows()
+    {
+        // arrange
+        var listener = new PostSwapListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateThrowingConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var swapped = ObserveCreatedExecutors(manager);
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterSwap = await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var activeExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal("configuration disposal failed", failure.Exception.Message);
+        Assert.Same(executorAfterSwap, failure.Executor);
+        Assert.Same(executorAfterSwap, activeExecutor);
+    }
+
+    [Fact]
+    public async Task Update_Should_ReportEveryObserverFailureAsAggregate_When_MultipleEventObserversThrow()
+    {
+        // arrange
+        var listener = new PostSwapListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        manager.Subscribe(new RequestExecutorEventObserver(@event =>
+        {
+            if (@event.Type == RequestExecutorEventType.Created)
+            {
+                throw new InvalidOperationException("first observer failed");
+            }
+        }));
+        manager.Subscribe(new RequestExecutorEventObserver(@event =>
+        {
+            if (@event.Type == RequestExecutorEventType.Created)
+            {
+                throw new InvalidOperationException("second observer failed");
+            }
+        }));
+        var swapped = ObserveCreatedExecutors(manager);
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterSwap = await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        var aggregate = Assert.IsType<AggregateException>(failure.Exception);
+        Assert.Equal(
+            ["first observer failed", "second observer failed"],
+            aggregate.InnerExceptions.Select(e => e.Message));
+        Assert.Same(executorAfterSwap, failure.Executor);
+    }
+
+    [Fact]
+    public async Task Update_Should_ReportCleanupFailure_When_DelayedDisposalOfThePreviousExecutorThrows()
+    {
+        // arrange
+        var listener = new PostSwapListener();
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .AddDiagnosticEventListener(_ => listener)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
+                .ModifyOptions(o => o.EvictionTimeout = TimeSpan.Zero)
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+        var initialExecutor = await manager.GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+        _ = initialExecutor.Schema.Services.GetRequiredService<ThrowingDisposable>();
+        var swapped = ObserveCreatedExecutors(manager);
+
+        // act
+        configProvider.UpdateConfiguration(CreateConfiguration("swapped"));
+        var failure = await listener.Failure.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var executorAfterSwap = await swapped.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(ISchemaDefinition.DefaultName, failure.SchemaName);
+        Assert.Equal("disposal failed", failure.Exception.Message);
+        Assert.Same(executorAfterSwap, failure.Executor);
+    }
+
+    [Fact]
+    public async Task GetExecutor_Should_ThrowBothFailures_When_FirstCreationDisposalThrows()
+    {
+        // arrange
+        var configProvider = new TestFusionConfigurationProvider(CreateConfiguration("field"));
+
+        var services =
+            new ServiceCollection()
+                .AddGraphQLGateway()
+                .AddConfigurationProvider(_ => configProvider)
+                .ConfigureSchemaServices((_, s) => s.AddSingleton<ThrowingDisposable>())
+                .UseRequest((context, next) =>
+                {
+                    _ = context.Schema.Services.GetRequiredService<ThrowingDisposable>();
+                    throw new InvalidOperationException("pipeline failed");
+                })
+                .Services
+                .BuildServiceProvider();
+
+        var manager = services.GetRequiredService<FusionRequestExecutorManager>();
+
+        // act
+        var exception = await Assert.ThrowsAsync<AggregateException>(
+            async () => await manager.GetExecutorAsync(cancellationToken: TestContext.Current.CancellationToken));
+
+        // assert
+        Assert.Equal(
+            ["pipeline failed", "disposal failed"],
+            exception.InnerExceptions.Select(e => e.Message));
     }
 
     [Fact]
@@ -545,6 +726,16 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
             }
             """);
 
+    private static FusionConfiguration CreateThrowingConfiguration(string fieldName)
+        => new(
+            CreateConfiguration(fieldName).Schema,
+            new JsonDocumentOwner(JsonDocument.Parse("{ }"), new ThrowingMemoryOwner()));
+
+    private sealed class ThrowingMemoryOwner : IDisposable
+    {
+        public void Dispose() => throw new InvalidOperationException("configuration disposal failed");
+    }
+
     private sealed class UpdateFailureListener : FusionExecutionDiagnosticEventListener
     {
         private readonly TaskCompletionSource<(string SchemaName, Exception Exception)> _failure =
@@ -580,12 +771,13 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
 
     private sealed class PostSwapListener : FusionExecutionDiagnosticEventListener
     {
-        private readonly TaskCompletionSource<(string SchemaName, Exception Exception)> _failure =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<(string SchemaName, IRequestExecutor Executor, Exception Exception)>
+            _failure = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<IRequestExecutor> _evicted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private volatile bool _throwOnCreated;
+        private volatile bool _throwOnEvicted;
 
         public bool ThrowOnCreated
         {
@@ -593,7 +785,13 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
             set => _throwOnCreated = value;
         }
 
-        public Task<(string SchemaName, Exception Exception)> Failure => _failure.Task;
+        public bool ThrowOnEvicted
+        {
+            get => _throwOnEvicted;
+            set => _throwOnEvicted = value;
+        }
+
+        public Task<(string SchemaName, IRequestExecutor Executor, Exception Exception)> Failure => _failure.Task;
 
         public Task<IRequestExecutor> Evicted => _evicted.Task;
 
@@ -606,10 +804,20 @@ public class FusionRequestExecutorManagerUpdateTests : FusionTestBase
         }
 
         public override void ExecutorEvicted(string name, IRequestExecutor executor)
-            => _evicted.TrySetResult(executor);
+        {
+            _evicted.TrySetResult(executor);
 
-        public override void ExecutorUpdateFailed(string schemaName, Exception exception)
-            => _failure.TrySetResult((schemaName, exception));
+            if (ThrowOnEvicted)
+            {
+                throw new InvalidOperationException("evicted failed");
+            }
+        }
+
+        public override void ExecutorUpdateCleanupFailed(
+            string schemaName,
+            IRequestExecutor executor,
+            Exception exception)
+            => _failure.TrySetResult((schemaName, executor, exception));
     }
 
     private sealed class FailureCollectingListener(int expectedCount) : FusionExecutionDiagnosticEventListener
