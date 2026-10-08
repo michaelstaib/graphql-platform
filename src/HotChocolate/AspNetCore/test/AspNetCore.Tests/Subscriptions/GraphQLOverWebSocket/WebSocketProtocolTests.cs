@@ -198,7 +198,7 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             });
 
     [Fact]
-    public Task Connection_Unauthorized_Should_Close_With_Unauthorized()
+    public Task SendConnectionInitAsync_Should_CloseWith4401_When_InterceptorReturnsUnauthorized()
         => RunTest(
             async ct =>
             {
