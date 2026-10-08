@@ -173,7 +173,7 @@ internal sealed class AuthorizationEvaluator
 
             if (scope.IsRecording)
             {
-                Record(scope, policyContext);
+                Record(scope, policyContext, isAuthenticated);
             }
 
             CollectDenied(policyContext, deniedDescriptors);
@@ -283,14 +283,26 @@ internal sealed class AuthorizationEvaluator
         return firstDenied;
     }
 
-    private static void Record(IAuditScope scope, PolicyEvaluationContext policyContext)
+    private static void Record(
+        IAuditScope scope,
+        PolicyEvaluationContext policyContext,
+        bool isAuthenticated)
     {
         var entries = policyContext.Entries;
         var verdicts = policyContext.Verdicts;
 
         for (var i = 0; i < entries.Length; i++)
         {
-            scope.Record(CreateAuditEntry(entries[i], verdicts[i]));
+            var verdict = verdicts[i];
+
+            if (!isAuthenticated
+                && entries[i].Descriptor.DirectiveName == DirectiveNames.Authenticated.Name
+                && verdict is { Outcome: PolicyOutcome.Denied, Reason: null })
+            {
+                verdict = verdict with { Reason = UnauthenticatedReason };
+            }
+
+            scope.Record(CreateAuditEntry(entries[i], verdict));
         }
     }
 
