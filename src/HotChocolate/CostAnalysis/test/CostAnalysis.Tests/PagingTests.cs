@@ -667,6 +667,49 @@ public class PagingTests
             .MatchMarkdownAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task PageInfo_Should_KeepStaticCost_When_SelectedOnClassicConnection()
+    {
+        // arrange
+        var snapshot = new Snapshot();
+
+        var operation =
+            Utf8GraphQLParser.Parse(
+                """
+                {
+                    books(first: 1) {
+                        pageInfo {
+                            hasNextPage
+                            endCursor
+                        }
+                    }
+                }
+                """);
+
+        var request =
+            OperationRequestBuilder.New()
+                .SetDocument(operation)
+                .ReportCost()
+                .Build();
+
+        var executor =
+            await new ServiceCollection()
+                .AddGraphQLServer()
+                .AddQueryType<Query>()
+                .AddFiltering()
+                .AddSorting()
+                .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var response = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+
+        // assert
+        await snapshot
+            .Add(operation, "Operation")
+            .Add(response, "Response")
+            .MatchMarkdownAsync(TestContext.Current.CancellationToken);
+    }
+
     public class Query
     {
         [UsePaging]
