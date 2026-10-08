@@ -223,7 +223,7 @@ public class FusionExecutionDiagnosticEventListener : IFusionExecutionDiagnostic
     public virtual void ExecutorUpdateFailed(string schemaName, Exception exception) { }
 
     /// <inheritdoc />
-    public virtual void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor executor, Exception exception)
+    public virtual void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor? executor, Exception exception)
     {
     }
 

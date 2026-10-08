@@ -456,10 +456,10 @@ public interface IFusionExecutionDiagnosticEvents : ICoreExecutionDiagnosticEven
     /// The name of the schema.
     /// </param>
     /// <param name="executor">
-    /// The executor that is active.
+    /// The executor that is active when the event is raised, or null when none is.
     /// </param>
     /// <param name="exception">
     /// The exception thrown by the step.
     /// </param>
-    void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor executor, Exception exception);
+    void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor? executor, Exception exception);
 }

@@ -456,7 +456,7 @@ internal sealed class AggregateFusionExecutionDiagnosticEvents(
         }
     }
 
-    public void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor executor, Exception exception)
+    public void ExecutorUpdateCleanupFailed(string schemaName, IRequestExecutor? executor, Exception exception)
     {
         for (var i = 0; i < listeners.Length; i++)
         {
