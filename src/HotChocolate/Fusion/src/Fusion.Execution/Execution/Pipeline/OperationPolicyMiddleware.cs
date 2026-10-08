@@ -18,6 +18,7 @@ internal sealed class OperationPolicyMiddleware
     private const string Key = "FusionOperationPolicyMiddleware";
 
     private readonly PolicyEvaluator _evaluator;
+    private readonly IAuditProvider _auditProvider;
     private readonly FusionAuthorizationOptions _options;
     private readonly AuthenticationSchemeResolver _schemeResolver;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
@@ -25,12 +26,14 @@ internal sealed class OperationPolicyMiddleware
 
     private OperationPolicyMiddleware(
         PolicyEvaluator evaluator,
+        IAuditProvider auditProvider,
         FusionAuthorizationOptions options,
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
         IInputType booleanType)
     {
         _evaluator = evaluator;
+        _auditProvider = auditProvider;
         _options = options;
         _schemeResolver = schemeResolver;
         _diagnosticEvents = diagnosticEvents;
@@ -61,7 +64,8 @@ internal sealed class OperationPolicyMiddleware
         }
 
         var user = GetUser(context);
-        var trail = context.Features.Get<IAuditTrail>() ?? throw ThrowHelper.OperationPolicyRequiresAuditTrail();
+        var trail = context.Features.Get<AuditTrailSource>()?.GetOrCreate(_auditProvider, context.RequestServices)
+            ?? _auditProvider.CreateTrail(context.RequestServices);
         PolicyDecisions?[]? decisionSets = null;
         IVariableValueCollection[]? updatedVariableSets = null;
 
@@ -202,9 +206,11 @@ internal sealed class OperationPolicyMiddleware
                 var options = fc.SchemaServices.GetRequiredService<FusionAuthorizationOptions>();
                 var schemeResolver = fc.SchemaServices.GetRequiredService<AuthenticationSchemeResolver>();
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
+                var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var booleanType = GetBooleanType(schema);
                 var middleware = new OperationPolicyMiddleware(
                     new PolicyEvaluator(options),
+                    auditProvider,
                     options,
                     schemeResolver,
                     diagnosticEvents,
