@@ -67,6 +67,12 @@ public abstract class RequestContext : IFeatureProvider
     public abstract IDictionary<string, object?> ContextData { get; }
 
     /// <summary>
+    /// Gets or sets the state that the executor shares between the requests of one batch, or
+    /// <c>null</c> when the request is not part of a batch.
+    /// </summary>
+    internal object? BatchState { get; set; }
+
+    /// <summary>
     /// Gets the memory arena that backs request-scoped allocations, or <c>null</c> when none is attached.
     /// </summary>
     internal MemoryArena? Memory => _memory;
