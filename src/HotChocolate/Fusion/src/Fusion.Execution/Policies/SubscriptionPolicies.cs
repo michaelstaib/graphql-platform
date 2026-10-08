@@ -170,6 +170,8 @@ internal sealed class SubscriptionPolicies
                 await _evaluator.CommitFaultedScopeAsync(context, buffer.Replay(), ex);
             }
 
+            _evaluator.ReportError(context, ex);
+
             if (ex is OperationCanceledException)
             {
                 throw ThrowHelper.OperationPolicyFaulted(ex);
@@ -254,9 +256,17 @@ internal sealed class SubscriptionPolicies
             return;
         }
 
-        var scope = _trail.BeginRequest(_info, OperationPolicyMiddleware.GetUser(context));
+        try
+        {
+            var scope = _trail.BeginRequest(_info, OperationPolicyMiddleware.GetUser(context));
 
-        _evaluator.RecordDenied(scope, _plan, _authorization, _variables, ExpiredReason);
-        await scope.CommitAsync(cancellationToken);
+            _evaluator.RecordDenied(scope, _plan, _authorization, _variables, ExpiredReason);
+            await scope.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
+        {
+            _evaluator.ReportError(context, ex);
+            throw;
+        }
     }
 }
