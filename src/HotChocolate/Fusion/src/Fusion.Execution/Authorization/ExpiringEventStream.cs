@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 
@@ -51,6 +52,7 @@ internal sealed class ExpiringEventStream(
 
         private bool IsExpired => _expired.IsCancellationRequested && !_callerToken.IsCancellationRequested;
 
+        [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
         public async ValueTask<bool> MoveNextAsync()
         {
             bool hasNext;
