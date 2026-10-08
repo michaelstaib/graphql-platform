@@ -18,7 +18,8 @@ public class AuthorizationWebSocketTests : FusionTestBase
         """;
 
     [Fact]
-    public async Task ConnectionInit_Should_BeAccepted_When_AnonymousAndRejectedOnUnauthenticated()
+    public async Task
+        SendConnectionInitAsync_Should_AcknowledgeTheConnection_When_AnonymousAndRejectedOnUnauthenticated()
     {
         // arrange
         using var server = CreateSourceSchema("A", Schema);
@@ -38,7 +39,7 @@ public class AuthorizationWebSocketTests : FusionTestBase
     }
 
     [Fact]
-    public async Task ConnectionInit_Should_BeAccepted_When_AnonymousAndNotRejected()
+    public async Task SendConnectionInitAsync_Should_AcknowledgeTheConnection_When_AnonymousAndNotRejected()
     {
         // arrange
         using var server = CreateSourceSchema("A", Schema);
