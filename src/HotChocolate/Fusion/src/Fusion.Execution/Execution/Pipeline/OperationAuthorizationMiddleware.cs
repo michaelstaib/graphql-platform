@@ -64,8 +64,9 @@ internal sealed class OperationAuthorizationMiddleware
         }
 
         var user = GetUser(context);
-        var trail = context.Features.Get<AuditTrailSource>()?.GetOrCreate(_auditProvider, context.RequestServices)
-            ?? _auditProvider.CreateTrail(context.RequestServices);
+        var trail = context.BatchState is BatchExecutionState batchState
+            ? batchState.GetOrCreateAuditTrail(_auditProvider, context.RequestServices)
+            : _auditProvider.CreateTrail(context.RequestServices);
         var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
 
         for (var i = 0; i < variableSets.Length; i++)

@@ -3,7 +3,6 @@ using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Features;
-using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Types;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.ObjectPool;
@@ -76,7 +75,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     private async Task<IExecutionResult> ExecuteAsync(
         IOperationRequest request,
         int? requestIndex,
-        AuditTrailSource? auditTrailSource,
+        BatchExecutionState? batchState,
         CancellationToken cancellationToken)
     {
         IServiceScope? scope = null;
@@ -104,9 +103,9 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
 
             context.AttachMemory(new MemoryArena());
 
-            if (auditTrailSource is not null)
+            if (batchState is not null)
             {
-                context.Features.Set(auditTrailSource);
+                context.BatchState = batchState;
             }
 
             await _requestDelegate(context).ConfigureAwait(false);
@@ -194,7 +193,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
         // results are forwarded into this stream. The forwarded results are backed by the
         // wrapper's memory, so the wrappers must stay alive until the consumer has processed
         // all results; we dispose them once the batch response stream itself is disposed.
-        var unwrappedResults = new ConcurrentQueue<IExecutionResult>();
+        var unwrappedResults = new BatchExecutionState();
 
         var response = new ResponseStream(
             () => CreateResponseStream(requestBatch, unwrappedResults, cancellationToken),
@@ -213,7 +212,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
 
     private async IAsyncEnumerable<OperationResult> CreateResponseStream(
         OperationRequestBatch requestBatch,
-        ConcurrentQueue<IExecutionResult> unwrappedResults,
+        BatchExecutionState unwrappedResults,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         IServiceScope? scope = null;
@@ -229,12 +228,9 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
 
         try
         {
-            var auditTrailSource = new AuditTrailSource();
-
             await foreach (var result in ExecuteBatchStream(
                 requestBatch,
                 requestServices,
-                auditTrailSource,
                 unwrappedResults,
                 ct)
                 .ConfigureAwait(false))
@@ -258,8 +254,7 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     private async IAsyncEnumerable<OperationResult> ExecuteBatchStream(
         OperationRequestBatch requestBatch,
         IServiceProvider services,
-        AuditTrailSource auditTrailSource,
-        ConcurrentQueue<IExecutionResult> unwrappedResults,
+        BatchExecutionState unwrappedResults,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var requests = requestBatch.Requests;
@@ -273,7 +268,6 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
             tasks.Add(ExecuteBatchItemAsync(
                 WithServices(requests[i], services),
                 i,
-                auditTrailSource,
                 completed,
                 unwrappedResults,
                 ct));
@@ -336,12 +330,11 @@ internal sealed class FusionRequestExecutor : IRequestExecutor, IAsyncDisposable
     private async Task ExecuteBatchItemAsync(
         IOperationRequest request,
         int requestIndex,
-        AuditTrailSource auditTrailSource,
         ConcurrentQueue<OperationResult> completed,
-        ConcurrentQueue<IExecutionResult> unwrappedResults,
+        BatchExecutionState unwrappedResults,
         CancellationToken cancellationToken)
     {
-        var result = await ExecuteAsync(request, requestIndex, auditTrailSource, cancellationToken)
+        var result = await ExecuteAsync(request, requestIndex, unwrappedResults, cancellationToken)
             .ConfigureAwait(false);
         await UnwrapBatchItemResultAsync(result, completed, unwrappedResults, cancellationToken);
     }
