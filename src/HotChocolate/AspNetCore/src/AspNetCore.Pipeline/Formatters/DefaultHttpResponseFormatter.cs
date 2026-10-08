@@ -608,8 +608,8 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
 
         // if we are sending a single result with the multipart/mixed header or
         // with a text/event-stream response content-type, we as well will just
-        // respond with an OK status code. A request error without data that explicitly
-        // asks for 401 or 403 keeps that status, because no stream follows it.
+        // respond with an OK status code. A request error without data that requests
+        // 401 or 403 keeps that status.
         if (format.Kind is ResponseContentType.MultiPartMixed or ResponseContentType.EventStream)
         {
             return !result.Data.HasValue
