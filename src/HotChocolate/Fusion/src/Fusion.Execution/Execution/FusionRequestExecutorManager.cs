@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.IO.Hashing;
 using System.Text;
 using System.Text.Json;
@@ -990,13 +991,34 @@ internal sealed class FusionRequestExecutorManager
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
+            List<Exception>? failures = null;
+
             lock (_sync)
             {
                 foreach (var subscription in _subscriptions)
                 {
-                    subscription.Observer.OnNext(eventMessage);
+                    try
+                    {
+                        subscription.Observer.OnNext(eventMessage);
+                    }
+                    catch (Exception ex)
+                    {
+                        (failures ??= []).Add(ex);
+                    }
                 }
             }
+
+            if (failures is null)
+            {
+                return;
+            }
+
+            if (failures.Count == 1)
+            {
+                ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
+
+            throw ThrowHelper.EventObserversFailed(failures);
         }
 
         private void Unsubscribe(Subscription subscription)
