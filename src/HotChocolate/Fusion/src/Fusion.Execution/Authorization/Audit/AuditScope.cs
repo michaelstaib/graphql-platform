@@ -59,6 +59,12 @@ internal abstract class AuditScope : IAuditScope
     /// <inheritdoc />
     public bool IsRecording => true;
 
+    /// <summary>
+    /// Gets the type and message of the failure recorded with <see cref="Fail"/>, or
+    /// <see langword="null"/> when the evaluation did not fail.
+    /// </summary>
+    public string? FailureReason { get; private set; }
+
     /// <inheritdoc />
     public void Record(in AuditLogEntry entry)
     {
@@ -68,6 +74,19 @@ internal abstract class AuditScope : IAuditScope
         }
 
         _entries.Add(entry);
+    }
+
+    /// <inheritdoc />
+    public void Fail(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        if (_isCommitted)
+        {
+            throw ThrowHelper.AuditScopeAlreadyCommitted();
+        }
+
+        FailureReason ??= $"{exception.GetType().FullName}: {exception.Message}";
     }
 
     /// <inheritdoc />

@@ -48,6 +48,17 @@ public interface IAuditScope
     void Record(in AuditLogEntry entry);
 
     /// <summary>
+    /// Records the failure that ended the evaluation of the variable set. The first failure wins.
+    /// </summary>
+    /// <param name="exception">
+    /// The exception that ended the evaluation.
+    /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The scope is already committed.
+    /// </exception>
+    void Fail(Exception exception);
+
+    /// <summary>
     /// Makes the entries durable and freezes the scope.
     /// </summary>
     /// <param name="cancellationToken">

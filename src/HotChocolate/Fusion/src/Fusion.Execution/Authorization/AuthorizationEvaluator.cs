@@ -131,6 +131,8 @@ internal sealed class AuthorizationEvaluator
             group.Add(descriptor, PolicyEvaluationOrder.Get(descriptor.DirectiveName));
         }
 
+        var evaluatedGroups = 0;
+
         foreach (var group in groups.OrderBy(static g => g.Order))
         {
             var entries = new PolicyEvaluationEntry[group.Descriptors.Count];
@@ -170,6 +172,18 @@ internal sealed class AuthorizationEvaluator
 
                 return new AuthorizationEvaluation(null, ex);
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (scope.IsRecording)
+                {
+                    Record(scope, policyContext, isAuthenticated);
+                    RecordUnanswered(scope, groups, evaluatedGroups + 1, variables);
+                }
+
+                throw;
+            }
+
+            evaluatedGroups++;
 
             if (scope.IsRecording)
             {
@@ -303,6 +317,25 @@ internal sealed class AuthorizationEvaluator
             }
 
             scope.Record(CreateAuditEntry(entries[i], verdict));
+        }
+    }
+
+    private static void RecordUnanswered(
+        IAuditScope scope,
+        List<PolicyGroup> groups,
+        int evaluatedGroups,
+        IVariableValueCollection variables)
+    {
+        foreach (var group in groups.OrderBy(static g => g.Order).Skip(evaluatedGroups))
+        {
+            foreach (var descriptor in group.Descriptors)
+            {
+                var entry = new PolicyEvaluationEntry(
+                    descriptor,
+                    CoerceArguments((Selection)descriptor.Selection, variables));
+
+                scope.Record(CreateAuditEntry(entry, default));
+            }
         }
     }
 
