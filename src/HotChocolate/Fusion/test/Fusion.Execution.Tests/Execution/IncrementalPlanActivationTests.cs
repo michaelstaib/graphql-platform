@@ -69,9 +69,9 @@ public class IncrementalPlanActivationTests : FusionTestBase
     [Theory]
     [InlineData(true, true, "a,b")]
     [InlineData(true, false, "a")]
-    [InlineData(false, true, "")]
+    [InlineData(false, true, "b")]
     [InlineData(false, false, "")]
-    public void GetRunningPlans_Should_RequireTheParentPlanToRun_When_DefersAreNested(
+    public void GetRunningPlans_Should_RequireTheNearestActiveAncestorPlanToRun_When_DefersAreNested(
         bool a,
         bool b,
         string expected)
