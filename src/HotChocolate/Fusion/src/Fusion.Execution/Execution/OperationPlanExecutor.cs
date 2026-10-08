@@ -1149,7 +1149,17 @@ internal static partial class OperationPlanExecutor
             && SubscriptionPolicies.GetExpiry(OperationPolicyMiddleware.GetUser(context.RequestContext))
                 is { } expiry)
         {
-            events = authorization.EndOnExpiry(events, responseStream, context.RequestContext, expiry);
+            events = authorization.EndOnExpiry(
+                events,
+                responseStream,
+                context.RequestContext,
+                expiry,
+                failure => context.DiagnosticEvents.SubscriptionEventError(
+                    context,
+                    subscriptionNode,
+                    schemaName,
+                    subscriptionResult.Id,
+                    failure));
         }
 
         try
