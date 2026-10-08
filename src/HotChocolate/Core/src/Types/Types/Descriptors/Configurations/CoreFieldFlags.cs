@@ -53,5 +53,10 @@ internal enum CoreFieldFlags : long
     HasPureResolver = 1L << 37,
     AlwaysProjected = 1L << 38,
     NotProjected = 1L << 39,
-    HasProjectionMiddleware = 1L << 40
+    HasProjectionMiddleware = 1L << 40,
+
+    /// <summary>
+    /// The field opts out of the automatic defaults that are applied to data resolvers.
+    /// </summary>
+    NoDataDefaults = 1L << 41
 }

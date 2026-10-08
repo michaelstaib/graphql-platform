@@ -168,14 +168,14 @@ internal sealed class CostTypeInterceptor : TypeInterceptor
 
         if (configuration is ObjectTypeConfiguration objectTypeDef)
         {
-            if (typeof(IPageInfo).IsAssignableFrom(objectTypeDef.RuntimeType))
-            {
-                return;
-            }
-
             foreach (var fieldDef in objectTypeDef.Fields)
             {
                 if (fieldDef.IsIntrospectionField)
+                {
+                    continue;
+                }
+
+                if ((fieldDef.Flags & CoreFieldFlags.NoDataDefaults) == CoreFieldFlags.NoDataDefaults)
                 {
                     continue;
                 }

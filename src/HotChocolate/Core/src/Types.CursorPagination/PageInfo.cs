@@ -28,6 +28,7 @@ public abstract class PageInfo : IPageInfo
     /// <param name="cancellationToken">
     /// The token that cancels the operation.
     /// </param>
+    [NoDataDefaults]
     [GraphQLDescription(
         "Indicates whether more edges exist following "
         + "the set defined by the clients arguments.")]
@@ -40,6 +41,7 @@ public abstract class PageInfo : IPageInfo
     /// <param name="cancellationToken">
     /// The token that cancels the operation.
     /// </param>
+    [NoDataDefaults]
     [GraphQLDescription(
         "Indicates whether more edges exist prior "
         + "the set defined by the clients arguments.")]
@@ -51,6 +53,7 @@ public abstract class PageInfo : IPageInfo
     /// <param name="cancellationToken">
     /// The token that cancels the operation.
     /// </param>
+    [NoDataDefaults]
     [GraphQLDescription(
         "When paginating backwards, the cursor to continue.")]
     public abstract ValueTask<string?> GetStartCursorAsync(CancellationToken cancellationToken = default);
@@ -61,6 +64,7 @@ public abstract class PageInfo : IPageInfo
     /// <param name="cancellationToken">
     /// The token that cancels the operation.
     /// </param>
+    [NoDataDefaults]
     [GraphQLDescription(
         "When paginating forwards, the cursor to continue.")]
     public abstract ValueTask<string?> GetEndCursorAsync(CancellationToken cancellationToken = default);
@@ -71,6 +75,7 @@ public abstract class PageInfo : IPageInfo
     /// <param name="cancellationToken">
     /// The token that cancels the operation.
     /// </param>
+    [NoDataDefaults]
     [GraphQLDescription(
         "A list of cursors to continue paginating forwards.")]
     [GraphQLType<NonNullType<ListType<NonNullType<PageCursorType>>>>]
@@ -83,6 +88,7 @@ public abstract class PageInfo : IPageInfo
     /// <param name="cancellationToken">
     /// The token that cancels the operation.
     /// </param>
+    [NoDataDefaults]
     [GraphQLDescription(
         "A list of cursors to continue paginating backwards.")]
     [GraphQLType<NonNullType<ListType<NonNullType<PageCursorType>>>>]
