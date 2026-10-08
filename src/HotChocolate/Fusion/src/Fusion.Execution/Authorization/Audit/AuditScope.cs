@@ -7,7 +7,7 @@ namespace HotChocolate.Fusion.Authorization.Audit;
 /// <summary>
 /// A scope that keeps its entries until it is committed and then hands them over once.
 /// </summary>
-public abstract class AuditScope : IAuditScope
+internal abstract class AuditScope : IAuditScope
 {
     private readonly ImmutableArray<AuditLogEntry>.Builder _entries =
         ImmutableArray.CreateBuilder<AuditLogEntry>();
@@ -16,6 +16,9 @@ public abstract class AuditScope : IAuditScope
     /// <summary>
     /// Initializes a new instance of <see cref="AuditScope"/>.
     /// </summary>
+    /// <param name="trail">
+    /// The trail that opens the scope.
+    /// </param>
     /// <param name="info">
     /// The identity of the variable set.
     /// </param>
@@ -26,17 +29,23 @@ public abstract class AuditScope : IAuditScope
     /// The provider data of the scope.
     /// </param>
     protected AuditScope(
+        IAuditTrail trail,
         AuditScopeInfo info,
         ClaimsPrincipal user,
         ImmutableDictionary<string, string> context)
     {
+        ArgumentNullException.ThrowIfNull(trail);
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(context);
 
+        Trail = trail;
         Info = info;
         Subject = AuditSubject.Capture(user);
         Context = context;
     }
+
+    /// <inheritdoc />
+    public IAuditTrail Trail { get; }
 
     /// <inheritdoc />
     public AuditScopeInfo Info { get; }

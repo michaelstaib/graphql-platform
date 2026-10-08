@@ -294,6 +294,36 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task ExecuteBatchAsync_Should_GiveEveryScopeTheSameInvocationId_When_RequestsAreBatched()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(Schema, client, audit);
+        var batch = new OperationRequestBatch(
+            [
+                CreateRequest("{ secret }", Authenticated()).Build(),
+                CreateRequest("{ secret }", Authenticated()).Build()
+            ]);
+
+        // act
+        await using var stream = await executor.ExecuteBatchAsync(
+            batch,
+            TestContext.Current.CancellationToken);
+        await foreach (var item in stream.ReadResultsAsync().WithCancellation(TestContext.Current.CancellationToken))
+        {
+            await item.DisposeAsync();
+        }
+
+        // assert
+        audit.Scopes.OrderBy(s => s.Info.RequestIndex).Select(s => s.Trail.InvocationId).MatchInlineSnapshots(
+            [
+                "invocation-1",
+                "invocation-1"
+            ]);
+    }
+
+    [Fact]
     public async Task CreateTrail_Should_RunWithoutOpeningScopes_When_OperationIsUnprotected()
     {
         // arrange
@@ -474,6 +504,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
 
     private static RecordingAuditScope CreateScope()
         => new(
+            NoOpAuditTrail.Instance,
             new AuditScopeInfo("operation", "plan", -1, 0),
             Authenticated(),
             ImmutableDictionary.Create<string, string>(),

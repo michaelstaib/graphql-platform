@@ -10,6 +10,8 @@ internal sealed class NoOpAuditScope : IAuditScope
     {
     }
 
+    public IAuditTrail Trail => NoOpAuditTrail.Instance;
+
     public AuditScopeInfo Info => default;
 
     public AuditSubject Subject => default;
