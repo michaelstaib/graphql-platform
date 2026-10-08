@@ -145,8 +145,72 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             [
                 "Query.ghost | @policy(ghost) | scopes=[] | args={} | Unanswered | reason=No policy provider knows the policy 'ghost' of the directive '@policy'. | data=-"
             ]);
+        Assert.Equal(
+            "System.InvalidOperationException: No policy provider knows the policy 'ghost' of the directive '@policy'.",
+            scope.FailureReason);
         Assert.Equal(1, scope.CommitCount);
         Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_CommitScopeWithFailureReason_When_PolicyThrows()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(
+            Schema,
+            client,
+            audit,
+            policies => policies.Evaluate("owner", (_, _) => throw new PolicyFault("boom")));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ secret owned(id: \"1\") guarded(id: \"7\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var scope = Assert.Single(audit.Scopes);
+        scope.Entries.Select(Format).MatchInlineSnapshots(
+            [
+                "Query.secret | @authenticated | scopes=[] | args={} | Allowed | reason=- | data=-",
+                "Query.owned | @policy(owner) | scopes=[] | args={id:\"1\"} | Unanswered | reason=- | data=-",
+                "Query.guarded | @policy(finance) | scopes=[] | args={id:\"7\"} | Unanswered | reason=- | data=-"
+            ]);
+        Assert.Equal("HotChocolate.Fusion.Authorization.AuditTrailTests+PolicyFault: boom", scope.FailureReason);
+        Assert.Equal(1, scope.CommitCount);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_LeaveScopeUncommitted_When_EvaluationIsCanceled()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(
+            Schema,
+            client,
+            audit,
+            policies => policies.Evaluate("owner", (_, _) => throw new OperationCanceledException()));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ owned(id: \"1\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(0, Assert.Single(audit.Scopes).CommitCount);
     }
 
     [Fact]
@@ -501,6 +565,8 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
                     });
                 configure?.Invoke(builder);
             });
+
+    private sealed class PolicyFault(string message) : Exception(message);
 
     private static RecordingAuditScope CreateScope()
         => new(
