@@ -90,10 +90,16 @@ internal sealed class OperationPolicyMiddleware
                     i,
                     context.RequestAborted);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (PolicyEvaluator.IsFault(ex, context.RequestAborted))
             {
                 scope.Fail(ex);
-                await scope.CommitAsync(context.RequestAborted);
+                await CommitFaultedScopeAsync(context, scope);
+
+                if (ex is OperationCanceledException)
+                {
+                    throw ThrowHelper.OperationPolicyFaulted(ex);
+                }
+
                 throw;
             }
 
@@ -155,6 +161,18 @@ internal sealed class OperationPolicyMiddleware
         }
 
         await next(context);
+    }
+
+    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope)
+    {
+        try
+        {
+            await scope.CommitAsync(context.RequestAborted);
+        }
+        catch (Exception commitFailure)
+        {
+            _diagnosticEvents.RequestError(context, commitFailure);
+        }
     }
 
     private async ValueTask RejectAsync(RequestContext context, SelectionDenial denial)
