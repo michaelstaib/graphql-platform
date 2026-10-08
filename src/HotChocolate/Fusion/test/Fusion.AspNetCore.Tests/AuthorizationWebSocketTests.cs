@@ -8,8 +8,6 @@ namespace HotChocolate.Fusion;
 
 public class AuthorizationWebSocketTests : FusionTestBase
 {
-    private const int Unauthorized = 4401;
-
     private const string Schema =
         """
         directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
@@ -20,7 +18,7 @@ public class AuthorizationWebSocketTests : FusionTestBase
         """;
 
     [Fact]
-    public async Task ConnectionInit_Should_CloseWithUnauthorized_When_AnonymousAndRejectedOnUnauthenticated()
+    public async Task ConnectionInit_Should_BeAccepted_When_AnonymousAndRejectedOnUnauthenticated()
     {
         // arrange
         using var server = CreateSourceSchema("A", Schema);
@@ -33,11 +31,10 @@ public class AuthorizationWebSocketTests : FusionTestBase
 
         // act
         await SendConnectionInitAsync(webSocket);
-        var closed = await ReceiveCloseAsync(webSocket);
+        var message = await ReceiveTextAsync(webSocket);
 
         // assert
-        Assert.Equal((WebSocketCloseStatus)Unauthorized, closed.Status);
-        Assert.Equal("Unauthorized", closed.Description);
+        Assert.Equal("""{"type":"connection_ack"}""", message);
     }
 
     [Fact]
@@ -85,14 +82,5 @@ public class AuthorizationWebSocketTests : FusionTestBase
         var received = await webSocket.ReceiveAsync(buffer, TestContext.Current.CancellationToken);
 
         return Encoding.UTF8.GetString(buffer, 0, received.Count);
-    }
-
-    private static async Task<(WebSocketCloseStatus? Status, string? Description)> ReceiveCloseAsync(
-        WebSocket webSocket)
-    {
-        var buffer = new byte[1024];
-        var received = await webSocket.ReceiveAsync(buffer, TestContext.Current.CancellationToken);
-
-        return (received.CloseStatus, received.CloseStatusDescription);
     }
 }
