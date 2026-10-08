@@ -3,7 +3,10 @@ using HotChocolate.Fusion.Authorization.Audit;
 
 namespace HotChocolate.Fusion.Authorization;
 
-internal sealed class FaultingAuditScope(IAuditScope inner, int failingCall, Exception failure) : IAuditScope
+internal sealed class FaultingAuditScope(
+    IAuditScope inner,
+    (int Call, Exception Failure)? recordFailure,
+    Exception? failFailure) : IAuditScope
 {
     private int _recordCalls;
 
@@ -19,15 +22,23 @@ internal sealed class FaultingAuditScope(IAuditScope inner, int failingCall, Exc
 
     public void Record(in AuditLogEntry entry)
     {
-        if (++_recordCalls == failingCall)
+        if (++_recordCalls == recordFailure?.Call)
         {
-            throw failure;
+            throw recordFailure.Value.Failure;
         }
 
         inner.Record(entry);
     }
 
-    public void Fail(Exception exception) => inner.Fail(exception);
+    public void Fail(Exception exception)
+    {
+        if (failFailure is not null)
+        {
+            throw failFailure;
+        }
+
+        inner.Fail(exception);
+    }
 
     public ValueTask CommitAsync(CancellationToken cancellationToken) => inner.CommitAsync(cancellationToken);
 }
