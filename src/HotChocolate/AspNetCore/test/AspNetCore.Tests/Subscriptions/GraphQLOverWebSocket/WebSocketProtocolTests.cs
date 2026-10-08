@@ -197,6 +197,30 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             });
 
     [Fact]
+    public Task Connection_Unauthorized_Should_Close_With_Unauthorized()
+        => TryTest(
+            async ct =>
+            {
+                // arrange
+                var interceptor = new UnauthorizedWithMessageInterceptor("Sign in first.");
+                using var testServer = CreateStarWarsServer(
+                    configureServices: s => s
+                        .AddGraphQLServer()
+                        .AddSocketSessionInterceptor(_ => interceptor));
+                var client = CreateWebSocketClient(testServer);
+                using var webSocket = await client.ConnectAsync(SubscriptionUri, ct);
+
+                // act
+                await webSocket.SendConnectionInitAsync(ct);
+
+                // assert
+                await webSocket.ReceiveServerMessageAsync(ct);
+                Assert.True(webSocket.CloseStatus.HasValue, "Connection is closed.");
+                Assert.Equal(CloseReasons.Unauthorized, (int)webSocket.CloseStatus.Value);
+                Assert.Equal("Sign in first.", webSocket.CloseStatusDescription);
+            });
+
+    [Fact]
     public Task Send_Connect_Accept_Explicit_Route()
         => TryTest(
             async ct =>
@@ -1168,6 +1192,16 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             IOperationMessagePayload connectionInitMessage,
             CancellationToken cancellationToken = default)
             => new(ConnectionStatus.Reject(message));
+    }
+
+    private sealed class UnauthorizedWithMessageInterceptor(string message)
+        : DefaultSocketSessionInterceptor
+    {
+        public override ValueTask<ConnectionStatus> OnConnectAsync(
+            ISocketSession session,
+            IOperationMessagePayload connectionInitMessage,
+            CancellationToken cancellationToken = default)
+            => new(ConnectionStatus.Unauthorized(message));
     }
 
     private sealed class SlowConnectInterceptor(TimeSpan delay)
