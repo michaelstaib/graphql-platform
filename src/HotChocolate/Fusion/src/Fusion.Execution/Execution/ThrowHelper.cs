@@ -24,6 +24,9 @@ internal static class ThrowHelper
     public static InvalidOperationException AuditScopeAlreadyCommitted()
         => new(FusionExecutionResources.AuditScope_AlreadyCommitted);
 
+    public static InvalidOperationException OperationAuthorizationFaulted(Exception fault)
+        => new(FusionExecutionResources.OperationAuthorization_EvaluationFaulted, fault);
+
     public static InvalidOperationException OperationAuthorizationRequiresBooleanType()
         => new(FusionExecutionResources.OperationAuthorization_BooleanTypeMissing);
 

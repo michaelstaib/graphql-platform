@@ -226,7 +226,52 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ExecuteAsync_Should_LeaveScopeUncommitted_When_EvaluationIsCanceled()
+    public async Task ExecuteAsync_Should_LeaveScopeUncommitted_When_RequestIsCanceled()
+    {
+        // arrange
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(
+            Schema,
+            client,
+            audit,
+            policies => policies.Evaluate(
+                "owner",
+                (_, _) =>
+                {
+                    cts.Cancel();
+                    throw new OperationCanceledException(cts.Token);
+                }));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ owned(id: \"1\") }", Authenticated()).Build(),
+            cts.Token);
+
+        // assert
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=0 | failure=-
+            """);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The GraphQL request execution was canceled.",
+                  "extensions": {
+                    "code": "HC0049"
+                  }
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_CommitScopeWithFailureReason_When_PolicyCancelsWithoutRequestCancellation()
     {
         // arrange
         var client = new AuthorizationTestClient(Data);
@@ -235,7 +280,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             Schema,
             client,
             audit,
-            policies => policies.Evaluate("owner", (_, _) => throw new OperationCanceledException()));
+            policies => policies.Evaluate("owner", (_, _) => throw new OperationCanceledException("not canceled")));
 
         // act
         await using var result = await executor.ExecuteAsync(
@@ -243,7 +288,135 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(0, Assert.Single(audit.Scopes).CommitCount);
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=1 | failure=System.OperationCanceledException: not canceled
+              Query.owned | @policy(owner) | scopes=[] | args={id:"1"} | Unanswered | reason=- | data=-
+            """);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_RecordRemainingEntriesAsUnanswered_When_EvaluatorFails()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client)
+        {
+            RecordFailure = (2, new InvalidOperationException("record"))
+        };
+        var executor = await CreateAuditedExecutorAsync(Schema, client, audit);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ secret owned(id: \"1\") guarded(id: \"7\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=1 | failure=System.InvalidOperationException: record
+              Query.secret | @authenticated | scopes=[] | args={} | Allowed | reason=- | data=-
+              Query.owned | @policy(owner) | scopes=[] | args={id:"1"} | Allowed | reason=- | data=-
+              Query.guarded | @policy(finance) | scopes=[] | args={id:"7"} | Unanswered | reason=- | data=-
+            """);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_PropagateThePolicyFaultAndReportTheCommitFailure_When_CommitFailsAfterAFault()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var listener = new CapturingExecutionDiagnosticEventListener();
+        var audit = new RecordingAuditProvider(client) { CommitFailure = new InvalidOperationException("commit") };
+        var executor = await CreateAuditedExecutorAsync(
+            Schema,
+            client,
+            audit,
+            policies => policies.Evaluate("owner", (_, _) => throw new InvalidOperationException("boom")),
+            builder => builder.AddDiagnosticEventListener(_ => listener));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ owned(id: \"1\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=1 | failure=System.InvalidOperationException: boom
+              Query.owned | @policy(owner) | scopes=[] | args={id:"1"} | Unanswered | reason=- | data=-
+            """);
+        listener.RequestErrors.Select(e => $"{e.GetType().FullName}: {e.Message}").MatchInlineSnapshots(
+            [
+                "System.InvalidOperationException: commit",
+                "System.InvalidOperationException: boom"
+            ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_FailClosed_When_CommitFailsWithoutAFault()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client) { CommitFailure = new InvalidOperationException("commit") };
+        var executor = await CreateAuditedExecutorAsync(Schema, client, audit);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ secret }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=1
+            scope trail=1 | request=-1 | set=0 | commits=1 | failure=-
+              Query.secret | @authenticated | scopes=[] | args={} | Allowed | reason=- | data=-
+            """);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error"
+                }
+              ]
+            }
+            """);
+        Assert.Empty(client.Requests);
     }
 
     [Fact]
@@ -468,7 +641,10 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
         }
 
         // assert
-        Assert.Equal(0, audit.TrailCount);
+        Format(audit).MatchInlineSnapshot(
+            """
+            trails=0
+            """);
     }
 
     [Fact]
@@ -640,7 +816,8 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             new AuditScopeInfo("operation", "plan", -1, 0),
             Authenticated(),
             ImmutableDictionary.Create<string, string>(),
-            static () => 0);
+            static () => 0,
+            null);
 
     private static AuditLogEntry CreateEntry()
         => new(
@@ -672,6 +849,23 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
 
         return $"authenticated={subject.IsAuthenticated} | name={subject.Name ?? "-"} "
             + $"| type={subject.AuthenticationType ?? "-"} | claims=[{claims}]";
+    }
+
+    private static string Format(RecordingAuditProvider provider)
+    {
+        var lines = new List<string> { $"trails={provider.TrailCount}" };
+
+        foreach (var scope in provider.Scopes.OrderBy(s => s.Info.RequestIndex).ThenBy(s => s.Info.VariableSetIndex))
+        {
+            var info = scope.Info;
+
+            lines.Add(
+                $"scope trail={scope.Context["trail"]} | request={info.RequestIndex} | set={info.VariableSetIndex} "
+                + $"| commits={scope.CommitCount} | failure={scope.FailureReason ?? "-"}");
+            lines.AddRange(scope.Entries.Select(e => "  " + Format(e)));
+        }
+
+        return string.Join("\n", lines);
     }
 
     private static string Format(RecordingAuditScope scope)

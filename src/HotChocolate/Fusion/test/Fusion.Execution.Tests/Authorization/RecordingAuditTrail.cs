@@ -18,9 +18,13 @@ internal sealed class RecordingAuditTrail(
             info,
             user,
             ImmutableDictionary<string, string>.Empty.Add("trail", index.ToString()),
-            countSourceSchemaRequests);
+            countSourceSchemaRequests,
+            provider.CommitFailure);
 
         provider.AddScope(scope);
-        return scope;
+
+        return provider.RecordFailure is { } recordFailure
+            ? new FaultingAuditScope(scope, recordFailure.Call, recordFailure.Failure)
+            : scope;
     }
 }
