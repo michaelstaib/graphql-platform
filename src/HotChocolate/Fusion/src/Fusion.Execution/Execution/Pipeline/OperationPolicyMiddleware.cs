@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -227,7 +228,7 @@ internal sealed class OperationPolicyMiddleware
                 variables,
                 variableValues,
                 decisions,
-                deniedDescriptors,
+                deniedDescriptors.ToFrozenSet(),
                 _booleanType,
                 _timeProvider));
     }
