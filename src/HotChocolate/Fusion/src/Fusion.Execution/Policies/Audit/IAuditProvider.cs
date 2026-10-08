@@ -7,8 +7,8 @@ public interface IAuditProvider
 {
     /// <summary>
     /// Creates the trail for one executor invocation, which is a single request, a request batch,
-    /// or a variable batch. The method runs for every invocation, including those that do not
-    /// touch a protected selection.
+    /// or a variable batch. The method runs once per invocation, on the first protected variable
+    /// set, and not at all for an invocation without a protected operation.
     /// </summary>
     /// <param name="requestServices">
     /// The request scoped service provider of the invocation.
