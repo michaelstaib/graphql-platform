@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using HotChocolate.AspNetCore.Subscriptions.Protocols;
 using HotChocolate.AspNetCore.Subscriptions.Protocols.GraphQLOverWebSocket;
 using HotChocolate.AspNetCore.Tests.Utilities;
 using HotChocolate.AspNetCore.Tests.Utilities.Subscriptions.GraphQLOverWebSocket;
+using HotChocolate.Collections.Immutable;
 using HotChocolate.Execution;
 using HotChocolate.Language;
 using HotChocolate.PersistedOperations;
@@ -777,6 +779,43 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             });
 
     [Fact]
+    public Task SendSubscribeAsync_Should_CloseWith4401_When_ResponseStreamEndsRequestingUnauthorized()
+        => TryTest(
+            async ct =>
+            {
+                // arrange
+                using var testServer = CreateStarWarsServer(
+                    configureServices: s => s
+                        .AddGraphQL()
+                        .UseRequest(_ => context =>
+                        {
+                            ResponseStream? stream = null;
+                            stream = new ResponseStream(() => ReadUnauthorizedEndingEventsAsync(stream!));
+                            context.Result = stream;
+                            return ValueTask.CompletedTask;
+                        }));
+                var client = CreateWebSocketClient(testServer);
+                using var webSocket = await ConnectToServerAsync(client, ct);
+
+                var payload = new SubscribePayload("subscription { onReview(episode: NEW_HOPE) { stars } }");
+                const string subscriptionId = "abc";
+
+                // act
+                await webSocket.SendSubscribeAsync(subscriptionId, payload, ct);
+
+                // assert
+                var message = await WaitForMessage(webSocket, Messages.Next, ct);
+                Assert.NotNull(message);
+                Assert.Equal(
+                    """{"id":"abc","type":"next","payload":{"extensions":{"event":1}}}""",
+                    message.RootElement.GetRawText());
+                await webSocket.ReceiveServerMessageAsync(ct);
+                Assert.True(webSocket.CloseStatus.HasValue, "Connection is closed.");
+                Assert.Equal(CloseReasons.Unauthorized, (int)webSocket.CloseStatus.Value);
+                Assert.Equal("Unauthorized", webSocket.CloseStatusDescription);
+            });
+
+    [Fact]
     public Task Connection_Init_Received_In_Time_Should_Not_Timeout_When_OnConnect_Is_Slow()
         => TryTest(
             async ct =>
@@ -1192,6 +1231,19 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             IOperationMessagePayload connectionInitMessage,
             CancellationToken cancellationToken = default)
             => new(ConnectionStatus.Reject(message));
+    }
+
+    private static async IAsyncEnumerable<OperationResult> ReadUnauthorizedEndingEventsAsync(
+        ResponseStream stream)
+    {
+        yield return new OperationResult(
+            ImmutableOrderedDictionary<string, object?>.Empty.Add("event", 1));
+
+        stream.ContextData = stream.ContextData.SetItem(
+            ExecutionContextData.HttpStatusCode,
+            HttpStatusCode.Unauthorized);
+
+        await Task.CompletedTask;
     }
 
     private sealed class UnauthorizedWithMessageInterceptor(string message)
