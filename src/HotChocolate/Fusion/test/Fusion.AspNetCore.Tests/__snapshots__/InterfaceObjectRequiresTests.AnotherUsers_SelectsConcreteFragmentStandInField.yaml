@@ -19,21 +19,21 @@ response:
       "data": {
         "anotherUsers": [
           {
+            "age": 123,
             "id": "Tm9kZVdpdGhOYW1lOjE1MTExNjMxNjg=",
             "name": "User: Tm9kZVdpdGhOYW1lOjE1MTExNjMxNjg=",
-            "age": 123,
             "score": 123
           },
           {
+            "age": 123,
             "id": "Tm9kZVdpdGhOYW1lOjI3MzI5MjUzNTA=",
             "name": "User: Tm9kZVdpdGhOYW1lOjI3MzI5MjUzNTA=",
-            "age": 123,
             "score": 123
           },
           {
+            "age": 123,
             "id": "Tm9kZVdpdGhOYW1lOjE2NTc0MzcyNTk=",
             "name": "User: Tm9kZVdpdGhOYW1lOjE2NTc0MzcyNTk=",
-            "age": 123,
             "score": 123
           }
         ]
@@ -68,12 +68,12 @@ sourceSchemas:
             query testQuery_40a12cd0_2($__fusion_1_id: ID!) {
               nodeById(id: $__fusion_1_id) {
                 __typename
-                name
                 ... on User {
                   age
                   id
                   name
                 }
+                name
               }
             }
           variables: |
@@ -96,9 +96,9 @@ sourceSchemas:
                 "data": {
                   "nodeById": {
                     "__typename": "User",
-                    "name": "User: Tm9kZVdpdGhOYW1lOjE1MTExNjMxNjg=",
                     "age": 123,
-                    "id": "Tm9kZVdpdGhOYW1lOjE1MTExNjMxNjg="
+                    "id": "Tm9kZVdpdGhOYW1lOjE1MTExNjMxNjg=",
+                    "name": "User: Tm9kZVdpdGhOYW1lOjE1MTExNjMxNjg="
                   }
                 }
               }
@@ -107,9 +107,9 @@ sourceSchemas:
                 "data": {
                   "nodeById": {
                     "__typename": "User",
-                    "name": "User: Tm9kZVdpdGhOYW1lOjI3MzI5MjUzNTA=",
                     "age": 123,
-                    "id": "Tm9kZVdpdGhOYW1lOjI3MzI5MjUzNTA="
+                    "id": "Tm9kZVdpdGhOYW1lOjI3MzI5MjUzNTA=",
+                    "name": "User: Tm9kZVdpdGhOYW1lOjI3MzI5MjUzNTA="
                   }
                 }
               }
@@ -118,9 +118,9 @@ sourceSchemas:
                 "data": {
                   "nodeById": {
                     "__typename": "User",
-                    "name": "User: Tm9kZVdpdGhOYW1lOjE2NTc0MzcyNTk=",
                     "age": 123,
-                    "id": "Tm9kZVdpdGhOYW1lOjE2NTc0MzcyNTk="
+                    "id": "Tm9kZVdpdGhOYW1lOjE2NTc0MzcyNTk=",
+                    "name": "User: Tm9kZVdpdGhOYW1lOjE2NTc0MzcyNTk="
                   }
                 }
               }
@@ -221,9 +221,6 @@ operationPlan:
         query testQuery {
           anotherUsers {
             __typename @fusion__requirement
-            id
-            id @fusion__requirement
-            name
             ... on User {
               age
               id
@@ -231,6 +228,9 @@ operationPlan:
               name
               score
             }
+            id
+            id @fusion__requirement
+            name
           }
         }
       name: testQuery
@@ -254,12 +254,12 @@ operationPlan:
         query testQuery_40a12cd0_2($__fusion_1_id: ID!) {
           nodeById(id: $__fusion_1_id) {
             __typename
-            name
             ... on User {
               age
               id
               name
             }
+            name
           }
         }
       source: $.nodeById

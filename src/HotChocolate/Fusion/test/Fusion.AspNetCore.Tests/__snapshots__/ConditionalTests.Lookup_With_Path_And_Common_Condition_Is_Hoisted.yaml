@@ -109,9 +109,9 @@ operationPlan:
     - document: |
         query testQuery($s: Boolean!, $x: Boolean!) {
           thing {
-            id @fusion__requirement
             delta @skip(if: $s) @include(if: $x)
             epsilon @skip(if: $s)
+            id @fusion__requirement
           }
         }
       name: testQuery
