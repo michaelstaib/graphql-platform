@@ -16,9 +16,6 @@ public sealed class AuthenticatedPolicy : IPolicy
     public static AuthenticatedPolicy Instance { get; } = new();
 
     /// <inheritdoc />
-    public bool ReevaluatesPerEvent => false;
-
-    /// <inheritdoc />
     public ValueTask EvaluateAsync(
         PolicyEvaluationContext context,
         CancellationToken cancellationToken)

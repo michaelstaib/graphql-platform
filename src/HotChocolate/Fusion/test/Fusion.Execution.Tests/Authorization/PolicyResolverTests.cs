@@ -108,8 +108,6 @@ public class PolicyResolverTests
 
     private sealed class StubPolicy : IPolicy
     {
-        public bool ReevaluatesPerEvent => false;
-
         public ValueTask EvaluateAsync(
             PolicyEvaluationContext context,
             CancellationToken cancellationToken)

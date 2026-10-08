@@ -4,8 +4,6 @@ namespace HotChocolate.Fusion.Authorization;
 
 internal sealed class UnresolvedPolicy(string directiveName, string? policyName) : IPolicy
 {
-    public bool ReevaluatesPerEvent => false;
-
     public ValueTask EvaluateAsync(
         PolicyEvaluationContext context,
         CancellationToken cancellationToken)

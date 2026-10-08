@@ -38,9 +38,6 @@ public sealed class RequiresScopesPolicy : IPolicy
     }
 
     /// <inheritdoc />
-    public bool ReevaluatesPerEvent => false;
-
-    /// <inheritdoc />
     public ValueTask EvaluateAsync(
         PolicyEvaluationContext context,
         CancellationToken cancellationToken)
