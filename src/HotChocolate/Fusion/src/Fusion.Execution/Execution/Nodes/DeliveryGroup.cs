@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Execution;
 using HotChocolate.Language;
 
@@ -60,5 +61,41 @@ public sealed record DeliveryGroup(
         }
 
         return value.Value;
+    }
+
+    /// <summary>
+    /// Determines which delivery groups are active for the variable set, indexed by
+    /// <see cref="Id"/>. The caller returns the result with <see cref="ActivationBits.Return"/>.
+    /// </summary>
+    internal static ActivationBits GetActive(
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        IVariableValueCollection variables)
+    {
+        var maxId = -1;
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            maxId = Math.Max(maxId, deliveryGroup.Id);
+        }
+
+        var active = new ActivationBits(maxId + 1);
+
+        try
+        {
+            foreach (var deliveryGroup in deliveryGroups)
+            {
+                if (deliveryGroup.IsActive(variables))
+                {
+                    active.Set(deliveryGroup.Id);
+                }
+            }
+
+            return active;
+        }
+        catch
+        {
+            active.Return();
+            throw;
+        }
     }
 }
