@@ -36,7 +36,7 @@ public class IncrementalPlanActivationTests : FusionTestBase
     }
 
     [Fact]
-    public void DoesNotRun_Should_MatchTheRunningBits_When_PlanHasMoreThan64IncrementalPlans()
+    public void DoesNotRun_Should_ReadTheRunningBitOfTheOperationsPlan_When_PlanHasMoreThan64IncrementalPlans()
     {
         // arrange
         var schema = CreateSchema();
@@ -49,14 +49,15 @@ public class IncrementalPlanActivationTests : FusionTestBase
         {
             // act
             running = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, activeDeliveryGroups);
+            var runningPlans = plan.IncrementalPlans
+                .Where(p => !plan.DoesNotRun(running, p.Operation))
+                .Select(p => p.DeliveryGroups[0].IfVariable!)
+                .ToArray();
+            var rootDoesNotRun = plan.DoesNotRun(running, plan.Operation);
 
             // assert
-            Assert.Equal(
-                ["d65"],
-                plan.IncrementalPlans
-                    .Where(p => !IncrementalPlan.DoesNotRun(plan.IncrementalPlans, running, p.Operation))
-                    .Select(p => p.DeliveryGroups[0].IfVariable));
-            Assert.False(IncrementalPlan.DoesNotRun(plan.IncrementalPlans, running, plan.Operation));
+            Assert.Equal(["d65"], runningPlans);
+            Assert.False(rootDoesNotRun);
         }
         finally
         {
