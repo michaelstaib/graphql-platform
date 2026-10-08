@@ -64,8 +64,9 @@ internal sealed class OperationPolicyMiddleware
         }
 
         var user = GetUser(context);
-        var trail = context.Features.Get<AuditTrailSource>()?.GetOrCreate(_auditProvider, context.RequestServices)
-            ?? _auditProvider.CreateTrail(context.RequestServices);
+        var trail = context.BatchState is BatchExecutionState batchState
+            ? batchState.GetOrCreateAuditTrail(_auditProvider, context.RequestServices)
+            : _auditProvider.CreateTrail(context.RequestServices);
         PolicyDecisions?[]? decisionSets = null;
         IVariableValueCollection[]? updatedVariableSets = null;
 
