@@ -720,4 +720,101 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
         result.MatchInlineSnapshot(expected);
         Assert.Single(recorder.Records);
     }
+
+    [Fact]
+    public async Task InvokeAsync_Should_SkipTheDeniedSelectionOfEveryFetch_When_DeferIsEnabled()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var recorder = new InMemoryPolicyRecorder();
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            recorder,
+            policies => policies.Deny("finance"));
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer(if: $d) { margin } } }",
+                Authenticated())
+            .SetVariableValues("""{"d":true}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        await DrainAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        client.Requests.MatchInlineSnapshots(
+            [
+                """
+                query Op_98828f15_1($d: Boolean!, $__fusion_auth_2: Boolean!) {
+                  product {
+                    id
+                    ... @skip(if: $d) {
+                      margin @skip(if: $__fusion_auth_2)
+                    }
+                  }
+                }
+                """,
+                """
+                query Op_defer_1($__fusion_auth_1: Boolean!) {
+                  product {
+                    margin @skip(if: $__fusion_auth_1)
+                  }
+                }
+                """
+            ]);
+        Assert.Single(recorder.Records);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Should_SkipTheDeniedSelectionOfEveryFetch_When_DeferIsDisabled()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var recorder = new InMemoryPolicyRecorder();
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            recorder,
+            policies => policies.Deny("finance"));
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer(if: $d) { margin } } }",
+                Authenticated())
+            .SetVariableValues("""{"d":false}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        await DrainAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        client.Requests.MatchInlineSnapshots(
+            [
+                """
+                query Op_98828f15_1($d: Boolean!, $__fusion_auth_2: Boolean!) {
+                  product {
+                    id
+                    ... @skip(if: $d) {
+                      margin @skip(if: $__fusion_auth_2)
+                    }
+                  }
+                }
+                """
+            ]);
+        Assert.Single(recorder.Records);
+    }
+
+    private static async Task DrainAsync(IExecutionResult result, CancellationToken cancellationToken)
+    {
+        if (result is ResponseStream stream)
+        {
+            await foreach (var _ in stream.ReadResultsAsync().WithCancellation(cancellationToken))
+            {
+            }
+        }
+    }
 }

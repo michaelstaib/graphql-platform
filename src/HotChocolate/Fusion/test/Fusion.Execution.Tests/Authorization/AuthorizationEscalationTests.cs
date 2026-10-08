@@ -1,4 +1,3 @@
-using System.Net;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization.InMemory;
 using HotChocolate.Fusion.Configuration;
@@ -57,9 +56,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
               ]
             }
             """);
-        var contextData = result.ExpectOperationResult().ContextData;
-        Assert.Equal(HttpStatusCode.Unauthorized, contextData[ExecutionContextData.HttpStatusCode]);
-        Assert.Equal("Bearer", contextData[ExecutionContextData.WwwAuthenticateHeaderValue]);
+        DescribeTransport(result).MatchInlineSnapshot(
+            """
+            status: Unauthorized
+            challenge: Bearer
+            """);
         Assert.Empty(client.Requests);
     }
 
@@ -88,7 +89,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
               }
             }
             """);
-        Assert.False(result.ExpectOperationResult().ContextData.ContainsKey(ExecutionContextData.HttpStatusCode));
+        DescribeTransport(result).MatchInlineSnapshot(
+            """
+            status: <none>
+            challenge: <none>
+            """);
         Assert.Single(client.Requests);
     }
 
@@ -119,9 +124,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
               ]
             }
             """);
-        var contextData = result.ExpectOperationResult().ContextData;
-        Assert.Equal(HttpStatusCode.Forbidden, contextData[ExecutionContextData.HttpStatusCode]);
-        Assert.False(contextData.ContainsKey(ExecutionContextData.WwwAuthenticateHeaderValue));
+        DescribeTransport(result).MatchInlineSnapshot(
+            """
+            status: Forbidden
+            challenge: <none>
+            """);
         Assert.Empty(client.Requests);
     }
 
@@ -147,9 +154,11 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        var contextData = result.ExpectOperationResult().ContextData;
-        Assert.Equal(HttpStatusCode.Unauthorized, contextData[ExecutionContextData.HttpStatusCode]);
-        Assert.False(contextData.ContainsKey(ExecutionContextData.WwwAuthenticateHeaderValue));
+        DescribeTransport(result).MatchInlineSnapshot(
+            """
+            status: Unauthorized
+            challenge: <none>
+            """);
     }
 
     [Fact]
@@ -229,6 +238,19 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             }
             """);
         Assert.Empty(client.Requests);
+    }
+
+    private static string DescribeTransport(IExecutionResult result)
+    {
+        var contextData = result.ExpectOperationResult().ContextData;
+        var status = contextData.TryGetValue(ExecutionContextData.HttpStatusCode, out var statusCode)
+            ? statusCode
+            : "<none>";
+        var challenge = contextData.TryGetValue(ExecutionContextData.WwwAuthenticateHeaderValue, out var header)
+            ? header
+            : "<none>";
+
+        return $"status: {status}\nchallenge: {challenge}";
     }
 
     private static Task<IRequestExecutor> CreateEscalatingExecutorAsync(

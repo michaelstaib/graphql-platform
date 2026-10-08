@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Diagnostics;
 
@@ -8,7 +9,7 @@ internal sealed class CapturingExecutionDiagnosticEventListener : FusionExecutio
 {
     private readonly ConcurrentQueue<Exception> _requestErrors = new();
 
-    public IReadOnlyCollection<Exception> RequestErrors => _requestErrors;
+    public ImmutableArray<Exception> RequestErrors => [.. _requestErrors];
 
     public override void RequestError(RequestContext context, Exception error)
         => _requestErrors.Enqueue(error);

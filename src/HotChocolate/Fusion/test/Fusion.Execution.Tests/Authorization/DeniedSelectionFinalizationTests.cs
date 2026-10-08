@@ -609,6 +609,143 @@ public class DeniedSelectionFinalizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task Complete_Should_ReportDeniedSelectionOfTheSequence_When_DeferIsEnabled()
+    {
+        // arrange
+        var executor = await CreateErrorExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer(if: $d) { name price } } }")
+            .SetVariableValues("""{"d":true}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "product": {
+                      "id": "1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "0",
+                      "path": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "0",
+                      "errors": [
+                        {
+                          "message": "The current user is not authenticated.",
+                          "path": [
+                            "product",
+                            "name"
+                          ],
+                          "extensions": {
+                            "code": "AUTH_NOT_AUTHENTICATED"
+                          }
+                        },
+                        {
+                          "message": "The current user is not authenticated.",
+                          "path": [
+                            "product",
+                            "price"
+                          ],
+                          "extensions": {
+                            "code": "AUTH_NOT_AUTHENTICATED"
+                          }
+                        }
+                      ],
+                      "data": {
+                        "name": null,
+                        "price": null
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "0"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task Complete_Should_ReportDeniedSelectionOfTheSequence_When_DeferIsDisabled()
+    {
+        // arrange
+        var executor = await CreateErrorExecutorAsync();
+        var request = CreateRequest(
+                "query($d: Boolean!) { product { id ... @defer(if: $d) { name price } } }")
+            .SetVariableValues("""{"d":false}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "errors": [
+                    {
+                      "message": "The current user is not authenticated.",
+                      "path": [
+                        "product",
+                        "name"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHENTICATED"
+                      }
+                    },
+                    {
+                      "message": "The current user is not authenticated.",
+                      "path": [
+                        "product",
+                        "price"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHENTICATED"
+                      }
+                    }
+                  ],
+                  "data": {
+                    "product": {
+                      "id": "1",
+                      "name": null,
+                      "price": null
+                    }
+                  },
+                  "hasNext": false
+                }
+                """
+            ]);
+    }
+
+    [Fact]
     public async Task Complete_Should_DenyTheSelection_When_PolicyLeavesTheEntryUnanswered()
     {
         // arrange
@@ -672,6 +809,25 @@ public class DeniedSelectionFinalizationTests : AuthorizationExecutionTestBase
               }
             }
             """);
+    }
+
+    private static async Task<List<string>> ReadPayloadsAsync(
+        IExecutionResult result,
+        CancellationToken cancellationToken)
+    {
+        if (result is not ResponseStream stream)
+        {
+            return [result.ExpectOperationResult().ToJson()];
+        }
+
+        var payloads = new List<string>();
+
+        await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cancellationToken))
+        {
+            payloads.Add(payload.ToJson());
+        }
+
+        return payloads;
     }
 
     private static Task<IRequestExecutor> CreateErrorExecutorAsync(

@@ -20,7 +20,7 @@ internal sealed class AuthorizationTestClient(string data) : ISourceSchemaClient
 {
     private readonly ConcurrentQueue<string> _requests = [];
 
-    public IReadOnlyCollection<string> Requests => _requests;
+    public ImmutableArray<string> Requests => [.. _requests];
 
     public SourceSchemaClientCapabilities Capabilities => SourceSchemaClientCapabilities.None;
 
