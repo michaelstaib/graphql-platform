@@ -5,11 +5,12 @@ using HotChocolate.Fusion.Policies.Audit;
 namespace HotChocolate.Fusion.Policies;
 
 internal sealed class RecordingAuditScope(
+    IAuditTrail trail,
     AuditScopeInfo info,
     ClaimsPrincipal user,
     ImmutableDictionary<string, string> context,
     Func<int> countSourceSchemaRequests)
-    : AuditScope(info, user, context)
+    : AuditScope(trail, info, user, context)
 {
     public ImmutableArray<AuditLogEntry> Entries { get; private set; }
 

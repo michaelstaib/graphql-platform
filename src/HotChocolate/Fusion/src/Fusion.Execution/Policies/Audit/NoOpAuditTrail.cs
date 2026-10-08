@@ -10,5 +10,7 @@ internal sealed class NoOpAuditTrail : IAuditTrail
     {
     }
 
+    public string InvocationId => string.Empty;
+
     public IAuditScope BeginRequest(AuditScopeInfo info, ClaimsPrincipal user) => NoOpAuditScope.Instance;
 }
