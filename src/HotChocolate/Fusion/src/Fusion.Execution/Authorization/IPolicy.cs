@@ -10,6 +10,12 @@ namespace HotChocolate.Fusion.Authorization;
 public interface IPolicy
 {
     /// <summary>
+    /// Gets a value that indicates whether a subscription asks the policy again for every event
+    /// against the current principal. <c>false</c> keeps the decision made when the subscription started.
+    /// </summary>
+    bool ReevaluatesPerEvent { get; }
+
+    /// <summary>
     /// Answers the entries of the context through its <c>Allow</c> and <c>Deny</c> methods.
     /// Entries that are not answered stay <see cref="PolicyOutcome.Unanswered"/>.
     /// </summary>
