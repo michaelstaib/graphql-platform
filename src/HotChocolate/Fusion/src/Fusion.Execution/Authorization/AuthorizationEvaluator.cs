@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -266,10 +267,14 @@ internal sealed class AuthorizationEvaluator
 
         try
         {
-            activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
+            activeDeliveryGroups = DeliveryGroup.GetActive(
+                plan.DeliveryGroups,
+                variables,
+                ArrayPool<ulong>.Shared);
             runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
                 plan.IncrementalPlans,
-                activeDeliveryGroups);
+                activeDeliveryGroups,
+                ArrayPool<ulong>.Shared);
 
             foreach (var descriptor in descriptors)
             {
@@ -288,8 +293,8 @@ internal sealed class AuthorizationEvaluator
         }
         finally
         {
-            activeDeliveryGroups.Return();
-            runningIncrementalPlans.Return();
+            activeDeliveryGroups.Return(ArrayPool<ulong>.Shared);
+            runningIncrementalPlans.Return(ArrayPool<ulong>.Shared);
         }
 
         return occurrences.ToImmutable();

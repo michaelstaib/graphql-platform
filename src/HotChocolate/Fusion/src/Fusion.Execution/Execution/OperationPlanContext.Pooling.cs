@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -14,17 +15,20 @@ namespace HotChocolate.Fusion.Execution;
 public sealed partial class OperationPlanContext
 {
     private CancellationTokenSource _engineCancellationSource = new();
+    private readonly ArrayPool<ulong> _activationPool;
     private ActivationBits _activeDeliveryGroups;
     private ActivationBits _runningIncrementalPlans;
 
     internal OperationPlanContext(
         INodeIdParser nodeIdParser,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
-        IErrorHandler errorHandler)
+        IErrorHandler errorHandler,
+        ArrayPool<ulong> activationPool)
     {
         _nodeIdParser = nodeIdParser;
         _diagnosticEvents = diagnosticEvents;
         _errorHandler = errorHandler;
+        _activationPool = activationPool;
         _resultStore = new FetchResultStore();
         _executionState = new ExecutionState();
     }
@@ -116,8 +120,11 @@ public sealed partial class OperationPlanContext
     /// </summary>
     internal void ActivateIncrementalPlans(OperationPlan plan, IVariableValueCollection variables)
     {
-        _activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
-        _runningIncrementalPlans = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, _activeDeliveryGroups);
+        _activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables, _activationPool);
+        _runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
+            plan.IncrementalPlans,
+            _activeDeliveryGroups,
+            _activationPool);
     }
 
     /// <summary>
@@ -203,8 +210,8 @@ public sealed partial class OperationPlanContext
         {
             _clientScope = default!;
         }
-        _activeDeliveryGroups.Return();
-        _runningIncrementalPlans.Return();
+        _activeDeliveryGroups.Return(_activationPool);
+        _runningIncrementalPlans.Return(_activationPool);
         _requirementValues = default;
         _requirementKeys = null;
         Traces =

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using HotChocolate.Execution;
 using HotChocolate.Language;
@@ -82,11 +83,13 @@ public sealed record DeliveryGroup(
 
     /// <summary>
     /// Determines which delivery groups are active for the variable set, indexed by
-    /// <see cref="Id"/>. The caller returns the result with <see cref="ActivationBits.Return"/>.
+    /// <see cref="Id"/>, renting from <paramref name="pool"/>. The caller returns the result with
+    /// <see cref="ActivationBits.Return"/>.
     /// </summary>
     internal static ActivationBits GetActive(
         ImmutableArray<DeliveryGroup> deliveryGroups,
-        IVariableValueCollection variables)
+        IVariableValueCollection variables,
+        ArrayPool<ulong> pool)
     {
         var maxId = -1;
 
@@ -95,7 +98,7 @@ public sealed record DeliveryGroup(
             maxId = Math.Max(maxId, deliveryGroup.Id);
         }
 
-        var active = new ActivationBits(maxId + 1);
+        var active = new ActivationBits(maxId + 1, pool);
 
         try
         {
@@ -111,7 +114,7 @@ public sealed record DeliveryGroup(
         }
         catch
         {
-            active.Return();
+            active.Return(pool);
             throw;
         }
     }
