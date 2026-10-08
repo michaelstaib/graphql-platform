@@ -91,8 +91,7 @@ internal sealed class OperationAuthorizationMiddleware
             }
             catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, context.RequestAborted))
             {
-                scope.Fail(ex);
-                await CommitFaultedScopeAsync(context, scope);
+                await CommitFaultedScopeAsync(context, scope, ex);
 
                 if (ex is OperationCanceledException)
                 {
@@ -135,8 +134,17 @@ internal sealed class OperationAuthorizationMiddleware
         await next(context);
     }
 
-    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope)
+    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope, Exception fault)
     {
+        try
+        {
+            scope.Fail(fault);
+        }
+        catch (Exception failFailure)
+        {
+            _diagnosticEvents.RequestError(context, failFailure);
+        }
+
         try
         {
             await scope.CommitAsync(context.RequestAborted);
@@ -193,7 +201,7 @@ internal sealed class OperationAuthorizationMiddleware
                 var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var variableType = GetVariableType(schema);
                 var middleware = new OperationAuthorizationMiddleware(
-                    new AuthorizationEvaluator(options),
+                    new AuthorizationEvaluator(options, diagnosticEvents),
                     auditProvider,
                     options,
                     schemeResolver,
