@@ -185,17 +185,17 @@ type PageCursor {
 "Information about pagination in a connection."
 type PageInfo {
   "Indicates whether more edges exist following the set defined by the clients arguments."
-  hasNextPage: Boolean! @cost(weight: "10")
+  hasNextPage: Boolean!
   "Indicates whether more edges exist prior the set defined by the clients arguments."
-  hasPreviousPage: Boolean! @cost(weight: "10")
+  hasPreviousPage: Boolean!
   "When paginating backwards, the cursor to continue."
-  startCursor: String @cost(weight: "10")
+  startCursor: String
   "When paginating forwards, the cursor to continue."
-  endCursor: String @cost(weight: "10")
+  endCursor: String
   "A list of cursors to continue paginating forwards."
-  forwardCursors: [PageCursor!]! @cost(weight: "10")
+  forwardCursors: [PageCursor!]!
   "A list of cursors to continue paginating backwards."
-  backwardCursors: [PageCursor!]! @cost(weight: "10")
+  backwardCursors: [PageCursor!]!
 }
 
 "A review of a particular movie."
