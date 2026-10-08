@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -23,6 +22,7 @@ internal sealed class OperationAuthorizationMiddleware
     private readonly AuthenticationSchemeResolver _schemeResolver;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly IInputType _variableType;
+    private readonly TimeProvider _timeProvider;
 
     private OperationAuthorizationMiddleware(
         AuthorizationEvaluator evaluator,
@@ -30,7 +30,8 @@ internal sealed class OperationAuthorizationMiddleware
         FusionAuthorizationOptions options,
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
-        IInputType variableType)
+        IInputType variableType,
+        TimeProvider timeProvider)
     {
         _evaluator = evaluator;
         _auditProvider = auditProvider;
@@ -38,6 +39,7 @@ internal sealed class OperationAuthorizationMiddleware
         _schemeResolver = schemeResolver;
         _diagnosticEvents = diagnosticEvents;
         _variableType = variableType;
+        _timeProvider = timeProvider;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
@@ -68,6 +70,7 @@ internal sealed class OperationAuthorizationMiddleware
             ? auditInvocation.GetOrCreateTrail(_auditProvider, context.RequestServices)
             : _auditProvider.CreateTrail(context.RequestServices);
         var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
+        var isSubscription = plan.Operation.Definition.Operation is OperationType.Subscription;
 
         for (var i = 0; i < variableSets.Length; i++)
         {
@@ -87,11 +90,12 @@ internal sealed class OperationAuthorizationMiddleware
                     variableSets[i],
                     scope,
                     i,
+                    null,
                     context.RequestAborted);
             }
             catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, context.RequestAborted))
             {
-                await CommitFaultedScopeAsync(context, scope, ex);
+                await _evaluator.CommitFaultedScopeAsync(context, scope, ex);
 
                 if (ex is OperationCanceledException)
                 {
@@ -126,7 +130,34 @@ internal sealed class OperationAuthorizationMiddleware
                 return;
             }
 
-            updatedVariableSets[i] = CreateVariableValues(variableSets[i], authorization.Variables, decisions);
+            if (isSubscription
+                && decisions is not null
+                && decisions.TryGetDenial(plan.Operation.RootSelectionSet, out var rootDenial))
+            {
+                await RejectAsync(context, rootDenial);
+                return;
+            }
+
+            var variableValues = AuthorizationVariableValues.Create(
+                variableSets[i],
+                authorization.Variables,
+                decisions,
+                _variableType);
+
+            updatedVariableSets[i] = variableValues;
+
+            if (isSubscription)
+            {
+                TrackSubscription(
+                    context,
+                    user,
+                    plan,
+                    authorization,
+                    scope,
+                    variableSets[i],
+                    variableValues,
+                    evaluation.DeniedDescriptors);
+            }
         }
 
         context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
@@ -134,25 +165,32 @@ internal sealed class OperationAuthorizationMiddleware
         await next(context);
     }
 
-    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope, Exception fault)
+    private void TrackSubscription(
+        RequestContext context,
+        ClaimsPrincipal user,
+        OperationPlan plan,
+        OperationAuthorization authorization,
+        IAuditScope scope,
+        IVariableValueCollection variables,
+        VariableValueCollection variableValues,
+        IReadOnlySet<PolicyDescriptor> deniedDescriptors)
     {
-        try
+        if (!authorization.HasReevaluatedPolicies && SubscriptionAuthorization.GetExpiry(user) is null)
         {
-            scope.Fail(fault);
-        }
-        catch (Exception failFailure)
-        {
-            _diagnosticEvents.RequestError(context, failFailure);
+            return;
         }
 
-        try
-        {
-            await scope.CommitAsync(context.RequestAborted);
-        }
-        catch (Exception commitFailure)
-        {
-            _diagnosticEvents.RequestError(context, commitFailure);
-        }
+        context.Features.Set(
+            new SubscriptionAuthorization(
+                _evaluator,
+                scope,
+                plan,
+                authorization,
+                variables,
+                variableValues,
+                deniedDescriptors,
+                _variableType,
+                _timeProvider));
     }
 
     private async ValueTask RejectAsync(RequestContext context, SelectionDenial denial)
@@ -167,24 +205,7 @@ internal sealed class OperationAuthorizationMiddleware
         context.Result = result;
     }
 
-    private IVariableValueCollection CreateVariableValues(
-        IVariableValueCollection variableValues,
-        ImmutableArray<AuthorizationVariable> variables,
-        AuthorizationDecisions? decisions)
-    {
-        var values = new Dictionary<string, VariableValue>();
-
-        foreach (var value in variableValues)
-        {
-            values[value.Name] = value;
-        }
-
-        AuthorizationVariableValues.AddTo(values, variables, decisions, _variableType);
-
-        return new VariableValueCollection(values, decisions);
-    }
-
-    private static ClaimsPrincipal GetUser(RequestContext context)
+    internal static ClaimsPrincipal GetUser(RequestContext context)
         => context.ContextData.TryGetValue(nameof(ClaimsPrincipal), out var value)
             && value is ClaimsPrincipal user
                 ? user
@@ -200,13 +221,15 @@ internal sealed class OperationAuthorizationMiddleware
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
                 var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var variableType = GetVariableType(schema);
+                var timeProvider = fc.SchemaServices.GetService<TimeProvider>() ?? TimeProvider.System;
                 var middleware = new OperationAuthorizationMiddleware(
                     new AuthorizationEvaluator(options, diagnosticEvents),
                     auditProvider,
                     options,
                     schemeResolver,
                     diagnosticEvents,
-                    variableType);
+                    variableType,
+                    timeProvider);
                 return requestContext => middleware.InvokeAsync(requestContext, next);
             },
             Key);
