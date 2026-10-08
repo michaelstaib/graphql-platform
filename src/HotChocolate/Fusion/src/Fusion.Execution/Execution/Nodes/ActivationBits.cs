@@ -26,6 +26,12 @@ internal struct ActivationBits
     }
 
     /// <summary>
+    /// Gets the rented words of a set larger than 64 flags, or <c>null</c> for a smaller set or
+    /// after <see cref="Return"/>.
+    /// </summary>
+    internal readonly ulong[]? RentedWords => _overflow;
+
+    /// <summary>
     /// Gets whether the flag at <paramref name="index"/> is set.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -51,14 +57,16 @@ internal struct ActivationBits
     }
 
     /// <summary>
-    /// Returns the rented memory of this set. Only one copy of the set may call this, once, and no
-    /// copy may be read afterwards.
+    /// Returns the rented memory and empties the set. Only one copy of the set may call this, once, and no
+    /// other copy may be read afterwards.
     /// </summary>
     public void Return()
     {
-        if (_overflow is { } overflow)
+        var overflow = _overflow;
+        this = default;
+
+        if (overflow is not null)
         {
-            _overflow = null;
             ArrayPool<ulong>.Shared.Return(overflow);
         }
     }

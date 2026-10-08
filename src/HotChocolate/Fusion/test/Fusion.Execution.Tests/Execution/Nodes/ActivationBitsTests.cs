@@ -1,9 +1,11 @@
+using System.Buffers;
+
 namespace HotChocolate.Fusion.Execution.Nodes;
 
 public class ActivationBitsTests
 {
     [Fact]
-    public void Get_Should_ReturnTheSetIndexes_When_CapacityFitsOneWord()
+    public void Set_Should_SetOnlyTheGivenIndexes_When_CapacityFitsOneWord()
     {
         // arrange
         var bits = new ActivationBits(64);
@@ -18,7 +20,7 @@ public class ActivationBitsTests
     }
 
     [Fact]
-    public void Get_Should_ReturnTheSetIndexes_When_CapacityExceedsOneWord()
+    public void Set_Should_SetOnlyTheGivenIndexes_When_CapacityExceedsOneWord()
     {
         // arrange
         var bits = new ActivationBits(200);
@@ -41,12 +43,14 @@ public class ActivationBitsTests
     }
 
     [Fact]
-    public void Get_Should_ReturnNoIndexes_When_RentedMemoryWasDirty()
+    public void Constructor_Should_ClearTheRentedWords_When_ThePoolReturnsDirtyMemory()
     {
         // arrange
         var dirty = new ActivationBits(200);
         dirty.Set(100);
         dirty.Set(190);
+        var words = dirty.RentedWords!;
+        var dirtyWordCount = words.Count(word => word != 0);
         dirty.Return();
 
         // act
@@ -55,12 +59,29 @@ public class ActivationBitsTests
         // assert
         try
         {
+            Assert.Equal(2, dirtyWordCount);
+            Assert.Same(words, bits.RentedWords);
             Assert.Empty(GetSetIndexes(bits, 200));
         }
         finally
         {
             bits.Return();
         }
+    }
+
+    [Fact]
+    public void Return_Should_ReleaseTheRentedWords_When_CapacityExceedsOneWord()
+    {
+        // arrange
+        var bits = new ActivationBits(200);
+        var words = bits.RentedWords!;
+
+        // act
+        bits.Return();
+
+        // assert
+        Assert.Same(words, ArrayPool<ulong>.Shared.Rent(words.Length));
+        Assert.Null(bits.RentedWords);
     }
 
     private static int[] GetSetIndexes(ActivationBits bits, int capacity)
