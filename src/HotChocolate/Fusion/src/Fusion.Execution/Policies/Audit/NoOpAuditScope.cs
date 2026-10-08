@@ -29,5 +29,9 @@ internal sealed class NoOpAuditScope : IAuditScope
     {
     }
 
+    public void Fail(Exception exception)
+    {
+    }
+
     public ValueTask CommitAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
