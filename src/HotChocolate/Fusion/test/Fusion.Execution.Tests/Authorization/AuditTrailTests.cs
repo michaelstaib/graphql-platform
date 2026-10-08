@@ -326,7 +326,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task CreateTrail_Should_RunOncePerInvocation_When_RequestsAreBatched()
+    public async Task ExecuteBatchAsync_Should_CreateTrailOnce_When_RequestsAreBatched()
     {
         // arrange
         var client = new AuthorizationTestClient(Data);
@@ -388,7 +388,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task CreateTrail_Should_RunWithoutOpeningScopes_When_OperationIsUnprotected()
+    public async Task ExecuteAsync_Should_NotCreateTrail_When_OperationIsUnprotected()
     {
         // arrange
         var client = new AuthorizationTestClient(Data);
@@ -401,8 +401,41 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(1, audit.TrailCount);
-        Assert.Empty(audit.Scopes);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "plain": "p"
+              }
+            }
+            """);
+        Assert.Equal(0, audit.TrailCount);
+    }
+
+    [Fact]
+    public async Task ExecuteBatchAsync_Should_NotCreateTrail_When_EveryOperationIsUnprotected()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(Schema, client, audit);
+        var batch = new OperationRequestBatch(
+            [
+                CreateRequest("{ plain }", Authenticated()).Build(),
+                CreateRequest("{ plain }", Authenticated()).Build()
+            ]);
+
+        // act
+        await using var stream = await executor.ExecuteBatchAsync(
+            batch,
+            TestContext.Current.CancellationToken);
+        await foreach (var item in stream.ReadResultsAsync().WithCancellation(TestContext.Current.CancellationToken))
+        {
+            await item.DisposeAsync();
+        }
+
+        // assert
+        Assert.Equal(0, audit.TrailCount);
     }
 
     [Fact]
