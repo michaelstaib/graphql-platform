@@ -29,6 +29,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
         """
         type Query {
           ghost: String @policy(policies: [["ghost"]])
+          guarded(id: ID!): String @policy(policies: [["finance"]])
         }
         """;
 
@@ -144,6 +145,38 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
         scope.Entries.Select(Format).MatchInlineSnapshots(
             [
                 "Query.ghost | @policy(ghost) | scopes=[] | args={} | Unanswered | reason=No policy provider knows the policy 'ghost' of the directive '@policy'. | data=-"
+            ]);
+        Assert.Equal(
+            "System.InvalidOperationException: No policy provider knows the policy 'ghost' of the directive '@policy'.",
+            scope.FailureReason);
+        Assert.Equal(1, scope.CommitCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_RecordRemainingEntriesAsUnanswered_When_PolicyIsUnresolved()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(
+            GhostSchema,
+            client,
+            audit,
+            configure: builder => builder.ModifyAuthorizationOptions(
+                options => options.DisableAuthorizationValidation = true));
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest("{ ghost guarded(id: \"7\") }", Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var scope = Assert.Single(audit.Scopes);
+        scope.Entries.Select(Format).MatchInlineSnapshots(
+            [
+                "Query.ghost | @policy(ghost) | scopes=[] | args={} | Unanswered | reason=No policy provider knows the policy 'ghost' of the directive '@policy'. | data=-",
+                "Query.guarded | @policy(finance) | scopes=[] | args={id:\"7\"} | Unanswered | reason=- | data=-"
             ]);
         Assert.Equal(
             "System.InvalidOperationException: No policy provider knows the policy 'ghost' of the directive '@policy'.",
