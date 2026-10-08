@@ -406,6 +406,8 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
             CreateRequest(Subscription, user).Build(),
             TestContext.Current.CancellationToken);
         await using var events = ReadEvents(result);
+        client.Publish(Event);
+        var first = await ReadNextAsync(events);
         holder.Context!.ContextData[nameof(ClaimsPrincipal)] =
             Authenticated(CreateExpiryClaim(time.GetUtcNow().AddMinutes(30)));
 
@@ -418,6 +420,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // assert
         Snapshot.Create()
+            .Add(first, "Event before the first expiry")
             .Add(renewed, "Event after the first expiry")
             .Add(hasNext, "Has Next after the renewed expiry")
             .MatchMarkdownSnapshot();
