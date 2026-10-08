@@ -22,3 +22,9 @@ System.InvalidOperationException: commit
   "System.InvalidOperationException: commit"
 ]
 ```
+
+## Subscription Event Errors
+
+```json
+[]
+```

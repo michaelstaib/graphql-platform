@@ -178,7 +178,15 @@ internal sealed class SubscriptionAuthorization
 
         if (buffer is not null)
         {
-            await buffer.Replay().CommitAsync(cancellationToken);
+            try
+            {
+                await buffer.Replay().CommitAsync(cancellationToken);
+            }
+            catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))
+            {
+                _evaluator.ReportError(context, ex);
+                throw;
+            }
         }
 
         _deniedDescriptors = evaluation.DeniedDescriptors;
