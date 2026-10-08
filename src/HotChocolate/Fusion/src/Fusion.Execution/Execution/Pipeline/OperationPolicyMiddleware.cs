@@ -92,8 +92,7 @@ internal sealed class OperationPolicyMiddleware
             }
             catch (Exception ex) when (PolicyEvaluator.IsFault(ex, context.RequestAborted))
             {
-                scope.Fail(ex);
-                await CommitFaultedScopeAsync(context, scope);
+                await CommitFaultedScopeAsync(context, scope, ex);
 
                 if (ex is OperationCanceledException)
                 {
@@ -163,8 +162,17 @@ internal sealed class OperationPolicyMiddleware
         await next(context);
     }
 
-    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope)
+    private async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope, Exception fault)
     {
+        try
+        {
+            scope.Fail(fault);
+        }
+        catch (Exception failFailure)
+        {
+            _diagnosticEvents.RequestError(context, failFailure);
+        }
+
         try
         {
             await scope.CommitAsync(context.RequestAborted);
@@ -228,7 +236,7 @@ internal sealed class OperationPolicyMiddleware
                 var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var booleanType = GetBooleanType(schema);
                 var middleware = new OperationPolicyMiddleware(
-                    new PolicyEvaluator(options),
+                    new PolicyEvaluator(options, diagnosticEvents),
                     auditProvider,
                     options,
                     schemeResolver,
