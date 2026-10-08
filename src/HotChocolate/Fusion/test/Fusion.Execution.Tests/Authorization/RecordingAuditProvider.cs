@@ -17,7 +17,7 @@ internal sealed class RecordingAuditProvider(AuthorizationTestClient client) : I
         => new RecordingAuditTrail(
             Interlocked.Increment(ref _trailCount),
             this,
-            () => client.Requests.Count);
+            () => client.Requests.Length);
 
     public void AddScope(RecordingAuditScope scope) => _scopes.Enqueue(scope);
 }
