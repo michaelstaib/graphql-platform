@@ -232,6 +232,34 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             ]);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BeginRequest_Should_RecordEachOccurrenceOnce_When_DeferIsConditional(bool defer)
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var audit = new RecordingAuditProvider(client);
+        var executor = await CreateAuditedExecutorAsync(Schema, client, audit);
+        var request = CreateRequest(
+                "query($d: Boolean!) { plain ... @defer(if: $d) { owned(id: \"1\") } }",
+                Authenticated())
+            .SetVariableValues($$"""{"d":{{(defer ? "true" : "false")}}}""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var scope = Assert.Single(audit.Scopes);
+        scope.Entries.Select(Format).MatchInlineSnapshots(
+            [
+                "Query.owned | @policy(owner) | scopes=[] | args={id:\"1\"} | Allowed | reason=- | data=-"
+            ]);
+    }
+
     [Fact]
     public async Task CreateTrail_Should_RunOncePerInvocation_When_RequestsAreBatched()
     {
