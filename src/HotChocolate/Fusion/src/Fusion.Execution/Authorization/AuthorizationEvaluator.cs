@@ -238,10 +238,12 @@ internal sealed class AuthorizationEvaluator
                 CollectDenied(policyContext, deniedDescriptors);
             }
 
+            var denied = Freeze(deniedDescriptors);
+
             return new AuthorizationEvaluation(
-                CreateDecisions(occurrences, deniedDescriptors, isAuthenticated, frozenDenied is not null),
+                CreateDecisions(occurrences, denied, isAuthenticated, frozenDenied is not null),
                 null,
-                Freeze(deniedDescriptors));
+                denied);
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
@@ -350,7 +352,7 @@ internal sealed class AuthorizationEvaluator
 
     private AuthorizationDecisions? CreateDecisions(
         ImmutableArray<PolicyDescriptor> occurrences,
-        HashSet<PolicyDescriptor> deniedDescriptors,
+        FrozenSet<PolicyDescriptor> deniedDescriptors,
         bool isAuthenticated,
         bool alwaysFinalize)
     {
@@ -440,7 +442,7 @@ internal sealed class AuthorizationEvaluator
     private static PolicyDescriptor? FindDenyingDescriptor(
         Selection selection,
         List<PolicyDescriptor> descriptors,
-        IReadOnlySet<PolicyDescriptor> deniedDescriptors)
+        FrozenSet<PolicyDescriptor> deniedDescriptors)
     {
         foreach (var descriptor in descriptors)
         {
