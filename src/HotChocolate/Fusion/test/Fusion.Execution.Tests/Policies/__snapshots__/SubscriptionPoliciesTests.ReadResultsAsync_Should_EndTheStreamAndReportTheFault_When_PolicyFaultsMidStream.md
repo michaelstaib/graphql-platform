@@ -22,3 +22,11 @@ System.InvalidOperationException: boom
   "System.InvalidOperationException: boom"
 ]
 ```
+
+## Subscription Event Errors
+
+```json
+[
+  "System.InvalidOperationException: boom"
+]
+```
