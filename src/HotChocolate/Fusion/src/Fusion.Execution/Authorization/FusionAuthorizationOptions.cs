@@ -78,7 +78,12 @@ public sealed class FusionAuthorizationOptions
 
             field = value;
         }
-    } = [];
+    }
+#if NET10_0_OR_GREATER
+        = [];
+#else
+        = ImmutableDictionary<string, string>.Empty;
+#endif
 
     /// <summary>
     /// Gets or sets the type of the claim that holds the scopes of the principal.
