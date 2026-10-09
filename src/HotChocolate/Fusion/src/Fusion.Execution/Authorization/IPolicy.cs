@@ -10,6 +10,13 @@ namespace HotChocolate.Fusion.Authorization;
 public interface IPolicy
 {
     /// <summary>
+    /// Gets a value that indicates whether a subscription asks the policy again for every event against
+    /// the current principal. The default <c>false</c> keeps the decision made when the subscription started,
+    /// and a selection denied at that point stays denied for the stream, so an allow flip applies on resubscribe only.
+    /// </summary>
+    bool ReevaluatesPerEvent => false;
+
+    /// <summary>
     /// Answers the entries of the context through its <c>Allow</c> and <c>Deny</c> methods.
     /// Entries that are not answered stay <see cref="PolicyOutcome.Unanswered"/>.
     /// </summary>

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -16,7 +17,9 @@ namespace HotChocolate.Fusion.Authorization;
 /// </summary>
 internal sealed class AuthorizationEvaluator
 {
-    private const string UnauthenticatedReason = "unauthenticated";
+    internal const string UnauthenticatedReason = "unauthenticated";
+    private const string SubscribeDecisionStandsReason = "subscribe-time decision stands";
+    private const string FrozenReason = "frozen";
 
     private static readonly ImmutableDictionary<string, object?> s_noArguments =
 #if NET10_0_OR_GREATER
@@ -79,6 +82,11 @@ internal sealed class AuthorizationEvaluator
     /// <param name="requestIndex">
     /// The index of the variable set within the request.
     /// </param>
+    /// <param name="frozenDenied">
+    /// The descriptors denied when a subscription started, or <c>null</c> to ask every policy.
+    /// A policy that does not reevaluate per event and every descriptor of a selection denied at that point
+    /// keep their earlier verdict instead of being asked.
+    /// </param>
     /// <param name="cancellationToken">
     /// The token that signals that the request was aborted.
     /// </param>
@@ -90,6 +98,7 @@ internal sealed class AuthorizationEvaluator
         IVariableValueCollection variables,
         IAuditScope scope,
         int requestIndex,
+        FrozenSet<PolicyDescriptor>? frozenDenied,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -105,12 +114,45 @@ internal sealed class AuthorizationEvaluator
         var groups = new List<PolicyGroup>();
         var groupsByPolicy = new Dictionary<IPolicy, PolicyGroup>();
         var answered = scope.IsRecording ? new HashSet<PolicyDescriptor>() : null;
+        var pinned = GetPinnedSelections(occurrences, frozenDenied);
         PolicyEvaluationContext? evaluating = null;
 
         try
         {
             foreach (var descriptor in occurrences)
             {
+                if (frozenDenied is not null
+                    && (!descriptor.Policy.ReevaluatesPerEvent || pinned.Contains((Selection)descriptor.Selection)))
+                {
+                    var isDenied = frozenDenied.Contains(descriptor);
+
+                    if (isDenied)
+                    {
+                        deniedDescriptors.Add(descriptor);
+                    }
+
+                    if (answered is not null)
+                    {
+                        var entry = new PolicyEvaluationEntry(
+                            descriptor,
+                            CoerceArguments((Selection)descriptor.Selection, variables));
+                        var reason = descriptor.Policy.ReevaluatesPerEvent
+                            ? SubscribeDecisionStandsReason
+                            : FrozenReason;
+
+                        scope.Record(
+                            CreateAuditEntry(
+                                entry,
+                                new PolicyVerdict(
+                                    isDenied ? PolicyOutcome.Denied : PolicyOutcome.Allowed,
+                                    reason,
+                                    null)));
+                        answered.Add(descriptor);
+                    }
+
+                    continue;
+                }
+
                 // An anonymous principal never reaches the scope and named policies, except an
                 // unresolved policy, which fails the request as a configuration error.
                 if (!isAuthenticated
@@ -187,7 +229,7 @@ internal sealed class AuthorizationEvaluator
                         RecordUnanswered(scope, occurrences, groups, answered, variables);
                     }
 
-                    return new AuthorizationEvaluation(null, ex);
+                    return new AuthorizationEvaluation(null, ex, Freeze(deniedDescriptors));
                 }
 
                 if (answered is not null)
@@ -199,14 +241,102 @@ internal sealed class AuthorizationEvaluator
                 CollectDenied(policyContext, deniedDescriptors);
             }
 
+            var denied = Freeze(deniedDescriptors);
+
             return new AuthorizationEvaluation(
-                CreateDecisions(occurrences, deniedDescriptors, isAuthenticated),
-                null);
+                CreateDecisions(occurrences, denied, isAuthenticated, frozenDenied is not null),
+                null,
+                denied);
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
             RecordFault(context, scope, evaluating, isAuthenticated, occurrences, groups, answered, variables);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Records the fault in the scope and commits it. A failure of the scope itself is reported to
+    /// the diagnostic events.
+    /// </summary>
+    /// <param name="context">
+    /// The request context.
+    /// </param>
+    /// <param name="scope">
+    /// The audit scope of the faulted evaluation.
+    /// </param>
+    /// <param name="fault">
+    /// The fault that ended the evaluation.
+    /// </param>
+    public async ValueTask CommitFaultedScopeAsync(RequestContext context, IAuditScope scope, Exception fault)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(fault);
+
+        try
+        {
+            scope.Fail(fault);
+        }
+        catch (Exception failFailure)
+        {
+            _diagnosticEvents.RequestError(context, failFailure);
+        }
+
+        try
+        {
+            await scope.CommitAsync(context.RequestAborted);
+        }
+        catch (Exception commitFailure)
+        {
+            _diagnosticEvents.RequestError(context, commitFailure);
+        }
+    }
+
+    /// <summary>
+    /// Records a denied entry with the given reason for every occurrence of the variable set,
+    /// without asking any policy.
+    /// </summary>
+    /// <param name="scope">
+    /// The audit scope that receives the entries.
+    /// </param>
+    /// <param name="plan">
+    /// The plan of the operation.
+    /// </param>
+    /// <param name="authorization">
+    /// The authorization requirements of the operation.
+    /// </param>
+    /// <param name="variables">
+    /// The coerced variable values of the variable set.
+    /// </param>
+    /// <param name="reason">
+    /// The reason of the denial.
+    /// </param>
+    public void RecordDenied(
+        IAuditScope scope,
+        OperationPlan plan,
+        OperationAuthorization authorization,
+        IVariableValueCollection variables,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(variables);
+        ArgumentException.ThrowIfNullOrEmpty(reason);
+
+        if (!scope.IsRecording)
+        {
+            return;
+        }
+
+        foreach (var descriptor in GetOccurrences(plan, authorization.Descriptors, variables))
+        {
+            var entry = new PolicyEvaluationEntry(
+                descriptor,
+                CoerceArguments((Selection)descriptor.Selection, variables));
+
+            scope.Record(CreateAuditEntry(entry, new PolicyVerdict(PolicyOutcome.Denied, reason, null)));
         }
     }
 
@@ -225,8 +355,9 @@ internal sealed class AuthorizationEvaluator
 
     private AuthorizationDecisions? CreateDecisions(
         ImmutableArray<PolicyDescriptor> occurrences,
-        HashSet<PolicyDescriptor> deniedDescriptors,
-        bool isAuthenticated)
+        FrozenSet<PolicyDescriptor> deniedDescriptors,
+        bool isAuthenticated,
+        bool alwaysFinalize)
     {
         if (deniedDescriptors.Count == 0)
         {
@@ -237,21 +368,7 @@ internal sealed class AuthorizationEvaluator
             ? AuthorizationDenialKind.Unauthorized
             : AuthorizationDenialKind.Unauthenticated;
         var selections = new List<Selection>();
-        var descriptorsBySelection = new Dictionary<Selection, List<PolicyDescriptor>>();
-
-        foreach (var descriptor in occurrences)
-        {
-            var selection = (Selection)descriptor.Selection;
-
-            if (!descriptorsBySelection.TryGetValue(selection, out var descriptors))
-            {
-                descriptors = [];
-                descriptorsBySelection.Add(selection, descriptors);
-                selections.Add(selection);
-            }
-
-            descriptors.Add(descriptor);
-        }
+        var descriptorsBySelection = GroupBySelection(occurrences, selections);
 
         var denials = ImmutableArray.CreateBuilder<SelectionDenial>();
 
@@ -273,13 +390,62 @@ internal sealed class AuthorizationEvaluator
             : new AuthorizationDecisions(
                 denials.ToImmutable(),
                 _options.DenyHandling,
-                _options.EnableAttribution);
+                _options.EnableAttribution,
+                alwaysFinalize);
+    }
+
+    private static HashSet<Selection> GetPinnedSelections(
+        ImmutableArray<PolicyDescriptor> occurrences,
+        FrozenSet<PolicyDescriptor>? frozenDenied)
+    {
+        var pinned = new HashSet<Selection>();
+
+        if (frozenDenied is null || frozenDenied.Count == 0)
+        {
+            return pinned;
+        }
+
+        var selections = new List<Selection>();
+        var descriptorsBySelection = GroupBySelection(occurrences, selections);
+
+        foreach (var selection in selections)
+        {
+            if (FindDenyingDescriptor(selection, descriptorsBySelection[selection], frozenDenied) is not null)
+            {
+                pinned.Add(selection);
+            }
+        }
+
+        return pinned;
+    }
+
+    private static Dictionary<Selection, List<PolicyDescriptor>> GroupBySelection(
+        ImmutableArray<PolicyDescriptor> occurrences,
+        List<Selection> selections)
+    {
+        var descriptorsBySelection = new Dictionary<Selection, List<PolicyDescriptor>>();
+
+        foreach (var descriptor in occurrences)
+        {
+            var selection = (Selection)descriptor.Selection;
+
+            if (!descriptorsBySelection.TryGetValue(selection, out var descriptors))
+            {
+                descriptors = [];
+                descriptorsBySelection.Add(selection, descriptors);
+                selections.Add(selection);
+            }
+
+            descriptors.Add(descriptor);
+        }
+
+        return descriptorsBySelection;
     }
 
     private static PolicyDescriptor? FindDenyingDescriptor(
         Selection selection,
         List<PolicyDescriptor> descriptors,
-        HashSet<PolicyDescriptor> deniedDescriptors)
+        FrozenSet<PolicyDescriptor> deniedDescriptors)
     {
         foreach (var descriptor in descriptors)
         {
@@ -456,6 +622,15 @@ internal sealed class AuthorizationEvaluator
 
         return values.ToImmutable();
     }
+
+    private static FrozenSet<PolicyDescriptor> Freeze(HashSet<PolicyDescriptor> deniedDescriptors)
+        => deniedDescriptors.Count == 0
+#if NET9_0_OR_GREATER
+            ? []
+#else
+            ? FrozenSet<PolicyDescriptor>.Empty
+#endif
+            : deniedDescriptors.ToFrozenSet();
 
     private static void CollectDenied(
         PolicyEvaluationContext policyContext,

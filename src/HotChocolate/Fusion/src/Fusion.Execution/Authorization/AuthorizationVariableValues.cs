@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Execution;
 using HotChocolate.Language;
 using HotChocolate.Types;
 
@@ -11,9 +12,9 @@ namespace HotChocolate.Fusion.Authorization;
 internal static class AuthorizationVariableValues
 {
     /// <summary>
-    /// Adds a value for every variable to the values of the variable set.
+    /// Creates the variable values of a variable set with a value for every synthetic variable.
     /// </summary>
-    /// <param name="values">
+    /// <param name="variableValues">
     /// The variable values of the variable set.
     /// </param>
     /// <param name="variables">
@@ -25,14 +26,21 @@ internal static class AuthorizationVariableValues
     /// <param name="type">
     /// The <c>Boolean!</c> type of the variables.
     /// </param>
-    public static void AddTo(
-        Dictionary<string, VariableValue> values,
+    public static VariableValueCollection Create(
+        IVariableValueCollection variableValues,
         ImmutableArray<AuthorizationVariable> variables,
         AuthorizationDecisions? decisions,
         IInputType type)
     {
-        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(variableValues);
         ArgumentNullException.ThrowIfNull(type);
+
+        var values = new Dictionary<string, VariableValue>();
+
+        foreach (var value in variableValues)
+        {
+            values[value.Name] = value;
+        }
 
         var evaluated = new Dictionary<string, bool>(variables.Length, StringComparer.Ordinal);
 
@@ -45,6 +53,8 @@ internal static class AuthorizationVariableValues
                 type,
                 value ? BooleanValueNode.True : BooleanValueNode.False);
         }
+
+        return new VariableValueCollection(values, decisions);
     }
 
     private static bool Evaluate(

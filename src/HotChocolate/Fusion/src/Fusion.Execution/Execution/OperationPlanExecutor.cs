@@ -4,7 +4,9 @@ using System.Text.Json;
 using System.Threading.Channels;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Pipeline;
 using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
@@ -1096,16 +1098,26 @@ internal static partial class OperationPlanExecutor
             // and the unsealed arena is abandoned instead.
             requestContext.Memory?.Seal();
 
-            var subscriptionEnumerable = CreateResponseStream(
-                context,
-                root,
-                subscriptionResult,
-                requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>(),
-                requestContext.Schema.GetRequestOptions().ExecutionTimeout,
-                executionCts.Token,
-                cancellationToken);
+            var authorization =
+                requestContext.Features.TryGet(out SubscriptionAuthorization? subscriptionAuthorization)
+                    ? subscriptionAuthorization
+                    : null;
+            var concurrencyGate = requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>();
+            var eventTimeout = requestContext.Schema.GetRequestOptions().ExecutionTimeout;
+            var executionToken = executionCts.Token;
 
-            var stream = new ResponseStream(() => subscriptionEnumerable);
+            ResponseStream? stream = null;
+            stream = new ResponseStream(
+                () => CreateResponseStream(
+                    context,
+                    root,
+                    subscriptionResult,
+                    authorization,
+                    concurrencyGate,
+                    eventTimeout,
+                    stream!,
+                    executionToken,
+                    cancellationToken));
             stream.RegisterForCleanup(context);
             stream.RegisterForCleanup(executionCts);
             return stream;
@@ -1269,8 +1281,10 @@ internal static partial class OperationPlanExecutor
         OperationPlanContext context,
         ExecutionNode subscriptionNode,
         SubscriptionResult subscriptionResult,
+        SubscriptionAuthorization? authorization,
         ExecutionConcurrencyGate? concurrencyGate,
         TimeSpan eventTimeout,
+        IExecutionResult responseStream,
         [EnumeratorCancellation] CancellationToken executionCancellationToken,
         CancellationToken requestCancellationToken)
     {
@@ -1289,11 +1303,33 @@ internal static partial class OperationPlanExecutor
         var (eventCts, eventCtsRegistration) = CreateEventCancellation();
 
         var schemaName = GetSubscriptionSchemaName(context, subscriptionNode);
+        var events = subscriptionResult.ReadStreamAsync();
+        Exception? authorizationFault = null;
+
+        if (authorization is not null
+            && SubscriptionAuthorization.GetExpiry(OperationAuthorizationMiddleware.GetUser(context.RequestContext))
+                is { } expiry)
+        {
+            events = authorization.EndOnExpiry(
+                events,
+                responseStream,
+                context.RequestContext,
+                expiry,
+                failure =>
+                {
+                    authorizationFault = failure;
+                    context.DiagnosticEvents.SubscriptionEventError(
+                        context,
+                        subscriptionNode,
+                        schemaName,
+                        subscriptionResult.Id,
+                        failure);
+                });
+        }
 
         try
         {
-            await foreach (var eventArgs in subscriptionResult.ReadStreamAsync()
-                .WithCancellation(executionCancellationToken))
+            await foreach (var eventArgs in events.WithCancellation(executionCancellationToken))
             {
                 using var scope = context.DiagnosticEvents.OnSubscriptionEvent(
                     context,
@@ -1330,6 +1366,26 @@ internal static partial class OperationPlanExecutor
                     }
 
                     context.Begin(eventArgs.StartTimestamp, eventArgs.Activity?.TraceId.ToHexString());
+
+                    if (authorization is { ReevaluatesPerEvent: true })
+                    {
+                        try
+                        {
+                            context.ApplyAuthorization(
+                                await authorization.ReevaluateAsync(context.RequestContext, eventToken));
+                        }
+                        catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, eventToken))
+                        {
+                            context.DiagnosticEvents.SubscriptionEventError(
+                                context,
+                                subscriptionNode,
+                                schemaName,
+                                subscriptionResult.Id,
+                                ex);
+                            authorizationFault = ex;
+                            break;
+                        }
+                    }
 
                     executionState.Reset();
 
@@ -1460,6 +1516,11 @@ internal static partial class OperationPlanExecutor
         {
             await eventCtsRegistration.DisposeAsync();
             eventCts?.Dispose();
+        }
+
+        if (authorizationFault is not null)
+        {
+            yield return ErrorHelper.SubscriptionFaulted(authorizationFault, context.ErrorHandler);
         }
 
         // Creates a fresh event-scoped cancellation source, links client-abort / shutdown into it,
