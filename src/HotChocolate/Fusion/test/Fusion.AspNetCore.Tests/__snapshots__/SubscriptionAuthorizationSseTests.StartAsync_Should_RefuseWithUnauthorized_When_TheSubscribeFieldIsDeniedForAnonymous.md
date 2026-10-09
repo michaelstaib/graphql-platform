@@ -9,7 +9,7 @@
 ## Challenge
 
 ```text
-Cookies
+none
 ```
 
 ## Events
