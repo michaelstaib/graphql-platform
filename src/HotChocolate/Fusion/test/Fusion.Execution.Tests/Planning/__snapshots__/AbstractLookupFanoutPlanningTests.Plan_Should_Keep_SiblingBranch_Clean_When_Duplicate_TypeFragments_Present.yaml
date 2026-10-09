@@ -9,9 +9,9 @@ operation:
             id
           }
           ... on Book {
+            title @skip(if: $title)
             sku
             id @fusion__requirement
-            title @skip(if: $title)
           }
           ... on Magazine {
             sku

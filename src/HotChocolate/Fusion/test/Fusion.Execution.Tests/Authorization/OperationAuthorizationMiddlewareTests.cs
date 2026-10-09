@@ -615,10 +615,10 @@ public class OperationAuthorizationMiddlewareTests : AuthorizationExecutionTestB
     [InlineData(false, 1, """
         {
           "data": {
+            "guarded": "g",
             "product": {
               "id": "1"
-            },
-            "guarded": "g"
+            }
           }
         }
         """)]

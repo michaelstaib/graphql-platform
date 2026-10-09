@@ -154,10 +154,10 @@ operationPlan:
         query testQuery {
           trendingMedia {
             __typename @fusion__requirement
-            id @fusion__requirement
             ... on Book {
               isbn
             }
+            id @fusion__requirement
           }
         }
       name: testQuery

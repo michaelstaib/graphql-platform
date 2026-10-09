@@ -47,7 +47,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
         ITypeDefinition type,
         Dictionary<string, FragmentDefinitionNode>? fragmentLookup)
     {
-        var context = new Context(null, null, null, type, null, null, fragmentLookup ?? []);
+        var context = new Context(null, null, null, type, null, null, new RewriteState(fragmentLookup ?? []));
 
         CollectSelections(selectionSetNode, context);
 
@@ -555,31 +555,19 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
 
     private static void MergeContexts(Context source, Context target)
     {
-        if (source.Conditionals is not null)
+        foreach (var entry in source.Order)
         {
-            foreach (var (conditional, conditionalContext) in source.Conditionals)
+            if (entry.Scope is { } scope)
             {
-                var targetConditionalContext = target.GetOrAddConditionalContext(conditional);
+                var targetScope = scope.IsConditionalContext
+                    ? target.GetOrAddConditionalContext(scope.Conditional)
+                    : target.AddDeferContext(scope.Defer!);
 
-                MergeContexts(conditionalContext, targetConditionalContext);
+                MergeContexts(scope, targetScope);
             }
-        }
-
-        if (source.Defers is not null)
-        {
-            foreach (var deferContext in source.Defers)
+            else if (entry.ResponseName is { } responseName)
             {
-                var targetDeferContext = target.AddDeferContext(deferContext.Defer!);
-
-                MergeContexts(deferContext, targetDeferContext);
-            }
-        }
-
-        if (source.Fields is not null)
-        {
-            foreach (var (_, fieldContextLookup) in source.Fields)
-            {
-                foreach (var (fieldNode, fieldContext) in fieldContextLookup)
+                foreach (var (fieldNode, fieldContext) in source.Fields![responseName])
                 {
                     if (!target.HasField(fieldNode, out var targetFieldContext))
                     {
@@ -592,13 +580,9 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
                     }
                 }
             }
-        }
-
-        if (source.Fragments is not null)
-        {
-            foreach (var (_, fragmentContextLookup) in source.Fragments)
+            else
             {
-                foreach (var (inlineFragmentNode, fragmentContext) in fragmentContextLookup)
+                foreach (var (inlineFragmentNode, fragmentContext) in source.Fragments![entry.TypeName!])
                 {
                     if (!target.HasFragment(inlineFragmentNode, out var targetFragmentContext))
                     {
@@ -842,94 +826,105 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
 
     private List<ISelectionNode>? RewriteSelections(Context context)
     {
-        List<ISelectionNode>? selections = null;
+        var placed = new List<PlacedSelection>();
+        var deferred = new List<PlacedSelection>();
 
-        if (context.Fields is not null)
+        PlaceSelections(context, [], placed, deferred);
+
+        if (placed.Count == 0 && deferred.Count == 0)
         {
-            foreach (var (_, fieldContextLookup) in context.Fields)
-            {
-                foreach (var (fieldNode, fieldContext) in fieldContextLookup)
-                {
-                    var newFieldNode = RewriteField(fieldNode, fieldContext);
+            return null;
+        }
 
-                    if (newFieldNode is null)
+        // Deferred selections follow the immediate ones.
+        placed.Sort(PlacedSelection.CompareByPosition);
+        deferred.Sort(PlacedSelection.CompareByPosition);
+        placed.AddRange(deferred);
+
+        return GroupByScope(placed, 0, placed.Count, 0);
+    }
+
+    private void PlaceSelections(
+        Context context,
+        ImmutableArray<Context> scopes,
+        List<PlacedSelection> placed,
+        List<PlacedSelection> deferred)
+    {
+        foreach (var entry in context.Order)
+        {
+            if (entry.ResponseName is { } responseName)
+            {
+                foreach (var (fieldNode, fieldContext) in context.Fields![responseName])
+                {
+                    if (RewriteField(fieldNode, fieldContext) is { } newFieldNode)
                     {
-                        continue;
+                        placed.Add(new PlacedSelection(entry.Sequence, placed.Count, newFieldNode, scopes));
                     }
-
-                    selections ??= [];
-                    selections.Add(newFieldNode);
                 }
             }
-        }
-
-        if (context.Fragments is not null)
-        {
-            foreach (var (_, fragmentContextLookup) in context.Fragments)
+            else if (entry.TypeName is { } typeName)
             {
-                foreach (var (inlineFragmentNode, fragmentContext) in fragmentContextLookup)
+                foreach (var (inlineFragmentNode, fragmentContext) in context.Fragments![typeName])
                 {
-                    var newInlineFragmentNode = RewriteInlineFragment(
-                        inlineFragmentNode,
-                        fragmentContext);
-
-                    if (newInlineFragmentNode is null)
+                    if (RewriteInlineFragment(inlineFragmentNode, fragmentContext) is { } newInlineFragmentNode)
                     {
-                        continue;
+                        placed.Add(new PlacedSelection(entry.Sequence, placed.Count, newInlineFragmentNode, scopes));
                     }
-
-                    selections ??= [];
-                    selections.Add(newInlineFragmentNode);
                 }
+            }
+            else if (entry.Scope!.IsConditionalContext)
+            {
+                PlaceSelections(entry.Scope, scopes.Add(entry.Scope), placed, deferred);
+            }
+            else if (RewriteDeferred(entry.Scope) is { } deferSelection)
+            {
+                deferred.Add(new PlacedSelection(entry.Sequence, deferred.Count, deferSelection, scopes));
             }
         }
+    }
 
-        if (context.Conditionals is not null)
+    /// <summary>
+    /// Wraps each run of consecutive selections that share the conditional context at
+    /// <paramref name="depth"/> in that conditional.
+    /// </summary>
+    private List<ISelectionNode> GroupByScope(List<PlacedSelection> placed, int start, int end, int depth)
+    {
+        var selections = new List<ISelectionNode>();
+        var i = start;
+
+        while (i < end)
         {
-            foreach (var (conditional, conditionalContext) in context.Conditionals)
+            var current = placed[i];
+
+            if (current.Scopes.Length <= depth)
             {
-                var conditionalSelection = RewriteConditional(conditional, conditionalContext);
-
-                if (conditionalSelection is null)
-                {
-                    continue;
-                }
-
-                selections ??= [];
-                selections.Add(conditionalSelection);
+                selections.Add(current.Node);
+                i++;
+                continue;
             }
-        }
 
-        if (context.Defers is not null)
-        {
-            foreach (var deferContext in context.Defers)
+            var scope = current.Scopes[depth];
+            var runEnd = i + 1;
+
+            while (runEnd < end
+                && placed[runEnd].Scopes.Length > depth
+                && ReferenceEquals(placed[runEnd].Scopes[depth], scope))
             {
-                var deferSelection = RewriteDeferred(deferContext);
-
-                if (deferSelection is null)
-                {
-                    continue;
-                }
-
-                selections ??= [];
-                selections.Add(deferSelection);
+                runEnd++;
             }
+
+            selections.Add(
+                RewriteConditional(scope.Conditional!, GroupByScope(placed, i, runEnd, depth + 1)));
+            i = runEnd;
         }
 
         return selections;
     }
 
-    private ISelectionNode? RewriteConditional(
+    private static ISelectionNode RewriteConditional(
         Conditional conditional,
-        Context context)
+        List<ISelectionNode> conditionalSelections)
     {
-        var conditionalSelections = RewriteSelections(context);
-
-        if (conditionalSelections is null)
-        {
-            return null;
-        }
-
         var conditionalDirectives = conditional.ToDirectives();
 
         // If we only have a single selection and this selection does not have directives of its own,
@@ -1074,7 +1069,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
 
     [DebuggerDisplay(
         "{Type.Name}, Fields: {Fields?.Count}, Fragments: {Fragments?.Count}, "
-        + "Conditionals: {Conditionals?.Count}, Defers: {Defers?.Count}")]
+        + "Conditionals: {Conditionals?.Count}, Entries: {Order.Count}")]
     private sealed class Context(
         Context? parent,
         Context? unconditionalContext,
@@ -1082,7 +1077,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
         ITypeDefinition type,
         Conditional? conditional,
         Defer? defer,
-        Dictionary<string, FragmentDefinitionNode> fragmentLookup)
+        RewriteState state)
     {
         /// <summary>
         /// Points to the parent of this context.
@@ -1136,10 +1131,11 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
         public Context? NonDeferredContext { get; } = nonDeferredContext;
 
         /// <summary>
-        /// The contexts for each <see cref="DocumentRewriter.Defer"/> occurrence.
-        /// Each occurrence produces a distinct entry; defers are never merged by identity.
+        /// The fields, fragments, conditional contexts and defer contexts of this context
+        /// in the order they appeared in the request. Each defer occurrence produces a distinct
+        /// entry; defers are never merged by identity.
         /// </summary>
-        public List<Context>? Defers { get; private set; }
+        public List<OrderEntry> Order { get; } = [];
 
         /// <summary>
         /// Provides a way to find all defer contexts a given selection node is referenced in.
@@ -1161,7 +1157,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
 
         public FragmentDefinitionNode GetFragmentDefinition(FragmentSpreadNode fragmentSpread)
         {
-            if (!fragmentLookup.TryGetValue(fragmentSpread.Name.Value, out var fragmentDefinition))
+            if (!state.FragmentLookup.TryGetValue(fragmentSpread.Name.Value, out var fragmentDefinition))
             {
                 throw ThrowHelper.FragmentDoesNotExist(fragmentSpread);
             }
@@ -1182,9 +1178,10 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
                     Type,
                     conditional,
                     null,
-                    fragmentLookup);
+                    state);
 
                 Conditionals[conditional] = conditionalContext;
+                Order.Add(new OrderEntry(state.NextSequence(), null, null, conditionalContext));
             }
 
             return conditionalContext;
@@ -1199,10 +1196,9 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
                 Type,
                 null,
                 defer,
-                fragmentLookup);
+                state);
 
-            Defers ??= [];
-            Defers.Add(deferContext);
+            Order.Add(new OrderEntry(state.NextSequence(), null, null, deferContext));
 
             return deferContext;
         }
@@ -1311,7 +1307,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
                     fieldType,
                     null,
                     null,
-                    fragmentLookup);
+                    state);
             }
 
             AddField(fieldNode, fieldContext);
@@ -1329,6 +1325,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
             {
                 existingFieldContextLookup = new(FieldNodeComparer.Instance);
                 Fields[responseName] = existingFieldContextLookup;
+                Order.Add(new OrderEntry(state.NextSequence(), responseName, null, null));
             }
 
             existingFieldContextLookup.Add(fieldNode, fieldContext);
@@ -1381,7 +1378,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
                 typeCondition,
                 null,
                 null,
-                fragmentLookup);
+                state);
 
             AddFragment(inlineFragmentNode, fragmentContext);
 
@@ -1398,6 +1395,7 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
             {
                 existingFragmentContextLookup = new(InlineFragmentNodeComparer.Instance);
                 Fragments[typeName] = existingFragmentContextLookup;
+                Order.Add(new OrderEntry(state.NextSequence(), null, typeName, null));
             }
 
             existingFragmentContextLookup.Add(inlineFragmentNode, fragmentContext);
@@ -1438,6 +1436,49 @@ public sealed class DocumentRewriter(FusionSchemaDefinition schema, bool removeS
             }
 
             return this;
+        }
+    }
+
+    /// <summary>
+    /// Shared by all contexts of one selection set rewrite.
+    /// </summary>
+    private sealed class RewriteState(Dictionary<string, FragmentDefinitionNode> fragmentLookup)
+    {
+        private int _sequence;
+
+        public Dictionary<string, FragmentDefinitionNode> FragmentLookup { get; } = fragmentLookup;
+
+        /// <summary>
+        /// Returns the next position in request order, unique across all contexts of the rewrite.
+        /// </summary>
+        public int NextSequence() => _sequence++;
+    }
+
+    /// <summary>
+    /// A group of selections of a context at the position of its first occurrence in the request.
+    /// Exactly one of the members <see cref="ResponseName"/>, <see cref="TypeName"/> and
+    /// <see cref="Scope"/> is set.
+    /// </summary>
+    private readonly record struct OrderEntry(
+        int Sequence,
+        string? ResponseName,
+        string? TypeName,
+        Context? Scope);
+
+    /// <summary>
+    /// A rewritten selection together with its position in the request, its position among the
+    /// selections of the same group, and the conditional contexts it is nested in, outermost first.
+    /// </summary>
+    private readonly record struct PlacedSelection(
+        int Sequence,
+        int Ordinal,
+        ISelectionNode Node,
+        ImmutableArray<Context> Scopes)
+    {
+        public static int CompareByPosition(PlacedSelection a, PlacedSelection b)
+        {
+            var bySequence = a.Sequence.CompareTo(b.Sequence);
+            return bySequence != 0 ? bySequence : a.Ordinal.CompareTo(b.Ordinal);
         }
     }
 

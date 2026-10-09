@@ -1184,14 +1184,14 @@ public class CompositeResultDocumentTests : FusionTestBase
             MaterializeSteeredProductResult(plan.Operation, 0, 4);
 
         // assert
-        // The document rewriter orders the conditional selection last, so its property row is
-        // block row 7 of 10, in the spanning segment past the split.
+        // The conditional selection is third in request order, so its property row is block
+        // row 5 of 10, in the spanning segment past the split.
         Assert.Equal(
             "start=chunk0 end=chunk1 splitRows=4 segment2BeginsWithValueRow=True "
-            + "conditionalPropertyRow=7 pastSplit=True namePath=productBySlug.name",
+            + "conditionalPropertyRow=5 pastSplit=True namePath=productBySlug.name",
             includedGeometry);
         Assert.Equal(includedGeometry, excludedGeometry);
-        Assert.Equal("""{"productBySlug":{"id":1,"name":"Abc","d":"Abc","c":"Abc"}}""", includedJson);
+        Assert.Equal("""{"productBySlug":{"id":1,"name":"Abc","c":"Abc","d":"Abc"}}""", includedJson);
         Assert.Equal("""{"productBySlug":{"id":1,"name":"Abc","d":"Abc"}}""", excludedJson);
     }
 
