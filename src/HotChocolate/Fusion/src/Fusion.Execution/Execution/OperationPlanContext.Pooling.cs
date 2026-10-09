@@ -14,6 +14,8 @@ namespace HotChocolate.Fusion.Execution;
 public sealed partial class OperationPlanContext
 {
     private CancellationTokenSource _engineCancellationSource = new();
+    private ActivationBits _activeDeliveryGroups;
+    private ActivationBits _runningIncrementalPlans;
 
     internal OperationPlanContext(
         INodeIdParser nodeIdParser,
@@ -93,6 +95,29 @@ public sealed partial class OperationPlanContext
         var maxNodeId = operationPlan.MaxNodeId;
         EnsureNodeArrayCapacity(maxNodeId);
         _activeNodeSlotCount = maxNodeId + 1;
+    }
+
+    /// <summary>
+    /// Gets the delivery groups that are active for the request, indexed by
+    /// <see cref="DeliveryGroup.Id"/>. The set is valid until the context is cleaned.
+    /// </summary>
+    internal ActivationBits ActiveDeliveryGroups => _activeDeliveryGroups;
+
+    /// <summary>
+    /// Gets the incremental plans that run for the request, indexed like
+    /// <see cref="OperationPlan.IncrementalPlans"/>. The set is valid until the context is cleaned.
+    /// </summary>
+    internal ActivationBits RunningIncrementalPlans => _runningIncrementalPlans;
+
+    /// <summary>
+    /// Computes the active delivery groups and the running incremental plans of
+    /// <paramref name="plan"/> for <paramref name="variables"/>. The context returns both sets
+    /// when it is cleaned.
+    /// </summary>
+    internal void ActivateIncrementalPlans(OperationPlan plan, IVariableValueCollection variables)
+    {
+        _activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
+        _runningIncrementalPlans = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, _activeDeliveryGroups);
     }
 
     /// <summary>
@@ -178,6 +203,8 @@ public sealed partial class OperationPlanContext
         {
             _clientScope = default!;
         }
+        _activeDeliveryGroups.Return();
+        _runningIncrementalPlans.Return();
         _requirementValues = default;
         _requirementKeys = null;
         Traces =

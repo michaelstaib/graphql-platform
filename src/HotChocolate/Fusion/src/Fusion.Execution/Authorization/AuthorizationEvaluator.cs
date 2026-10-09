@@ -261,22 +261,35 @@ internal sealed class AuthorizationEvaluator
     {
         var occurrences = ImmutableArray.CreateBuilder<PolicyDescriptor>(descriptors.Length);
         var flagsByOperation = new Dictionary<Operation, ConditionFlags>();
-        var operationsThatDoNotRun = plan.IncrementalPlans.IsEmpty
-            ? null
-            : IncrementalPlan.GetOperationsThatDoNotRun(plan.IncrementalPlans, variables);
+        var activeDeliveryGroups = default(ActivationBits);
+        var runningIncrementalPlans = default(ActivationBits);
 
-        foreach (var descriptor in descriptors)
+        try
         {
-            if (operationsThatDoNotRun?.Contains(
-                    ((Selection)descriptor.Selection).DeclaringSelectionSet.DeclaringOperation) is true)
-            {
-                continue;
-            }
+            activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
+            runningIncrementalPlans = IncrementalPlan.GetRunningPlans(
+                plan.IncrementalPlans,
+                activeDeliveryGroups);
 
-            if (IsReachable((Selection)descriptor.Selection, variables, flagsByOperation))
+            foreach (var descriptor in descriptors)
             {
-                occurrences.Add(descriptor);
+                if (plan.DoesNotRun(
+                        runningIncrementalPlans,
+                        ((Selection)descriptor.Selection).DeclaringSelectionSet.DeclaringOperation))
+                {
+                    continue;
+                }
+
+                if (IsReachable((Selection)descriptor.Selection, variables, flagsByOperation))
+                {
+                    occurrences.Add(descriptor);
+                }
             }
+        }
+        finally
+        {
+            activeDeliveryGroups.Return();
+            runningIncrementalPlans.Return();
         }
 
         return occurrences.ToImmutable();
