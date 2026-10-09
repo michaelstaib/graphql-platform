@@ -1097,8 +1097,8 @@ public class AuthorizationPlanningTests : FusionTestBase
             .AddInMemoryPolicies(policies => policies.Allow("p"))
             .AddInMemoryConfiguration(schemaDocument)
             .ConfigureSchemaServices(
-                (_, sc) => sc.AddSingleton<IAuthenticationSchemeCatalog>(
-                    new TestAuthenticationSchemeCatalog("Bearer")));
+                (_, sc) => sc.AddSingleton<IAuthenticationSchemeLookup>(
+                    new TestAuthenticationSchemeLookup("Bearer")));
         IServiceProvider serviceProvider = services.BuildServiceProvider();
         var executor = await serviceProvider.GetRequestExecutorAsync(
             cancellationToken: TestContext.Current.CancellationToken);

@@ -62,8 +62,8 @@ public static class FusionServerServiceCollectionExtensions
         {
             sc.TryAddSingleton<ITimeProvider, DefaultTimeProvider>();
 
-            sc.TryAddSingleton<IAuthenticationSchemeCatalog>(
-                _ => new AuthenticationSchemeCatalog(
+            sc.TryAddSingleton<IAuthenticationSchemeLookup>(
+                _ => new AspNetCoreAuthenticationSchemeLookup(
                     applicationServices.GetService<IAuthenticationSchemeProvider>()));
 
             sc.TryAddSingleton<IHttpResponseFormatter>(

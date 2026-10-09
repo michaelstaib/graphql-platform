@@ -86,9 +86,9 @@ internal static class AuthorizationStartupValidator
             throw ThrowHelper.EmptyAuthenticationSchemes();
         }
 
-        if (!schemeResolver.HasCatalog)
+        if (!schemeResolver.HasLookup)
         {
-            throw ThrowHelper.AuthenticationSchemesWithoutCatalog();
+            throw ThrowHelper.AuthenticationSchemesWithoutLookup();
         }
 
         for (var i = 0; i < listed.Length; i++)
@@ -107,9 +107,9 @@ internal static class AuthorizationStartupValidator
         AuthenticationSchemeResolver schemeResolver,
         ImmutableArray<string> registered)
     {
-        if (!schemeResolver.HasCatalog)
+        if (!schemeResolver.HasLookup)
         {
-            throw ThrowHelper.NoAuthenticationSchemeCatalog();
+            throw ThrowHelper.NoAuthenticationSchemeLookup();
         }
 
         if (options.Schemes is null && registered.IsEmpty)

@@ -491,7 +491,7 @@ internal sealed class FusionRequestExecutorManager
         services.AddSingleton(
             static sp => new AuthenticationSchemeResolver(
                 sp.GetRequiredService<FusionAuthorizationOptions>(),
-                sp.GetService<IAuthenticationSchemeCatalog>()));
+                sp.GetService<IAuthenticationSchemeLookup>()));
         services.TryAddSingleton<IPolicyResolver>(
             static sp =>
             {

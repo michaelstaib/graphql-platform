@@ -9,7 +9,7 @@ namespace HotChocolate.Fusion.Authorization;
 internal sealed class AuthenticationSchemeResolver
 {
     private readonly FusionAuthorizationOptions _options;
-    private readonly IAuthenticationSchemeCatalog? _catalog;
+    private readonly IAuthenticationSchemeLookup? _lookup;
 
     /// <summary>
     /// Initializes a new instance of <see cref="AuthenticationSchemeResolver"/>.
@@ -17,23 +17,23 @@ internal sealed class AuthenticationSchemeResolver
     /// <param name="options">
     /// The authorization options.
     /// </param>
-    /// <param name="catalog">
+    /// <param name="lookup">
     /// The registered schemes, or <c>null</c> if the host exposes none, which resolves to no registered schemes.
     /// </param>
     public AuthenticationSchemeResolver(
         FusionAuthorizationOptions options,
-        IAuthenticationSchemeCatalog? catalog)
+        IAuthenticationSchemeLookup? lookup)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         _options = options;
-        _catalog = catalog;
+        _lookup = lookup;
     }
 
     /// <summary>
     /// Gets a value indicating whether the host exposes its registered authentication schemes.
     /// </summary>
-    public bool HasCatalog => _catalog is not null;
+    public bool HasLookup => _lookup is not null;
 
     /// <summary>
     /// Gets the names of the registered authentication schemes.
@@ -42,9 +42,9 @@ internal sealed class AuthenticationSchemeResolver
     /// The token that signals that the operation was aborted.
     /// </param>
     public ValueTask<ImmutableArray<string>> GetRegisteredAsync(CancellationToken cancellationToken)
-        => _catalog is null
+        => _lookup is null
             ? new ValueTask<ImmutableArray<string>>([])
-            : _catalog.GetSchemeNamesAsync(cancellationToken);
+            : _lookup.GetSchemeNamesAsync(cancellationToken);
 
     /// <summary>
     /// Gets the value of the <c>WWW-Authenticate</c> header that advertises the HTTP authentication schemes
@@ -55,7 +55,7 @@ internal sealed class AuthenticationSchemeResolver
     /// </param>
     public async ValueTask<string?> GetChallengeAsync(CancellationToken cancellationToken)
     {
-        if (_catalog is null)
+        if (_lookup is null)
         {
             return null;
         }
@@ -71,7 +71,7 @@ internal sealed class AuthenticationSchemeResolver
                 continue;
             }
 
-            var challenge = await _catalog.GetChallengeAsync(schemeName, cancellationToken).ConfigureAwait(false);
+            var challenge = await _lookup.GetChallengeAsync(schemeName, cancellationToken).ConfigureAwait(false);
 
             if (challenge is not null || _options.SchemeChallenges.TryGetValue(schemeName, out challenge))
             {

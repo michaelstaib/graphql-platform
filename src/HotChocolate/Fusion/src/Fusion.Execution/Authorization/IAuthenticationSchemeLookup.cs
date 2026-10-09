@@ -5,7 +5,7 @@ namespace HotChocolate.Fusion.Authorization;
 /// <summary>
 /// Provides the authentication schemes the host has registered and the challenges their handlers advertise.
 /// </summary>
-internal interface IAuthenticationSchemeCatalog
+internal interface IAuthenticationSchemeLookup
 {
     /// <summary>
     /// Gets the names of all registered authentication schemes.

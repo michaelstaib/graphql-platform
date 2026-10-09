@@ -28,14 +28,14 @@ internal static class ThrowHelper
     public static InvalidOperationException NoAuthenticationSchemeRegistered()
         => new(FusionExecutionResources.AuthorizationValidation_NoSchemeRegistered);
 
-    public static InvalidOperationException NoAuthenticationSchemeCatalog()
-        => new(FusionExecutionResources.AuthorizationValidation_NoSchemeCatalog);
+    public static InvalidOperationException NoAuthenticationSchemeLookup()
+        => new(FusionExecutionResources.AuthorizationValidation_NoSchemeLookup);
 
     public static InvalidOperationException EmptyAuthenticationSchemes()
         => new(FusionExecutionResources.AuthorizationValidation_SchemesEmpty);
 
-    public static InvalidOperationException AuthenticationSchemesWithoutCatalog()
-        => new(FusionExecutionResources.AuthorizationValidation_SchemesWithoutCatalog);
+    public static InvalidOperationException AuthenticationSchemesWithoutLookup()
+        => new(FusionExecutionResources.AuthorizationValidation_SchemesWithoutLookup);
 
     public static InvalidOperationException PolicyNotResolved(string directiveName, string? policyName)
         => new(string.Format(

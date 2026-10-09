@@ -345,9 +345,9 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string AuthorizationValidation_NoSchemeCatalog {
+        internal static string AuthorizationValidation_NoSchemeLookup {
             get {
-                return ResourceManager.GetString("AuthorizationValidation_NoSchemeCatalog", resourceCulture);
+                return ResourceManager.GetString("AuthorizationValidation_NoSchemeLookup", resourceCulture);
             }
         }
 
@@ -357,9 +357,9 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string AuthorizationValidation_SchemesWithoutCatalog {
+        internal static string AuthorizationValidation_SchemesWithoutLookup {
             get {
-                return ResourceManager.GetString("AuthorizationValidation_SchemesWithoutCatalog", resourceCulture);
+                return ResourceManager.GetString("AuthorizationValidation_SchemesWithoutLookup", resourceCulture);
             }
         }
     }

@@ -10,9 +10,10 @@ public class AuthenticationSchemeResolverTests
         // arrange
         var schemeResolver = new AuthenticationSchemeResolver(
             new FusionAuthorizationOptions(),
-            new TestAuthenticationSchemeCatalog(
-                ["MyJwt"],
-                ImmutableDictionary<string, string>.Empty.Add("MyJwt", "Bearer")));
+            new TestAuthenticationSchemeLookup("MyJwt")
+            {
+                Challenges = ImmutableDictionary<string, string>.Empty.Add("MyJwt", "Bearer")
+            });
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -27,9 +28,10 @@ public class AuthenticationSchemeResolverTests
         // arrange
         var schemeResolver = new AuthenticationSchemeResolver(
             new FusionAuthorizationOptions(),
-            new TestAuthenticationSchemeCatalog(
-                ["JwtA", "JwtB"],
-                ImmutableDictionary<string, string>.Empty.Add("JwtA", "Bearer").Add("JwtB", "Bearer")));
+            new TestAuthenticationSchemeLookup("JwtA", "JwtB")
+            {
+                Challenges = ImmutableDictionary<string, string>.Empty.Add("JwtA", "Bearer").Add("JwtB", "Bearer")
+            });
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -44,9 +46,12 @@ public class AuthenticationSchemeResolverTests
         // arrange
         var schemeResolver = new AuthenticationSchemeResolver(
             new FusionAuthorizationOptions(),
-            new TestAuthenticationSchemeCatalog(
-                ["Windows", "MyJwt"],
-                ImmutableDictionary<string, string>.Empty.Add("Windows", "Negotiate").Add("MyJwt", "Bearer")));
+            new TestAuthenticationSchemeLookup("Windows", "MyJwt")
+            {
+                Challenges = ImmutableDictionary<string, string>.Empty
+                    .Add("Windows", "Negotiate")
+                    .Add("MyJwt", "Bearer")
+            });
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -63,7 +68,7 @@ public class AuthenticationSchemeResolverTests
         {
             SchemeChallenges = ImmutableDictionary<string, string>.Empty.Add("Cookies", "Cookie")
         };
-        var schemeResolver = new AuthenticationSchemeResolver(options, new TestAuthenticationSchemeCatalog("Cookies"));
+        var schemeResolver = new AuthenticationSchemeResolver(options, new TestAuthenticationSchemeLookup("Cookies"));
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -78,7 +83,7 @@ public class AuthenticationSchemeResolverTests
         // arrange
         var schemeResolver = new AuthenticationSchemeResolver(
             new FusionAuthorizationOptions(),
-            new TestAuthenticationSchemeCatalog("Cookies"));
+            new TestAuthenticationSchemeLookup("Cookies"));
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -98,9 +103,10 @@ public class AuthenticationSchemeResolverTests
         };
         var schemeResolver = new AuthenticationSchemeResolver(
             options,
-            new TestAuthenticationSchemeCatalog(
-                ["MyJwt", "Windows"],
-                ImmutableDictionary<string, string>.Empty.Add("MyJwt", "Bearer")));
+            new TestAuthenticationSchemeLookup("MyJwt", "Windows")
+            {
+                Challenges = ImmutableDictionary<string, string>.Empty.Add("MyJwt", "Bearer")
+            });
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -120,9 +126,10 @@ public class AuthenticationSchemeResolverTests
         };
         var schemeResolver = new AuthenticationSchemeResolver(
             options,
-            new TestAuthenticationSchemeCatalog(
-                ["MyJwt"],
-                ImmutableDictionary<string, string>.Empty.Add("MyJwt", "Bearer")));
+            new TestAuthenticationSchemeLookup("MyJwt")
+            {
+                Challenges = ImmutableDictionary<string, string>.Empty.Add("MyJwt", "Bearer")
+            });
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -137,7 +144,7 @@ public class AuthenticationSchemeResolverTests
         // arrange
         var schemeResolver = new AuthenticationSchemeResolver(
             new FusionAuthorizationOptions { Schemes = ImmutableArray.Create("Bearer") },
-            new TestAuthenticationSchemeCatalog());
+            new TestAuthenticationSchemeLookup());
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);
@@ -147,10 +154,10 @@ public class AuthenticationSchemeResolverTests
     }
 
     [Fact]
-    public async Task GetChallengeAsync_Should_ReturnNull_When_HostHasNoCatalog()
+    public async Task GetChallengeAsync_Should_ReturnNull_When_HostHasNoLookup()
     {
         // arrange
-        var schemeResolver = new AuthenticationSchemeResolver(new FusionAuthorizationOptions(), catalog: null);
+        var schemeResolver = new AuthenticationSchemeResolver(new FusionAuthorizationOptions(), lookup: null);
 
         // act
         var challenge = await schemeResolver.GetChallengeAsync(CancellationToken.None);

@@ -30,7 +30,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             field,
-            catalog: new TestAuthenticationSchemeCatalog(),
+            lookup: new TestAuthenticationSchemeLookup(),
             policies: policies => policies.Allow("admin"));
 
         // act
@@ -48,7 +48,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "secret: String @authenticated",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"));
+            lookup: new TestAuthenticationSchemeLookup("Bearer"));
 
         // act
         var executor = await provider.GetRequestExecutorAsync(
@@ -64,7 +64,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "secret: String @authenticated",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer"),
             configure: o => o.Schemes = ImmutableArray.Create("Bearer", "Cookie"));
 
         // act
@@ -85,7 +85,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "field: String",
-            catalog: new TestAuthenticationSchemeCatalog(),
+            lookup: new TestAuthenticationSchemeLookup(),
             configure: o => o.Schemes = ImmutableArray.Create("Bearer"));
 
         // act
@@ -108,7 +108,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             field,
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer"),
             configure: o => o.Schemes = ImmutableArray<string>.Empty);
 
         // act
@@ -125,12 +125,12 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     [Theory]
     [InlineData("secret: String @authenticated")]
     [InlineData("field: String")]
-    public async Task Startup_Should_Fail_When_SchemesAreListedAndHostHasNoAuthenticationSchemeCatalog(string field)
+    public async Task Startup_Should_Fail_When_SchemesAreListedAndHostHasNoAuthenticationSchemeLookup(string field)
     {
         // arrange
         var provider = CreateProvider(
             field,
-            catalog: null,
+            lookup: null,
             configure: o => o.Schemes = ImmutableArray.Create("Bearer"));
 
         // act
@@ -141,7 +141,8 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
         Assert.Equal(
             "The Schemes option lists authentication schemes but the host exposes no authentication schemes. "
-            + "Register the catalog through HotChocolate.Fusion.AspNetCore, or do not set Schemes.",
+            + "Register the authentication scheme lookup through HotChocolate.Fusion.AspNetCore, "
+            + "or do not set Schemes.",
             exception.Message);
     }
 
@@ -151,7 +152,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "field: String",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer", "Cookie"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer", "Cookie"),
             configure: o => o.Schemes = ImmutableArray.Create("Cookie"));
 
         // act
@@ -168,7 +169,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "secret: String @authenticated",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer", "Cookie"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer", "Cookie"),
             configure: o => o.Schemes = ImmutableArray.Create("Cookie"));
 
         // act
@@ -185,7 +186,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "field: String",
-            catalog: new TestAuthenticationSchemeCatalog());
+            lookup: new TestAuthenticationSchemeLookup());
 
         // act
         var executor = await provider.GetRequestExecutorAsync(
@@ -196,10 +197,10 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Fail_When_SchemaUsesAuthorizationAndHostHasNoAuthenticationSchemeCatalog()
+    public async Task Startup_Should_Fail_When_SchemaUsesAuthorizationAndHostHasNoAuthenticationSchemeLookup()
     {
         // arrange
-        var provider = CreateProvider("secret: String @authenticated", catalog: null);
+        var provider = CreateProvider("secret: String @authenticated", lookup: null);
 
         // act
         var act = async () => await provider.GetRequestExecutorAsync(
@@ -219,7 +220,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             """secret: String @policy(policies: [["admin", "auditor"]])""",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer"),
             policies: policies => policies.Allow("admin"));
 
         // act
@@ -239,7 +240,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             """secret: String @policy(policies: [["admin", "auditor"]])""",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer"),
             policies: policies => policies.Allow("admin").Deny("auditor"));
 
         // act
@@ -259,7 +260,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
             secret: String @authenticated
             guarded: String @policy(policies: [["admin"]])
             """,
-            catalog: new TestAuthenticationSchemeCatalog(),
+            lookup: new TestAuthenticationSchemeLookup(),
             configure: o =>
             {
                 o.Schemes = ImmutableArray.Create("Bearer");
@@ -280,7 +281,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "field: String",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer"),
             configure: o =>
             {
                 o.Schemes = ImmutableArray<string>.Empty;
@@ -301,7 +302,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // arrange
         var provider = CreateProvider(
             "field: String",
-            catalog: new TestAuthenticationSchemeCatalog("Bearer"),
+            lookup: new TestAuthenticationSchemeLookup("Bearer"),
             configure: o =>
             {
                 o.Schemes = ImmutableArray.Create("Bearer", "Cookie");
@@ -317,12 +318,12 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_ValidationIsDisabledAndSchemesAreListedWithoutCatalog()
+    public async Task Startup_Should_Succeed_When_ValidationIsDisabledAndSchemesAreListedWithoutLookup()
     {
         // arrange
         var provider = CreateProvider(
             "field: String",
-            catalog: null,
+            lookup: null,
             configure: o =>
             {
                 o.Schemes = ImmutableArray.Create("Bearer");
@@ -339,7 +340,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
 
     private static IServiceProvider CreateProvider(
         string fields,
-        IAuthenticationSchemeCatalog? catalog,
+        IAuthenticationSchemeLookup? lookup,
         Action<FusionAuthorizationOptions>? configure = null,
         Action<InMemory.InMemoryPolicyBuilder>? policies = null)
     {
@@ -356,9 +357,9 @@ public class AuthorizationStartupValidationTests : FusionTestBase
                     {{Directives}}
                     """));
 
-        if (catalog is not null)
+        if (lookup is not null)
         {
-            builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton(catalog));
+            builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton(lookup));
         }
 
         if (configure is not null)

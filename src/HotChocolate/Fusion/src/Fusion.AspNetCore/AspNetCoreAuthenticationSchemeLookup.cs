@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Authentication;
 
 namespace HotChocolate.Fusion.AspNetCore;
 
-internal sealed class AuthenticationSchemeCatalog(IAuthenticationSchemeProvider? schemeProvider)
-    : IAuthenticationSchemeCatalog
+internal sealed class AspNetCoreAuthenticationSchemeLookup(IAuthenticationSchemeProvider? schemeProvider)
+    : IAuthenticationSchemeLookup
 {
     private const string JwtBearerHandlerTypeName = "Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler";
     private const string NegotiateHandlerTypeName = "Microsoft.AspNetCore.Authentication.Negotiate.NegotiateHandler";
