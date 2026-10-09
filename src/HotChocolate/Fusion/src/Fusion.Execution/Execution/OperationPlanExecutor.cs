@@ -1520,9 +1520,7 @@ internal static partial class OperationPlanExecutor
 
         if (authorizationFault is not null)
         {
-            yield return ErrorHelper.SubscriptionFaulted(
-                authorizationFault,
-                context.RequestContext.Schema.Services.GetRequiredService<IErrorHandler>());
+            yield return ErrorHelper.SubscriptionFaulted(authorizationFault, context.ErrorHandler);
         }
 
         // Creates a fresh event-scoped cancellation source, links client-abort / shutdown into it,
