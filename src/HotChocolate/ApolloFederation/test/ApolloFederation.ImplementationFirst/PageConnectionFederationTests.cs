@@ -31,6 +31,7 @@ public class PageConnectionFederationTests
             .AddApolloFederation()
             .AddImplementationFirstTypes()
             .AddPagingArguments()
+            .ModifyPagingOptions(o => o.EnableRelativeCursors = true)
             .AddTypeExtension(new ObjectTypeExtension(d => d.Name("PageCursor").Shareable()))
             .BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
 
