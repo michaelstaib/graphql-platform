@@ -219,7 +219,7 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
     private Task<Gateway> CreateGatewayAsync(TestServer server, Action<FusionAuthorizationOptions> configure)
         => CreateCompositeSchemaAsync(
             [("A", server)],
-            configureServices: AddCookieSchemes,
+            configureServices: AddJwtScheme,
             configureApplication: UseTestUser,
             configureGatewayBuilder: b => b
                 .ModifyAuthorizationOptions(configure)
@@ -292,9 +292,8 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
         app.UseEndpoints(endpoint => endpoint.MapGraphQL());
     }
 
-    private static void AddCookieSchemes(IServiceCollection services)
+    private static void AddJwtScheme(IServiceCollection services)
         => services
             .AddAuthentication()
-            .AddCookie("Cookies")
-            .AddCookie("Session");
+            .AddJwtBearer("Jwt", _ => { });
 }
