@@ -56,9 +56,10 @@ internal enum CoreFieldFlags : long
     HasProjectionMiddleware = 1L << 40,
 
     /// <summary>
-    /// The field opts out of the automatic defaults that are applied to data resolvers.
+    /// The field is not treated as a data resolver for automatic default directives.
+    /// Its reads are bounded and pre-paid by the connection that produced it.
     /// </summary>
-    NoDataDefaults = 1L << 41,
+    NotDataResolver = 1L << 41,
 
     /// <summary>
     /// The field exists on the schema only when relative cursors are enabled globally or on at least one field.

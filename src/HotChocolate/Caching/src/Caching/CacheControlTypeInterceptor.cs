@@ -74,9 +74,9 @@ internal sealed class CacheControlTypeInterceptor(
                 continue;
             }
 
-            if ((field.Flags & CoreFieldFlags.NoDataDefaults) == CoreFieldFlags.NoDataDefaults)
+            if ((field.Flags & CoreFieldFlags.NotDataResolver) == CoreFieldFlags.NotDataResolver)
             {
-                // Fields that opt out of data resolver defaults receive no defaults.
+                // Fields that are not data resolvers receive no defaults.
                 continue;
             }
 
