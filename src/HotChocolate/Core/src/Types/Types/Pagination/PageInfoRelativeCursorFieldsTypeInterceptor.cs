@@ -6,17 +6,13 @@ using HotChocolate.Types.Descriptors.Configurations;
 namespace HotChocolate.Types.Pagination;
 
 /// <summary>
-/// Keeps the relative cursor fields of the <c>PageInfo</c> type out of the schema unless relative cursors
-/// are enabled globally or on at least one field.
+/// Keeps the relative cursor fields out of the schema unless relative cursors are enabled globally
+/// or on at least one field.
 /// </summary>
 internal sealed class PageInfoRelativeCursorFieldsTypeInterceptor : TypeInterceptor
 {
-    private const string PageInfoTypeName = "PageInfo";
-    private const string ForwardCursorsFieldName = "forwardCursors";
-    private const string BackwardCursorsFieldName = "backwardCursors";
-
-    private readonly List<(int Index, ObjectFieldConfiguration Field)> _removedFields = [];
-    private ObjectTypeConfiguration? _pageInfo;
+    private readonly List<(ObjectTypeConfiguration Type, int Index, ObjectFieldConfiguration Field)>
+        _removedFields = [];
     private bool _fieldEnabled;
 
     public override void OnBeforeRegisterDependencies(
@@ -28,8 +24,7 @@ internal sealed class PageInfoRelativeCursorFieldsTypeInterceptor : TypeIntercep
             case ObjectTypeConfiguration typeConfiguration:
                 _fieldEnabled |= typeConfiguration.Fields.Any(t => IsEnabled(t.GetFeatures()));
 
-                if (typeConfiguration.Name is PageInfoTypeName
-                    && !IsEnabled(discoveryContext.DescriptorContext.Features))
+                if (!IsEnabled(discoveryContext.DescriptorContext.Features))
                 {
                     RemoveRelativeCursorFields(typeConfiguration);
                 }
@@ -45,18 +40,17 @@ internal sealed class PageInfoRelativeCursorFieldsTypeInterceptor : TypeIntercep
     public override IEnumerable<TypeReference> RegisterMoreTypes(
         IReadOnlyCollection<ITypeDiscoveryContext> discoveryContexts)
     {
-        if (_pageInfo is null || _removedFields.Count == 0 || !_fieldEnabled)
+        if (_removedFields.Count == 0 || !_fieldEnabled)
         {
             yield break;
         }
 
-        var pageInfo = _pageInfo;
         var restored = _removedFields.ToArray();
         _removedFields.Clear();
 
-        foreach (var (index, field) in restored)
+        foreach (var (typeConfiguration, index, field) in restored)
         {
-            pageInfo.Fields.Insert(index, field);
+            typeConfiguration.Fields.Insert(index, field);
 
             if (field.Type is { } type)
             {
@@ -67,18 +61,20 @@ internal sealed class PageInfoRelativeCursorFieldsTypeInterceptor : TypeIntercep
 
     private void RemoveRelativeCursorFields(ObjectTypeConfiguration typeConfiguration)
     {
-        _pageInfo = typeConfiguration;
+        var removed = new List<(ObjectTypeConfiguration Type, int Index, ObjectFieldConfiguration Field)>();
 
         for (var i = typeConfiguration.Fields.Count - 1; i >= 0; i--)
         {
             var field = typeConfiguration.Fields[i];
 
-            if (field.Name is ForwardCursorsFieldName or BackwardCursorsFieldName)
+            if (field.Flags.HasFlag(CoreFieldFlags.RelativeCursorField))
             {
-                _removedFields.Insert(0, (i, field));
+                removed.Insert(0, (typeConfiguration, i, field));
                 typeConfiguration.Fields.RemoveAt(i);
             }
         }
+
+        _removedFields.AddRange(removed);
     }
 
     private static bool IsEnabled(IFeatureCollection features)

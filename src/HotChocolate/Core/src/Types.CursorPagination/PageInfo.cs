@@ -76,6 +76,7 @@ public abstract class PageInfo : IPageInfo
     /// The token that cancels the operation.
     /// </param>
     [NoDataDefaults]
+    [RelativeCursorField]
     [GraphQLDescription(
         "A list of cursors to continue paginating forwards.")]
     [GraphQLType<NonNullType<ListType<NonNullType<PageCursorType>>>>]
@@ -89,6 +90,7 @@ public abstract class PageInfo : IPageInfo
     /// The token that cancels the operation.
     /// </param>
     [NoDataDefaults]
+    [RelativeCursorField]
     [GraphQLDescription(
         "A list of cursors to continue paginating backwards.")]
     [GraphQLType<NonNullType<ListType<NonNullType<PageCursorType>>>>]

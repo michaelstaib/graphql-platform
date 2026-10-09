@@ -13,10 +13,6 @@ type ConnectionPageInfo {
   startCursor: String
   "When paginating forwards, the cursor to continue."
   endCursor: String
-  "A list of cursors to continue paginating forwards."
-  forwardCursors: [PageCursor!]!
-  "A list of cursors to continue paginating backwards."
-  backwardCursors: [PageCursor!]!
 }
 ```
 
@@ -42,10 +38,6 @@ type PageInfo {
   startCursor: String
   "When paginating forwards, the cursor to continue."
   endCursor: String
-  "A list of cursors to continue paginating forwards."
-  forwardCursors: [PageCursor!]!
-  "A list of cursors to continue paginating backwards."
-  backwardCursors: [PageCursor!]!
 }
 ```
 

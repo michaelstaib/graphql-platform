@@ -58,5 +58,10 @@ internal enum CoreFieldFlags : long
     /// <summary>
     /// The field opts out of the automatic defaults that are applied to data resolvers.
     /// </summary>
-    NoDataDefaults = 1L << 41
+    NoDataDefaults = 1L << 41,
+
+    /// <summary>
+    /// The field exists on the schema only when relative cursors are enabled globally or on at least one field.
+    /// </summary>
+    RelativeCursorField = 1L << 42
 }

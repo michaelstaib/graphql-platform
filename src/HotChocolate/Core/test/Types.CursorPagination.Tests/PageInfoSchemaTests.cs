@@ -277,7 +277,6 @@ public class PageInfoSchemaTests
         // arrange
         var builder = new ServiceCollection()
             .AddGraphQLServer()
-            .ModifyPagingOptions(o => o.EnableRelativeCursors = true)
             .AddQueryType<CustomMixedQuery>()
             .AddType<CustomConnectionType>();
 
