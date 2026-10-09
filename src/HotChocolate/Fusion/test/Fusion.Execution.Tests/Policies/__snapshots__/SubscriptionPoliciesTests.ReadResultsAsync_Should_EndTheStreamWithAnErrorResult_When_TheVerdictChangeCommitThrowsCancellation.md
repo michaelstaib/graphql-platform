@@ -12,6 +12,12 @@
 }
 ```
 
+## Terminal Status Code
+
+```json
+"InternalServerError"
+```
+
 ## Has Next
 
 ```json
