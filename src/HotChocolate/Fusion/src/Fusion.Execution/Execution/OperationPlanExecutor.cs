@@ -109,18 +109,14 @@ internal static partial class OperationPlanExecutor
             var activeDeliveryGroups = rootContext.ActiveDeliveryGroups;
             var deliveryPaths = CreateDeliveryPaths(operationPlan);
 
-            // Mark top-level active delivery groups as pending on the initial
-            // result. Nested delivery groups are marked pending after their
-            // parent incremental plan completes.
+            // Mark active delivery groups without an active enclosing group as pending on
+            // the initial result. The others are marked pending after the incremental plan
+            // of their nearest active enclosing group completes.
             var pendingResults = ImmutableList.CreateBuilder<PendingResult>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (deliveryGroup.Parent is not null)
-                {
-                    continue;
-                }
-
-                if (!activeDeliveryGroups.Get(deliveryGroup.Id))
+                if (!activeDeliveryGroups.Get(deliveryGroup.Id)
+                    || deliveryGroup.GetActiveParent(activeDeliveryGroups) is not null)
                 {
                     continue;
                 }
@@ -234,7 +230,8 @@ internal static partial class OperationPlanExecutor
             {
                 var incrementalPlan = incrementalPlans[i];
 
-                if (!runningIncrementalPlans.Get(i) || incrementalPlan.DeliveryGroups[0].Parent is not null)
+                if (!runningIncrementalPlans.Get(i)
+                    || incrementalPlan.DeliveryGroups[0].GetActiveParent(activeDeliveryGroups) is not null)
                 {
                     continue;
                 }
@@ -257,7 +254,8 @@ internal static partial class OperationPlanExecutor
             var announcedDeliveryGroupIds = new HashSet<int>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (deliveryGroup.Parent is null && activeDeliveryGroups.Get(deliveryGroup.Id))
+                if (activeDeliveryGroups.Get(deliveryGroup.Id)
+                    && deliveryGroup.GetActiveParent(activeDeliveryGroups) is null)
                 {
                     announcedDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
@@ -295,7 +293,7 @@ internal static partial class OperationPlanExecutor
                         continue;
                     }
 
-                    var candidateParent = candidate.DeliveryGroups[0].Parent;
+                    var candidateParent = candidate.DeliveryGroups[0].GetActiveParent(activeDeliveryGroups);
                     if (candidateParent is null)
                     {
                         continue;
