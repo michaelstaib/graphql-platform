@@ -210,7 +210,7 @@ internal static class ErrorHelper
     public static OperationResult SubscriptionFaulted(Exception fault, IErrorHandler errorHandler)
     {
         var result = OperationResult.FromError(
-            errorHandler.Handle(ErrorBuilder.FromException(fault).Build()));
+            [.. errorHandler.Handle([ErrorBuilder.FromException(fault).Build()])]);
 
         result.ContextData = result.ContextData.Add(
             ExecutionContextData.HttpStatusCode,
