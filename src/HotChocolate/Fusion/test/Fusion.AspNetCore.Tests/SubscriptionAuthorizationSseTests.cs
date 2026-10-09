@@ -355,7 +355,7 @@ public class SubscriptionAuthorizationSseTests : SubscriptionAuthorizationTransp
     }
 
     [Fact]
-    public async Task ReadEventAsync_Should_AbortTheStream_When_APolicyFaultsMidStream()
+    public async Task ReadToEndAsync_Should_EndWithAnErrorEventThenComplete_When_APolicyFaultsMidStream()
     {
         // arrange
         using var gateway = await CreateSubscriptionGatewayAsync(DenyHandling.Error);
@@ -367,22 +367,38 @@ public class SubscriptionAuthorizationSseTests : SubscriptionAuthorizationTransp
 
         // act
         gateway.Feed.Publish(Event);
-        await Assert.ThrowsAsync<IOException>(sse.ReadEventAsync);
+        var remaining = await sse.ReadToEndAsync();
 
         // assert
-        first.MatchInlineSnapshot(
-            """
-            event: next
-            {
-              "data": {
-                "changed": {
-                  "id": "1",
-                  "name": "name",
-                  "tag": "tag"
+        string?[] events = [first, .. remaining];
+        events.MatchInlineSnapshots(
+            [
+                """
+                event: next
+                {
+                  "data": {
+                    "changed": {
+                      "id": "1",
+                      "name": "name",
+                      "tag": "tag"
+                    }
+                  }
                 }
-              }
-            }
-            """);
+                """,
+                """
+                event: next
+                {
+                  "errors": [
+                    {
+                      "message": "Unexpected Execution Error"
+                    }
+                  ]
+                }
+                """,
+                """
+                event: complete
+                """
+            ]);
     }
 
     [Fact]
