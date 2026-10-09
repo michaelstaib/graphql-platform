@@ -9,7 +9,7 @@
 ## Challenge
 
 ```text
-none
+Bearer
 ```
 
 ## Events
