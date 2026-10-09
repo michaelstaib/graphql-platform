@@ -178,44 +178,30 @@ public class IntegrationTests
     public async Task Query_PageInfo_Across_Connection_Backings()
     {
         // arrange
+        var services = CreateApplicationServicesWithRelativeCursors();
+        var executor = await services.GetRequiredService<IRequestExecutorProvider>().GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            PageInfoQuery,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Query_PageInfo_Without_Relative_Cursors_Rejects_Cursor_Fields()
+    {
+        // arrange
         var services = CreateApplicationServices();
         var executor = await services.GetRequiredService<IRequestExecutorProvider>().GetExecutorAsync(
             cancellationToken: TestContext.Current.CancellationToken);
 
         // act
         var result = await executor.ExecuteAsync(
-            """
-            {
-                authors {
-                    pageInfo {
-                        ...PageInfoFields
-                    }
-                }
-                publishers {
-                    pageInfo {
-                        ...PageInfoFields
-                    }
-                }
-                magazines {
-                    pageInfo {
-                        ...PageInfoFields
-                    }
-                }
-            }
-
-            fragment PageInfoFields on PageInfo {
-                hasNextPage
-                hasPreviousPage
-                startCursor
-                endCursor
-                forwardCursors {
-                    page
-                }
-                backwardCursors {
-                    page
-                }
-            }
-            """,
+            PageInfoQuery,
             TestContext.Current.CancellationToken);
 
         // assert
@@ -226,7 +212,7 @@ public class IntegrationTests
     public async Task Schema_With_Cost_Analysis_And_Cache_Control_Has_No_Directives_On_PageInfo()
     {
         // arrange
-        var services = CreateApplicationServicesWithCostAndCacheControl();
+        var services = CreateApplicationServicesWithCostAndCacheControl(enableRelativeCursors: true);
 
         // act
         var executor = await services.GetRequiredService<IRequestExecutorProvider>().GetExecutorAsync(
@@ -236,7 +222,75 @@ public class IntegrationTests
         executor.Schema.MatchSnapshot();
     }
 
-    private static IServiceProvider CreateApplicationServicesWithCostAndCacheControl()
+    [Fact]
+    public async Task Schema_With_Cost_Analysis_And_Cache_Control_Without_Relative_Cursors()
+    {
+        // arrange
+        var services = CreateApplicationServicesWithCostAndCacheControl(enableRelativeCursors: false);
+
+        // act
+        var executor = await services.GetRequiredService<IRequestExecutorProvider>().GetExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // assert
+        executor.Schema.MatchSnapshot();
+    }
+
+    private const string PageInfoQuery =
+        """
+        {
+            authors {
+                pageInfo {
+                    ...PageInfoFields
+                }
+            }
+            publishers {
+                pageInfo {
+                    ...PageInfoFields
+                }
+            }
+            magazines {
+                pageInfo {
+                    ...PageInfoFields
+                }
+            }
+        }
+
+        fragment PageInfoFields on PageInfo {
+            hasNextPage
+            hasPreviousPage
+            startCursor
+            endCursor
+            forwardCursors {
+                page
+            }
+            backwardCursors {
+                page
+            }
+        }
+        """;
+
+    private static IServiceProvider CreateApplicationServicesWithRelativeCursors()
+    {
+        var serviceCollection = new ServiceCollection();
+
+        serviceCollection
+            .AddSingleton<AuthorRepository>()
+            .AddScoped<AuthorAddressRepository>()
+            .AddSingleton<BookRepository>()
+            .AddSingleton<ChapterRepository>();
+
+        serviceCollection
+            .AddGraphQLServer(disableDefaultSecurity: true)
+            .AddCustomModule()
+            .AddGlobalObjectIdentification()
+            .AddMutationConventions()
+            .ModifyPagingOptions(o => o.EnableRelativeCursors = true);
+
+        return serviceCollection.BuildServiceProvider();
+    }
+
+    private static IServiceProvider CreateApplicationServicesWithCostAndCacheControl(bool enableRelativeCursors)
     {
         var serviceCollection = new ServiceCollection();
 
@@ -251,7 +305,8 @@ public class IntegrationTests
             .AddCustomModule()
             .AddGlobalObjectIdentification()
             .AddMutationConventions()
-            .AddCacheControl();
+            .AddCacheControl()
+            .ModifyPagingOptions(o => o.EnableRelativeCursors = enableRelativeCursors);
 
         return serviceCollection.BuildServiceProvider();
     }
