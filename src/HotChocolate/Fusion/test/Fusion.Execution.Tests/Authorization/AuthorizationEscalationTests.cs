@@ -104,8 +104,8 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             {
                 builder.ModifyAuthorizationOptions(options => options.DisableAuthorizationValidation = true);
                 builder.ConfigureSchemaServices(
-                    (_, sc) => sc.AddSingleton<IAuthenticationSchemeCatalog>(
-                        new TestAuthenticationSchemeCatalog()));
+                    (_, sc) => sc.AddSingleton<IAuthenticationSchemeLookup>(
+                        new TestAuthenticationSchemeLookup()));
             });
 
         // act

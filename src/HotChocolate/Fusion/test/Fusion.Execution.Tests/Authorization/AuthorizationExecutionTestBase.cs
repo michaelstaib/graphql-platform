@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Authorization.InMemory;
@@ -20,7 +21,8 @@ public abstract class AuthorizationExecutionTestBase : FusionTestBase
             on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
         """;
 
-    private static readonly string[] s_schemes = ["Bearer"];
+    private static readonly ImmutableDictionary<string, string> s_challenges =
+        ImmutableDictionary<string, string>.Empty.Add("Bearer", "Bearer");
 
     internal static async Task<IRequestExecutor> CreateExecutorAsync(
         string sourceSchema,
@@ -47,7 +49,8 @@ public abstract class AuthorizationExecutionTestBase : FusionTestBase
         builder.AddInMemoryConfiguration(ComposeSchemaDocument(defaultListSize: 1, sourceSchema + "\n" + Directives));
         builder.Services.AddSingleton<ISourceSchemaClientFactory>(new AuthorizationTestClientFactory(client));
         builder.ConfigureSchemaServices(
-            (_, sc) => sc.AddSingleton<IAuthenticationSchemeCatalog>(new TestAuthenticationSchemeCatalog(s_schemes)));
+            (_, sc) => sc.AddSingleton<IAuthenticationSchemeLookup>(
+                new TestAuthenticationSchemeLookup("Bearer") { Challenges = s_challenges }));
 
         FusionSetupUtilities.Configure(
             builder,
