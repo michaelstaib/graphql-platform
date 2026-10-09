@@ -877,7 +877,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ReadResultsAsync_Should_EndTheStreamAndReportTheFault_When_PolicyFaultsMidStream()
+    public async Task ReadResultsAsync_Should_EndTheStreamWithAnErrorResult_When_PolicyFaultsMidStream()
     {
         // arrange
         var client = new AuthorizationTestClient(Event);
@@ -902,11 +902,13 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // act
         client.Publish(Event);
-        var failure = await ReadFailureAsync(events);
+        var terminal = await ReadNextAsync(events);
+        var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(failure, "Failure")
+            .Add(terminal, "Terminal Result")
+            .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
             .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
@@ -914,7 +916,8 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ReadResultsAsync_Should_EndTheStreamBeforeTheEvent_When_TheVerdictChangeScopeFailsToCommit()
+    public async Task
+        ReadResultsAsync_Should_EndTheStreamWithAnErrorResultInsteadOfTheEvent_When_TheVerdictChangeScopeFailsToCommit()
     {
         // arrange
         var client = new AuthorizationTestClient(Event);
@@ -940,11 +943,13 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // act
         client.Publish(Event);
-        var failure = await ReadFailureAsync(events);
+        var terminal = await ReadNextAsync(events);
+        var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(failure, "Failure")
+            .Add(terminal, "Terminal Result")
+            .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
             .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
@@ -952,7 +957,8 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ReadResultsAsync_Should_EndTheStreamWithAFault_When_TheVerdictChangeCommitThrowsCancellation()
+    public async Task
+        ReadResultsAsync_Should_EndTheStreamWithAnErrorResult_When_TheVerdictChangeCommitThrowsCancellation()
     {
         // arrange
         var client = new AuthorizationTestClient(Event);
@@ -978,11 +984,13 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // act
         client.Publish(Event);
-        var failure = await ReadFailureAsync(events);
+        var terminal = await ReadNextAsync(events);
+        var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(failure, "Failure")
+            .Add(terminal, "Terminal Result")
+            .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
             .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
@@ -990,7 +998,7 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ReadResultsAsync_Should_EndTheStreamAndReportTheFailure_When_TheExpiryScopeFailsToCommit()
+    public async Task ReadResultsAsync_Should_EndTheStreamWithAnErrorResult_When_TheExpiryScopeFailsToCommit()
     {
         // arrange
         var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddHours(1));
@@ -1019,11 +1027,13 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         time.Advance(TimeSpan.FromMinutes(10));
 
         // act
-        var failure = await ReadFailureAsync(events);
+        var terminal = await ReadNextAsync(events);
+        var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(failure, "Failure")
+            .Add(terminal, "Terminal Result")
+            .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
             .Add(listener.SubscriptionEventErrors.Select(Describe).ToArray(), "Subscription Event Errors")
@@ -1085,13 +1095,6 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         await using var current = events.Current;
 
         return current.ToJson();
-    }
-
-    private static async Task<string> ReadFailureAsync(IAsyncEnumerator<OperationResult> events)
-    {
-        var failure = await Assert.ThrowsAnyAsync<Exception>(async () => await events.MoveNextAsync());
-
-        return Describe(failure);
     }
 
     private static string Describe(Exception exception)

@@ -213,8 +213,7 @@ internal sealed class SubscriptionAuthorization
     /// The expiry of the token when the subscription started.
     /// </param>
     /// <param name="reportFailure">
-    /// The callback that receives the failure to commit the audit scope of the expiry before the
-    /// failure ends the stream.
+    /// The callback that receives the failure to commit the audit scope of the expiry.
     /// </param>
     public IAsyncEnumerable<EventMessageResult> EndOnExpiry(
         IAsyncEnumerable<EventMessageResult> events,
@@ -273,7 +272,6 @@ internal sealed class SubscriptionAuthorization
         catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, cancellationToken))
         {
             reportFailure(ex);
-            throw;
         }
     }
 }

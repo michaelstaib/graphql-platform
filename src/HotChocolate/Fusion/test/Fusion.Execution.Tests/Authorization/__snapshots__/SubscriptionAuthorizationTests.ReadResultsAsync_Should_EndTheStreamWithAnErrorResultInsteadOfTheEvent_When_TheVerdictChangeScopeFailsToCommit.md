@@ -1,9 +1,21 @@
-# ReadResultsAsync_Should_EndTheStreamBeforeTheEvent_When_TheVerdictChangeScopeFailsToCommit
+# ReadResultsAsync_Should_EndTheStreamWithAnErrorResultInsteadOfTheEvent_When_TheVerdictChangeScopeFailsToCommit
 
-## Failure
+## Terminal Result
 
 ```text
-System.InvalidOperationException: commit
+{
+  "errors": [
+    {
+      "message": "Unexpected Execution Error"
+    }
+  ]
+}
+```
+
+## Has Next
+
+```json
+false
 ```
 
 ## Scopes

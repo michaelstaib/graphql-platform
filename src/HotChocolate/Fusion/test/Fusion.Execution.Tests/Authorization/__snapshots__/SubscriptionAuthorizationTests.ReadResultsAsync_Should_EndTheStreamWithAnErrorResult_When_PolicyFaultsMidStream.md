@@ -1,9 +1,21 @@
-# ReadResultsAsync_Should_EndTheStreamAndReportTheFault_When_PolicyFaultsMidStream
+# ReadResultsAsync_Should_EndTheStreamWithAnErrorResult_When_PolicyFaultsMidStream
 
-## Failure
+## Terminal Result
 
 ```text
-System.InvalidOperationException: boom
+{
+  "errors": [
+    {
+      "message": "Unexpected Execution Error"
+    }
+  ]
+}
+```
+
+## Has Next
+
+```json
+false
 ```
 
 ## Scopes

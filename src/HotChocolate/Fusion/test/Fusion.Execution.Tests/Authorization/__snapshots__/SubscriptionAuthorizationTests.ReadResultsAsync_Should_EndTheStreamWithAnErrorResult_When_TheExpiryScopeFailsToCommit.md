@@ -1,9 +1,21 @@
-# ReadResultsAsync_Should_EndTheStreamAndReportTheFailure_When_TheExpiryScopeFailsToCommit
+# ReadResultsAsync_Should_EndTheStreamWithAnErrorResult_When_TheExpiryScopeFailsToCommit
 
-## Failure
+## Terminal Result
 
 ```text
-System.InvalidOperationException: commit
+{
+  "errors": [
+    {
+      "message": "Unexpected Execution Error"
+    }
+  ]
+}
+```
+
+## Has Next
+
+```json
+false
 ```
 
 ## Scopes
