@@ -16,6 +16,7 @@ public class PageConnectionFederationTests
             .AddApolloFederation()
             .AddImplementationFirstTypes()
             .AddPagingArguments()
+            .ModifyPagingOptions(o => o.EnableRelativeCursors = true)
             .BuildSchemaAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
