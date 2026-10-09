@@ -50,6 +50,8 @@ public static class HotChocolateFusionServiceCollectionExtensions
     {
         services.AddOptions();
 
+        services.TryAddSingleton(TimeProvider.System);
+
         services.TryAddSingleton<ObjectPoolProvider, DefaultObjectPoolProvider>();
         services.TryAddSingleton(sp =>
         {
@@ -65,7 +67,8 @@ public static class HotChocolateFusionServiceCollectionExtensions
         services.TryAddSingleton(
             static sp => new FusionRequestExecutorManager(
                 sp.GetRequiredService<IOptionsMonitor<FusionGatewaySetup>>(),
-                sp));
+                sp,
+                sp.GetRequiredService<TimeProvider>()));
         services.TryAddSingleton<IRequestExecutorProvider>(
             static sp => sp.GetRequiredService<FusionRequestExecutorManager>());
         services.TryAddSingleton<IRequestExecutorEvents>(
