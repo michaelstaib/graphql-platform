@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.IO.Hashing;
 using System.Text;
 using System.Text.Json;
@@ -123,29 +124,60 @@ internal sealed class FusionRequestExecutorManager
     private SemaphoreSlim GetSemaphoreForSchema(string schemaName)
         => _semaphoreBySchema.GetOrAdd(schemaName, _ => new SemaphoreSlim(1, 1));
 
-    private void EvictExecutor(FusionRequestExecutor executor, IFusionExecutionDiagnosticEvents diagnosticEvents)
+    private void EvictExecutor(
+        FusionRequestExecutor executor,
+        RequestExecutorRegistration registration)
     {
         try
         {
-            diagnosticEvents.ExecutorEvicted(executor.Schema.Name, executor);
+            registration.DiagnosticEvents.ExecutorEvicted(executor.Schema.Name, executor);
 
             _events.RaiseEvent(RequestExecutorEvent.Evicted(executor));
         }
         finally
         {
-            EvictRequestExecutorAsync(executor).FireAndForget();
+            EvictRequestExecutorAsync(executor, registration).FireAndForget();
         }
     }
 
-    private static async Task EvictRequestExecutorAsync(FusionRequestExecutor previousExecutor)
+    private static async Task EvictRequestExecutorAsync(
+        FusionRequestExecutor previousExecutor,
+        RequestExecutorRegistration registration)
     {
-        var evictionTimeout = previousExecutor.Schema.GetOptions().EvictionTimeout;
+        try
+        {
+            var evictionTimeout = previousExecutor.Schema.GetOptions().EvictionTimeout;
 
-        // we will give the request executor some grace period to finish all requests
-        // in the pipeline.
-        await Task.Delay(evictionTimeout).ConfigureAwait(false);
+            // we will give the request executor some grace period to finish all requests
+            // in the pipeline.
+            await Task.Delay(evictionTimeout).ConfigureAwait(false);
 
-        await previousExecutor.DisposeAsync().ConfigureAwait(false);
+            await previousExecutor.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ReportCleanupFailure(
+                registration.DiagnosticEvents,
+                previousExecutor.Schema.Name,
+                registration.Executor,
+                ex);
+        }
+    }
+
+    private static void ReportCleanupFailure(
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        string schemaName,
+        FusionRequestExecutor? activeExecutor,
+        Exception exception)
+    {
+        try
+        {
+            diagnosticEvents.ExecutorUpdateCleanupFailed(schemaName, activeExecutor, exception);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private async ValueTask<RequestExecutorRegistration> CreateInitialRegistrationAsync(
@@ -160,7 +192,7 @@ internal sealed class FusionRequestExecutorManager
                 cancellationToken)
                 .ConfigureAwait(false);
 
-        var executor = CreateRequestExecutor(schemaName, configuration);
+        var executor = await CreateRequestExecutorAsync(schemaName, configuration, null).ConfigureAwait(false);
 
         await ValidateAuthorizationAsync(executor, cancellationToken).ConfigureAwait(false);
         await WarmupExecutorAsync(executor, true, cancellationToken).ConfigureAwait(false);
@@ -173,9 +205,10 @@ internal sealed class FusionRequestExecutorManager
             configuration);
     }
 
-    private FusionRequestExecutor CreateRequestExecutor(
+    private async ValueTask<FusionRequestExecutor> CreateRequestExecutorAsync(
         string schemaName,
-        FusionConfiguration configuration)
+        FusionConfiguration configuration,
+        IFusionExecutionDiagnosticEvents? diagnosticEvents)
     {
         ulong version;
 
@@ -207,16 +240,78 @@ internal sealed class FusionRequestExecutorManager
             costOptions,
             authorizationOptions);
 
-        var schema = CreateSchema(schemaName, configuration.Schema, schemaServices, features);
-        _ = schemaServices.GetRequiredService<CostSchemaIndex>();
-        var pipeline = CreatePipeline(setup, schema, schemaServices, requestOptions);
+        try
+        {
+            var schema = CreateSchema(schemaName, configuration.Schema, schemaServices, features);
+            _ = schemaServices.GetRequiredService<CostSchemaIndex>();
+            var pipeline = CreatePipeline(setup, schema, schemaServices, requestOptions);
 
-        var contextPool = schemaServices.GetRequiredService<ObjectPool<PooledRequestContext>>();
-        var executor = new FusionRequestExecutor(schema, _applicationServices, pipeline, contextPool, version);
-        var requestExecutorAccessor = schemaServices.GetRequiredService<RequestExecutorAccessor>();
-        requestExecutorAccessor.RequestExecutor = executor;
+            var contextPool = schemaServices.GetRequiredService<ObjectPool<PooledRequestContext>>();
+            var executor = new FusionRequestExecutor(schema, _applicationServices, pipeline, contextPool, version);
+            var requestExecutorAccessor = schemaServices.GetRequiredService<RequestExecutorAccessor>();
+            requestExecutorAccessor.RequestExecutor = executor;
 
-        return executor;
+            return executor;
+        }
+        catch
+        {
+            var firstCreationEvents = diagnosticEvents is null ? TryGetDiagnosticEvents(schemaServices) : null;
+            var disposalException = await DisposeSchemaServicesAsync(schemaServices).ConfigureAwait(false);
+
+            if (disposalException is not null)
+            {
+                if (diagnosticEvents is not null)
+                {
+                    ReportUpdateFailure(diagnosticEvents, schemaName, disposalException);
+                }
+                else if (firstCreationEvents is not null)
+                {
+                    ReportCleanupFailure(firstCreationEvents, schemaName, null, disposalException);
+                }
+            }
+
+            throw;
+        }
+    }
+
+    private static IFusionExecutionDiagnosticEvents? TryGetDiagnosticEvents(ServiceProvider schemaServices)
+    {
+        try
+        {
+            return schemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async ValueTask<Exception?> DisposeSchemaServicesAsync(ServiceProvider schemaServices)
+    {
+        try
+        {
+            await schemaServices.DisposeAsync().ConfigureAwait(false);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    private static void ReportUpdateFailure(
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        string schemaName,
+        Exception exception)
+    {
+        try
+        {
+            diagnosticEvents.ExecutorUpdateFailed(schemaName, exception);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private static ValueTask ValidateAuthorizationAsync(
@@ -795,37 +890,100 @@ internal sealed class FusionRequestExecutorManager
                     break;
                 }
 
-                var documentHash = XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(configuration.Schema.ToString()));
-                var settingsHash = XxHash64.HashToUInt64(GetRawUtf8Value(configuration.Settings.Document.RootElement));
+                var previousExecutor = Executor;
+                var previousConfiguration = _currentConfiguration;
+                FusionRequestExecutor? nextExecutor = null;
+                ulong documentHash;
+                ulong settingsHash;
 
-                if (documentHash == _documentHash
-                    && settingsHash == _settingsHash
-                    && configuration.PlanningFingerprint == _planningFingerprint)
+                try
                 {
+                    documentHash = XxHash64.HashToUInt64(Encoding.UTF8.GetBytes(configuration.Schema.ToString()));
+                    settingsHash = XxHash64.HashToUInt64(GetRawUtf8Value(configuration.Settings.Document.RootElement));
+
+                    if (documentHash == _documentHash
+                        && settingsHash == _settingsHash
+                        && configuration.PlanningFingerprint == _planningFingerprint)
+                    {
+                        continue;
+                    }
+
+                    nextExecutor = await _manager.CreateRequestExecutorAsync(
+                        previousExecutor.Schema.Name,
+                        configuration,
+                        DiagnosticEvents)
+                        .ConfigureAwait(false);
+
+                    await ValidateAuthorizationAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
+                    await WarmupExecutorAsync(nextExecutor, false, _cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+                {
+                    await RejectAsync(nextExecutor, configuration).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    ReportUpdateFailure(DiagnosticEvents, previousExecutor.Schema.Name, ex);
+                    await RejectAsync(nextExecutor, configuration).ConfigureAwait(false);
                     continue;
                 }
 
+                Executor = nextExecutor;
+                _currentConfiguration = configuration;
                 _documentHash = documentHash;
                 _settingsHash = settingsHash;
                 _planningFingerprint = configuration.PlanningFingerprint;
 
-                var previousExecutor = Executor;
-                var previousConfiguration = _currentConfiguration;
-                var nextExecutor = _manager.CreateRequestExecutor(Executor.Schema.Name, configuration);
+                var activeExecutor = nextExecutor;
+                var schemaName = activeExecutor.Schema.Name;
 
-                await ValidateAuthorizationAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
-                await WarmupExecutorAsync(nextExecutor, false, _cancellationToken).ConfigureAwait(false);
+                RunGuarded(activeExecutor, () => DiagnosticEvents.ExecutorCreated(schemaName, activeExecutor));
+                RunGuarded(
+                    activeExecutor,
+                    () => _manager._events.RaiseEvent(RequestExecutorEvent.Created(activeExecutor)));
+                RunGuarded(activeExecutor, () => _manager.EvictExecutor(previousExecutor, this));
+                RunGuarded(activeExecutor, previousConfiguration.Dispose);
+            }
+        }
 
-                Executor = nextExecutor;
-                _currentConfiguration = configuration;
+        private void RunGuarded(FusionRequestExecutor activeExecutor, Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                ReportCleanupFailure(DiagnosticEvents, activeExecutor.Schema.Name, activeExecutor, ex);
+            }
+        }
 
-                DiagnosticEvents.ExecutorCreated(nextExecutor.Schema.Name, nextExecutor);
+        private static async ValueTask RejectAsync(
+            FusionRequestExecutor? executor,
+            FusionConfiguration configuration)
+        {
+            try
+            {
+                configuration.Dispose();
+            }
+            catch
+            {
+                // ignore
+            }
 
-                _manager._events.RaiseEvent(RequestExecutorEvent.Created(nextExecutor));
+            if (executor is null)
+            {
+                return;
+            }
 
-                _manager.EvictExecutor(previousExecutor, DiagnosticEvents);
-
-                previousConfiguration.Dispose();
+            try
+            {
+                await executor.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // ignore
             }
         }
 
@@ -888,13 +1046,34 @@ internal sealed class FusionRequestExecutorManager
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
+            List<Exception>? failures = null;
+
             lock (_sync)
             {
                 foreach (var subscription in _subscriptions)
                 {
-                    subscription.Observer.OnNext(eventMessage);
+                    try
+                    {
+                        subscription.Observer.OnNext(eventMessage);
+                    }
+                    catch (Exception ex)
+                    {
+                        (failures ??= []).Add(ex);
+                    }
                 }
             }
+
+            if (failures is null)
+            {
+                return;
+            }
+
+            if (failures.Count == 1)
+            {
+                ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
+
+            throw ThrowHelper.EventObserversFailed(failures);
         }
 
         private void Unsubscribe(Subscription subscription)
