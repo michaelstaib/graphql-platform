@@ -818,8 +818,11 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
                 Assert.Equal("Unauthorized", webSocket.CloseStatusDescription);
             });
 
-    [Fact]
-    public Task SendSubscribeAsync_Should_SendErrorAndKeepConnectionOpen_When_ResponseStreamEndsWithAFaultResult()
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public Task SendSubscribeAsync_Should_SendErrorAndStop_When_ResponseStreamYieldsAnErrorResultWithAStatusCode(
+        HttpStatusCode requestedStatusCode)
         => RunTest(
             async ct =>
             {
@@ -829,7 +832,7 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
                         .AddGraphQL()
                         .UseRequest(_ => context =>
                         {
-                            context.Result = new ResponseStream(ReadFaultEndingEventsAsync);
+                            context.Result = new ResponseStream(() => ReadFaultEndingEventsAsync(requestedStatusCode));
                             return ValueTask.CompletedTask;
                         }));
                 var client = CreateWebSocketClient(testServer);
@@ -1288,7 +1291,8 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
         await Task.CompletedTask;
     }
 
-    private static async IAsyncEnumerable<OperationResult> ReadFaultEndingEventsAsync()
+    private static async IAsyncEnumerable<OperationResult> ReadFaultEndingEventsAsync(
+        HttpStatusCode requestedStatusCode)
     {
         yield return new OperationResult(
             ImmutableOrderedDictionary<string, object?>.Empty.Add("event", 1));
@@ -1297,11 +1301,14 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             ErrorBuilder.New().SetMessage("Unexpected Execution Error").Build());
         fault.ContextData = fault.ContextData.Add(
             ExecutionContextData.HttpStatusCode,
-            HttpStatusCode.InternalServerError);
+            requestedStatusCode);
 
         await Task.CompletedTask;
 
         yield return fault;
+
+        yield return new OperationResult(
+            ImmutableOrderedDictionary<string, object?>.Empty.Add("event", 2));
     }
 
     private sealed class UnauthorizedWithMessageInterceptor(string message)
