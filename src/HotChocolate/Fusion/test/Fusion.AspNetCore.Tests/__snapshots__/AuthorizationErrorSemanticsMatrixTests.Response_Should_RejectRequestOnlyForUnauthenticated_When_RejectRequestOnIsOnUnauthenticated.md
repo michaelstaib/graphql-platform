@@ -1,6 +1,6 @@
 # Response_Should_RejectRequestOnlyForUnauthenticated_When_RejectRequestOnIsOnUnauthenticated
 
-## OnUnauthenticated: Unauthenticated denial (anonymous) -> 401 Unauthorized, WWW-Authenticate: Cookies, Session
+## OnUnauthenticated: Unauthenticated denial (anonymous) -> 401 Unauthorized, WWW-Authenticate: Bearer
 
 ```json
 {
@@ -83,7 +83,7 @@
 }
 ```
 
-## OnUnauthenticated with attribution: Unauthenticated denial (anonymous) -> 401 Unauthorized, WWW-Authenticate: Cookies, Session
+## OnUnauthenticated with attribution: Unauthenticated denial (anonymous) -> 401 Unauthorized, WWW-Authenticate: Bearer
 
 ```json
 {
