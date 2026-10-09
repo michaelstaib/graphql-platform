@@ -116,6 +116,27 @@ public class AuthorizationOptionsTests : FusionTestBase
         Assert.Equal("value", exception.ParamName);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void SchemeChallenges_Should_Throw_When_ChallengeIsEmpty(string? challenge)
+    {
+        // arrange
+        var options = new FusionAuthorizationOptions();
+        var challenges = ImmutableDictionary<string, string>.Empty.Add("MyJwt", challenge!);
+
+        // act
+        var act = () => options.SchemeChallenges = challenges;
+
+        // assert
+        var exception = Assert.Throws<ArgumentException>(act);
+        Assert.Equal(
+            "The WWW-Authenticate challenge of the authentication scheme 'MyJwt' must not be null, "
+            + "empty or whitespace. (Parameter 'value')",
+            exception.Message);
+    }
+
     [Fact]
     public void ScopeClaimName_Should_Throw_When_ValueIsEmpty()
     {

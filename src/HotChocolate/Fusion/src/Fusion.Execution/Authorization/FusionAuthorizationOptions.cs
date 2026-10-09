@@ -68,6 +68,14 @@ public sealed class FusionAuthorizationOptions
             ExpectMutableOptions();
             ArgumentNullException.ThrowIfNull(value);
 
+            foreach (var entry in value)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Value))
+                {
+                    throw ThrowHelper.SchemeChallengeEmpty(entry.Key, nameof(value));
+                }
+            }
+
             field = value;
         }
     } = [];

@@ -327,6 +327,12 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
+        internal static string FusionAuthorizationOptions_SchemeChallengeEmpty {
+            get {
+                return ResourceManager.GetString("FusionAuthorizationOptions_SchemeChallengeEmpty", resourceCulture);
+            }
+        }
+
         internal static string AuthorizationValidation_SchemeNotRegistered {
             get {
                 return ResourceManager.GetString("AuthorizationValidation_SchemeNotRegistered", resourceCulture);

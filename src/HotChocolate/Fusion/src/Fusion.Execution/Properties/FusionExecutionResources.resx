@@ -159,6 +159,9 @@
   <data name="FusionAuthorizationOptions_ReadOnly" xml:space="preserve">
     <value>The authorization options are read-only.</value>
   </data>
+  <data name="FusionAuthorizationOptions_SchemeChallengeEmpty" xml:space="preserve">
+    <value>The WWW-Authenticate challenge of the authentication scheme '{0}' must not be null, empty or whitespace.</value>
+  </data>
   <data name="AuthorizationValidation_SchemeNotRegistered" xml:space="preserve">
     <value>The authentication scheme '{0}' of the authorization options is not registered. Register it, remove it from the schemes, or disable the authorization validation.</value>
   </data>

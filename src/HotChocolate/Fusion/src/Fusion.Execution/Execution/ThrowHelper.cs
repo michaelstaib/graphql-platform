@@ -13,6 +13,13 @@ internal static class ThrowHelper
     public static InvalidOperationException AuthorizationOptionsAreReadOnly()
         => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
 
+    public static ArgumentException SchemeChallengeEmpty(string schemeName, string paramName)
+        => new(
+            string.Format(
+                FusionExecutionResources.FusionAuthorizationOptions_SchemeChallengeEmpty,
+                schemeName),
+            paramName);
+
     public static InvalidOperationException AuthenticationSchemeNotRegistered(string schemeName)
         => new(string.Format(
             FusionExecutionResources.AuthorizationValidation_SchemeNotRegistered,
