@@ -1,9 +1,21 @@
-# ReadResultsAsync_Should_EndTheStreamWithAFault_When_TheVerdictChangeCommitThrowsCancellation
+# ReadResultsAsync_Should_EndTheStreamWithAnErrorResult_When_TheVerdictChangeCommitThrowsCancellation
 
-## Failure
+## Terminal Result
 
 ```text
-System.InvalidOperationException: The authorization of the request faulted without the request being canceled.
+{
+  "errors": [
+    {
+      "message": "Unexpected Execution Error"
+    }
+  ]
+}
+```
+
+## Has Next
+
+```json
+false
 ```
 
 ## Scopes

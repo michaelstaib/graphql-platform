@@ -1304,6 +1304,7 @@ internal static partial class OperationPlanExecutor
 
         var schemaName = GetSubscriptionSchemaName(context, subscriptionNode);
         var events = subscriptionResult.ReadStreamAsync();
+        Exception? authorizationFault = null;
 
         if (authorization is not null
             && SubscriptionAuthorization.GetExpiry(OperationAuthorizationMiddleware.GetUser(context.RequestContext))
@@ -1314,12 +1315,16 @@ internal static partial class OperationPlanExecutor
                 responseStream,
                 context.RequestContext,
                 expiry,
-                failure => context.DiagnosticEvents.SubscriptionEventError(
-                    context,
-                    subscriptionNode,
-                    schemaName,
-                    subscriptionResult.Id,
-                    failure));
+                failure =>
+                {
+                    authorizationFault = failure;
+                    context.DiagnosticEvents.SubscriptionEventError(
+                        context,
+                        subscriptionNode,
+                        schemaName,
+                        subscriptionResult.Id,
+                        failure);
+                });
         }
 
         try
@@ -1364,8 +1369,22 @@ internal static partial class OperationPlanExecutor
 
                     if (authorization is { ReevaluatesPerEvent: true })
                     {
-                        context.ApplyAuthorization(
-                            await authorization.ReevaluateAsync(context.RequestContext, eventToken));
+                        try
+                        {
+                            context.ApplyAuthorization(
+                                await authorization.ReevaluateAsync(context.RequestContext, eventToken));
+                        }
+                        catch (Exception ex) when (AuthorizationEvaluator.IsFault(ex, eventToken))
+                        {
+                            context.DiagnosticEvents.SubscriptionEventError(
+                                context,
+                                subscriptionNode,
+                                schemaName,
+                                subscriptionResult.Id,
+                                ex);
+                            authorizationFault = ex;
+                            break;
+                        }
                     }
 
                     executionState.Reset();
@@ -1497,6 +1516,13 @@ internal static partial class OperationPlanExecutor
         {
             await eventCtsRegistration.DisposeAsync();
             eventCts?.Dispose();
+        }
+
+        if (authorizationFault is not null)
+        {
+            yield return ErrorHelper.SubscriptionFaulted(
+                authorizationFault,
+                context.RequestContext.Schema.Services.GetRequiredService<IErrorHandler>());
         }
 
         // Creates a fresh event-scoped cancellation source, links client-abort / shutdown into it,
