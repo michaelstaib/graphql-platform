@@ -140,6 +140,7 @@ public class CacheControlTypeInterceptorTests
         // arrange
         var builder = new ServiceCollection()
             .AddGraphQL()
+            .ModifyPagingOptions(o => o.EnableRelativeCursors = true)
             .AddQueryType<PagingQueryType>()
             .AddType<OrderPageConnectionType>()
             .AddCacheControl();
