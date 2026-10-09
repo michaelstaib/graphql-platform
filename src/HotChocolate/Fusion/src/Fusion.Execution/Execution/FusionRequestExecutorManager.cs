@@ -15,6 +15,7 @@ using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Pipeline;
 using HotChocolate.Features;
 using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Configuration.Parsers;
 using HotChocolate.Fusion.Diagnostics;
@@ -587,6 +588,7 @@ internal sealed class FusionRequestExecutorManager
             static sp => new AuthenticationSchemeResolver(
                 sp.GetRequiredService<FusionAuthorizationOptions>(),
                 sp.GetService<IAuthenticationSchemeLookup>()));
+        services.TryAddSingleton<IAuditProvider>(NoOpAuditProvider.Instance);
         services.TryAddSingleton<IPolicyResolver>(
             static sp =>
             {

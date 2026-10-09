@@ -201,4 +201,10 @@
   <data name="DeliveryGroup_InvalidIfVariable" xml:space="preserve">
     <value>The variable {0} has an invalid value.</value>
   </data>
+  <data name="AuditScope_AlreadyCommitted" xml:space="preserve">
+    <value>The audit scope is already committed and cannot be changed or committed again.</value>
+  </data>
+  <data name="OperationAuthorization_EvaluationFaulted" xml:space="preserve">
+    <value>The authorization of the request faulted without the request being canceled.</value>
+  </data>
 </root>
