@@ -45,7 +45,7 @@ public abstract class SubscriptionAuthorizationTransportTestBase : FusionTestBas
 
         var gateway = await CreateCompositeSchemaAsync(
             [("A", source)],
-            configureServices: services => services.AddAuthentication().AddCookie("Cookies"),
+            configureServices: services => services.AddAuthentication().AddJwtBearer("Bearer", _ => { }),
             configureApplication: UseTestUser,
             configureGatewayBuilder: builder =>
             {
