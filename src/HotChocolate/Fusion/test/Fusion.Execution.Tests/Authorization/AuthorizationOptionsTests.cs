@@ -25,6 +25,7 @@ public class AuthorizationOptionsTests : FusionTestBase
             DenyHandling: Null
             RejectRequestOn: Off
             Schemes: unset
+            SchemeChallenges: none
             ScopeClaimName: scope
             ScopeClaimFormat: SpaceSeparated
             EnableAttribution: False
@@ -44,6 +45,7 @@ public class AuthorizationOptionsTests : FusionTestBase
                         o.DenyHandling = DenyHandling.Error;
                         o.RejectRequestOn = RejectRequestOn.OnUnauthenticated;
                         o.Schemes = ImmutableArray.Create("Bearer", "Cookie");
+                        o.SchemeChallenges = ImmutableDictionary<string, string>.Empty.Add("Cookie", "Cookie");
                     })
                 .ModifyAuthorizationOptions(
                     o =>
@@ -64,6 +66,7 @@ public class AuthorizationOptionsTests : FusionTestBase
             DenyHandling: Error
             RejectRequestOn: OnUnauthorized
             Schemes: Bearer,Cookie
+            SchemeChallenges: Cookie=Cookie
             ScopeClaimName: scp
             ScopeClaimFormat: Array
             EnableAttribution: True
@@ -97,6 +100,20 @@ public class AuthorizationOptionsTests : FusionTestBase
 
         // assert
         Assert.Null(options.Schemes);
+    }
+
+    [Fact]
+    public void SchemeChallenges_Should_Throw_When_ValueIsNull()
+    {
+        // arrange
+        var options = new FusionAuthorizationOptions();
+
+        // act
+        var act = () => options.SchemeChallenges = null!;
+
+        // assert
+        var exception = Assert.Throws<ArgumentNullException>(act);
+        Assert.Equal("value", exception.ParamName);
     }
 
     [Fact]
@@ -178,8 +195,14 @@ public class AuthorizationOptionsTests : FusionTestBase
             $"DenyHandling: {options.DenyHandling}",
             $"RejectRequestOn: {options.RejectRequestOn}",
             $"Schemes: {(options.Schemes is { } schemes ? string.Join(',', schemes) : "unset")}",
+            $"SchemeChallenges: {DescribeChallenges(options.SchemeChallenges)}",
             $"ScopeClaimName: {options.ScopeClaimName}",
             $"ScopeClaimFormat: {options.ScopeClaimFormat}",
             $"EnableAttribution: {options.EnableAttribution}",
             $"DisableAuthorizationValidation: {options.DisableAuthorizationValidation}");
+
+    private static string DescribeChallenges(ImmutableDictionary<string, string> challenges)
+        => challenges.IsEmpty
+            ? "none"
+            : string.Join(',', challenges.Select(challenge => $"{challenge.Key}={challenge.Value}"));
 }

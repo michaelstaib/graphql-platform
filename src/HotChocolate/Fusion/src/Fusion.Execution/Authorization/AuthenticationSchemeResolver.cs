@@ -47,18 +47,38 @@ internal sealed class AuthenticationSchemeResolver
             : _catalog.GetSchemeNamesAsync(cancellationToken);
 
     /// <summary>
-    /// Gets the value of the <c>WWW-Authenticate</c> header that advertises the selected schemes
-    /// as bare names, or <c>null</c> if no scheme is registered.
+    /// Gets the value of the <c>WWW-Authenticate</c> header that advertises the HTTP authentication schemes
+    /// of the selected registrations, deduplicated and in ordinal order, or <c>null</c> if none contributes.
     /// </summary>
     /// <param name="cancellationToken">
     /// The token that signals that the operation was aborted.
     /// </param>
     public async ValueTask<string?> GetChallengeAsync(CancellationToken cancellationToken)
     {
+        if (_catalog is null)
+        {
+            return null;
+        }
+
         var registered = await GetRegisteredAsync(cancellationToken).ConfigureAwait(false);
         var selected = _options.Schemes ?? registered;
-        var challenged = selected.Where(registered.Contains).ToImmutableArray();
+        var challenges = new SortedSet<string>(StringComparer.Ordinal);
 
-        return challenged.IsEmpty ? null : string.Join(", ", challenged);
+        foreach (var schemeName in selected)
+        {
+            if (!registered.Contains(schemeName))
+            {
+                continue;
+            }
+
+            var challenge = await _catalog.GetChallengeAsync(schemeName, cancellationToken).ConfigureAwait(false);
+
+            if (challenge is not null || _options.SchemeChallenges.TryGetValue(schemeName, out challenge))
+            {
+                challenges.Add(challenge);
+            }
+        }
+
+        return challenges.Count == 0 ? null : string.Join(", ", challenges);
     }
 }

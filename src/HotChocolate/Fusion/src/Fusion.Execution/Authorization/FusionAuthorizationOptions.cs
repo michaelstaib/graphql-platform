@@ -57,6 +57,22 @@ public sealed class FusionAuthorizationOptions
     }
 
     /// <summary>
+    /// Gets or sets the <c>WWW-Authenticate</c> challenge per authentication scheme name for handlers whose
+    /// challenge is not fixed by protocol. A scheme without an entry contributes no challenge.
+    /// </summary>
+    public ImmutableDictionary<string, string> SchemeChallenges
+    {
+        get;
+        set
+        {
+            ExpectMutableOptions();
+            ArgumentNullException.ThrowIfNull(value);
+
+            field = value;
+        }
+    } = [];
+
+    /// <summary>
     /// Gets or sets the type of the claim that holds the scopes of the principal.
     /// <c>scope</c> by default.
     /// </summary>

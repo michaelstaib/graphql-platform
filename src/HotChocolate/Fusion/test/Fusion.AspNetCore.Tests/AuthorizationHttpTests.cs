@@ -27,8 +27,95 @@ public class AuthorizationHttpTests : FusionTestBase
         }
         """;
 
+    private static readonly ImmutableDictionary<string, string> s_cookieChallenges =
+        ImmutableDictionary<string, string>.Empty.Add("Cookies", "Cookie").Add("Session", "Session");
+
     [Fact]
-    public async Task Request_Should_ChallengeWithEveryRegisteredScheme_When_EscalatedAndSchemesAreUnset()
+    public async Task Request_Should_ChallengeWithMappedChallenges_When_EscalatedAndSchemesAreUnset()
+    {
+        // arrange
+        using var server = CreateSourceSchema("A", SimpleSchema);
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureServices: AddCookieSchemes,
+            configureGatewayBuilder: b => UseEscalation(
+                b.ModifyAuthorizationOptions(o => o.SchemeChallenges = s_cookieChallenges),
+                HttpStatusCode.Unauthorized));
+
+        // act
+        using var response = await PostAsync(gateway);
+
+        // assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("Cookie, Session", GetChallenge(response));
+    }
+
+    [Fact]
+    public async Task Request_Should_ChallengeWithListedSchemesOnly_When_EscalatedAndSchemesAreSet()
+    {
+        // arrange
+        using var server = CreateSourceSchema("A", SimpleSchema);
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureServices: AddCookieSchemes,
+            configureGatewayBuilder: b => UseEscalation(
+                b.ModifyAuthorizationOptions(
+                    o =>
+                    {
+                        o.Schemes = ImmutableArray.Create("Session");
+                        o.SchemeChallenges = s_cookieChallenges;
+                    }),
+                HttpStatusCode.Unauthorized));
+
+        // act
+        using var response = await PostAsync(gateway);
+
+        // assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("Session", GetChallenge(response));
+    }
+
+    [Fact]
+    public async Task Request_Should_ChallengeWithBearer_When_JwtHandlerIsRegisteredUnderCustomName()
+    {
+        // arrange
+        using var server = CreateSourceSchema("A", SimpleSchema);
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureServices: services => services.AddAuthentication().AddJwtBearer("MyJwt", _ => { }),
+            configureGatewayBuilder: b => UseEscalation(b, HttpStatusCode.Unauthorized));
+
+        // act
+        using var response = await PostAsync(gateway);
+
+        // assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("Bearer", GetChallenge(response));
+    }
+
+    [Fact]
+    public async Task Request_Should_ChallengeWithBearerOnce_When_TwoJwtHandlersAreRegistered()
+    {
+        // arrange
+        using var server = CreateSourceSchema("A", SimpleSchema);
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureServices: services => services
+                .AddAuthentication()
+                .AddJwtBearer("JwtA", _ => { })
+                .AddJwtBearer("JwtB", _ => { }),
+            configureGatewayBuilder: b => UseEscalation(b, HttpStatusCode.Unauthorized));
+
+        // act
+        using var response = await PostAsync(gateway);
+
+        // assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("Bearer", GetChallenge(response));
+    }
+
+    [Fact]
+    public async Task Request_Should_OmitChallenge_When_EscalatedAndHandlerHasNoChallengeEntry()
     {
         // arrange
         using var server = CreateSourceSchema("A", SimpleSchema);
@@ -42,27 +129,7 @@ public class AuthorizationHttpTests : FusionTestBase
 
         // assert
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Equal("Cookies, Session", GetChallenge(response));
-    }
-
-    [Fact]
-    public async Task Request_Should_ChallengeWithListedSchemesOnly_When_EscalatedAndSchemesAreSet()
-    {
-        // arrange
-        using var server = CreateSourceSchema("A", SimpleSchema);
-        using var gateway = await CreateCompositeSchemaAsync(
-            [("A", server)],
-            configureServices: AddCookieSchemes,
-            configureGatewayBuilder: b => UseEscalation(
-                b.ModifyAuthorizationOptions(o => o.Schemes = ImmutableArray.Create("Session")),
-                HttpStatusCode.Unauthorized));
-
-        // act
-        using var response = await PostAsync(gateway);
-
-        // assert
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Equal("Session", GetChallenge(response));
+        Assert.Null(GetChallenge(response));
     }
 
     [Fact]
