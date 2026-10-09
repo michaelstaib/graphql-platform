@@ -902,12 +902,14 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // act
         client.Publish(Event);
-        var terminal = await ReadNextAsync(events);
+        Assert.True(await events.MoveNextAsync());
+        await using var terminal = events.Current;
         var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(terminal, "Terminal Result")
+            .Add(terminal.ToJson(), "Terminal Result")
+            .Add(GetRequestedStatusCode(terminal), "Terminal Status Code")
             .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
@@ -943,12 +945,14 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // act
         client.Publish(Event);
-        var terminal = await ReadNextAsync(events);
+        Assert.True(await events.MoveNextAsync());
+        await using var terminal = events.Current;
         var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(terminal, "Terminal Result")
+            .Add(terminal.ToJson(), "Terminal Result")
+            .Add(GetRequestedStatusCode(terminal), "Terminal Status Code")
             .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
@@ -984,12 +988,14 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
         // act
         client.Publish(Event);
-        var terminal = await ReadNextAsync(events);
+        Assert.True(await events.MoveNextAsync());
+        await using var terminal = events.Current;
         var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(terminal, "Terminal Result")
+            .Add(terminal.ToJson(), "Terminal Result")
+            .Add(GetRequestedStatusCode(terminal), "Terminal Status Code")
             .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
@@ -1027,12 +1033,14 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
         time.Advance(TimeSpan.FromMinutes(10));
 
         // act
-        var terminal = await ReadNextAsync(events);
+        Assert.True(await events.MoveNextAsync());
+        await using var terminal = events.Current;
         var hasNext = await events.MoveNextAsync();
 
         // assert
         Snapshot.Create()
-            .Add(terminal, "Terminal Result")
+            .Add(terminal.ToJson(), "Terminal Result")
+            .Add(GetRequestedStatusCode(terminal), "Terminal Status Code")
             .Add(hasNext, "Has Next")
             .Add(audit.Scopes.Select(Format).ToArray(), "Scopes")
             .Add(listener.RequestErrors.Select(Describe).ToArray(), "Request Errors")
