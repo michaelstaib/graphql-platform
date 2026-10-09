@@ -820,6 +820,44 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             });
 
     [Fact]
+    public Task SendSubscribeAsync_Should_SendErrorAndKeepConnectionOpen_When_ResponseStreamEndsWithAFaultResult()
+        => TryTest(
+            async ct =>
+            {
+                // arrange
+                using var testServer = CreateStarWarsServer(
+                    configureServices: s => s
+                        .AddGraphQL()
+                        .UseRequest(_ => context =>
+                        {
+                            context.Result = new ResponseStream(ReadFaultEndingEventsAsync);
+                            return ValueTask.CompletedTask;
+                        }));
+                var client = CreateWebSocketClient(testServer);
+                using var webSocket = await ConnectToServerAsync(client, ct);
+
+                var payload = new SubscribePayload("subscription { onReview(episode: NEW_HOPE) { stars } }");
+                const string subscriptionId = "abc";
+
+                // act
+                await webSocket.SendSubscribeAsync(subscriptionId, payload, ct);
+
+                // assert
+                var next = await WaitForMessage(webSocket, Messages.Next, ct);
+                var error = await WaitForMessage(webSocket, Messages.Error, ct);
+                await webSocket.SendPingAsync(ct);
+                var afterError = await WaitForMessage(webSocket, _ => true, TimeSpan.FromSeconds(1), ct);
+                Assert.Equal(
+                    """{"id":"abc","type":"next","payload":{"extensions":{"event":1}}}""",
+                    next?.RootElement.GetRawText());
+                Assert.Equal(
+                    """{"id":"abc","type":"error","payload":[{"message":"Unexpected Execution Error"}]}""",
+                    error?.RootElement.GetRawText());
+                Assert.Equal(Messages.Pong, afterError?.RootElement.GetProperty(MessageProperties.Type).GetString());
+                Assert.False(webSocket.CloseStatus.HasValue, "Connection is open.");
+            });
+
+    [Fact]
     public Task Connection_Init_Received_In_Time_Should_Not_Timeout_When_OnConnect_Is_Slow()
         => TryTest(
             async ct =>
@@ -1249,6 +1287,22 @@ public class WebSocketProtocolTests(TestServerFactory serverFactory, ITestOutput
             statusCode);
 
         await Task.CompletedTask;
+    }
+
+    private static async IAsyncEnumerable<OperationResult> ReadFaultEndingEventsAsync()
+    {
+        yield return new OperationResult(
+            ImmutableOrderedDictionary<string, object?>.Empty.Add("event", 1));
+
+        var fault = OperationResult.FromError(
+            ErrorBuilder.New().SetMessage("Unexpected Execution Error").Build());
+        fault.ContextData = fault.ContextData.Add(
+            ExecutionContextData.HttpStatusCode,
+            HttpStatusCode.InternalServerError);
+
+        await Task.CompletedTask;
+
+        yield return fault;
     }
 
     private sealed class UnauthorizedWithMessageInterceptor(string message)

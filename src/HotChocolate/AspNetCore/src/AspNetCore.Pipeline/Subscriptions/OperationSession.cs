@@ -77,8 +77,19 @@ internal sealed class OperationSession : IOperationSession
                     {
                         try
                         {
-                            // use the original cancellation token here to keep the websocket open for other streams.
-                            await SendResultMessageAsync(item, cancellationToken);
+                            if (IsFaultResult(item))
+                            {
+                                // an error message terminates the operation, so no complete message
+                                // is sent afterwards.
+                                errorSent = true;
+                                await _session.Protocol.SendErrorMessageAsync(_session, Id, item.Errors, ct);
+                            }
+                            else
+                            {
+                                // use the original cancellation token here to keep the websocket open for other
+                                // streams.
+                                await SendResultMessageAsync(item, cancellationToken);
+                            }
                         }
                         finally
                         {
@@ -89,7 +100,8 @@ internal sealed class OperationSession : IOperationSession
                     // a stream that ends requesting 401 closes the connection as unauthorized
                     // instead of completing the operation.
                     closeUnauthorized =
-                        !ct.IsCancellationRequested
+                        !errorSent
+                        && !ct.IsCancellationRequested
                         && RequestedStatusCode.TryGet(responseStream.ContextData, out var requestedStatusCode)
                         && requestedStatusCode is HttpStatusCode.Unauthorized;
                     break;
@@ -257,6 +269,12 @@ internal sealed class OperationSession : IOperationSession
 
         return requestBuilder;
     }
+
+    private static bool IsFaultResult(OperationResult result)
+        => result.Data is null
+            && result.Errors.Count > 0
+            && RequestedStatusCode.TryGet(result.ContextData, out var requestedStatusCode)
+            && requestedStatusCode is HttpStatusCode.InternalServerError;
 
     private async Task SendResultMessageAsync(OperationResult result, CancellationToken ct)
     {
