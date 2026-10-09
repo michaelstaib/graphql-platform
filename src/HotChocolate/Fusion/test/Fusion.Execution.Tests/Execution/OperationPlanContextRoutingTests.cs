@@ -359,7 +359,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
                 services,
                 executor,
                 operationPlan,
-                new VariableValueCollection(coercedVariables));
+                new VariableValueCollection(coercedVariables, null));
         }
 
         public ExecutionNode GetRootNode() => _operationPlan.RootNodes[0];

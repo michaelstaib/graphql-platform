@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Execution;
@@ -9,16 +10,21 @@ internal sealed class VariableValueCollection : IVariableValueCollection
 {
     private readonly Dictionary<string, VariableValue> _coercedValues;
 
-    public VariableValueCollection(Dictionary<string, VariableValue> coercedValues)
+    public VariableValueCollection(
+        Dictionary<string, VariableValue> coercedValues,
+        AuthorizationDecisions? authorizationDecisions)
     {
         ArgumentNullException.ThrowIfNull(coercedValues);
 
         _coercedValues = coercedValues;
+        AuthorizationDecisions = authorizationDecisions;
     }
 
-    public static VariableValueCollection Empty { get; } = new([]);
+    public static VariableValueCollection Empty { get; } = new([], null);
 
     public bool IsEmpty => _coercedValues.Count == 0;
+
+    public AuthorizationDecisions? AuthorizationDecisions { get; }
 
     public T GetValue<T>(string name) where T : IValueNode
     {
