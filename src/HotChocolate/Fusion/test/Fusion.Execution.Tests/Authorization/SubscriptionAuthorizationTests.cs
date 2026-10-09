@@ -919,6 +919,37 @@ public class SubscriptionAuthorizationTests : AuthorizationExecutionTestBase
 
     [Fact]
     public async Task
+        ReadResultsAsync_Should_EndTheStreamWithTheInnerErrors_When_AnErrorFilterReturnsAnAggregateError()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: true);
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder => builder.AddErrorFilter(e => new AggregateError(e.WithMessage("a"), e.WithMessage("b"))));
+        await using var result = await executor.ExecuteAsync(
+            CreateRequest(Subscription, Authenticated()).Build(),
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+        client.Publish(Event);
+        await ReadNextAsync(events);
+        policy.Fault = new InvalidOperationException("boom");
+
+        // act
+        client.Publish(Event);
+        Assert.True(await events.MoveNextAsync());
+        await using var terminal = events.Current;
+
+        // assert
+        Snapshot.Create()
+            .Add(terminal.ToJson(), "Terminal Result")
+            .Add(GetRequestedStatusCode(terminal), "Terminal Status Code")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task
         ReadResultsAsync_Should_EndTheStreamWithAnErrorResultInsteadOfTheEvent_When_TheVerdictChangeScopeFailsToCommit()
     {
         // arrange
