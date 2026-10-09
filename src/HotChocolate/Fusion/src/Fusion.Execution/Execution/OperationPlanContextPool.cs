@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Diagnostics;
@@ -11,11 +12,13 @@ internal sealed class OperationPlanContextPool : IDisposable
     private readonly INodeIdParser _nodeIdParser;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly IErrorHandler _errorHandler;
+    private readonly ArrayPool<ulong> _activationPool;
 
     public OperationPlanContextPool(
         INodeIdParser nodeIdParser,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
         IErrorHandler errorHandler,
+        ArrayPool<ulong> activationPool,
         int[] levels,
         TimeSpan trimInterval)
     {
@@ -29,6 +32,7 @@ internal sealed class OperationPlanContextPool : IDisposable
         _nodeIdParser = nodeIdParser;
         _diagnosticEvents = diagnosticEvents;
         _errorHandler = errorHandler;
+        _activationPool = activationPool;
         _bucket = new Bucket(levels, trimInterval);
     }
 
@@ -38,7 +42,11 @@ internal sealed class OperationPlanContextPool : IDisposable
 
         if (context is null)
         {
-            context = new OperationPlanContext(_nodeIdParser, _diagnosticEvents, _errorHandler);
+            context = new OperationPlanContext(
+                _nodeIdParser,
+                _diagnosticEvents,
+                _errorHandler,
+                _activationPool);
             Log.ContextMiss();
         }
         else

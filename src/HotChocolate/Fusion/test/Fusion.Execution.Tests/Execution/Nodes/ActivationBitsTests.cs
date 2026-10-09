@@ -1,5 +1,3 @@
-using System.Buffers;
-
 namespace HotChocolate.Fusion.Execution.Nodes;
 
 public class ActivationBitsTests
@@ -8,7 +6,8 @@ public class ActivationBitsTests
     public void Set_Should_SetOnlyTheGivenIndexes_When_CapacityFitsOneWord()
     {
         // arrange
-        var bits = new ActivationBits(64);
+        var pool = new CountingArrayPool();
+        var bits = new ActivationBits(64, pool);
 
         // act
         bits.Set(0);
@@ -23,7 +22,8 @@ public class ActivationBitsTests
     public void Set_Should_SetOnlyTheGivenIndexes_When_CapacityExceedsOneWord()
     {
         // arrange
-        var bits = new ActivationBits(200);
+        var pool = new CountingArrayPool();
+        var bits = new ActivationBits(200, pool);
 
         try
         {
@@ -38,50 +38,48 @@ public class ActivationBitsTests
         }
         finally
         {
-            bits.Return();
+            bits.Return(pool);
         }
     }
 
     [Fact]
-    public void Constructor_Should_ClearTheRentedWords_When_ThePoolReturnsDirtyMemory()
+    public void Constructor_Should_ClearTheClaimedWords_When_ThePoolReturnsDirtyMemory()
     {
         // arrange
-        var dirty = new ActivationBits(200);
-        dirty.Set(100);
-        dirty.Set(190);
-        var words = dirty.RentedWords!;
-        var dirtyWordCount = words.Count(word => word != 0);
-        dirty.Return();
+        var pool = new CountingArrayPool();
+        var dirty = new ulong[4];
+        Array.Fill(dirty, ulong.MaxValue);
+        pool.Seed(dirty);
 
         // act
-        var bits = new ActivationBits(200);
+        var bits = new ActivationBits(200, pool);
 
         // assert
         try
         {
-            Assert.Equal(2, dirtyWordCount);
-            Assert.Same(words, bits.RentedWords);
+            Assert.Same(dirty, Assert.Single(pool.Rented));
             Assert.Empty(GetSetIndexes(bits, 200));
         }
         finally
         {
-            bits.Return();
+            bits.Return(pool);
         }
     }
 
     [Fact]
-    public void Return_Should_ReleaseTheRentedWords_When_CapacityExceedsOneWord()
+    public void Return_Should_HandTheRentedWordsBackToThePool_When_CapacityExceedsOneWord()
     {
         // arrange
-        var bits = new ActivationBits(200);
-        var words = bits.RentedWords!;
+        var pool = new CountingArrayPool();
+        var bits = new ActivationBits(200, pool);
+        var words = Assert.Single(pool.Rented);
 
         // act
-        bits.Return();
+        bits.Return(pool);
 
         // assert
-        Assert.Same(words, ArrayPool<ulong>.Shared.Rent(words.Length));
-        Assert.Null(bits.RentedWords);
+        Assert.Same(words, Assert.Single(pool.Returned));
+        Assert.Equal(0, pool.Outstanding);
     }
 
     private static int[] GetSetIndexes(ActivationBits bits, int capacity)
