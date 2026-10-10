@@ -21,16 +21,6 @@ public class CollectionSegmentInfo : IPageInfo
     }
 
     /// <summary>
-    /// Gets a value indicating whether there is another page after the current one.
-    /// </summary>
-    internal bool HasNextPage => _hasNextPage;
-
-    /// <summary>
-    /// Gets a value indicating whether there is a page before the current one.
-    /// </summary>
-    internal bool HasPreviousPage => _hasPreviousPage;
-
-    /// <summary>
     /// <c>true</c> if there is another page after the current one.
     /// <c>false</c> if this page is the last page of the current data set / collection.
     /// </summary>

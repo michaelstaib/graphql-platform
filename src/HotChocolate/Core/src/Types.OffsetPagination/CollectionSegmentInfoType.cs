@@ -1,5 +1,5 @@
-using HotChocolate.Resolvers;
 using HotChocolate.Types.Composite;
+using HotChocolate.Types.Descriptors.Configurations;
 
 namespace HotChocolate.Types.Pagination;
 
@@ -28,8 +28,7 @@ public class CollectionSegmentInfoType : ObjectType<CollectionSegmentInfo>
                 "Indicates whether more items exist following "
                 + "the set defined by the clients arguments.")
             .Extend()
-            .OnBeforeCreate(
-                c => c.PureResolver = ctx => GetPageInfo(ctx).HasNextPage);
+            .Configuration.Flags |= CoreFieldFlags.NotDataResolver;
 
         descriptor
             .Field(t => t.HasPreviousPageAsync(default))
@@ -39,10 +38,6 @@ public class CollectionSegmentInfoType : ObjectType<CollectionSegmentInfo>
                 "Indicates whether more items exist prior "
                 + "the set defined by the clients arguments.")
             .Extend()
-            .OnBeforeCreate(
-                c => c.PureResolver = ctx => GetPageInfo(ctx).HasPreviousPage);
+            .Configuration.Flags |= CoreFieldFlags.NotDataResolver;
     }
-
-    private static CollectionSegmentInfo GetPageInfo(IResolverContext context)
-        => context.Parent<CollectionSegmentInfo>();
 }
