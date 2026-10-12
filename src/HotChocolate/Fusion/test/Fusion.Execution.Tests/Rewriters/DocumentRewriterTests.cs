@@ -410,6 +410,40 @@ public class DocumentRewriterTests : FusionTestBase
     }
 
     [Fact]
+    public void RewriteDocument_Should_PlaceFieldAtUnconditionalOccurrence_When_FieldAppearsFirstUnderCondition()
+    {
+        // arrange
+        var sourceText = FileResource.Open("schema1.graphql");
+        var schemaDefinition = ComposeSchema(sourceText);
+
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            query($skip: Boolean!) {
+              productById(id: 1) {
+                id @skip(if: $skip)
+                name
+                id
+              }
+            }
+            """);
+
+        // act
+        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewritten = rewriter.RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            query($skip: Boolean!) {
+              productById(id: 1) {
+                name
+                id
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public void RewriteDocument_Should_KeepRequestOrder_When_SameConditionalIsSeparatedByOtherSelections()
     {
         // arrange
