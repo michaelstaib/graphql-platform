@@ -150,10 +150,10 @@ operationPlan:
         query testQuery {
           anotherUsers {
             __typename @fusion__requirement
-            id @fusion__requirement
             ... on User {
               age
             }
+            id @fusion__requirement
           }
         }
       name: testQuery

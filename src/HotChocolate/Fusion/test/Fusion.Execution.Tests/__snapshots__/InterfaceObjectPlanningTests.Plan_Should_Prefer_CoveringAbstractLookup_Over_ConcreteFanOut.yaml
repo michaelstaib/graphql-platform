@@ -3,10 +3,10 @@ operation:
       {
         product {
           __typename @fusion__requirement
-          id @fusion__requirement
           ... on Bread {
             id
           }
+          id @fusion__requirement
         }
       }
     hash: 123456789101112
