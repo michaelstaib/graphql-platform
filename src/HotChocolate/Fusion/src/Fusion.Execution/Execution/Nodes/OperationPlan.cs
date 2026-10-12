@@ -15,6 +15,7 @@ public sealed record OperationPlan : IOperationPlan
 {
     private static readonly JsonOperationPlanFormatter s_formatter = new();
     private readonly ExecutionNode?[] _nodesById = [];
+    private readonly Dictionary<Operation, int>? _incrementalPlanIndexes;
 
     private OperationPlan(
         string id,
@@ -42,6 +43,7 @@ public sealed record OperationPlan : IOperationPlan
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
         Authorization = CreateAuthorization(operation, incrementalPlans);
+        _incrementalPlanIndexes = CreateIncrementalPlanIndexes(incrementalPlans);
     }
 
     /// <summary>
@@ -116,6 +118,15 @@ public sealed record OperationPlan : IOperationPlan
     /// or <c>null</c> if nothing is protected.
     /// </summary>
     internal OperationAuthorization? Authorization { get; }
+
+    /// <summary>
+    /// Determines whether the operation belongs to an incremental plan of this plan that is not set in
+    /// <paramref name="runningIncrementalPlans"/>.
+    /// </summary>
+    internal bool DoesNotRun(ActivationBits runningIncrementalPlans, Operation operation)
+        => _incrementalPlanIndexes is not null
+            && _incrementalPlanIndexes.TryGetValue(operation, out var index)
+            && !runningIncrementalPlans.Get(index);
 
     /// <summary>
     /// Retrieves the execution node associated with a plan node identifier.
@@ -260,6 +271,24 @@ public sealed record OperationPlan : IOperationPlan
             incrementalPlans,
             searchSpace,
             expandedNodes);
+    }
+
+    private static Dictionary<Operation, int>? CreateIncrementalPlanIndexes(
+        ImmutableArray<IncrementalPlan> incrementalPlans)
+    {
+        if (incrementalPlans.IsDefaultOrEmpty)
+        {
+            return null;
+        }
+
+        var indexes = new Dictionary<Operation, int>(incrementalPlans.Length);
+
+        for (var i = 0; i < incrementalPlans.Length; i++)
+        {
+            indexes[incrementalPlans[i].Operation] = i;
+        }
+
+        return indexes;
     }
 
     private static OperationAuthorization? CreateAuthorization(
