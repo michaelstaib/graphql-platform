@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Features;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.ApolloFederation;
 using HotChocolate.Fusion.Execution.Clients;
@@ -44,6 +45,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private bool _collectTelemetry;
     private bool _usesDynamicSchemaNames;
     private bool _usesBatchNodes;
+    private AuthorizationDecisions? _authorizationDecisions;
 #pragma warning disable IDE0370 // Remove unnecessary suppression
     private ISourceSchemaClientScope _clientScope = default!;
 #pragma warning restore IDE0370 // Remove unnecessary suppression
@@ -782,6 +784,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     internal OperationResult Complete(bool reusable = false, bool retainMemoryForDefer = false)
     {
         _resultStore.FinalizePocketedErrors();
+
+        if (_authorizationDecisions is { RequiresFinalization: true } authorizationDecisions)
+        {
+            _resultStore.FinalizeDeniedSelections(authorizationDecisions);
+        }
 
         var environment = Schema.TryGetEnvironment();
 

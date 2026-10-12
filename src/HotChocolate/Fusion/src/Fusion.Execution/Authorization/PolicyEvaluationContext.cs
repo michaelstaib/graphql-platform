@@ -99,16 +99,19 @@ public sealed class PolicyEvaluationContext
     public ReadOnlySpan<PolicyVerdict> Verdicts => _verdicts;
 
     /// <summary>
-    /// Allows the entry unless it was already denied.
+    /// Allows the entry.
     /// </summary>
     /// <param name="entry">
     /// An entry of <see cref="Entries"/>.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The entry was already answered.
+    /// </exception>
     public void Allow(in PolicyEvaluationEntry entry)
         => Record(entry, PolicyOutcome.Allowed, null, null);
 
     /// <summary>
-    /// Allows the entry unless it was already denied.
+    /// Allows the entry.
     /// </summary>
     /// <param name="entry">
     /// An entry of <see cref="Entries"/>.
@@ -116,6 +119,9 @@ public sealed class PolicyEvaluationContext
     /// <param name="auditData">
     /// Key/value pairs that are only meant for auditing.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The entry was already answered.
+    /// </exception>
     public void Allow(in PolicyEvaluationEntry entry, ImmutableDictionary<string, string> auditData)
     {
         ArgumentNullException.ThrowIfNull(auditData);
@@ -123,7 +129,7 @@ public sealed class PolicyEvaluationContext
     }
 
     /// <summary>
-    /// Denies the entry. A denial cannot be overridden by a later answer.
+    /// Denies the entry.
     /// </summary>
     /// <param name="entry">
     /// An entry of <see cref="Entries"/>.
@@ -131,11 +137,14 @@ public sealed class PolicyEvaluationContext
     /// <param name="reason">
     /// An optional reason that is only meant for auditing.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The entry was already answered.
+    /// </exception>
     public void Deny(in PolicyEvaluationEntry entry, string? reason = null)
         => Record(entry, PolicyOutcome.Denied, reason, null);
 
     /// <summary>
-    /// Denies the entry. A denial cannot be overridden by a later answer.
+    /// Denies the entry.
     /// </summary>
     /// <param name="entry">
     /// An entry of <see cref="Entries"/>.
@@ -146,6 +155,9 @@ public sealed class PolicyEvaluationContext
     /// <param name="auditData">
     /// Key/value pairs that are only meant for auditing.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The entry was already answered.
+    /// </exception>
     public void Deny(
         in PolicyEvaluationEntry entry,
         string? reason,
@@ -172,14 +184,13 @@ public sealed class PolicyEvaluationContext
     {
         var index = GetIndex(entry);
 
-        if (_verdicts[index].Outcome is PolicyOutcome.Denied)
+        if (_verdicts[index].Outcome is not PolicyOutcome.Unanswered)
         {
-            return;
-        }
+            var descriptor = entry.Descriptor;
 
-        if (outcome is PolicyOutcome.Allowed && _verdicts[index].Outcome is PolicyOutcome.Allowed)
-        {
-            return;
+            throw ThrowHelper.PolicyEntryAlreadyAnswered(
+                descriptor.Selection.Field.Coordinate.ToString(),
+                descriptor.PolicyName ?? descriptor.DirectiveName);
         }
 
         _verdicts[index] = new PolicyVerdict(outcome, reason, auditData);

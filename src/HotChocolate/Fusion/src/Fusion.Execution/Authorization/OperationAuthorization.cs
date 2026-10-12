@@ -14,6 +14,7 @@ public sealed class OperationAuthorization
     {
         Descriptors = descriptors;
         Variables = variables;
+        HasUnresolvedPolicies = ContainsUnresolvedPolicy(descriptors);
     }
 
     /// <summary>
@@ -25,4 +26,23 @@ public sealed class OperationAuthorization
     /// Gets the synthetic variables in the order they were allocated.
     /// </summary>
     public ImmutableArray<AuthorizationVariable> Variables { get; }
+
+    /// <summary>
+    /// Gets a value that indicates whether any descriptor refers to a policy name that no
+    /// provider resolved.
+    /// </summary>
+    internal bool HasUnresolvedPolicies { get; }
+
+    private static bool ContainsUnresolvedPolicy(ImmutableArray<PolicyDescriptor> descriptors)
+    {
+        foreach (var descriptor in descriptors)
+        {
+            if (descriptor.Policy is UnresolvedPolicy)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

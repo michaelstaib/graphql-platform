@@ -339,7 +339,8 @@ public sealed class AliasBatchRequestSelectionTests : FusionTestBase
                 new Dictionary<string, VariableValue>(StringComparer.Ordinal)
                 {
                     [name] = new(name, stringType, new StringValueNode("client"))
-                });
+                },
+                null);
         }
 
         /// <summary>

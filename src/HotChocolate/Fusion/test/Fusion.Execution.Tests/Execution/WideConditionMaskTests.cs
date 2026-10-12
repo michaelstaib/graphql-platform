@@ -393,7 +393,7 @@ public class WideConditionMaskTests : FusionTestBase
     {
         var variables = new Dictionary<string, VariableValue>();
         AddVariables(schema, variables, prefix, count, value);
-        return new VariableValueCollection(variables);
+        return new VariableValueCollection(variables, null);
     }
 
     private static VariableValueCollection CreateVariables(
@@ -413,7 +413,7 @@ public class WideConditionMaskTests : FusionTestBase
                 new NonNullType(booleanType),
                 x ? BooleanValueNode.True : BooleanValueNode.False));
 
-        return new VariableValueCollection(variables);
+        return new VariableValueCollection(variables, null);
     }
 
     private static void AddVariables(

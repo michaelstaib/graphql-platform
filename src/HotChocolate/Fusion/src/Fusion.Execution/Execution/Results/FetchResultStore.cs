@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Language;
@@ -691,6 +692,17 @@ AddErrors_Next:
         {
             _valueCompletion.FinalizePocketedErrors(_result.Data);
             _valueCompletion.FinalizeInaccessibleRuntimeTypes(_result.Data);
+        }
+    }
+
+    public void FinalizeDeniedSelections(AuthorizationDecisions decisions)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(decisions);
+
+        lock (_lock)
+        {
+            _valueCompletion.FinalizeDeniedSelections(_result.Data, decisions);
         }
     }
 

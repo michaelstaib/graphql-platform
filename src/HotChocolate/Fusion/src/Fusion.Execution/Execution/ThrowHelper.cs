@@ -10,6 +10,20 @@ internal static class ThrowHelper
     public static InvalidOperationException PolicyEntryNotPartOfContext()
         => new(FusionExecutionResources.PolicyEvaluationContext_EntryNotPartOfContext);
 
+    public static InvalidOperationException PolicyEntryAlreadyAnswered(
+        string fieldCoordinate,
+        string policy)
+        => new(string.Format(
+            FusionExecutionResources.PolicyEvaluationContext_EntryAlreadyAnswered,
+            fieldCoordinate,
+            policy));
+
+    public static InvalidOperationException OperationAuthorizationRequiresPlan()
+        => new(FusionExecutionResources.OperationAuthorization_OperationPlanMissing);
+
+    public static InvalidOperationException OperationAuthorizationRequiresBooleanType()
+        => new(FusionExecutionResources.OperationAuthorization_BooleanTypeMissing);
+
     public static InvalidOperationException AuthorizationOptionsAreReadOnly()
         => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
 
@@ -36,6 +50,11 @@ internal static class ThrowHelper
 
     public static InvalidOperationException AuthenticationSchemesWithoutLookup()
         => new(FusionExecutionResources.AuthorizationValidation_SchemesWithoutLookup);
+
+    public static InvalidOperationException InvalidDeferIfVariable(string variableName)
+        => new(string.Format(
+            FusionExecutionResources.DeliveryGroup_InvalidIfVariable,
+            variableName));
 
     public static InvalidOperationException PolicyNotResolved(string directiveName, string? policyName)
         => new(string.Format(

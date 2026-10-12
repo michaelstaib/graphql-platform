@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using HotChocolate.Features;
+using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 using static HotChocolate.Fusion.Authorization.PolicyTestHelper;
 
@@ -44,7 +45,7 @@ public class PolicyEvaluationContextTests
     }
 
     [Fact]
-    public void Allow_Should_NotOverrideDenial_When_EntryWasDeniedBefore()
+    public void Allow_Should_Throw_When_EntryWasDeniedBefore()
     {
         // arrange
         var selections = CreateSelections();
@@ -54,31 +55,63 @@ public class PolicyEvaluationContextTests
         context.Deny(context.Entries[0], "no");
 
         // act
-        context.Allow(context.Entries[0]);
+        void Act() => context.Allow(context.Entries[0]);
 
         // assert
+        var exception = Assert.Throws<InvalidOperationException>(Act);
         Assert.Equal(
-            new PolicyVerdict(PolicyOutcome.Denied, "no", null),
-            context.Verdicts[0]);
+            "The policy 'p' already answered the entry of the field 'Product.id'. "
+            + "An entry takes exactly one verdict.",
+            exception.Message);
+        Assert.Equal(new PolicyVerdict(PolicyOutcome.Denied, "no", null), context.Verdicts[0]);
     }
 
     [Fact]
-    public void Deny_Should_ReplaceAllowance_When_EntryWasAllowedBefore()
+    public void Deny_Should_Throw_When_EntryWasAllowedBefore()
+    {
+        // arrange
+        var selections = CreateSelections();
+        var auditData = ImmutableDictionary<string, string>.Empty.Add("rule", "r1");
+        var context = CreateContext(
+            Anonymous(),
+            CreateEntry(selections[1], AuthenticatedPolicy.Instance));
+        context.Allow(context.Entries[0], auditData);
+
+        // act
+        void Act() => context.Deny(context.Entries[0], "later");
+
+        // assert
+        var exception = Assert.Throws<InvalidOperationException>(Act);
+        Assert.Equal(
+            "The policy 'p' already answered the entry of the field 'Product.id'. "
+            + "An entry takes exactly one verdict.",
+            exception.Message);
+        Assert.Same(auditData, context.Verdicts[0].AuditData);
+    }
+
+    [Fact]
+    public void Allow_Should_Throw_When_EntryWasAllowedBefore()
     {
         // arrange
         var selections = CreateSelections();
         var context = CreateContext(
             Anonymous(),
-            CreateEntry(selections[1], AuthenticatedPolicy.Instance));
+            CreateEntry(
+                selections[2],
+                AuthenticatedPolicy.Instance,
+                DirectiveNames.Authenticated.Name,
+                policyName: null));
         context.Allow(context.Entries[0]);
 
         // act
-        context.Deny(context.Entries[0], "later");
+        void Act() => context.Allow(context.Entries[0]);
 
         // assert
+        var exception = Assert.Throws<InvalidOperationException>(Act);
         Assert.Equal(
-            new PolicyVerdict(PolicyOutcome.Denied, "later", null),
-            context.Verdicts[0]);
+            "The policy 'authenticated' already answered the entry of the field 'Product.name'. "
+            + "An entry takes exactly one verdict.",
+            exception.Message);
     }
 
     [Fact]

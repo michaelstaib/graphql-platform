@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 using HotChocolate.Buffers;
+using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
 using HotChocolate.Language;
 
@@ -40,6 +41,7 @@ public sealed record OperationPlan : IOperationPlan
         MaxNodeId = _nodesById.Length > 0 ? _nodesById.Length - 1 : 0;
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
+        Authorization = CreateAuthorization(operation, incrementalPlans);
     }
 
     /// <summary>
@@ -108,6 +110,12 @@ public sealed record OperationPlan : IOperationPlan
     internal bool UsesDynamicSchemaNames { get; }
 
     internal bool UsesBatchNodes { get; }
+
+    /// <summary>
+    /// Gets the authorization requirements of the operation and its incremental plans,
+    /// or <c>null</c> if nothing is protected.
+    /// </summary>
+    internal OperationAuthorization? Authorization { get; }
 
     /// <summary>
     /// Retrieves the execution node associated with a plan node identifier.
@@ -252,6 +260,51 @@ public sealed record OperationPlan : IOperationPlan
             incrementalPlans,
             searchSpace,
             expandedNodes);
+    }
+
+    private static OperationAuthorization? CreateAuthorization(
+        Operation operation,
+        ImmutableArray<IncrementalPlan> incrementalPlans)
+    {
+        var root = operation.Authorization;
+        var hasIncrementalAuthorization = false;
+
+        if (!incrementalPlans.IsDefaultOrEmpty)
+        {
+            foreach (var incrementalPlan in incrementalPlans)
+            {
+                if (incrementalPlan.Operation.Authorization is not null)
+                {
+                    hasIncrementalAuthorization = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasIncrementalAuthorization)
+        {
+            return root;
+        }
+
+        var descriptors = ImmutableArray.CreateBuilder<PolicyDescriptor>();
+        var variables = ImmutableArray.CreateBuilder<AuthorizationVariable>();
+
+        if (root is not null)
+        {
+            descriptors.AddRange(root.Descriptors);
+            variables.AddRange(root.Variables);
+        }
+
+        foreach (var incrementalPlan in incrementalPlans)
+        {
+            if (incrementalPlan.Operation.Authorization is { } authorization)
+            {
+                descriptors.AddRange(authorization.Descriptors);
+                variables.AddRange(authorization.Variables);
+            }
+        }
+
+        return new OperationAuthorization(descriptors.ToImmutable(), variables.ToImmutable());
     }
 
     private static ExecutionNode?[] CreateNodeLookup(
