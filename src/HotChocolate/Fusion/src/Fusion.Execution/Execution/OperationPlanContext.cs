@@ -146,6 +146,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal ExecutionState ExecutionState => _executionState;
 
+    /// <summary>
+    /// Gets the error handler of the schema this context executes against.
+    /// </summary>
+    internal IErrorHandler ErrorHandler => _errorHandler;
+
     internal bool IsNodeSkipped(int nodeId)
         => _executionState.IsNodeSkipped(nodeId);
 
@@ -769,6 +774,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal PooledArrayWriter CreateRentedBuffer()
         => _resultStore.CreateRentedBuffer();
+
+    internal void ApplyAuthorization(VariableValueCollection variables)
+    {
+        Variables = variables;
+        _authorizationDecisions = variables.AuthorizationDecisions;
+    }
 
     internal void Begin(long? start = null, string? traceId = null)
     {
