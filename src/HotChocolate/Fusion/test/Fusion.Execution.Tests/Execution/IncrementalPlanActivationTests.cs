@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -16,13 +17,16 @@ public class IncrementalPlanActivationTests : FusionTestBase
         var schema = CreateSchema();
         var plan = PlanOperation(schema, CreateDeferDocument(conditionCount: 70));
         var variables = CreateVariables(schema, "d", 70, i => i is 3 or 65);
-        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
+        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables, ArrayPool<ulong>.Shared);
         var running = default(ActivationBits);
 
         try
         {
             // act
-            running = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, activeDeliveryGroups);
+            running = IncrementalPlan.GetRunningPlans(
+                plan.IncrementalPlans,
+                activeDeliveryGroups,
+                ArrayPool<ulong>.Shared);
 
             // assert
             Assert.Equal(70, plan.IncrementalPlans.Length);
@@ -30,8 +34,8 @@ public class IncrementalPlanActivationTests : FusionTestBase
         }
         finally
         {
-            activeDeliveryGroups.Return();
-            running.Return();
+            activeDeliveryGroups.Return(ArrayPool<ulong>.Shared);
+            running.Return(ArrayPool<ulong>.Shared);
         }
     }
 
@@ -42,13 +46,16 @@ public class IncrementalPlanActivationTests : FusionTestBase
         var schema = CreateSchema();
         var plan = PlanOperation(schema, CreateDeferDocument(conditionCount: 70));
         var variables = CreateVariables(schema, "d", 70, i => i == 65);
-        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
+        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables, ArrayPool<ulong>.Shared);
         var running = default(ActivationBits);
 
         try
         {
             // act
-            running = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, activeDeliveryGroups);
+            running = IncrementalPlan.GetRunningPlans(
+                plan.IncrementalPlans,
+                activeDeliveryGroups,
+                ArrayPool<ulong>.Shared);
             var runningPlans = plan.IncrementalPlans
                 .Where(p => !plan.DoesNotRun(running, p.Operation))
                 .Select(p => p.DeliveryGroups[0].IfVariable!)
@@ -61,8 +68,8 @@ public class IncrementalPlanActivationTests : FusionTestBase
         }
         finally
         {
-            activeDeliveryGroups.Return();
-            running.Return();
+            activeDeliveryGroups.Return(ArrayPool<ulong>.Shared);
+            running.Return(ArrayPool<ulong>.Shared);
         }
     }
 
@@ -83,21 +90,24 @@ public class IncrementalPlanActivationTests : FusionTestBase
             "query($a: Boolean! $b: Boolean!) "
             + "{ plain: foo ... @defer(if: $a) { x: foo ... @defer(if: $b) { y: foo } } }");
         var variables = CreateVariables(schema, ("a", a), ("b", b));
-        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
+        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables, ArrayPool<ulong>.Shared);
         var running = default(ActivationBits);
 
         try
         {
             // act
-            running = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, activeDeliveryGroups);
+            running = IncrementalPlan.GetRunningPlans(
+                plan.IncrementalPlans,
+                activeDeliveryGroups,
+                ArrayPool<ulong>.Shared);
 
             // assert
             Assert.Equal(expected, string.Join(",", DescribeRunning(plan, running)));
         }
         finally
         {
-            activeDeliveryGroups.Return();
-            running.Return();
+            activeDeliveryGroups.Return(ArrayPool<ulong>.Shared);
+            running.Return(ArrayPool<ulong>.Shared);
         }
     }
 
@@ -126,8 +136,11 @@ public class IncrementalPlanActivationTests : FusionTestBase
 
     private static int Evaluate(OperationPlan plan, IVariableValueCollection variables)
     {
-        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables);
-        var running = IncrementalPlan.GetRunningPlans(plan.IncrementalPlans, activeDeliveryGroups);
+        var activeDeliveryGroups = DeliveryGroup.GetActive(plan.DeliveryGroups, variables, ArrayPool<ulong>.Shared);
+        var running = IncrementalPlan.GetRunningPlans(
+            plan.IncrementalPlans,
+            activeDeliveryGroups,
+            ArrayPool<ulong>.Shared);
         var count = 0;
 
         for (var i = 0; i < plan.IncrementalPlans.Length; i++)
@@ -138,8 +151,8 @@ public class IncrementalPlanActivationTests : FusionTestBase
             }
         }
 
-        activeDeliveryGroups.Return();
-        running.Return();
+        activeDeliveryGroups.Return(ArrayPool<ulong>.Shared);
+        running.Return(ArrayPool<ulong>.Shared);
         return count;
     }
 

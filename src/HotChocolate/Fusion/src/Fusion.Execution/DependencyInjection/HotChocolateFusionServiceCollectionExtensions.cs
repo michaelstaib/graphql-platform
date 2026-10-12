@@ -1,3 +1,4 @@
+using System.Buffers;
 using HotChocolate;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
@@ -113,6 +114,7 @@ public static class HotChocolateFusionServiceCollectionExtensions
                     sp.GetRequiredService<INodeIdParser>(),
                     sp.GetRequiredService<IFusionExecutionDiagnosticEvents>(),
                     sp.GetRequiredService<IErrorHandler>(),
+                    ArrayPool<ulong>.Shared,
                     levels: [64, 128, 256, 512, 1024, 2048, 4096],
                     trimInterval: TimeSpan.FromMinutes(2))));
 
