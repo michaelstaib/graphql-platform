@@ -22,17 +22,17 @@ internal static class AuthorizationVariableValues
     /// <param name="decisions">
     /// The denied selections of the variable set, or <c>null</c> if every selection is allowed.
     /// </param>
-    /// <param name="type">
-    /// The <c>Boolean!</c> type of the variables.
+    /// <param name="booleanType">
+    /// The schema's Boolean type.
     /// </param>
     public static void AddTo(
         Dictionary<string, VariableValue> values,
         ImmutableArray<AuthorizationVariable> variables,
         AuthorizationDecisions? decisions,
-        IInputType type)
+        IInputType booleanType)
     {
         ArgumentNullException.ThrowIfNull(values);
-        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(booleanType);
 
         var evaluated = new Dictionary<string, bool>(variables.Length, StringComparer.Ordinal);
 
@@ -42,7 +42,7 @@ internal static class AuthorizationVariableValues
 
             values[variable.Name] = new VariableValue(
                 variable.Name,
-                type,
+                booleanType,
                 value ? BooleanValueNode.True : BooleanValueNode.False);
         }
     }

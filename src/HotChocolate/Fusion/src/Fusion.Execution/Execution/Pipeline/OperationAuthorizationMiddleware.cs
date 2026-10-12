@@ -20,20 +20,20 @@ internal sealed class OperationAuthorizationMiddleware
     private readonly FusionAuthorizationOptions _options;
     private readonly AuthenticationSchemeResolver _schemeResolver;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
-    private readonly IInputType _variableType;
+    private readonly IInputType _booleanType;
 
     private OperationAuthorizationMiddleware(
         AuthorizationEvaluator evaluator,
         FusionAuthorizationOptions options,
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
-        IInputType variableType)
+        IInputType booleanType)
     {
         _evaluator = evaluator;
         _options = options;
         _schemeResolver = schemeResolver;
         _diagnosticEvents = diagnosticEvents;
-        _variableType = variableType;
+        _booleanType = booleanType;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
@@ -121,7 +121,7 @@ internal sealed class OperationAuthorizationMiddleware
             values[value.Name] = value;
         }
 
-        AuthorizationVariableValues.AddTo(values, variables, decisions, _variableType);
+        AuthorizationVariableValues.AddTo(values, variables, decisions, _booleanType);
 
         return new VariableValueCollection(values, decisions);
     }
@@ -140,18 +140,18 @@ internal sealed class OperationAuthorizationMiddleware
                 var options = fc.SchemaServices.GetRequiredService<FusionAuthorizationOptions>();
                 var schemeResolver = fc.SchemaServices.GetRequiredService<AuthenticationSchemeResolver>();
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
-                var variableType = GetVariableType(schema);
+                var booleanType = GetBooleanType(schema);
                 var middleware = new OperationAuthorizationMiddleware(
                     new AuthorizationEvaluator(options),
                     options,
                     schemeResolver,
                     diagnosticEvents,
-                    variableType);
+                    booleanType);
                 return requestContext => middleware.InvokeAsync(requestContext, next);
             },
             Key);
 
-    private static IInputType GetVariableType(FusionSchemaDefinition schema)
+    private static IInputType GetBooleanType(FusionSchemaDefinition schema)
     {
         var typeNode = new NonNullTypeNode(new NamedTypeNode(SpecScalarNames.Boolean.Name));
 
