@@ -211,9 +211,9 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
 
     private static void RegisterResultForCleanup(IMiddlewareContext context)
     {
-        if (context.Result is IAsyncDisposable disposable)
+        if (context.Result is IStreamPageConnection connection)
         {
-            context.RegisterForCleanup(disposable.DisposeAsync, CleanAfter.Request);
+            context.RegisterForCleanup(connection.DisposeAsync, CleanAfter.Request);
         }
     }
 

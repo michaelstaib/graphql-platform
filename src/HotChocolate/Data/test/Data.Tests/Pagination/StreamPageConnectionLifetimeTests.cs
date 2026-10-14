@@ -1,4 +1,6 @@
 #if NET9_0_OR_GREATER
+using System.Collections;
+using System.Data;
 using System.Data.Common;
 using CookieCrumble.Resources;
 using GreenDonut;
@@ -14,11 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Data.Pagination;
 
-[Collection(PostgresCacheCollectionFixture.DefinitionName)]
-public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
+public class StreamPageConnectionLifetimeTests
 {
-    public PostgreSqlResource Resource { get; } = resource;
-
     [Fact]
     public async Task Execute_Should_RunOnlyTheCountQuery_When_OnlyTotalCountIsSelected()
     {
@@ -246,6 +245,23 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Dispose_Should_ReleaseThePageOnce_When_TheConnectionIsDerived()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ derivedItems(first: 2) { pageInfo { startCursor } } }",
+            TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
     public async Task Dispose_Should_ReleaseThePageOnce_When_ThePageIsCompleted()
     {
         // arrange
@@ -284,12 +300,32 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
     }
 
     [Fact]
-    public async Task Dispose_Should_ReleaseThePageOnce_When_ReadingTheRowsFaults()
+    public async Task Execute_Should_ReleaseTheLifetime_When_OpeningTheRowReaderFaults()
     {
         // arrange
         await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
         var executor = await CreateExecutorAsync(probe);
         probe.FailRowReader = true;
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ items(first: 2) { nodes { id } } }",
+            TestContext.Current.CancellationToken);
+        var errors = result.ExpectOperationResult().Errors.Select(t => t.Message).ToArray();
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(["Unexpected Execution Error"], errors);
+        Assert.Equal(1, probe.Released);
+    }
+
+    [Fact]
+    public async Task Dispose_Should_ReleaseThePageOnce_When_ReadingRowsFaultsAfterConnectionCreation()
+    {
+        // arrange
+        await using var probe = await Probe.CreateSqliteAsync(authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(probe);
+        probe.FailAfterFirstRow = true;
 
         // act
         var result = await executor.ExecuteAsync(
@@ -369,32 +405,7 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         Assert.Equal(1, probe.Released);
     }
 
-    [Fact]
-    public async Task Dispose_Should_ReleaseBatchPagesTogether_When_PagesShareOnePump()
-    {
-        // arrange
-        await using var probe = await Probe.CreatePostgresAsync(
-            Resource.GetConnectionString($"db_{Guid.NewGuid():N}"),
-            authorCount: 2,
-            itemsPerAuthor: 4);
-        var executor = await CreateExecutorAsync(probe);
-
-        // act
-        var result = await executor.ExecuteAsync(
-            "{ authors { id items(first: 2) { pageInfo { startCursor } } } }",
-            TestContext.Current.CancellationToken);
-        var errorCount = result.ExpectOperationResult().Errors.Count;
-        var releasedBeforeDispose = probe.Released;
-        await result.DisposeAsync();
-
-        // assert
-        Assert.Equal(0, errorCount);
-        Assert.Equal(1, probe.Created);
-        Assert.Equal(0, releasedBeforeDispose);
-        Assert.Equal(1, probe.Released);
-    }
-
-    private static async Task<IRequestExecutor> CreateExecutorAsync(Probe probe)
+    internal static async Task<IRequestExecutor> CreateExecutorAsync(Probe probe)
         => await new ServiceCollection()
             .AddSingleton(probe)
             .AddGraphQL()
@@ -447,6 +458,20 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             return page;
         }
 
+        [UseConnection]
+        public async Task<DerivedItemConnection> GetDerivedItems(
+            PagingArguments arguments,
+            [Service] Probe probe,
+            CancellationToken cancellationToken)
+        {
+            var context = probe.CreateContext();
+            var page = await context.Items
+                .OrderBy(t => t.Id)
+                .ToStreamPageAsync(arguments, probe.CreateLifetime(context), cancellationToken);
+
+            return new DerivedItemConnection(page);
+        }
+
         public List<Author> GetAuthors([Service] Probe probe)
             => probe.Authors.Select(id => new Author { Id = id }).ToList();
 
@@ -460,6 +485,10 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         {
             descriptor
                 .Field(t => t.GetItems(default!, default!, default))
+                .AddPagingArguments()
+                .Type<NonNullType<ItemConnectionType>>();
+            descriptor
+                .Field(t => t.GetDerivedItems(default!, default!, default))
                 .AddPagingArguments()
                 .Type<NonNullType<ItemConnectionType>>();
         }
@@ -476,13 +505,15 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
         }
     }
 
+    public sealed class DerivedItemConnection(StreamPage<Item> page) : StreamPageConnection<Item>(page);
+
     public sealed class ItemConnectionType : ObjectType<StreamPageConnection<Item>>
     {
         protected override void Configure(IObjectTypeDescriptor<StreamPageConnection<Item>> descriptor)
         {
             descriptor.Name("ItemConnection");
-            descriptor.Field(t => t.Nodes).Use(GateMiddleware);
-            descriptor.Field(t => t.Edges).Type<ListType<NonNullType<ItemEdgeType>>>();
+            descriptor.Field(t => t.GetNodesAsync(default)).Use(GateMiddleware);
+            descriptor.Field(t => t.GetEdgesAsync(default)).Type<ListType<NonNullType<ItemEdgeType>>>();
             descriptor
                 .Field(t => t.PageInfo)
                 .Type<NonNullType<ItemPageInfoType>>()
@@ -583,6 +614,8 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
 
         public bool FailRowReader { get; set; }
 
+        public bool FailAfterFirstRow { get; set; }
+
         public static async Task<Probe> CreateSqliteAsync(int authorCount, int itemsPerAuthor)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
@@ -654,11 +687,148 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
 
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default)
+            => FailAfterFirstRow
+                ? new(new FaultingDataReader(result))
+                : base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+
         public async ValueTask DisposeAsync()
         {
             if (_connection is not null)
             {
                 await _connection.DisposeAsync();
+            }
+        }
+
+        private sealed class FaultingDataReader(DbDataReader inner) : DbDataReader
+        {
+            private bool _firstRead = true;
+
+            public override object this[int ordinal] => inner[ordinal];
+
+            public override object this[string name] => inner[name];
+
+            public override int Depth => inner.Depth;
+
+            public override int FieldCount => inner.FieldCount;
+
+            public override bool HasRows => inner.HasRows;
+
+            public override bool IsClosed => inner.IsClosed;
+
+            public override int RecordsAffected => inner.RecordsAffected;
+
+            public override int VisibleFieldCount => inner.VisibleFieldCount;
+
+            public override bool Read()
+            {
+                ThrowIfAlreadyRead();
+                return inner.Read();
+            }
+
+            public override Task<bool> ReadAsync(CancellationToken cancellationToken)
+            {
+                ThrowIfAlreadyRead();
+                return inner.ReadAsync(cancellationToken);
+            }
+
+            public override bool NextResult() => inner.NextResult();
+
+            public override Task<bool> NextResultAsync(CancellationToken cancellationToken)
+                => inner.NextResultAsync(cancellationToken);
+
+            public override bool GetBoolean(int ordinal) => inner.GetBoolean(ordinal);
+
+            public override byte GetByte(int ordinal) => inner.GetByte(ordinal);
+
+            public override long GetBytes(
+                int ordinal,
+                long dataOffset,
+                byte[]? buffer,
+                int bufferOffset,
+                int length)
+                => inner.GetBytes(ordinal, dataOffset, buffer, bufferOffset, length);
+
+            public override char GetChar(int ordinal) => inner.GetChar(ordinal);
+
+            public override long GetChars(
+                int ordinal,
+                long dataOffset,
+                char[]? buffer,
+                int bufferOffset,
+                int length)
+                => inner.GetChars(ordinal, dataOffset, buffer, bufferOffset, length);
+
+            public override string GetDataTypeName(int ordinal) => inner.GetDataTypeName(ordinal);
+
+            public override DateTime GetDateTime(int ordinal) => inner.GetDateTime(ordinal);
+
+            public override decimal GetDecimal(int ordinal) => inner.GetDecimal(ordinal);
+
+            public override double GetDouble(int ordinal) => inner.GetDouble(ordinal);
+
+            public override Type GetFieldType(int ordinal) => inner.GetFieldType(ordinal);
+
+            public override T GetFieldValue<T>(int ordinal) => inner.GetFieldValue<T>(ordinal);
+
+            public override Task<T> GetFieldValueAsync<T>(int ordinal, CancellationToken cancellationToken)
+                => inner.GetFieldValueAsync<T>(ordinal, cancellationToken);
+
+            public override float GetFloat(int ordinal) => inner.GetFloat(ordinal);
+
+            public override Guid GetGuid(int ordinal) => inner.GetGuid(ordinal);
+
+            public override short GetInt16(int ordinal) => inner.GetInt16(ordinal);
+
+            public override int GetInt32(int ordinal) => inner.GetInt32(ordinal);
+
+            public override long GetInt64(int ordinal) => inner.GetInt64(ordinal);
+
+            public override string GetName(int ordinal) => inner.GetName(ordinal);
+
+            public override int GetOrdinal(string name) => inner.GetOrdinal(name);
+
+            public override string GetString(int ordinal) => inner.GetString(ordinal);
+
+            public override object GetValue(int ordinal) => inner.GetValue(ordinal);
+
+            public override int GetValues(object[] values) => inner.GetValues(values);
+
+            public override bool IsDBNull(int ordinal) => inner.IsDBNull(ordinal);
+
+            public override Task<bool> IsDBNullAsync(int ordinal, CancellationToken cancellationToken)
+                => inner.IsDBNullAsync(ordinal, cancellationToken);
+
+            public override DataTable? GetSchemaTable() => inner.GetSchemaTable();
+
+            public override IEnumerator GetEnumerator() => ((IEnumerable)inner).GetEnumerator();
+
+            public override void Close() => inner.Close();
+
+            public override Task CloseAsync() => inner.CloseAsync();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    inner.Dispose();
+                }
+            }
+
+            public override ValueTask DisposeAsync() => inner.DisposeAsync();
+
+            private void ThrowIfAlreadyRead()
+            {
+                if (!_firstRead)
+                {
+                    throw new InvalidOperationException("The row reader faulted.");
+                }
+
+                _firstRead = false;
             }
         }
 
@@ -671,6 +841,35 @@ public class StreamPageConnectionLifetimeTests(PostgreSqlResource resource)
                 await context.DisposeAsync();
             }
         }
+    }
+}
+
+[Collection(PostgresCacheCollectionFixture.DefinitionName)]
+public class StreamPageConnectionBatchLifetimeTests(PostgreSqlResource resource)
+{
+    [Fact]
+    public async Task Dispose_Should_ReleaseBatchPagesTogether_When_PagesShareOnePump()
+    {
+        // arrange
+        await using var probe = await StreamPageConnectionLifetimeTests.Probe.CreatePostgresAsync(
+            resource.GetConnectionString($"db_{Guid.NewGuid():N}"),
+            authorCount: 2,
+            itemsPerAuthor: 4);
+        var executor = await StreamPageConnectionLifetimeTests.CreateExecutorAsync(probe);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ authors { id items(first: 2) { pageInfo { startCursor } } } }",
+            TestContext.Current.CancellationToken);
+        var errorCount = result.ExpectOperationResult().Errors.Count;
+        var releasedBeforeDispose = probe.Released;
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(0, errorCount);
+        Assert.Equal(1, probe.Created);
+        Assert.Equal(0, releasedBeforeDispose);
+        Assert.Equal(1, probe.Released);
     }
 }
 #endif
