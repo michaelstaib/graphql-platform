@@ -39,7 +39,6 @@ internal sealed partial class OperationContext
     private IBatchDispatcher _batchDispatcher = null!;
     private InputParser _inputParser = null!;
     private MemoryArena? _memory;
-    private bool _isDeferContext;
     private int _branchId;
     private int _variableIndex;
     private object? _rootValue;
@@ -71,12 +70,12 @@ internal sealed partial class OperationContext
     internal RequestCleanup? RequestCleanup { get; set; }
 
     /// <summary>
-    /// Registers a cleanup action that runs when the request ends. In a deferred part of an incremental
-    /// operation the action is registered with the request cleanup of the response stream.
+    /// Registers a cleanup action that runs when the request ends. In an incremental operation,
+    /// the action is registered with the request cleanup of the response stream.
     /// </summary>
     internal void RegisterRequestCleanup(Func<ValueTask> action)
     {
-        if (_isDeferContext && RequestCleanup is { } requestCleanup)
+        if (RequestCleanup is { } requestCleanup)
         {
             requestCleanup.Register(action);
             return;
@@ -169,7 +168,6 @@ internal sealed partial class OperationContext
         _batchDispatcher = context._batchDispatcher;
         _memory = context._memory;
         RequestCleanup = context.RequestCleanup;
-        _isDeferContext = true;
         _currentBranchTracker = context._currentBranchTracker;
         _currentWorkScheduler = context._currentWorkScheduler;
         _currentDeferExecutionCoordinator = context._currentDeferExecutionCoordinator;
@@ -227,7 +225,6 @@ internal sealed partial class OperationContext
             _batchDispatcher = null!;
             _memory = null;
             RequestCleanup = null;
-            _isDeferContext = false;
             _branchId = int.MinValue;
             _propagateNullValues = false;
             _isInitialized = false;

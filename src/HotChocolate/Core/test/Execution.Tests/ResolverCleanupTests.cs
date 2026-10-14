@@ -98,6 +98,97 @@ public class ResolverCleanupTests
     }
 
     [Fact]
+    public async Task RegisterForCleanup_Should_RunRootRequestCleanupOnce_When_CancelledBeforeTheInitialPayload()
+    {
+        // arrange
+        var cleanupCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resolverStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseResolver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupCount = 0;
+        using var cancellation = new CancellationTokenSource();
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(
+                descriptor =>
+                {
+                    descriptor
+                        .Field("block")
+                        .Type<StringType>()
+                        .Use(next => async context =>
+                        {
+                            resolverStarted.TrySetResult();
+                            await releaseResolver.Task.ConfigureAwait(false);
+                            context.RegisterForCleanup(
+                                () =>
+                                {
+                                    Interlocked.Increment(ref cleanupCount);
+                                    cleanupCompleted.TrySetResult();
+                                    return default;
+                                },
+                                CleanAfter.Request);
+                            await next(context).ConfigureAwait(false);
+                        })
+                        .Resolve("block");
+                    descriptor
+                        .Field("deferred")
+                        .Type<StringType>()
+                        .Resolve("deferred");
+                })
+            .ModifyOptions(o => o.EnableDefer = true)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ block ... @defer { deferred } }",
+            cancellation.Token);
+        await resolverStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        cancellation.Cancel();
+        var result = await execution;
+        releaseResolver.TrySetResult();
+        await cleanupCompleted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(1, cleanupCount);
+    }
+
+    [Fact]
+    public async Task RegisterForCleanup_Should_KeepBufferedResultOwnership_When_DeferIsDisabled()
+    {
+        // arrange
+        List<string> log = [];
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(
+                descriptor => descriptor
+                    .Field("foo")
+                    .Type<StringType>()
+                    .Use(next => context =>
+                    {
+                        context.RegisterForCleanup(() => Log(log, "request"), CleanAfter.Request);
+                        return next(context);
+                    })
+                    .Resolve("bar"))
+            .ModifyOptions(o => o.EnableDefer = true)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var request = OperationRequestBuilder.New()
+            .SetDocument("query($defer: Boolean!) { foo ... @defer(if: $defer) { foo } }")
+            .SetVariableValues("""{ "defer": false }""")
+            .Build();
+
+        // act
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+        var logBeforeDispose = log.ToArray();
+        await result.DisposeAsync();
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Empty(logBeforeDispose);
+        Assert.Equal(["request"], log);
+    }
+
+    [Fact]
     public async Task RegisterForCleanup_Should_RunRequestCleanupForEachContext_When_AVariableBatchIsCancelled()
     {
         // arrange

@@ -62,6 +62,8 @@ internal sealed class QueryExecutor
                 initialResult.RegisterForCleanup(cleanupTask);
             }
 
+            initialResult.RegisterForCleanup(requestCleanup.ExecuteAsync);
+
             return initialResult;
         }
 
