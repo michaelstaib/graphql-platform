@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace HotChocolate.Execution.Processing;
 
 /// <summary>
@@ -54,9 +56,20 @@ internal sealed class RequestCleanup
             return;
         }
 
+        ExceptionDispatchInfo? exception = null;
+
         foreach (var action in actions)
         {
-            await action().ConfigureAwait(false);
+            try
+            {
+                await action().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                exception ??= ExceptionDispatchInfo.Capture(ex);
+            }
         }
+
+        exception?.Throw();
     }
 }

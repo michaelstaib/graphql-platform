@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.ExceptionServices;
 using HotChocolate.Collections.Immutable;
 using HotChocolate.Resolvers;
 using HotChocolate.Text.Json;
@@ -138,10 +139,21 @@ internal sealed class OperationResultBuilder : IOperationResultBuilder
 
     public async ValueTask ExecuteCleanupTasksAsync()
     {
+        ExceptionDispatchInfo? exception = null;
+
         foreach (var cleanupTask in TakeCleanupTasks())
         {
-            await cleanupTask().ConfigureAwait(false);
+            try
+            {
+                await cleanupTask().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                exception ??= ExceptionDispatchInfo.Capture(ex);
+            }
         }
+
+        exception?.Throw();
     }
 
     public void Reset()
