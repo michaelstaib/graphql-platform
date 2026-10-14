@@ -122,7 +122,7 @@ public class StreamPageTests
     }
 
     [Fact]
-    public void StreamPage_Should_DeclareNoNonPublicMembers_Besides_TotalCountRequestedSizeAndCreateCursor()
+    public void StreamPage_Should_DeclareOnlyExpectedNonPublicMembers()
     {
         // arrange: every non-public property and non-accessor method declared directly on the base page
         var members = typeof(StreamPage<>)
@@ -133,7 +133,20 @@ public class StreamPageTests
             .OrderBy(name => name, StringComparer.Ordinal);
 
         // assert
-        Assert.Equal(["CreateCursor", "RequestedSize", "TotalCount"], members);
+        Assert.Equal(
+            [
+                "CreateCursor",
+                "DisposeUnsafeAsync",
+                "GetEntriesCore",
+                "GetEntriesUnsafeAsync",
+                "GetHasNextPageAsync",
+                "GetHasPreviousPageAsync",
+                "GetTotalCountAsync",
+                "GetValuesAsync",
+                "RequestedSize",
+                "TotalCount"
+            ],
+            members);
     }
 
     [Fact]
@@ -266,6 +279,35 @@ public class StreamPageTests
         }
 
         return false;
+    }
+
+    [Fact]
+    public async Task Readers_Should_SerializeAdvancement_When_ConcurrentReadersNeedMoreRows()
+    {
+        // arrange
+        var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a"), Row("b"), Row("c"))
+        {
+            RejectConcurrentMoves = true
+        };
+        var gate = source.GateBeforeItem(1);
+        var page = await CreatePage(source, Definition<string>(requestedCount: 3, forward: true));
+        await using var first = page.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await using var second = page.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await first.MoveNextAsync();
+        await second.MoveNextAsync();
+
+        // act
+        var firstAdvance = first.MoveNextAsync().AsTask();
+        await source.WaitForGateAsync(1).WaitAsync(TestContext.Current.CancellationToken);
+        var secondAdvance = second.MoveNextAsync().AsTask();
+        var secondWasWaiting = !secondAdvance.IsCompleted;
+        gate.TrySetResult();
+        var advances = (await firstAdvance, await secondAdvance);
+        await page.DisposeAsync();
+
+        // assert
+        Assert.True(secondWasWaiting);
+        Assert.Equal((true, true), advances);
     }
 
     [Fact]
