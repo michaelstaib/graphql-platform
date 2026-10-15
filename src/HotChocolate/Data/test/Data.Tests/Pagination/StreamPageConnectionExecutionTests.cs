@@ -57,17 +57,48 @@ public class StreamPageConnectionExecutionTests(PostgreSqlResource resource)
 
         using var document = JsonDocument.Parse(resultJson);
         var authors = document.RootElement.GetProperty("data").GetProperty("authors");
-        var batchPages = authors
+        var batchStreamPages = authors
             .EnumerateArray()
-            .Select(author => author.GetProperty("items").GetRawText())
+            .Select(author => JsonSerializer.Serialize(author.GetProperty("items")))
             .ToArray();
-        var singlePages = authors
+        var batchPagedPages = authors
             .EnumerateArray()
-            .Select(author => author.GetProperty("pagedItems").GetRawText())
+            .Select(author => JsonSerializer.Serialize(author.GetProperty("pagedItems")))
             .ToArray();
+        var singlePagedPages = new List<string>();
+
+        foreach (var author in authors.EnumerateArray())
+        {
+            var authorId = author.GetProperty("id").GetInt32();
+            var singleResult = await executor.ExecuteAsync(
+                OperationRequestBuilder.New()
+                    .SetDocument(
+                        $$"""
+                        {
+                          pagedItems(authorId: {{authorId}}, first: 2) {
+                            nodes { id authorId }
+                            edges { cursor node { id authorId } }
+                            pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+                            totalCount
+                          }
+                        }
+                        """)
+                    .Build(),
+                Xunit.TestContext.Current.CancellationToken);
+            var singleResultJson = singleResult.ToJson();
+            await singleResult.DisposeAsync();
+
+            using var singleDocument = JsonDocument.Parse(singleResultJson);
+            singlePagedPages.Add(
+                JsonSerializer.Serialize(
+                    singleDocument.RootElement
+                        .GetProperty("data")
+                        .GetProperty("pagedItems")));
+        }
 
         // assert
-        Assert.Equal(singlePages, batchPages);
+        Assert.Equal(batchPagedPages, batchStreamPages);
+        Assert.Equal(singlePagedPages, batchStreamPages);
         resultJson.MatchInlineSnapshot(
             """
             {
@@ -376,11 +407,32 @@ public class StreamPageConnectionExecutionTests(PostgreSqlResource resource)
             return page;
         }
 
+        [UseConnection(IncludeTotalCount = true)]
+        public async Task<PageConnection<Item>> GetPagedItems(
+            int authorId,
+            PagingArguments arguments,
+            [Service] Store store,
+            CancellationToken cancellationToken)
+        {
+            await using var context = store.CreateContext();
+            return await context.Items
+                .Where(item => item.AuthorId == authorId)
+                .OrderBy(item => item.Id)
+                .ToPageAsync(arguments, cancellationToken);
+        }
+
         public List<Author> GetAuthors([Service] Store store)
             => store.AuthorIds.Select(id => new Author { Id = id }).ToList();
 
-        public string GetSibling([Service] Store store)
+        public async Task<string> GetSibling(
+            [Service] Store store,
+            CancellationToken cancellationToken)
         {
+            if (store.ReaderGateEntered is { } readerGateEntered)
+            {
+                await readerGateEntered.Task.WaitAsync(cancellationToken);
+            }
+
             store.SiblingCompleted?.TrySetResult(true);
             return "sibling";
         }
@@ -394,6 +446,10 @@ public class StreamPageConnectionExecutionTests(PostgreSqlResource resource)
                 .Field(query => query.GetItems(default!, default!, default))
                 .AddPagingArguments()
                 .Type<NonNullType<ItemConnectionType>>();
+            descriptor
+                .Field(query => query.GetPagedItems(default, default!, default!, default))
+                .AddPagingArguments()
+                .Type<NonNullType<PagedItemConnectionType>>();
         }
     }
 
