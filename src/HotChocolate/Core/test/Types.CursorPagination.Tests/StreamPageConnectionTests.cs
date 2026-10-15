@@ -1,6 +1,8 @@
 using GreenDonut.Data;
+using HotChocolate.Execution;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Types.Pagination;
 
@@ -46,6 +48,17 @@ public class StreamPageConnectionTests
 
         // assert
         Assert.Throws<ArgumentOutOfRangeException>(Create);
+    }
+
+    [Fact]
+    public void StreamPageConnection_Should_NotImplementIAsyncDisposable()
+    {
+        // act
+        var implementsAsyncDisposable = typeof(IAsyncDisposable)
+            .IsAssignableFrom(typeof(StreamPageConnection<Item>));
+
+        // assert
+        Assert.False(implementsAsyncDisposable);
     }
 
     [Fact]
@@ -206,6 +219,50 @@ public class StreamPageConnectionTests
 
         // assert
         Assert.Null(totalCount);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReturnPage_When_ConnectionIsDerived()
+    {
+        // arrange
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType<DerivedQueryType>()
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            """
+            {
+              derived {
+                nodes { id }
+                edges { cursor }
+                pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+                totalCount
+              }
+            }
+            """,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "derived": {
+                  "nodes": [],
+                  "edges": [],
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "hasPreviousPage": false,
+                    "startCursor": null,
+                    "endCursor": null
+                  },
+                  "totalCount": 0
+                }
+              }
+            }
+            """);
     }
 
     [Fact]
@@ -401,6 +458,21 @@ public class StreamPageConnectionTests
         }
 
         return ids;
+    }
+
+    public sealed class DerivedQuery
+    {
+        [UseConnection(IncludeTotalCount = true)]
+        public DerivedConnection GetDerived()
+            => new(StreamPage<Item>.Empty);
+    }
+
+    public sealed class DerivedConnection(StreamPage<Item> page) : StreamPageConnection<Item>(page);
+
+    public sealed class DerivedQueryType : ObjectType<DerivedQuery>
+    {
+        protected override void Configure(IObjectTypeDescriptor<DerivedQuery> descriptor)
+            => descriptor.Field(query => query.GetDerived()).AddPagingArguments();
     }
 
     public sealed class Item

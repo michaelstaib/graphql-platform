@@ -34,11 +34,15 @@ internal sealed class StreamPagePump<TElement>
     /// A row already read from <paramref name="source"/> before construction, returned as the
     /// first result of <see cref="ReadNextAsync"/> without advancing the source again.
     /// </param>
+    /// <param name="access">
+    /// The access coordinator shared by pages that use this pump.
+    /// </param>
     public StreamPagePump(
         IAsyncEnumerator<StreamRow<TElement>> source,
         int pageCount,
         IAsyncDisposable? lifetime = null,
-        StreamRow<TElement>? primedFirstRow = null)
+        StreamRow<TElement>? primedFirstRow = null,
+        StreamPageAccess? access = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageCount, 1);
@@ -47,7 +51,10 @@ internal sealed class StreamPagePump<TElement>
         _livePages = pageCount;
         _lifetime = lifetime;
         _primedFirstRow = primedFirstRow;
+        Access = access ?? new StreamPageAccess();
     }
+
+    internal StreamPageAccess Access { get; }
 
     /// <summary>
     /// Reads the next row from the shared source, or null once the source is exhausted.
