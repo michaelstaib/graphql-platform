@@ -32,23 +32,23 @@ internal sealed class ElementProjectingSource<TElement, TValue>(
 
     /// <inheritdoc />
     public override IAsyncEnumerable<PageEntry<TValue>> GetEntriesAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
         => GetEntriesCore(cancellationToken);
 
     /// <inheritdoc />
-    public override ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken)
+    public override ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken = default)
         => buffer.TotalCountAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken)
+    public override ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default)
         => buffer.HasNextPageAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken)
+    public override ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default)
         => buffer.HasPreviousPageAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override ValueTask PrimeAsync(CancellationToken cancellationToken)
+    public override ValueTask PrimeAsync(CancellationToken cancellationToken = default)
         => buffer.PrimeAsync(cancellationToken);
 
     /// <inheritdoc />

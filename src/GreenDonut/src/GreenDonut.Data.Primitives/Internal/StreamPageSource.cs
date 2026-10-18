@@ -43,34 +43,34 @@ internal abstract class StreamPageSource<TValue> : IAsyncDisposable
     /// Enumerates the buffered entries, reading ahead from the source as needed.
     /// </summary>
     public abstract IAsyncEnumerable<PageEntry<TValue>> GetEntriesAsync(
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Enumerates the buffered items, reading ahead from the source as needed.
     /// </summary>
-    public IAsyncEnumerable<TValue> GetValuesAsync(CancellationToken cancellationToken)
+    public IAsyncEnumerable<TValue> GetValuesAsync(CancellationToken cancellationToken = default)
         => GetValuesCore(cancellationToken);
 
     /// <summary>
     /// Resolves the total count, reading ahead only as far as needed.
     /// </summary>
-    public abstract ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken);
+    public abstract ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Resolves whether there is a next page, reading ahead only as far as needed.
     /// </summary>
-    public abstract ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken);
+    public abstract ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Resolves whether there is a previous page, reading ahead only as far as needed.
     /// </summary>
-    public abstract ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken);
+    public abstract ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads from the source until one entry is buffered or the source completes. This is the
     /// mandatory step between construction and handing a page to a consumer.
     /// </summary>
-    public abstract ValueTask PrimeAsync(CancellationToken cancellationToken);
+    public abstract ValueTask PrimeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the already buffered entry at the given index, without reading ahead.

@@ -89,11 +89,11 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
 
     /// <inheritdoc />
     public override IAsyncEnumerable<PageEntry<TElement>> GetEntriesAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
         => GetEntriesCore(cancellationToken);
 
     /// <inheritdoc />
-    public override async ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken)
+    public override async ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken = default)
     {
         if (_totalCount is null && !_firstRowObserved && !_isCompleted)
         {
@@ -104,7 +104,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public override async ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken)
+    public override async ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default)
     {
         while (_hasNextPage is null && !_isCompleted)
         {
@@ -115,7 +115,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public override async ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken)
+    public override async ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default)
     {
         while (_hasPreviousPage is null && !_isCompleted)
         {
@@ -126,7 +126,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
     }
 
     /// <inheritdoc />
-    public override ValueTask PrimeAsync(CancellationToken cancellationToken)
+    public override ValueTask PrimeAsync(CancellationToken cancellationToken = default)
         => AdvanceAsync(cancellationToken);
 
     /// <inheritdoc />
@@ -150,7 +150,7 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
     public static async ValueTask<StreamPageBuffer<TElement>> CreatePrimedAsync(
         StreamPagePump<TElement>? pump,
         StreamPageDefinition<TElement> definition,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
         var buffer = new StreamPageBuffer<TElement>(
             pump,
