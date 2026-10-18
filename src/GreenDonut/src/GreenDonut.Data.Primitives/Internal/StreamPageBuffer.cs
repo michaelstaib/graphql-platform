@@ -41,8 +41,14 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
     /// <param name="definition">
     /// The definition that governs how rows turn into content, flags, and a total count.
     /// </param>
-    internal StreamPageBuffer(StreamPagePump<TElement>? pump, StreamPageDefinition<TElement> definition)
-        : base(pump?.Access)
+    /// <param name="access">
+    /// The access coordinator shared by pages reading the same source reader.
+    /// </param>
+    internal StreamPageBuffer(
+        StreamPagePump<TElement>? pump,
+        StreamPageDefinition<TElement> definition,
+        StreamPageAccess access)
+        : base(access)
     {
         _pump = pump;
         _definition = definition;
@@ -146,7 +152,10 @@ internal sealed class StreamPageBuffer<TElement> : StreamPageSource<TElement>
         StreamPageDefinition<TElement> definition,
         CancellationToken cancellationToken = default)
     {
-        var buffer = new StreamPageBuffer<TElement>(pump, definition);
+        var buffer = new StreamPageBuffer<TElement>(
+            pump,
+            definition,
+            pump is null ? new StreamPageAccess() : pump.Access);
 
         try
         {

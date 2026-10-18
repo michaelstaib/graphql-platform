@@ -384,7 +384,10 @@ public class StreamPageCursorTests
         ScriptedRowSource<int> source,
         StreamPageDefinition<int> definition)
     {
-        var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(), pageCount: 1);
+        var pump = new StreamPagePump<int>(
+            source.GetAsyncEnumerator(),
+            pageCount: 1,
+            access: new StreamPageAccess());
         return ValueCursorStreamPage<int>.CreatePrimedAsync(
             pump,
             definition,

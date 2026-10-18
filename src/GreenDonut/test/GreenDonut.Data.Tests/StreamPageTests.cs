@@ -73,7 +73,8 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
         var pump = new StreamPagePump<int>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
-            pageCount: 1);
+            pageCount: 1,
+            access: new StreamPageAccess());
         var selectorCalls = 0;
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
@@ -203,13 +204,15 @@ public class StreamPageTests
         var valueSource = new ScriptedAsyncSource<StreamRow<string>>(Row("a"));
         var valuePump = new StreamPagePump<string>(
             valueSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
-            pageCount: 1);
+            pageCount: 1,
+            access: new StreamPageAccess());
         var valueDefinition = Definition<string>(requestedCount: 1, forward: true);
 
         var elementSource = new ScriptedAsyncSource<StreamRow<int>>(Row(1));
         var elementPump = new StreamPagePump<int>(
             elementSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
-            pageCount: 1);
+            pageCount: 1,
+            access: new StreamPageAccess());
         var elementDefinition = Definition<int>(requestedCount: 1, forward: true);
 
         // act
@@ -615,7 +618,10 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", totalCount: 5), Row("b"), Row("c"));
-        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var pump = new StreamPagePump<string>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            access: new StreamPageAccess());
         var definition = Definition<string>(requestedCount: 3, forward: true) with { Index = 1 };
 
         // act: the primed factory buffers the first row and resolves the count as part of creation
@@ -646,9 +652,13 @@ public class StreamPageTests
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<string>>();
         var lifetime = new ScriptedAsyncDisposable();
-        var pump = new StreamPagePump<string>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+        var pump = new StreamPagePump<string>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            access: new StreamPageAccess(),
+            lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
-        var buffer = new StreamPageBuffer<string>(pump, definition);
+        var buffer = new StreamPageBuffer<string>(pump, definition, pump.Access);
 
         // act
         await buffer.PrimeAsync(TestContext.Current.CancellationToken);
@@ -670,6 +680,7 @@ public class StreamPageTests
         var pump = new StreamPagePump<string>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
+            access: new StreamPageAccess(),
             lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
 
@@ -694,6 +705,7 @@ public class StreamPageTests
         var pump = new StreamPagePump<string>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
+            access: new StreamPageAccess(),
             lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         using var cts = new CancellationTokenSource();
@@ -718,6 +730,7 @@ public class StreamPageTests
         var pump = new StreamPagePump<string>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
+            access: new StreamPageAccess(),
             lifetime: lifetime);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         using var cts = new CancellationTokenSource();
@@ -739,7 +752,8 @@ public class StreamPageTests
         var source = new ScriptedAsyncSource<StreamRow<string>>(Row("a", totalCount: 5), Row("b"));
         var pump = new StreamPagePump<string>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
-            pageCount: 1);
+            pageCount: 1,
+            access: new StreamPageAccess());
         var definition = Definition<string>(requestedCount: 2, forward: true) with { Index = 1 };
 
         // act
@@ -758,7 +772,10 @@ public class StreamPageTests
     {
         // arrange
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2), Row(3));
-        var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var pump = new StreamPagePump<int>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            access: new StreamPageAccess());
         var selectorCalls = 0;
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
@@ -786,7 +803,10 @@ public class StreamPageTests
     {
         // arrange: two rows project to the same value, so the cursor must be read from the entry's index
         var source = new ScriptedAsyncSource<StreamRow<int>>(Row(1), Row(2));
-        var pump = new StreamPagePump<int>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1);
+        var pump = new StreamPagePump<int>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            access: new StreamPageAccess());
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
             Definition<int>(requestedCount: 2, forward: true),
@@ -877,7 +897,11 @@ public class StreamPageTests
         StreamPageDefinition<T> definition,
         IAsyncDisposable? lifetime = null)
     {
-        var pump = new StreamPagePump<T>(source.GetAsyncEnumerator(TestContext.Current.CancellationToken), pageCount: 1, lifetime: lifetime);
+        var pump = new StreamPagePump<T>(
+            source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
+            pageCount: 1,
+            access: new StreamPageAccess(),
+            lifetime: lifetime);
         return await ValueCursorStreamPage<T>.CreatePrimedAsync(
             pump,
             definition,
