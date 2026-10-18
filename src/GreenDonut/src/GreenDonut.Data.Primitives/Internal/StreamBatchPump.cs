@@ -76,7 +76,7 @@ internal sealed class StreamBatchPump<TKey, TElement>
     public static async ValueTask<StreamBatchPump<TKey, TElement>?> CreateAsync(
         IAsyncEnumerator<StreamBatchRow<TKey, TElement>> source,
         IReadOnlyCollection<TKey> keys,
-        IAsyncDisposable? lifetime = null)
+        IAsyncDisposable? lifetime)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(keys);
@@ -193,7 +193,9 @@ internal sealed class StreamBatchPump<TKey, TElement>
         return new StreamPagePump<TElement>(
             new KeyReader(this, key),
             pageCount: 1,
-            access: _access);
+            access: _access,
+            lifetime: null,
+            primedFirstRow: null);
     }
 
     private void RegisterDrain<TValue>(TKey key, StreamPage<TValue> page)

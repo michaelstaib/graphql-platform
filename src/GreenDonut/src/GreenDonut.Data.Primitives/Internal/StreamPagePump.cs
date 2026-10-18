@@ -34,15 +34,16 @@ internal sealed class StreamPagePump<TElement>
     /// or null if this pump owns nothing beyond the source.
     /// </param>
     /// <param name="primedFirstRow">
-    /// A row already read from <paramref name="source"/> before construction, returned as the
-    /// first result of <see cref="ReadNextAsync"/> without advancing the source again.
+    /// A row already read from <paramref name="source"/> before construction, or null if no row was
+    /// read ahead. When supplied, it is returned as the first result of <see cref="ReadNextAsync"/>
+    /// without advancing the source again.
     /// </param>
     public StreamPagePump(
         IAsyncEnumerator<StreamRow<TElement>> source,
         int pageCount,
         StreamPageAccess access,
-        IAsyncDisposable? lifetime = null,
-        StreamRow<TElement>? primedFirstRow = null)
+        IAsyncDisposable? lifetime,
+        StreamRow<TElement>? primedFirstRow)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageCount, 1);

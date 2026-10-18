@@ -74,7 +74,9 @@ public class StreamPageTests
         var pump = new StreamPagePump<int>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var selectorCalls = 0;
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
@@ -205,14 +207,18 @@ public class StreamPageTests
         var valuePump = new StreamPagePump<string>(
             valueSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var valueDefinition = Definition<string>(requestedCount: 1, forward: true);
 
         var elementSource = new ScriptedAsyncSource<StreamRow<int>>(Row(1));
         var elementPump = new StreamPagePump<int>(
             elementSource.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var elementDefinition = Definition<int>(requestedCount: 1, forward: true);
 
         // act
@@ -621,7 +627,9 @@ public class StreamPageTests
         var pump = new StreamPagePump<string>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var definition = Definition<string>(requestedCount: 3, forward: true) with { Index = 1 };
 
         // act: the primed factory buffers the first row and resolves the count as part of creation
@@ -656,7 +664,8 @@ public class StreamPageTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
             access: new StreamPageAccess(),
-            lifetime: lifetime);
+            lifetime: lifetime,
+            primedFirstRow: null);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         var buffer = new StreamPageBuffer<string>(pump, definition, pump.Access);
 
@@ -681,7 +690,8 @@ public class StreamPageTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
             access: new StreamPageAccess(),
-            lifetime: lifetime);
+            lifetime: lifetime,
+            primedFirstRow: null);
         var definition = Definition<string>(requestedCount: 3, forward: true);
 
         // act
@@ -706,7 +716,8 @@ public class StreamPageTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
             access: new StreamPageAccess(),
-            lifetime: lifetime);
+            lifetime: lifetime,
+            primedFirstRow: null);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -731,7 +742,8 @@ public class StreamPageTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
             access: new StreamPageAccess(),
-            lifetime: lifetime);
+            lifetime: lifetime,
+            primedFirstRow: null);
         var definition = Definition<string>(requestedCount: 3, forward: true);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -753,7 +765,9 @@ public class StreamPageTests
         var pump = new StreamPagePump<string>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var definition = Definition<string>(requestedCount: 2, forward: true) with { Index = 1 };
 
         // act
@@ -775,7 +789,9 @@ public class StreamPageTests
         var pump = new StreamPagePump<int>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var selectorCalls = 0;
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
@@ -806,7 +822,9 @@ public class StreamPageTests
         var pump = new StreamPagePump<int>(
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
-            access: new StreamPageAccess());
+            access: new StreamPageAccess(),
+            lifetime: null,
+            primedFirstRow: null);
         var page = ElementCursorStreamPage<int, string>.CreateForBatch(
             pump,
             Definition<int>(requestedCount: 2, forward: true),
@@ -901,7 +919,8 @@ public class StreamPageTests
             source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
             pageCount: 1,
             access: new StreamPageAccess(),
-            lifetime: lifetime);
+            lifetime: lifetime,
+            primedFirstRow: null);
         return await ValueCursorStreamPage<T>.CreatePrimedAsync(
             pump,
             definition,

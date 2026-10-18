@@ -313,7 +313,8 @@ public class StreamBatchPumpTests
         var exception = await Assert.ThrowsAsync<ArgumentException>(
             () => StreamBatchPump<string, string>.CreateAsync(
                 source.GetAsyncEnumerator(TestContext.Current.CancellationToken),
-                ["A", "B", "A"]).AsTask());
+                ["A", "B", "A"],
+                lifetime: null).AsTask());
 
         // assert
         Assert.Equal("keys", exception.ParamName);

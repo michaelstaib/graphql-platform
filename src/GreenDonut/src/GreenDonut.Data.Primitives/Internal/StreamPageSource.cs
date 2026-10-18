@@ -43,34 +43,34 @@ internal abstract class StreamPageSource<TValue> : IAsyncDisposable
     /// Enumerates the buffered entries, reading ahead from the source as needed.
     /// </summary>
     public abstract IAsyncEnumerable<PageEntry<TValue>> GetEntriesAsync(
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Enumerates the buffered items, reading ahead from the source as needed.
     /// </summary>
-    public IAsyncEnumerable<TValue> GetValuesAsync(CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<TValue> GetValuesAsync(CancellationToken cancellationToken)
         => GetValuesCore(cancellationToken);
 
     /// <summary>
     /// Resolves the total count, reading ahead only as far as needed.
     /// </summary>
-    public abstract ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask<int?> TotalCountAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Resolves whether there is a next page, reading ahead only as far as needed.
     /// </summary>
-    public abstract ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask<bool> HasNextPageAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Resolves whether there is a previous page, reading ahead only as far as needed.
     /// </summary>
-    public abstract ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask<bool> HasPreviousPageAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Reads from the source until one entry is buffered or the source completes. This is the
     /// mandatory step between construction and handing a page to a consumer.
     /// </summary>
-    public abstract ValueTask PrimeAsync(CancellationToken cancellationToken = default);
+    public abstract ValueTask PrimeAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Gets the already buffered entry at the given index, without reading ahead.
