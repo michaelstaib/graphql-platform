@@ -19,6 +19,7 @@ public sealed partial class ResultDocument : IDisposable
     private readonly ulong _includeFlags;
     private readonly ulong[]? _wideIncludeFlags;
     private readonly Path _rootPath = Path.Root;
+    private readonly int _arrayIndexOffset;
     internal MetaDb _metaDb;
     private long _dataHead;
     private int _rentedDataChunks;
@@ -87,6 +88,30 @@ public sealed partial class ResultDocument : IDisposable
             deferUsage,
             includeFlags.Overflow,
             deferFlags.Overflow);
+    }
+
+    internal ResultDocument(
+        IMemoryArena arena,
+        Operation operation,
+        Selection selection,
+        Path path,
+        int arrayIndexOffset,
+        ConditionFlags includeFlags)
+    {
+        ArgumentNullException.ThrowIfNull(arena);
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(selection);
+
+        _arena = arena;
+        _metaDb = MetaDb.Create(arena);
+        _data = RentDataChunks();
+        _operation = operation;
+        _includeFlags = includeFlags.Word0;
+        _wideIncludeFlags = includeFlags.Overflow;
+        _rootPath = path;
+        _arrayIndexOffset = arrayIndexOffset;
+
+        Data = CreateObject(Cursor.CreateZero(), selection);
     }
 
     private static MemorySegment[] RentDataChunks()
@@ -239,6 +264,7 @@ public sealed partial class ResultDocument : IDisposable
 
         var path = _rootPath;
         var parentTokenType = ElementTokenType.StartObject;
+        var applyArrayIndexOffset = _arrayIndexOffset != 0;
 
         chain = chain[..written];
 
@@ -260,6 +286,13 @@ public sealed partial class ResultDocument : IDisposable
                 {
                     // arrayIndex = abs(child) - (abs(parent) + 1)
                     var arrayIndex = c.Index - (parentCursor.Index + 1);
+
+                    if (applyArrayIndexOffset)
+                    {
+                        arrayIndex += _arrayIndexOffset;
+                        applyArrayIndexOffset = false;
+                    }
+
                     path = path.Append(arrayIndex);
                 }
             }
@@ -554,6 +587,27 @@ public sealed partial class ResultDocument : IDisposable
             }
 
             WriteEndObject(startObjectCursor, selectionCount);
+
+            return new ResultElement(this, startObjectCursor);
+        }
+    }
+
+    private ResultElement CreateObject(Cursor parent, Selection selection)
+    {
+        lock (_dataChunkLock)
+        {
+            var startObjectCursor = WriteStartObject(parent, isSelectionSet: false);
+
+            if (_wideIncludeFlags is null)
+            {
+                WriteEmptyProperty(startObjectCursor, selection);
+            }
+            else
+            {
+                WriteEmptyPropertyWide(startObjectCursor, selection);
+            }
+
+            WriteEndObject(startObjectCursor, 1);
 
             return new ResultElement(this, startObjectCursor);
         }

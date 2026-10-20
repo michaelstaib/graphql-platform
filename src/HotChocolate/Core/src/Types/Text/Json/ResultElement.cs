@@ -1163,6 +1163,14 @@ public readonly partial struct ResultElement
         formatter.WriteValue(_cursor, row);
     }
 
+    internal void WriteTo(JsonWriter writer)
+    {
+        CheckValidInstance();
+
+        var formatter = new ResultDocument.RawJsonFormatter(_parent, writer);
+        formatter.WriteValue(_cursor, _parent._metaDb.Get(_cursor));
+    }
+
     /// <inheritdoc />
     public override string ToString()
     {

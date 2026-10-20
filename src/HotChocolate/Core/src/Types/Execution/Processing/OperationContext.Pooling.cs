@@ -64,6 +64,12 @@ internal sealed partial class OperationContext
     public bool IsInitialized => _isInitialized;
 
     /// <summary>
+    /// Gets the operation context of the request that this context executes a part of,
+    /// which is the context itself for the operation context of the request.
+    /// </summary>
+    internal OperationContext RootContext { get; private set; } = null!;
+
+    /// <summary>
     /// Gets or sets the collector for the request cleanup of an incremental operation,
     /// or <c>null</c> when the operation has no incremental parts.
     /// </summary>
@@ -137,6 +143,7 @@ internal sealed partial class OperationContext
         _currentBranchTracker = _branchTracker;
         _currentWorkScheduler = _workScheduler;
         _currentDeferExecutionCoordinator = _deferExecutionCoordinator;
+        RootContext = this;
         _isInitialized = true;
 
         // once the operation context is marked as initialized we can initialize sub components.
@@ -151,6 +158,42 @@ internal sealed partial class OperationContext
         Path selectionPath,
         int executionBranchId,
         DeferUsage deferUsage)
+    {
+        InitializeChildContext(context, executionBranchId);
+
+        Result.Data = new ResultDocument(
+            context._memory!,
+            context.Operation,
+            selectionSet,
+            selectionPath,
+            context.IncludeConditionFlags,
+            context.DeferConditionFlags,
+            deferUsage);
+        Result.RequestIndex = _requestContext.RequestIndex;
+        Result.VariableIndex = context._variableIndex;
+    }
+
+    public void InitializeStreamContext(
+        OperationContext context,
+        Selection selection,
+        Path parentPath,
+        int firstItemIndex,
+        int executionBranchId)
+    {
+        InitializeChildContext(context, executionBranchId);
+
+        Result.Data = new ResultDocument(
+            context._memory!,
+            context.Operation,
+            selection,
+            parentPath,
+            firstItemIndex,
+            context.IncludeConditionFlags);
+        Result.RequestIndex = _requestContext.RequestIndex;
+        Result.VariableIndex = context._variableIndex;
+    }
+
+    private void InitializeChildContext(OperationContext context, int executionBranchId)
     {
         _requestContext = context._requestContext;
         _schema = context._schema;
@@ -173,21 +216,12 @@ internal sealed partial class OperationContext
         _currentDeferExecutionCoordinator = context._currentDeferExecutionCoordinator;
         _propagateNullValues = context._propagateNullValues;
         _branchId = executionBranchId;
+        _variableIndex = context._variableIndex;
+        RootContext = context.RootContext;
         _isInitialized = true;
 
         IncludeConditionFlags = context.IncludeConditionFlags;
         DeferConditionFlags = context.DeferConditionFlags;
-
-        Result.Data = new ResultDocument(
-            context._memory!,
-            context.Operation,
-            selectionSet,
-            selectionPath,
-            context.IncludeConditionFlags,
-            context.DeferConditionFlags,
-            deferUsage);
-        Result.RequestIndex = _requestContext.RequestIndex;
-        Result.VariableIndex = context._variableIndex;
     }
 
     public void InitializeWorkSchedulerFrom(OperationContext context)
@@ -225,6 +259,7 @@ internal sealed partial class OperationContext
             _batchDispatcher = null!;
             _memory = null;
             RequestCleanup = null;
+            RootContext = null!;
             _branchId = int.MinValue;
             _propagateNullValues = false;
             _isInitialized = false;

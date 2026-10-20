@@ -35,6 +35,7 @@ internal sealed partial class ResolverTask
         _completionStatus = ExecutionTaskStatus.Completed;
         _operationContext = null!;
         _selection = null!;
+        _stream = null;
         _context.Clean();
         Status = ExecutionTaskStatus.WaitingToRun;
         IsSerial = false;
