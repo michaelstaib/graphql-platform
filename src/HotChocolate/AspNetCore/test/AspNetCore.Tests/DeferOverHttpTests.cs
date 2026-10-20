@@ -77,6 +77,59 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
                 """);
     }
 
+    [Fact]
+    public async Task Simple_Stream_Multipart()
+    {
+        // arrange
+        using var server = CreateDeferServer();
+        var client = server.CreateClient();
+
+        // act
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/graphql");
+        request.Content = JsonContent.Create(new
+        {
+            query = """
+                {
+                    tags @stream(initialCount: 1)
+                }
+                """
+        });
+        request.Headers.Add("Accept", "multipart/mixed");
+
+        using var response = await client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("multipart/mixed", response.Content.Headers.ContentType?.MediaType);
+
+        var content = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Snapshot
+            .Create()
+            .Add(content, "Response")
+            .MatchInline(
+                """
+
+                ---
+                Content-Type: application/json; charset=utf-8
+
+                {"data":{"tags":["a"]},"pending":[{"id":"2","path":["tags"]}],"hasNext":true}
+                ---
+                Content-Type: application/json; charset=utf-8
+
+                {"incremental":[{"id":"2","items":["b"]}],"hasNext":true}
+                ---
+                Content-Type: application/json; charset=utf-8
+
+                {"incremental":[{"id":"2","items":["c"]}],"completed":[{"id":"2"}],"hasNext":false}
+                -----
+
+                """);
+    }
+
     [Theory]
     [InlineData("multipart/mixed; incrementalSpec=v0.1; charset=utf-8")]
     [InlineData("application/graphql-response+json, multipart/mixed; incrementalSpec=v0.1")]
@@ -1401,6 +1454,15 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
         public ICharacter GetHero()
             => new Droid { Name = "R2-D2" };
+
+        public async IAsyncEnumerable<string> GetTags()
+        {
+            yield return "a";
+            await Task.Delay(300);
+            yield return "b";
+            await Task.Delay(300);
+            yield return "c";
+        }
     }
 
     [InterfaceType("Character")]
