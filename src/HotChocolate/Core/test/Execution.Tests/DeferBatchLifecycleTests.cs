@@ -75,7 +75,7 @@ public class DeferBatchLifecycleTests
         await probe.WaitForCleanupsAsync(4);
 
         // assert
-        Assert.Equal("person.id=2; name=name-2; hasNext=True,False", summary);
+        summary.MatchInlineSnapshot("person.id=2; name=name-2; hasNext=True,False");
         Assert.Equal(["cleanup:name:1", "cleanup:name:2", "cleanup:person:1", "cleanup:person:2"], probe.Events);
     }
 
@@ -110,7 +110,7 @@ public class DeferBatchLifecycleTests
         await probe.WaitForCleanupsAsync(4);
 
         // assert
-        Assert.Equal("person.id=1; name=name-1; hasNext=True,False", summary);
+        summary.MatchInlineSnapshot("person.id=1; name=name-1; hasNext=True,False");
         Assert.Equal(["cleanup:name:1", "cleanup:name:2", "cleanup:person:1", "cleanup:person:2"], probe.Events);
     }
 
