@@ -123,6 +123,12 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
                 return false;
             }
 
+            if (field is ObjectField { IsParallelExecutable: false })
+            {
+                reason = $"references the field `{currentType.Name}.{segment}` that is not parallel executable.";
+                return false;
+            }
+
             if (i == entry.Segments.Length - 1)
             {
                 break;

@@ -21,6 +21,11 @@ internal static class ThrowHelper
             $"The field `{selection.Field.Coordinate}` uses a batch resolver "
             + "and cannot take part in an execution group.");
 
+    public static InvalidOperationException ExecutionGroup_SerialSelectionNotSupported(Selection selection)
+        => new(
+            $"The field `{selection.Field.Coordinate}` is not parallel executable "
+            + "and cannot take part in an execution group.");
+
     public static GraphQLException VariableIsNotAnInputType(
         VariableDefinitionNode variableDefinition)
     {
