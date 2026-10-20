@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using CookieCrumble.Resources;
 using GreenDonut.Data;
 using HotChocolate.Execution;
+using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Types;
 using HotChocolate.Types.Pagination;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,7 +25,8 @@ public class StreamPageConnectionBatchDeferLifetimeTests(PostgreSqlResource reso
             authorCount: 1,
             itemsPerAuthor: 5);
         var tracker = new LifetimeTracker();
-        var executor = await CreateExecutorAsync(probe, tracker);
+        var listener = new DeferTaskListener();
+        var executor = await CreateExecutorAsync(probe, tracker, listener);
         probe.NodesGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var request = OperationRequestBuilder
             .New()
@@ -73,22 +75,53 @@ public class StreamPageConnectionBatchDeferLifetimeTests(PostgreSqlResource reso
             probe.NodesGate.TrySetResult();
         }
 
+        await listener.WaitForDeferredTasksAsync(2);
         await tracker.WaitForReleasedAsync(2);
 
         // assert
         Assert.Equal([1, 1], tracker.DisposeCounts);
     }
 
-    private static async Task<IRequestExecutor> CreateExecutorAsync(Probe probe, LifetimeTracker tracker)
+    private static async Task<IRequestExecutor> CreateExecutorAsync(
+        Probe probe,
+        LifetimeTracker tracker,
+        DeferTaskListener listener)
         => await new ServiceCollection()
             .AddSingleton(probe)
             .AddSingleton(tracker)
             .AddGraphQL()
+            .AddDiagnosticEventListener(_ => listener)
             .AddQueryType<BatchQueryType>()
             .AddType<ItemConnectionType>()
             .AddPagingArguments()
             .ModifyOptions(o => o.EnableDefer = true)
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+    private sealed class DeferTaskListener : ExecutionDiagnosticEventListener
+    {
+        private readonly SemaphoreSlim _completed = new(0);
+
+        public override IDisposable RunTask(IExecutionTask task)
+            => task.IsDeferred && task.BranchId == -1
+                ? new DeferTaskScope(_completed)
+                : EmptyScope;
+
+        public async Task WaitForDeferredTasksAsync(int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                if (!await _completed.WaitAsync(s_timeout, TestContext.Current.CancellationToken))
+                {
+                    throw new TimeoutException();
+                }
+            }
+        }
+
+        private sealed class DeferTaskScope(SemaphoreSlim completed) : IDisposable
+        {
+            public void Dispose() => completed.Release();
+        }
+    }
 
     public sealed class BatchQuery
     {
