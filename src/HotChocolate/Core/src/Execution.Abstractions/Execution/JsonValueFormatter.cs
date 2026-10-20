@@ -366,12 +366,19 @@ public static class JsonValueFormatter
                 writer.WriteNullValue();
             }
         }
-        else if (item is IIncrementalListResult)
+        else if (item is IIncrementalListResult listResult)
         {
             writer.WritePropertyName(Items);
 
-            // TODO: Write actual data
             writer.WriteStartArray();
+
+            var items = listResult.Items;
+
+            for (var i = 0; i < items.Count; i++)
+            {
+                WriteValue(writer, items[i], options);
+            }
+
             writer.WriteEndArray();
         }
         else
