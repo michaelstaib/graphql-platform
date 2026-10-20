@@ -94,5 +94,27 @@ public class StreamPageConnection<TNode> : IStreamPageConnection
     public static implicit operator StreamPageConnection<TNode>(StreamPage<TNode> page)
         => new(page);
 
+    async ValueTask IStreamPageConnection.PreReadAsync(
+        StreamPageReads reads,
+        CancellationToken cancellationToken)
+    {
+        if ((reads & StreamPageReads.TotalCount) != 0)
+        {
+            await _page.TotalCountAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if ((reads & StreamPageReads.FirstRow) != 0)
+        {
+            await _page.HasPreviousPageAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if ((reads & StreamPageReads.AllRows) != 0)
+        {
+            await foreach (var _ in _page.GetEntriesAsync(cancellationToken).ConfigureAwait(false))
+            {
+            }
+        }
+    }
+
     ValueTask IStreamPageConnection.DisposeAsync() => _page.DisposeAsync();
 }
