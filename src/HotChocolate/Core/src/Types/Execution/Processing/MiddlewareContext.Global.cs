@@ -41,6 +41,8 @@ internal partial class MiddlewareContext : IMiddlewareContext
 
     public ConditionFlags IncludeConditionFlags => _operationContext.IncludeConditionFlags;
 
+    public ConditionFlags DeferConditionFlags => _operationContext.DeferConditionFlags;
+
     public CancellationToken RequestAborted { get; private set; }
 
     public bool HasCleanupTasks => _cleanupTasks.Count > 0;
