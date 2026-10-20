@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using HotChocolate.Execution.Processing.Tasks;
 using HotChocolate.Text.Json;
 using HotChocolate.Types;
 using HotChocolate.Utilities;
@@ -27,6 +28,18 @@ internal static partial class ValueCompletion
                 && operationContext.Converter.TryConvert(runtimeType, runtimeValue, out var converted))
             {
                 runtimeValue = converted;
+            }
+
+            if (selection.IsExecutionGroupRoot)
+            {
+                ExecutionGroupTaskFactory.EnqueueOrInlineResolverTasks(
+                    context,
+                    selection,
+                    selectionSet,
+                    objectType,
+                    resultValue,
+                    runtimeValue);
+                return;
             }
 
             EnqueueOrInlineResolverTasks(

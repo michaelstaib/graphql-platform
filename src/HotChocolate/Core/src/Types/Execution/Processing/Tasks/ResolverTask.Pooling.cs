@@ -24,6 +24,11 @@ internal sealed partial class ResolverTask
         IsSerial = selection.Strategy is SelectionExecutionStrategy.Serial;
         BranchId = executionBranchId;
         DeferUsage = deferUsage;
+
+        if (selection.IsExecutionGroupParticipant)
+        {
+            ExecutionGroupInstance.TryGetNode(scopedContextData, selection, out _groupInstance, out _groupNode);
+        }
     }
 
     /// <summary>
@@ -40,6 +45,8 @@ internal sealed partial class ResolverTask
         IsSerial = false;
         BranchId = int.MinValue;
         DeferUsage = null;
+        _groupInstance = null;
+        _groupNode = null;
         IsRegistered = false;
 #pragma warning disable CS0618
         Next = null;

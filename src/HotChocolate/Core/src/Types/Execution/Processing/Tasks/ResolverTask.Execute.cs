@@ -49,6 +49,11 @@ internal sealed partial class ResolverTask
         }
         finally
         {
+            if (_groupInstance is not null)
+            {
+                EndGroupTurn();
+            }
+
             try
             {
                 if (_context.HasCleanupTasks)
@@ -77,6 +82,11 @@ internal sealed partial class ResolverTask
 
         try
         {
+            if (_groupInstance is not null)
+            {
+                await _groupInstance.WaitForTurnAsync(_groupNode!, cancellationToken).ConfigureAwait(false);
+            }
+
             // If the arguments are already parsed and processed we can just process.
             // Arguments need no pre-processing if they have no variables.
             if (Selection.Arguments.IsFullyCoercedNoErrors)
@@ -123,6 +133,22 @@ internal sealed partial class ResolverTask
         }
 
         return false;
+    }
+
+    private void EndGroupTurn()
+    {
+        var instance = _groupInstance!;
+        var node = _groupNode!;
+
+        _groupInstance = null;
+        _groupNode = null;
+
+        // the selections below a selection without an object result are never created.
+        var releaseDescendants =
+            !node.DescendantSlotIndexes.IsEmpty
+            && (Status is ExecutionTaskStatus.Faulted || _context.ResultValue.IsNullOrInvalidated);
+
+        instance.Complete(node, releaseDescendants);
     }
 
     private async ValueTask ExecuteResolverPipelineAsync(CancellationToken cancellationToken)

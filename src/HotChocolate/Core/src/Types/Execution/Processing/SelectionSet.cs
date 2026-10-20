@@ -18,6 +18,7 @@ public sealed class SelectionSet : ISelectionSet
     private readonly SelectionLookup _utf8ResponseNameLookup;
     private Flags _flags;
     private Operation? _declaringOperation;
+    private volatile ExecutionGroupPlan? _executionGroupPlan;
 
     internal SelectionSet(
         int id,
@@ -244,6 +245,15 @@ public sealed class SelectionSet : ISelectionSet
 
         selection = default;
         return false;
+    }
+
+    /// <summary>
+    /// Gets or sets the resolved execution group when the selection set belongs to the result of a group root field.
+    /// </summary>
+    internal ExecutionGroupPlan? ExecutionGroupPlan
+    {
+        get => _executionGroupPlan;
+        set => _executionGroupPlan = value;
     }
 
     internal void Complete(Operation declaringOperation)

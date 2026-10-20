@@ -89,6 +89,11 @@ public sealed class Selection : ISelection, IFeatureProvider
             _flags |= Flags.List;
         }
 
+        if (field.IsExecutionGroupRoot)
+        {
+            _flags |= Flags.ExecutionGroupRoot;
+        }
+
         _utf8ResponseName = Utf8StringCache.GetUtf8String(responseName);
     }
 
@@ -186,6 +191,18 @@ public sealed class Selection : ISelection, IFeatureProvider
 
     /// <inheritdoc />
     public bool IsLeaf => (_flags & Flags.Leaf) == Flags.Leaf;
+
+    /// <summary>
+    /// Gets a value indicating whether the field of this selection is the root of an execution group.
+    /// </summary>
+    internal bool IsExecutionGroupRoot => (_flags & Flags.ExecutionGroupRoot) == Flags.ExecutionGroupRoot;
+
+    /// <summary>
+    /// Gets a value indicating whether this selection is a member of, or on the path to a member of,
+    /// the execution group of an ancestor selection.
+    /// </summary>
+    internal bool IsExecutionGroupParticipant
+        => (_flags & Flags.ExecutionGroupParticipant) == Flags.ExecutionGroupParticipant;
 
     /// <summary>
     /// Gets a value indicating whether this selection has child selections.
@@ -996,7 +1013,9 @@ nextItem:
             _deferUsage,
             _deferMask,
             _wideDeferMask,
-            _flags,
+            field.IsExecutionGroupRoot
+                ? _flags | Flags.ExecutionGroupRoot
+                : _flags & ~Flags.ExecutionGroupRoot,
             Arguments,
             Strategy,
             ResolverPipeline,
@@ -1067,6 +1086,20 @@ nextItem:
     }
 
     /// <summary>
+    /// Marks this selection as taking part in an execution group. Participants always run as
+    /// resolver tasks so that they can wait for their turn.
+    /// </summary>
+    internal void MarkAsExecutionGroupParticipant()
+    {
+        _flags |= Flags.ExecutionGroupParticipant;
+
+        if (Strategy is SelectionExecutionStrategy.Pure)
+        {
+            Strategy = SelectionExecutionStrategy.Default;
+        }
+    }
+
+    /// <summary>
     /// Completes the selection without sealing it.
     /// </summary>
     internal void Complete(SelectionSet selectionSet)
@@ -1133,6 +1166,8 @@ nextItem:
         Leaf = 16,
         ProjectionRequirement = 32,
         RequiresWideIncludeFlags = 64,
-        RequiresWideDeferFlags = 128
+        RequiresWideDeferFlags = 128,
+        ExecutionGroupRoot = 256,
+        ExecutionGroupParticipant = 512
     }
 }
