@@ -56,11 +56,6 @@ public interface IResolverContext : IHasContextData, IFeatureProvider
     ConditionFlags IncludeConditionFlags { get; }
 
     /// <summary>
-    /// Gets the defer condition flags of the current request.
-    /// </summary>
-    ConditionFlags DeferConditionFlags { get; }
-
-    /// <summary>
     /// Gets the previous (parent) resolver result.
     /// </summary>
     /// <typeparam name="T">

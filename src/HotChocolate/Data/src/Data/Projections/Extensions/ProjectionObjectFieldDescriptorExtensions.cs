@@ -270,8 +270,6 @@ public static class ProjectionObjectFieldDescriptorExtensions
 
         public ConditionFlags IncludeConditionFlags => _context.IncludeConditionFlags;
 
-        public ConditionFlags DeferConditionFlags => _context.DeferConditionFlags;
-
         public IServiceProvider RequestServices => _context.RequestServices;
 
         public string ResponseName => _context.ResponseName;

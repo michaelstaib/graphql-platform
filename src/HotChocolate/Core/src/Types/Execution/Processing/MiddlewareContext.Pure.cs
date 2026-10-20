@@ -70,8 +70,6 @@ internal partial class MiddlewareContext
 
         public ConditionFlags IncludeConditionFlags => parentContext.IncludeConditionFlags;
 
-        public ConditionFlags DeferConditionFlags => parentContext.DeferConditionFlags;
-
         public CancellationToken RequestAborted => parentContext.RequestAborted;
 
         public void ReportError(string errorMessage)

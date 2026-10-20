@@ -10,11 +10,6 @@ internal static class StreamPageReadResolver
     private const string BackwardCursors = "backwardCursors";
 
     public static StreamPageReads Resolve(IResolverContext context)
-        => context.Operation.HasIncrementalParts
-            ? Compute(context)
-            : context.Selection.Features.GetOrSetSafe(Compute, context);
-
-    private static StreamPageReads Compute(IResolverContext context)
     {
         var selection = context.Selection;
 
@@ -23,7 +18,7 @@ internal static class StreamPageReadResolver
             return StreamPageReads.None;
         }
 
-        var deferFlags = context.DeferConditionFlags;
+        var deferFlags = context.Operation.CreateDeferConditionFlags(context.Variables);
         var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags);
         var reads = StreamPageReads.None;
 

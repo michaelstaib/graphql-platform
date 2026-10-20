@@ -614,8 +614,6 @@ public class QueryableCursorPagingProviderTests
         public ulong IncludeFlags => 0;
         public ConditionFlags IncludeConditionFlags => new(0);
 
-        public ConditionFlags DeferConditionFlags => new(0);
-
         public T Parent<T>()
         {
             throw new NotImplementedException();
