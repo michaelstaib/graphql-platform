@@ -121,6 +121,24 @@ public class ExecutionGroupDefinitionTests
     }
 
     [Fact]
+    public void Create_Should_Throw_When_PathIsNestedBelowAnotherEntry()
+    {
+        // arrange
+        // act
+        var exception = Assert.Throws<SchemaException>(
+            () => CreateSchema(
+                new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                new ExecutionGroupEntry("pageInfo", 1, isStreamable: false)));
+
+        // assert
+        GetMessages(exception).MatchInlineSnapshots(
+        [
+            "The execution group of field `Query.connection` is invalid: the entry `pageInfo.hasNextPage` "
+            + "is nested below the entry `pageInfo`."
+        ]);
+    }
+
+    [Fact]
     public void Create_Should_Throw_When_PathContainsAnInvalidFieldName()
     {
         // arrange

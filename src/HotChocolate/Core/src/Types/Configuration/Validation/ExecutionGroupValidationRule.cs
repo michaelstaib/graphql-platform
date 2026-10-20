@@ -53,6 +53,41 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
 
             errors.Add(ExecutionGroup_InvalidEntry(type, field, entry, reason));
         }
+
+        foreach (var entry in definition.Entries)
+        {
+            foreach (var other in definition.Entries)
+            {
+                if (IsNestedBelow(entry, other))
+                {
+                    errors.Add(
+                        ExecutionGroup_InvalidEntry(
+                            type,
+                            field,
+                            entry,
+                            $"is nested below the entry `{other.Path}`."));
+                    break;
+                }
+            }
+        }
+    }
+
+    private static bool IsNestedBelow(ExecutionGroupEntry entry, ExecutionGroupEntry other)
+    {
+        if (other.Segments.Length >= entry.Segments.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < other.Segments.Length; i++)
+        {
+            if (!string.Equals(entry.Segments[i], other.Segments[i], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryValidateEntry(ObjectField root, ExecutionGroupEntry entry, out string reason)
