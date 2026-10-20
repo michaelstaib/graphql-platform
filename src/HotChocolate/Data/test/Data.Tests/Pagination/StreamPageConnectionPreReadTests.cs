@@ -5,8 +5,10 @@ using CookieCrumble.Resources;
 using GreenDonut;
 using GreenDonut.Data;
 using HotChocolate.Execution;
+using HotChocolate.Language;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
+using HotChocolate.Types.Descriptors.Configurations;
 using HotChocolate.Types.Pagination;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -344,6 +346,70 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_PreReadAndDisposeAtRequestEnd_When_TheFieldIsSourceGenerated()
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var executor = await new ServiceCollection()
+            .AddSingleton(store)
+            .AddGraphQLServer()
+            .AddType<global::HotChocolate.Types.Pagination.ItemConnectionType>()
+            .AddType<global::HotChocolate.Types.Pagination.ItemEdgeType>()
+            .ConfigureDescriptorContext(
+                context => context.TypeConfiguration.TryAdd(
+                    "StreamPageConnectionTests::HotChocolate.Data.Pagination.GeneratedQuery",
+                    OperationTypeNames.Query,
+                    () => GeneratedQuery.Initialize))
+            .ConfigureSchema(
+                builder => builder.TryAddRootType(
+                    () => new ObjectType(descriptor => descriptor.Name(OperationTypeNames.Query)),
+                    OperationType.Query))
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ generatedItems(first: 2) { nodes { id } pageInfo { hasNextPage endCursor } totalCount } }",
+            TestContext.Current.CancellationToken);
+        var json = result.ToJson();
+        var releasedBefore = store.Released;
+        await result.DisposeAsync();
+        var releasedAfter = store.Released;
+
+        // assert
+        json.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "generatedItems": {
+                  "nodes": [
+                    {
+                      "id": 1
+                    },
+                    {
+                      "id": 2
+                    }
+                  ],
+                  "pageInfo": {
+                    "hasNextPage": true,
+                    "endCursor": "e30y"
+                  },
+                  "totalCount": 5
+                }
+              }
+            }
+            """);
+        store.Summarize().MatchInlineSnapshot(
+            """
+            {
+              "RowsWereRead": true,
+              "ReadAfterResolver": false
+            }
+            """);
+        Assert.Equal(1, releasedBefore);
+        Assert.Equal(1, releasedAfter);
+    }
+
     private static async Task<IRequestExecutor> CreateExecutorAsync(Store store)
         => await new ServiceCollection()
             .AddSingleton(store)
@@ -490,6 +556,7 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
         private int _reads;
         private int _readsAfterResolver;
         private int _resolverReturns;
+        private int _released;
 
         private Store(string connectionString, int[] authorIds)
         {
@@ -514,6 +581,8 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
                 }
             }
         }
+
+        public int Released => Volatile.Read(ref _released);
 
         public int ResolverReturns
         {
@@ -553,7 +622,7 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
 
         public PagingContext CreateContext() => new(_options);
 
-        public IAsyncDisposable CreateLifetime(PagingContext context) => context;
+        public IAsyncDisposable CreateLifetime(PagingContext context) => new Lifetime(this, context);
 
         public ReadSummary Summarize()
             => new(ReadsAtEnd > 0, ReadsAtEnd > ReadsAfterResolver);
@@ -575,6 +644,15 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
             => _counting
                 ? new(new CountingDataReader(result, () => Interlocked.Increment(ref _reads)))
                 : base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+
+        private sealed class Lifetime(Store store, PagingContext context) : IAsyncDisposable
+        {
+            public async ValueTask DisposeAsync()
+            {
+                Interlocked.Increment(ref store._released);
+                await context.DisposeAsync();
+            }
+        }
     }
 
     public sealed record ReadSummary(bool RowsWereRead, bool ReadAfterResolver);
@@ -684,4 +762,40 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
 
         public override ValueTask DisposeAsync() => inner.DisposeAsync();
     }
+}
+
+[QueryType]
+public static partial class GeneratedQuery
+{
+    [UseConnection(IncludeTotalCount = true)]
+    public static async Task<StreamPageConnection<StreamPageConnectionPreReadTests.Item>> GetGeneratedItems(
+        PagingArguments arguments,
+        [Service] StreamPageConnectionPreReadTests.Store store,
+        CancellationToken cancellationToken)
+    {
+        var context = store.CreateContext();
+
+        return await context.Items
+            .OrderBy(item => item.Id)
+            .ToStreamPageAsync(
+                arguments,
+                store.CreateLifetime(context),
+                cancellationToken);
+    }
+
+    static partial void Configure(IObjectTypeDescriptor descriptor)
+        => descriptor
+            .Field("generatedItems")
+            .Extend()
+            .OnBeforeCreate(
+                (_, configuration) => configuration.MiddlewareConfigurations.Insert(
+                    0,
+                    new FieldMiddlewareConfiguration(RecordResolverReturn)));
+
+    private static FieldDelegate RecordResolverReturn(FieldDelegate next)
+        => async context =>
+        {
+            await next(context);
+            context.Service<StreamPageConnectionPreReadTests.Store>().RecordResolverReturn();
+        };
 }
