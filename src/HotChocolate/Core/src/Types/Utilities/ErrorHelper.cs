@@ -804,4 +804,26 @@ internal static class ErrorHelper
             .SetDirective(directive)
             .SetArgument(argument)
             .Build();
+
+    public static ISchemaError ExecutionGroup_NoEntries(ObjectType type, ObjectField field)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                $"The execution group of field `{field.Coordinate}` is invalid: "
+                + "it must declare at least one entry.")
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_InvalidEntry(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string reason)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                $"The execution group of field `{field.Coordinate}` is invalid: "
+                + $"the entry `{entry.Path}` {reason}")
+            .SetType(type)
+            .SetField(field)
+            .Build();
 }

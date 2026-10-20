@@ -255,6 +255,23 @@ public class ObjectFieldConfiguration : OutputFieldConfiguration
     }
 
     /// <summary>
+    /// Makes this field the root of an execution group, or removes the group when
+    /// <paramref name="definition"/> is <c>null</c>.
+    /// </summary>
+    public void SetExecutionGroup(ExecutionGroupDefinition? definition)
+    {
+        if (definition is null)
+        {
+            Flags &= ~CoreFieldFlags.ExecutionGroup;
+            Features.Set<ExecutionGroupDefinition>(null);
+            return;
+        }
+
+        Flags |= CoreFieldFlags.ExecutionGroup;
+        Features.Set(definition);
+    }
+
+    /// <summary>
     /// A list of middleware components which will be used to form the field pipeline.
     /// </summary>
     internal IReadOnlyList<FieldMiddlewareConfiguration> GetMiddlewareDefinitions()

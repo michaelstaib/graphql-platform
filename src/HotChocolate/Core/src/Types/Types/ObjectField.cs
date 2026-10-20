@@ -109,6 +109,15 @@ public sealed class ObjectField : OutputField
     public IResolverResultPostProcessor? ResultPostProcessor { get; private set; }
 
     /// <summary>
+    /// Gets the execution group that this field is the root of, or <c>null</c> if the field has no group.
+    /// </summary>
+    public ExecutionGroupDefinition? ExecutionGroup
+        => IsExecutionGroupRoot ? Features.Get<ExecutionGroupDefinition>() : null;
+
+    internal bool IsExecutionGroupRoot
+        => (Flags & CoreFieldFlags.ExecutionGroup) == CoreFieldFlags.ExecutionGroup;
+
+    /// <summary>
     /// Gets the associated member of the runtime type for this field.
     /// This property can be <c>null</c> if this field is not associated with
     /// a concrete member on the runtime type.
