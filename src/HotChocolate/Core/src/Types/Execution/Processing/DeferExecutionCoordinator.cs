@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using HotChocolate.Fetching;
 
 namespace HotChocolate.Execution.Processing;
@@ -62,7 +63,7 @@ internal sealed partial class DeferExecutionCoordinator
                 GetChildrenUnsafe(currentBranchId).Add(newBranchId);
                 _branchLookup.Add(
                     newBranchId,
-                    new DeferredBranch(path, deferUsage.Label, currentBranchId, BranchKind.Defer));
+                    new DeferredBranch(path, deferUsage.Label, deferUsage, currentBranchId, BranchKind.Defer));
                 _branchIdLookup.Add(key, newBranchId);
                 _hasBranches = true;
                 _pendingBranches++;
@@ -90,7 +91,10 @@ internal sealed partial class DeferExecutionCoordinator
                 GetChildrenUnsafe(currentBranchId).Add(streamBranchId);
                 _branchLookup.Add(
                     streamBranchId,
-                    new DeferredBranch(path, label, currentBranchId, BranchKind.Stream));
+                    new DeferredBranch(path, label, null, currentBranchId, BranchKind.Stream)
+                    {
+                        Stream = new StreamState()
+                    });
                 _branchIdLookup.Add(key, streamBranchId);
                 _hasBranches = true;
                 _pendingBranches++;
@@ -114,8 +118,8 @@ internal sealed partial class DeferExecutionCoordinator
             var itemsBranchId = _branchTracker.CreateNewBranchId();
             _branchLookup.Add(
                 itemsBranchId,
-                new DeferredBranch(stream.Path, null, streamBranchId, BranchKind.StreamItems));
-            (stream.Items ??= []).Add(itemsBranchId);
+                new DeferredBranch(stream.Path, null, null, streamBranchId, BranchKind.StreamItems));
+            (stream.Stream!.Items ??= []).Add(itemsBranchId);
             return itemsBranchId;
         }
     }
@@ -135,12 +139,12 @@ internal sealed partial class DeferExecutionCoordinator
 
         lock (_sync)
         {
-            var itemsBranch = _branchLookup[itemsBranchId];
+            ref var itemsBranch = ref CollectionsMarshal.GetValueRefOrNullRef(_branchLookup, itemsBranchId);
             itemsBranch.StreamItems = items;
 
             if (completesStream)
             {
-                _branchLookup[itemsBranch.ParentBranchId].IsStreamCompleted = true;
+                _branchLookup[itemsBranch.ParentBranchId].Stream!.IsCompleted = true;
             }
         }
 
@@ -157,15 +161,15 @@ internal sealed partial class DeferExecutionCoordinator
 
         lock (_sync)
         {
-            var stream = _branchLookup[streamBranchId];
+            var stream = _branchLookup[streamBranchId].Stream!;
 
-            if (stream.IsStreamCompleted)
+            if (stream.IsCompleted)
             {
                 return;
             }
 
-            stream.IsStreamCompleted = true;
-            stream.StreamErrors = errors;
+            stream.IsCompleted = true;
+            stream.Errors = errors;
 
             if (!_delivered.Contains(streamBranchId))
             {
@@ -185,6 +189,36 @@ internal sealed partial class DeferExecutionCoordinator
 
                 PublishUnsafe(result);
             }
+        }
+    }
+
+    /// <summary>
+    /// Unregisters the child branches of <paramref name="parentBranchId"/> whose tasks were dropped
+    /// before they started, so the response no longer waits for them.
+    /// </summary>
+    public void ReleaseChildBranches(int parentBranchId)
+    {
+        AssertInitialized();
+
+        lock (_sync)
+        {
+            ref var parent = ref CollectionsMarshal.GetValueRefOrNullRef(_branchLookup, parentBranchId);
+
+            if (Unsafe.IsNullRef(ref parent) || parent.Children is not { Count: > 0 } children)
+            {
+                return;
+            }
+
+            foreach (var childId in children)
+            {
+                if (_branchLookup.Remove(childId, out var child))
+                {
+                    _branchIdLookup.Remove(new DeferredBranchKey(child.Path, child.Group, child.ParentBranchId));
+                    _pendingBranches--;
+                }
+            }
+
+            children.Clear();
         }
     }
 
@@ -384,11 +418,13 @@ internal sealed partial class DeferExecutionCoordinator
         {
             _delivered.Add(childId);
 
-            while (child.Items is { } items
-                && child.DeliveredItems < items.Count
-                && _completed.Remove(items[child.DeliveredItems], out var itemsResult))
+            var stream = child.Stream!;
+
+            while (stream.Items is { } items
+                && stream.DeliveredItems < items.Count
+                && _completed.Remove(items[stream.DeliveredItems], out var itemsResult))
             {
-                var itemsBranchId = items[child.DeliveredItems];
+                var itemsBranchId = items[stream.DeliveredItems];
 
                 result.RegisterForCleanup(itemsResult);
                 AddStreamItemsUnsafe(_branchLookup[itemsBranchId], itemsResult, incrementalBuilder, completedBuilder);
@@ -447,7 +483,7 @@ internal sealed partial class DeferExecutionCoordinator
         ImmutableList<CompletedResult>.Builder completedBuilder)
     {
         var streamBranchId = itemsBranch.ParentBranchId;
-        var stream = _branchLookup[streamBranchId];
+        var stream = _branchLookup[streamBranchId].Stream!;
 
         stream.DeliveredItems++;
 
@@ -455,12 +491,12 @@ internal sealed partial class DeferExecutionCoordinator
         {
             incrementalBuilder.Add(new IncrementalListResult(streamBranchId, itemsResult.Errors, items));
         }
-        else if (!stream.IsStreamCompletionDelivered)
+        else if (!stream.IsCompletionDelivered)
         {
             // errors bubbled above the streamed list, so the stream ends with these errors.
             completedBuilder.Add(new CompletedResult(streamBranchId, itemsResult.Errors));
-            stream.IsStreamCompleted = true;
-            stream.IsStreamCompletionDelivered = true;
+            stream.IsCompleted = true;
+            stream.IsCompletionDelivered = true;
             _pendingBranches--;
         }
     }
@@ -469,18 +505,18 @@ internal sealed partial class DeferExecutionCoordinator
         int streamBranchId,
         ImmutableList<CompletedResult>.Builder completedBuilder)
     {
-        var stream = _branchLookup[streamBranchId];
+        var stream = _branchLookup[streamBranchId].Stream!;
 
-        if (!stream.IsStreamCompleted
-            || stream.IsStreamCompletionDelivered
+        if (!stream.IsCompleted
+            || stream.IsCompletionDelivered
             || stream.DeliveredItems != (stream.Items?.Count ?? 0)
             || !_delivered.Contains(streamBranchId))
         {
             return false;
         }
 
-        stream.IsStreamCompletionDelivered = true;
-        completedBuilder.Add(new CompletedResult(streamBranchId, stream.StreamErrors));
+        stream.IsCompletionDelivered = true;
+        completedBuilder.Add(new CompletedResult(streamBranchId, stream.Errors));
         _pendingBranches--;
         return true;
     }
@@ -497,7 +533,9 @@ internal sealed partial class DeferExecutionCoordinator
             return _mainBranchChildren ??= [];
         }
 
-        if (!_branchLookup.TryGetValue(branchId, out var branch))
+        ref var branch = ref CollectionsMarshal.GetValueRefOrNullRef(_branchLookup, branchId);
+
+        if (Unsafe.IsNullRef(ref branch))
         {
             return [];
         }
@@ -514,23 +552,29 @@ internal sealed partial class DeferExecutionCoordinator
         StreamItems
     }
 
-    private sealed class DeferredBranch(
+    private struct DeferredBranch(
         Path path,
         string? label,
+        DeferUsage? group,
         int parentBranchId,
         BranchKind kind)
     {
         public Path Path { get; } = path;
         public string? Label { get; } = label;
+        public DeferUsage? Group { get; } = group;
         public int ParentBranchId { get; } = parentBranchId;
         public BranchKind Kind { get; } = kind;
         public HashSet<int>? Children { get; set; }
+        public StreamState? Stream { get; set; }
+        public IReadOnlyList<object?>? StreamItems { get; set; }
+    }
 
+    private sealed class StreamState
+    {
         public List<int>? Items { get; set; }
         public int DeliveredItems { get; set; }
-        public bool IsStreamCompleted { get; set; }
-        public bool IsStreamCompletionDelivered { get; set; }
-        public IReadOnlyList<IError>? StreamErrors { get; set; }
-        public IReadOnlyList<object?>? StreamItems { get; set; }
+        public bool IsCompleted { get; set; }
+        public bool IsCompletionDelivered { get; set; }
+        public IReadOnlyList<IError>? Errors { get; set; }
     }
 }
