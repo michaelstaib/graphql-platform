@@ -29,6 +29,7 @@ internal sealed class StreamTask : ExecutionTask
     private readonly string? _label;
     private readonly IAsyncEnumerator<object?> _enumerator;
     private readonly CancellationTokenSource _cancellation;
+    private readonly CancellationToken _cancellationToken;
     private readonly MiddlewareContext _resolverContext = new();
     private int _nextItemIndex;
     private int _streamBranchId;
@@ -56,6 +57,7 @@ internal sealed class StreamTask : ExecutionTask
         _nextItemIndex = firstStreamedIndex;
         _enumerator = enumerator;
         _cancellation = cancellation;
+        _cancellationToken = cancellation.Token;
     }
 
     // the stream task runs in the system branch as it's just an orchestration task.
@@ -112,7 +114,7 @@ internal sealed class StreamTask : ExecutionTask
     private async ValueTask StreamAsync()
     {
         var coordinator = _parentContext.DeferExecutionCoordinator;
-        var token = _cancellation.Token;
+        var token = _cancellationToken;
         var items = new List<object?>();
         var move = default(ValueTask<bool>);
         var isMoving = false;
@@ -224,52 +226,81 @@ internal sealed class StreamTask : ExecutionTask
     private async ValueTask<bool> DeliverAsync(List<object?> items, bool completesStream)
     {
         var coordinator = _parentContext.DeferExecutionCoordinator;
-        var itemsBranchId = coordinator.BranchStreamItems(_streamBranchId);
-        var contextFactory = _parentContext.Services.GetRequiredService<IFactory<OperationContextOwner>>();
-        using var contextOwner = contextFactory.Create();
-        var context = contextOwner.OperationContext;
+        var itemsBranchId = BranchTracker.SystemBranchId;
+        OperationContextOwner? contextOwner = null;
         var tasks = new List<IExecutionTask>();
-
-        context.InitializeStreamContext(_parentContext, _selection, _path.Parent, _nextItemIndex, itemsBranchId);
-        _nextItemIndex += items.Count;
 
         try
         {
-            var listResult = CompleteItems(context, items, tasks, itemsBranchId);
+            itemsBranchId = coordinator.BranchStreamItems(_streamBranchId);
+            var contextFactory = _parentContext.Services.GetRequiredService<IFactory<OperationContextOwner>>();
+            contextOwner = contextFactory.Create();
+            var context = contextOwner.OperationContext;
 
-            if (tasks.Count > 0)
+            context.InitializeStreamContext(_parentContext, _selection, _path.Parent, _nextItemIndex, itemsBranchId);
+            _nextItemIndex += items.Count;
+
+            try
             {
-                context.Scheduler.Register(CollectionsMarshal.AsSpan(tasks));
+                var listResult = CompleteItems(context, items, tasks, itemsBranchId);
+
+                if (tasks.Count > 0)
+                {
+                    context.Scheduler.Register(CollectionsMarshal.AsSpan(tasks));
+                }
+
+                await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
+
+                var result = context.BuildResult();
+
+                if (listResult.IsNullOrInvalidated)
+                {
+                    coordinator.EnqueueStreamItems(
+                        result,
+                        itemsBranchId,
+                        items: null,
+                        completesStream: completesStream);
+                    return false;
+                }
+
+                var streamedItems = new List<object?>(listResult.GetArrayLength());
+
+                foreach (var item in listResult.EnumerateArray())
+                {
+                    streamedItems.Add(new StreamedItem(item));
+                }
+
+                coordinator.EnqueueStreamItems(
+                    result,
+                    itemsBranchId,
+                    streamedItems,
+                    completesStream: completesStream);
+                return true;
+            }
+            finally
+            {
+                // the cleanup registered by the item resolvers is handed to the response stream, also when
+                // the batch faults or is cancelled, before the context is returned.
+                foreach (var cleanupTask in context.Result.TakeCleanupTasks())
+                {
+                    _parentContext.RegisterRequestCleanup(cleanupTask);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException
+            || !_cancellationToken.IsCancellationRequested)
+        {
+            if (itemsBranchId != BranchTracker.SystemBranchId)
+            {
+                var result = new OperationResult(CreateErrors(ex));
+                coordinator.EnqueueStreamItems(result, itemsBranchId, items: null, completesStream: true);
             }
 
-            await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
-
-            var result = context.BuildResult();
-
-            if (listResult.IsNullOrInvalidated)
-            {
-                coordinator.EnqueueStreamItems(result, itemsBranchId, items: null, completesStream: completesStream);
-                return false;
-            }
-
-            var streamedItems = new List<object?>(listResult.GetArrayLength());
-
-            foreach (var item in listResult.EnumerateArray())
-            {
-                streamedItems.Add(new StreamedItem(item));
-            }
-
-            coordinator.EnqueueStreamItems(result, itemsBranchId, streamedItems, completesStream: completesStream);
-            return true;
+            return false;
         }
         finally
         {
-            // the cleanup registered by the item resolvers is handed to the response stream, also when
-            // the batch faults or is cancelled, before the context is returned.
-            foreach (var cleanupTask in context.Result.TakeCleanupTasks())
-            {
-                _parentContext.RegisterRequestCleanup(cleanupTask);
-            }
+            contextOwner?.Dispose();
         }
     }
 
@@ -320,6 +351,17 @@ internal sealed class StreamTask : ExecutionTask
             }
 
             context.Result.AddNonNullViolation(listResult.Path);
+
+            _parentContext.DeferExecutionCoordinator.ReleaseChildBranches(itemsBranchId);
+
+            foreach (var task in tasks)
+            {
+                if (task is DeferTask deferTask)
+                {
+                    deferTask.Reset();
+                }
+            }
+
             tasks.Clear();
         }
 

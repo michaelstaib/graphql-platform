@@ -2,9 +2,15 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using GreenDonut;
 using GreenDonut.Data;
+using HotChocolate.Execution.Configuration;
+using HotChocolate.Execution.DependencyInjection;
+using HotChocolate.Execution.Instrumentation;
+using HotChocolate.Execution.Processing;
+using HotChocolate.Execution.Processing.Tasks;
 using HotChocolate.Types;
 using HotChocolate.Types.Pagination;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.ObjectPool;
 
 namespace HotChocolate.Execution;
 
@@ -1482,7 +1488,10 @@ public class StreamTests
     {
         // arrange
         var state = new StreamState();
-        var executor = await CreateExecutorAsync(state);
+        var listener = new StreamTaskListener(disposeBeforeStart: false);
+        var executor = await CreateBuilder(state)
+            .AddDiagnosticEventListener(_ => listener)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
         var result = await executor.ExecuteAsync(
             "{ endlessItems @stream(initialCount: 1) { id } }",
             TestContext.Current.CancellationToken);
@@ -1499,6 +1508,7 @@ public class StreamTests
 
         await stream.DisposeAsync();
         await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await listener.TaskCompleted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
         // assert
         Assert.Equal(1, state.EnumeratorDisposeCalls);
@@ -1509,7 +1519,10 @@ public class StreamTests
     {
         // arrange
         var state = new StreamState();
-        var executor = await CreateExecutorAsync(state);
+        var listener = new StreamTaskListener(disposeBeforeStart: false);
+        var executor = await CreateBuilder(state)
+            .AddDiagnosticEventListener(_ => listener)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
         using var requestAborted = new CancellationTokenSource();
         var result = await executor.ExecuteAsync(
             "{ endlessItems @stream(initialCount: 1) { id } }",
@@ -1519,15 +1532,196 @@ public class StreamTests
         // act
         await requestAborted.CancelAsync();
         await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await listener.TaskCompleted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         await stream.DisposeAsync();
 
         // assert
         Assert.Equal(1, state.EnumeratorDisposeCalls);
     }
 
+    [Fact]
+    public async Task Stream_Should_DisposeEnumeratorOnce_When_StreamIsDisposedBeforeStreamTaskStarts()
+    {
+        // arrange
+        var state = new StreamState();
+        var listener = new StreamTaskListener(disposeBeforeStart: true);
+        var executor = await CreateBuilder(state)
+            .AddDiagnosticEventListener(_ => listener)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var result = await executor
+            .ExecuteAsync(
+                "{ endlessItems @stream(initialCount: 1) { id } }",
+                TestContext.Current.CancellationToken)
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var stream = Assert.IsType<ResponseStream>(result);
+        await listener.TaskCompleted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await listener.Disposal.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await stream.DisposeAsync();
+
+        // assert
+        Assert.Equal(1, state.EnumeratorDisposeCalls);
+        Assert.Equal(0, listener.TaskErrorCount);
+    }
+
+    [Fact]
+    public async Task Stream_Should_EndWithErrors_When_ItemsBatchCannotBeStarted()
+    {
+        // arrange
+        var executor = await CreateFaultingExecutorAsync(new StreamState(), failOnCall: 2);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+                executor,
+                "{ items(count: 3) @stream(initialCount: 1) { id } }")
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "Unexpected Execution Error",
+                      "path": [
+                        "items"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_CompleteWithErrors_When_DeferContextCannotBeCreatedForLaterItem()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateFaultingExecutorAsync(state, failOnCall: 5);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+                executor,
+                "{ requiredItems(count: 3) @stream(initialCount: 1) { id ... @defer { gatedName } } }",
+                () => { },
+                () => state.ReleaseName(1))
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "requiredItems": [
+                  {
+                    "id": 1
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "requiredItems",
+                    0
+                  ]
+                },
+                {
+                  "id": "3",
+                  "path": [
+                    "requiredItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "3",
+                  "errors": [
+                    {
+                      "message": "Unexpected Execution Error",
+                      "path": [
+                        "requiredItems"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "data": {
+                    "gatedName": "item-1"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
     private static async Task<IRequestExecutor> CreateExecutorAsync(StreamState? state = null)
-        => await new ServiceCollection()
-            .AddSingleton(state ?? new StreamState())
+        => await CreateBuilder(state ?? new StreamState()).BuildRequestExecutorAsync();
+
+    private static async Task<IRequestExecutor> CreateFaultingExecutorAsync(StreamState state, int failOnCall)
+    {
+        var builder = CreateBuilder(state);
+        builder.Services.AddSingleton<IFactory<OperationContextOwner>>(
+            sp => new FaultingContextOwnerFactory(
+                new OperationContextOwnerFactory(sp.GetRequiredService<ObjectPool<OperationContext>>()),
+                failOnCall));
+
+        return await builder.BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+    }
+
+    private static IRequestExecutorBuilder CreateBuilder(StreamState state)
+        => new ServiceCollection()
+            .AddSingleton(state)
             .AddGraphQL()
             .AddQueryType<StreamQuery>()
             .AddType<ConnectionLikeType>()
@@ -1537,8 +1731,7 @@ public class StreamTests
                 {
                     o.EnableDefer = true;
                     o.EnableStream = true;
-                })
-            .BuildRequestExecutorAsync();
+                });
 
     // Runs one step after each payload that was read, which lets a test hold back the producers of
     // later payloads until the earlier payloads were observed.
@@ -1687,6 +1880,13 @@ public class StreamTests
             return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
         }
 
+        [GraphQLType<NonNullType<ListType<NonNullType<ObjectType<Item>>>>>]
+        public async Task<List<Item>> GetRequiredItemsAsync(int count)
+        {
+            await Task.Yield();
+            return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
+        }
+
         [GraphQLType<ListType<NonNullType<ObjectType<Item>>>>]
         public async Task<List<Item>> GetStrictItemsAsync(int count)
         {
@@ -1801,6 +2001,52 @@ public class StreamTests
                 .Extend()
                 .OnBeforeCreate((_, field) => field.SetConnectionEdgesFieldFlags());
         }
+    }
+
+    private sealed class StreamTaskListener(bool disposeBeforeStart) : ExecutionDiagnosticEventListener
+    {
+        private int _taskErrorCount;
+
+        public int TaskErrorCount => Volatile.Read(ref _taskErrorCount);
+
+        public Task Disposal { get; private set; } = Task.CompletedTask;
+
+        public TaskCompletionSource TaskCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override IDisposable RunTask(IExecutionTask task)
+        {
+            if (!task.IsDeferred || task.BranchId != BranchTracker.SystemBranchId)
+            {
+                return EmptyScope;
+            }
+
+            if (disposeBeforeStart && task is StreamTask streamTask)
+            {
+                Disposal = streamTask.DisposeAsync().AsTask();
+            }
+
+            return new CompletionScope(TaskCompleted);
+        }
+
+        public override void TaskError(IExecutionTask task, IError error)
+            => Interlocked.Increment(ref _taskErrorCount);
+
+        private sealed class CompletionScope(TaskCompletionSource completed) : IDisposable
+        {
+            public void Dispose() => completed.TrySetResult();
+        }
+    }
+
+    private sealed class FaultingContextOwnerFactory(IFactory<OperationContextOwner> inner, int failOnCall)
+        : IFactory<OperationContextOwner>
+    {
+        private int _calls;
+
+        public OperationContextOwner Create()
+            => Interlocked.Increment(ref _calls) == failOnCall
+                ? throw new InvalidOperationException("context unavailable")
+                : inner.Create();
     }
 
     private sealed class EndlessItems(StreamState state) : IAsyncEnumerable<Item>
