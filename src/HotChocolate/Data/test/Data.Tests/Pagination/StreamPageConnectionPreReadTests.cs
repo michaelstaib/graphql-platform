@@ -310,13 +310,16 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
     }
 
     [Theory]
-    [InlineData("nodes { id }")]
-    [InlineData("edges { cursor node { id } } nodes { id }")]
-    [InlineData("nodes { id } pageInfo { hasNextPage endCursor }")]
-    [InlineData("nodes { id } pageInfo { hasPreviousPage startCursor } totalCount")]
-    [InlineData("nodes { id } pageInfo { forwardCursors { page } backwardCursors { page } }")]
-    [InlineData("totalCount")]
-    public async Task Execute_Should_NotReadAfterTheResolversReturn_When_PagesAreBatched(string selection)
+    [InlineData("items(first: 2) { nodes { id } }")]
+    [InlineData("items(first: 2) { edges { cursor node { id } } nodes { id } }")]
+    [InlineData("items(first: 2) { nodes { id } pageInfo { hasNextPage endCursor } }")]
+    [InlineData("items(first: 2) { nodes { id } pageInfo { hasPreviousPage startCursor } totalCount }")]
+    [InlineData("items(first: 2) { nodes { id } pageInfo { forwardCursors { page } backwardCursors { page } } }")]
+    [InlineData("items(first: 2) { totalCount }")]
+    [InlineData("items(last: 2) { pageInfo { startCursor } }")]
+    [InlineData("items(last: 2) { pageInfo { hasPreviousPage startCursor } }")]
+    [InlineData("items(last: 2, before: \"e30y\") { pageInfo { startCursor } }")]
+    public async Task Execute_Should_NotReadAfterTheResolversReturn_When_PagesAreBatched(string items)
     {
         // arrange
         var store = await Store.CreateAsync(resource, authorCount: 2, itemsPerAuthor: 9);
@@ -324,7 +327,7 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
 
         // act
         await using var result = await executor.ExecuteAsync(
-            $"{{ authors {{ id items(first: 2) {{ {selection} }} }} }}",
+            $"{{ authors {{ id {items} }} }}",
             TestContext.Current.CancellationToken);
         var errorCount = result.ExpectOperationResult().Errors.Count;
         await result.DisposeAsync();
@@ -332,7 +335,13 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
         // assert
         Assert.Equal(0, errorCount);
         Assert.Equal(2, store.ResolverReturns);
-        Assert.Equal(store.ReadsAfterResolver, store.ReadsAtEnd);
+        store.Summarize().MatchInlineSnapshot(
+            """
+            {
+              "RowsWereRead": true,
+              "ReadAfterResolver": false
+            }
+            """);
     }
 
     private static async Task<IRequestExecutor> CreateExecutorAsync(Store store)

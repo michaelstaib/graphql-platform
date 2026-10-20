@@ -105,6 +105,13 @@ public class StreamPageConnection<TNode> : IStreamPageConnection
 
         if ((reads & StreamPageReads.FirstRow) != 0)
         {
+            var entries = _page.GetEntriesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+
+            await using (entries.ConfigureAwait(false))
+            {
+                await entries.MoveNextAsync().ConfigureAwait(false);
+            }
+
             await _page.HasPreviousPageAsync(cancellationToken).ConfigureAwait(false);
         }
 
