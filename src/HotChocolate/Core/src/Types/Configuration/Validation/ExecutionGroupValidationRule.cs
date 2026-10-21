@@ -43,21 +43,14 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
         {
             if (!paths.Add(entry.Path))
             {
-                errors.Add(
-                    ExecutionGroup_InvalidEntry(
-                        type, 
-                        field, 
-                        entry, 
-                        "is declared more than once."));
+                errors.Add(ExecutionGroup_DuplicateEntry(type, field, entry));
                 continue;
             }
 
-            if (TryValidateEntry(schema, field, entry, out var reason))
+            if (ValidateEntry(schema, type, field, entry) is { } error)
             {
-                continue;
+                errors.Add(error);
             }
-
-            errors.Add(ExecutionGroup_InvalidEntry(type, field, entry, reason));
         }
 
         foreach (var entry in group.Entries)
@@ -66,12 +59,7 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
             {
                 if (IsNestedBelow(entry, other))
                 {
-                    errors.Add(
-                        ExecutionGroup_InvalidEntry(
-                            type,
-                            field,
-                            entry,
-                            $"is nested below the entry `{other.Path}`."));
+                    errors.Add(ExecutionGroup_NestedEntry(type, field, entry, other));
                     break;
                 }
             }
@@ -96,50 +84,46 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
         return true;
     }
 
-    private static bool TryValidateEntry(
+    private static ISchemaError? ValidateEntry(
         ISchemaDefinition schema,
+        ObjectType type,
         ObjectField root,
-        ExecutionGroupEntry entry,
-        out string reason)
+        ExecutionGroupEntry entry)
     {
         foreach (var name in entry.Segments)
         {
             if (!name.IsValidGraphQLName())
             {
-                reason = $"contains the invalid field name `{name}`.";
-                return false;
+                return ExecutionGroup_InvalidFieldName(type, root, entry, name);
             }
         }
 
         switch (root.Type.NamedType())
         {
             case ObjectType objectType:
-                return TryValidatePath(objectType, entry, out reason);
+                return ValidatePath(type, root, objectType, entry);
 
             case InterfaceType interfaceType:
                 foreach (var possibleType in schema.GetPossibleTypes(interfaceType))
                 {
-                    if (!TryValidatePath(possibleType, entry, out reason))
+                    if (ValidatePath(type, root, possibleType, entry) is { } error)
                     {
-                        return false;
+                        return error;
                     }
                 }
 
-                reason = string.Empty;
-                return true;
+                return null;
 
             default:
-                reason =
-                    "cannot be resolved because the type of the group root must be an object type "
-                    + "or interface type.";
-                return false;
+                return ExecutionGroup_RootTypeNotComposite(type, root, entry);
         }
     }
 
-    private static bool TryValidatePath(
+    private static ISchemaError? ValidatePath(
+        ObjectType type,
+        ObjectField root,
         IComplexTypeDefinition currentType,
-        ExecutionGroupEntry entry,
-        out string reason)
+        ExecutionGroupEntry entry)
     {
         for (var i = 0; i < entry.Segments.Length; i++)
         {
@@ -147,20 +131,17 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
 
             if (!currentType.Fields.TryGetField(segment, out var field))
             {
-                reason = $"references the field `{segment}` that does not exist on type `{currentType.Name}`.";
-                return false;
+                return ExecutionGroup_FieldNotFound(type, root, entry, currentType.Name, segment);
             }
 
             if (field is ObjectField { BatchResolver: not null })
             {
-                reason = $"references the field `{currentType.Name}.{segment}` that uses a batch resolver.";
-                return false;
+                return ExecutionGroup_BatchResolverField(type, root, entry, currentType.Name, segment);
             }
 
             if (field is ObjectField { IsParallelExecutable: false })
             {
-                reason = $"references the field `{currentType.Name}.{segment}` that is not parallel executable.";
-                return false;
+                return ExecutionGroup_NotParallelExecutableField(type, root, entry, currentType.Name, segment);
             }
 
             if (i == entry.Segments.Length - 1)
@@ -170,26 +151,22 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
 
             if (field.Type.IsListType())
             {
-                reason = $"passes through the list field `{currentType.Name}.{segment}`.";
-                return false;
+                return ExecutionGroup_ListField(type, root, entry, currentType.Name, segment);
             }
 
             if (field is ObjectField { ExecutionGroup: not null })
             {
-                reason = $"passes through the field `{currentType.Name}.{segment}` that is an execution group root.";
-                return false;
+                return ExecutionGroup_GroupRootField(type, root, entry, currentType.Name, segment);
             }
 
             if (field.Type.NamedType() is not ObjectType nextType)
             {
-                reason = $"passes through the field `{currentType.Name}.{segment}` that is not of an object type.";
-                return false;
+                return ExecutionGroup_NonObjectField(type, root, entry, currentType.Name, segment);
             }
 
             currentType = nextType;
         }
 
-        reason = string.Empty;
-        return true;
+        return null;
     }
 }

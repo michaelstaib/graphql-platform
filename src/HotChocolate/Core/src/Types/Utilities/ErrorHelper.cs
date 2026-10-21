@@ -807,22 +807,159 @@ internal static class ErrorHelper
 
     public static ISchemaError ExecutionGroup_NoEntries(ObjectType type, ObjectField field)
         => SchemaErrorBuilder.New()
-            .SetMessage(
-                $"The execution group of field `{field.Coordinate}` is invalid: "
-                + "it must declare at least one entry.")
+            .SetMessage(ErrorHelper_ExecutionGroup_NoEntries, field.Coordinate.ToString())
             .SetType(type)
             .SetField(field)
             .Build();
 
-    public static ISchemaError ExecutionGroup_InvalidEntry(
+    public static ISchemaError ExecutionGroup_DuplicateEntry(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry)
+        => SchemaErrorBuilder.New()
+            .SetMessage(ErrorHelper_ExecutionGroup_DuplicateEntry, field.Coordinate.ToString(), entry.Path)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_NestedEntry(
         ObjectType type,
         ObjectField field,
         ExecutionGroupEntry entry,
-        string reason)
+        ExecutionGroupEntry ancestor)
         => SchemaErrorBuilder.New()
             .SetMessage(
-                $"The execution group of field `{field.Coordinate}` is invalid: "
-                + $"the entry `{entry.Path}` {reason}")
+                ErrorHelper_ExecutionGroup_NestedEntry,
+                field.Coordinate.ToString(),
+                entry.Path,
+                ancestor.Path)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_InvalidFieldName(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_InvalidFieldName,
+                field.Coordinate.ToString(),
+                entry.Path,
+                segment)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_RootTypeNotComposite(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry)
+        => SchemaErrorBuilder.New()
+            .SetMessage(ErrorHelper_ExecutionGroup_RootTypeNotComposite, field.Coordinate.ToString(), entry.Path)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_FieldNotFound(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string pathTypeName,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_FieldNotFound,
+                field.Coordinate.ToString(),
+                entry.Path,
+                pathTypeName,
+                segment)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_BatchResolverField(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string pathTypeName,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_BatchResolverField,
+                field.Coordinate.ToString(),
+                entry.Path,
+                pathTypeName,
+                segment)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_NotParallelExecutableField(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string pathTypeName,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_NotParallelExecutableField,
+                field.Coordinate.ToString(),
+                entry.Path,
+                pathTypeName,
+                segment)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_ListField(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string pathTypeName,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_ListField,
+                field.Coordinate.ToString(),
+                entry.Path,
+                pathTypeName,
+                segment)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_GroupRootField(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string pathTypeName,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_GroupRootField,
+                field.Coordinate.ToString(),
+                entry.Path,
+                pathTypeName,
+                segment)
+            .SetType(type)
+            .SetField(field)
+            .Build();
+
+    public static ISchemaError ExecutionGroup_NonObjectField(
+        ObjectType type,
+        ObjectField field,
+        ExecutionGroupEntry entry,
+        string pathTypeName,
+        string segment)
+        => SchemaErrorBuilder.New()
+            .SetMessage(
+                ErrorHelper_ExecutionGroup_NonObjectField,
+                field.Coordinate.ToString(),
+                entry.Path,
+                pathTypeName,
+                segment)
             .SetType(type)
             .SetField(field)
             .Build();

@@ -17,14 +17,10 @@ internal static class ThrowHelper
         => new InvalidOperationException("The selection is not fully initialized.");
 
     public static InvalidOperationException ExecutionGroup_BatchSelectionNotSupported(Selection selection)
-        => new(
-            $"The field `{selection.Field.Coordinate}` uses a batch resolver "
-            + "and cannot take part in an execution group.");
+        => new(string.Format(ThrowHelper_ExecutionGroup_BatchSelectionNotSupported, selection.Field.Coordinate));
 
     public static InvalidOperationException ExecutionGroup_SerialSelectionNotSupported(Selection selection)
-        => new(
-            $"The field `{selection.Field.Coordinate}` is not parallel executable "
-            + "and cannot take part in an execution group.");
+        => new(string.Format(ThrowHelper_ExecutionGroup_SerialSelectionNotSupported, selection.Field.Coordinate));
 
     public static GraphQLException VariableIsNotAnInputType(
         VariableDefinitionNode variableDefinition)
