@@ -353,7 +353,8 @@ internal sealed class BatchResolverTask : IResolverTask
                             _operationContext,
                             context,
                             _taskBuffer,
-                            context.BranchId);
+                            context.BranchId,
+                            groupScope: null);
 
                     Complete(completionContext, context.Selection, resultValue, result);
                 }

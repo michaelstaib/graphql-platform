@@ -896,23 +896,6 @@ internal static class ErrorHelper
             .SetField(field)
             .Build();
 
-    public static ISchemaError ExecutionGroup_NotParallelExecutableField(
-        ObjectType type,
-        ObjectField field,
-        ExecutionGroupEntry entry,
-        string pathTypeName,
-        string segment)
-        => SchemaErrorBuilder.New()
-            .SetMessage(
-                ErrorHelper_ExecutionGroup_NotParallelExecutableField,
-                field.Coordinate.ToString(),
-                entry.Path,
-                pathTypeName,
-                segment)
-            .SetType(type)
-            .SetField(field)
-            .Build();
-
     public static ISchemaError ExecutionGroup_ListField(
         ObjectType type,
         ObjectField field,

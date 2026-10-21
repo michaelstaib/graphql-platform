@@ -101,6 +101,7 @@ internal static class ResolverTaskFactory
                                     Path.Root,
                                     parent,
                                     scopedContext,
+                                    groupScope: null,
                                     branchId,
                                     deferUsage));
                         }
@@ -212,6 +213,7 @@ internal static class ResolverTaskFactory
                                     currentPath,
                                     parent,
                                     context.ResolverContext.ScopedContextData,
+                                    context.GroupScope,
                                     branchId,
                                     deferUsage));
                         }
@@ -239,12 +241,11 @@ internal static class ResolverTaskFactory
                 else
                 {
                     context.Tasks.Add(
-                        operationContext.CreateResolverTask(
+                        CreateChildTask(
+                            context,
                             parent,
                             selection,
                             field.Value,
-                            context.ResolverContext.ScopedContextData,
-                            context.ParentBranchId,
                             parentDeferUsage));
                 }
             }
@@ -276,15 +277,39 @@ internal static class ResolverTaskFactory
                 else
                 {
                     context.Tasks.Add(
-                        operationContext.CreateResolverTask(
+                        CreateChildTask(
+                            context,
                             parent,
                             selection,
                             field.Value,
-                            context.ResolverContext.ScopedContextData,
-                            context.ParentBranchId));
+                            deferUsage: null));
                 }
             }
         }
+    }
+
+    private static ResolverTask CreateChildTask(
+        ValueCompletionContext context,
+        object parent,
+        Selection selection,
+        ResultElement resultValue,
+        DeferUsage? deferUsage)
+    {
+        var task =
+            context.OperationContext.CreateResolverTask(
+                parent,
+                selection,
+                resultValue,
+                context.ResolverContext.ScopedContextData,
+                context.ParentBranchId,
+                deferUsage);
+
+        if (selection.IsExecutionGroupParticipant)
+        {
+            task.JoinExecutionGroup(context.GroupScope);
+        }
+
+        return task;
     }
 
     private static void ResolveAndCompleteInline(

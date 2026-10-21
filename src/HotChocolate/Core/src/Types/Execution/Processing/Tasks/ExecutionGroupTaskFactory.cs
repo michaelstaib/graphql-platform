@@ -6,8 +6,8 @@ namespace HotChocolate.Execution.Processing.Tasks;
 internal static class ExecutionGroupTaskFactory
 {
     /// <summary>
-    /// Opens an execution group instance for the result of a group root field and enqueues
-    /// the tasks below it so that they can find the instance.
+    /// Opens an execution group scope for the result of a group root field and enqueues
+    /// the tasks below it so that they join the scope.
     /// </summary>
     public static void EnqueueOrInlineResolverTasks(
         ValueCompletionContext context,
@@ -19,16 +19,19 @@ internal static class ExecutionGroupTaskFactory
     {
         var operationContext = context.OperationContext;
         var plan = operationContext.Operation.GetExecutionGroupPlan(root, selectionSet);
-        var instance = ExecutionGroupInstance.Open(plan, operationContext.IncludeConditionFlags);
-        var resolverContext = context.ResolverContext;
-        var scopedContext = resolverContext.ScopedContextData;
-
-        resolverContext.ScopedContextData = scopedContext.SetItem(ExecutionGroupInstance.ScopedContextKey, instance);
+        var scope = operationContext.Scheduler.OpenExecutionGroupScope(plan, operationContext.IncludeConditionFlags);
+        var groupContext =
+            new ValueCompletionContext(
+                operationContext,
+                context.ResolverContext,
+                context.Tasks,
+                context.ParentBranchId,
+                scope);
 
         try
         {
             ResolverTaskFactory.EnqueueOrInlineResolverTasks(
-                context,
+                groupContext,
                 selectionSet,
                 selectionSetType,
                 resultValue,
@@ -36,12 +39,8 @@ internal static class ExecutionGroupTaskFactory
         }
         catch
         {
-            instance.Abandon();
+            scope?.Abandon();
             throw;
-        }
-        finally
-        {
-            resolverContext.ScopedContextData = scopedContext;
         }
     }
 }

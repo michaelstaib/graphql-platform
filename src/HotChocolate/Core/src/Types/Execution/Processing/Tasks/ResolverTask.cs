@@ -13,8 +13,8 @@ internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool) 
     private OperationContext _operationContext = null!;
     private Selection _selection = null!;
     private ExecutionTaskStatus _completionStatus = ExecutionTaskStatus.Completed;
-    private ExecutionGroupInstance? _groupInstance;
-    private ExecutionGroupNode? _groupNode;
+    private ExecutionGroupScope? _groupScope;
+    private int _groupSlot = -1;
 
     /// <summary>
     /// Gets or sets the internal execution id.
@@ -39,6 +39,21 @@ internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool) 
     /// Gets access to the resolver context for this task.
     /// </summary>
     internal MiddlewareContext Context => _context;
+
+    /// <summary>
+    /// Gets the execution group scope that this task takes part in, or <c>null</c> if it is not part of a group.
+    /// </summary>
+    internal ExecutionGroupScope? GroupScope => _groupScope;
+
+    /// <summary>
+    /// Gets the slot of this task in its execution group scope, or <c>-1</c> if the task only leads to members.
+    /// </summary>
+    internal int GroupSlot => _groupSlot;
+
+    /// <summary>
+    /// Gets a value indicating whether this task is a member that waits for its turn in an execution group scope.
+    /// </summary>
+    internal bool IsExecutionGroupMember => _groupScope is not null && _groupSlot >= 0;
 
     /// <summary>
     /// Gets access to the diagnostic events.

@@ -3,9 +3,9 @@ using System.Collections.Immutable;
 namespace HotChocolate.Types;
 
 /// <summary>
-/// Defines the selections below a field that run one after the other instead of in parallel.
-/// A member runs after its predecessor has completed its own resolver task. Member paths cannot pass through
-/// list fields, abstract types, other group roots or batch resolver fields.
+/// Defines the selections below a field that run one after the other, each after its predecessor has completed
+/// its own resolver task. Member paths cannot pass through list fields, abstract types, other group roots or
+/// batch resolver fields.
 /// </summary>
 public sealed class ExecutionGroup
 {

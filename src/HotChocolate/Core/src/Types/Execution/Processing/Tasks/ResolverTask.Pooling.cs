@@ -24,12 +24,34 @@ internal sealed partial class ResolverTask
         IsSerial = selection.Strategy is SelectionExecutionStrategy.Serial;
         BranchId = executionBranchId;
         DeferUsage = deferUsage;
+    }
 
-        if (selection.IsExecutionGroupParticipant)
+    /// <summary>
+    /// Makes this task a participant of the execution group scope if the selection is part of its plan.
+    /// </summary>
+    internal void JoinExecutionGroup(ExecutionGroupScope? scope)
+    {
+        if (scope is not null && scope.Plan.TryGetNode(_selection.Id, out var node))
         {
-            ExecutionGroupInstance.TryGetNode(scopedContextData, selection, out _groupInstance, out _groupNode);
+            _groupScope = scope;
+            _groupSlot = node.SlotIndex;
         }
     }
+
+    /// <summary>
+    /// Registers this task with the work scheduler.
+    /// </summary>
+    internal void Register() => _operationContext.Scheduler.Register(this);
+
+    /// <summary>
+    /// Counts this task with the work scheduler without making it available for execution.
+    /// </summary>
+    internal void Reserve() => _operationContext.Scheduler.Reserve(this);
+
+    /// <summary>
+    /// Makes this task available for execution after it was counted with <see cref="Reserve"/>.
+    /// </summary>
+    internal void RegisterReserved() => _operationContext.Scheduler.RegisterReserved(this);
 
     /// <summary>
     /// Resets the resolver task before returning it to the pool.
@@ -45,8 +67,8 @@ internal sealed partial class ResolverTask
         IsSerial = false;
         BranchId = int.MinValue;
         DeferUsage = null;
-        _groupInstance = null;
-        _groupNode = null;
+        _groupScope = null;
+        _groupSlot = -1;
         IsRegistered = false;
 #pragma warning disable CS0618
         Next = null;

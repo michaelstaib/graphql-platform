@@ -3558,15 +3558,6 @@ namespace HotChocolate.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to The execution group of field `{0}` is invalid: the entry `{1}` references the field `{2}.{3}` that is not parallel executable..
-        /// </summary>
-        internal static string ErrorHelper_ExecutionGroup_NotParallelExecutableField {
-            get {
-                return ResourceManager.GetString("ErrorHelper_ExecutionGroup_NotParallelExecutableField", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to The execution group of field `{0}` is invalid: the entry `{1}` passes through the list field `{2}.{3}`..
         /// </summary>
         internal static string ErrorHelper_ExecutionGroup_ListField {

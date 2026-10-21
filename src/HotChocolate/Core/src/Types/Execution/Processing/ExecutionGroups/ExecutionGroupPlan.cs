@@ -85,11 +85,6 @@ internal sealed class ExecutionGroupPlan
             {
                 throw ThrowHelper.ExecutionGroup_BatchSelectionNotSupported(builder.Selection);
             }
-
-            if (builder.Selection.Strategy is SelectionExecutionStrategy.Serial)
-            {
-                throw ThrowHelper.ExecutionGroup_SerialSelectionNotSupported(builder.Selection);
-            }
         }
 
         var nodes = new Dictionary<int, ExecutionGroupNode>(builders.Count);

@@ -140,53 +140,6 @@ public class ExecutionGroupConfigurationTests
     }
 
     [Fact]
-    public void Create_Should_Throw_When_MemberIsSerial()
-    {
-        // arrange
-        var builder = SchemaBuilder.New()
-            .ModifyOptions(o => o.DefaultResolverStrategy = ExecutionStrategy.Serial)
-            .AddQueryType(descriptor =>
-            {
-                descriptor.Name("Query");
-                descriptor
-                    .Field("connection")
-                    .Type("Connection")
-                    .Resolve(_ => new object())
-                    .ExecutionGroup(
-                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
-                        new ExecutionGroupEntry("nodes", 1, isStreamable: false));
-            })
-            .AddObjectType(descriptor =>
-            {
-                descriptor.Name("Connection");
-                descriptor.Field("nodes").Type("[Item!]!").Resolve(_ => Array.Empty<object>());
-                descriptor.Field("pageInfo").Type("PageInfo").Resolve(_ => new object());
-            })
-            .AddObjectType(descriptor =>
-            {
-                descriptor.Name("PageInfo");
-                descriptor.Field("hasNextPage").Type("Boolean!").Resolve(_ => true);
-            })
-            .AddObjectType(descriptor =>
-            {
-                descriptor.Name("Item");
-                descriptor.Field("name").Type("String").Resolve(_ => "name");
-            });
-
-        // act
-        var exception = Assert.Throws<SchemaException>(builder.Create);
-
-        // assert
-        GetMessages(exception).MatchInlineSnapshots(
-        [
-            "The execution group of field `Query.connection` is invalid: the entry `pageInfo.hasNextPage` "
-            + "references the field `Connection.pageInfo` that is not parallel executable.",
-            "The execution group of field `Query.connection` is invalid: the entry `nodes` "
-            + "references the field `Connection.nodes` that is not parallel executable."
-        ]);
-    }
-
-    [Fact]
     public void Create_Should_Throw_When_PathContainsAnInvalidFieldName()
     {
         // arrange
@@ -245,25 +198,6 @@ public class ExecutionGroupConfigurationTests
         [
             "The execution group of field `Query.conn` is invalid: the entry `pageInfo.hasNextPage` "
             + "passes through the field `ConnB.pageInfo` that is an execution group root."
-        ]);
-    }
-
-    [Fact]
-    public void Create_Should_Throw_When_ImplementingTypeHasASerialMember()
-    {
-        // arrange
-        // act
-        var exception = Assert.Throws<SchemaException>(
-            () => CreateInterfaceSchema(
-                new ExecutionGroupEntry("nodes", 0, isStreamable: false),
-                nodes => nodes.Serial(),
-                pageInfo => { }));
-
-        // assert
-        GetMessages(exception).MatchInlineSnapshots(
-        [
-            "The execution group of field `Query.conn` is invalid: the entry `nodes` "
-            + "references the field `ConnB.nodes` that is not parallel executable."
         ]);
     }
 

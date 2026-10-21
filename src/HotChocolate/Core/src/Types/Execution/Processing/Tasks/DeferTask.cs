@@ -10,6 +10,7 @@ internal sealed class DeferTask : ExecutionTask
     private OperationContextOwner _deferContextOwner = null!;
     private object? _parent;
     private IImmutableDictionary<string, object?> _scopedContext = null!;
+    private ExecutionGroupScope? _groupScope;
     private int _executionBranchId;
     private DeferUsage _deferUsage = null!;
 
@@ -31,18 +32,33 @@ internal sealed class DeferTask : ExecutionTask
         {
             foreach (var field in data.EnumerateObject())
             {
-                bufferedTasks[i++] =
+                var selection = field.AssertSelection();
+                var task =
                     deferContext.CreateResolverTask(
                         _parent,
-                        field.AssertSelection(),
+                        selection,
                         field.Value,
                         _scopedContext,
                         _executionBranchId,
                         _deferUsage);
+
+                if (selection.IsExecutionGroupParticipant)
+                {
+                    task.JoinExecutionGroup(_groupScope);
+                }
+
+                bufferedTasks[i++] = task;
             }
 
             // we register our deferred tasks for execution ...
-            deferContext.Scheduler.Register(bufferedTasks.AsSpan(0, i));
+            if (deferContext.Scheduler.HasExecutionGroups)
+            {
+                ExecutionGroupScope.Register(deferContext.Scheduler, bufferedTasks.AsSpan(0, i));
+            }
+            else
+            {
+                deferContext.Scheduler.Register(bufferedTasks.AsSpan(0, i));
+            }
         }
         finally
         {
@@ -88,6 +104,7 @@ internal sealed class DeferTask : ExecutionTask
         OperationContext parentContext,
         object? parent,
         IImmutableDictionary<string, object?> scopedContext,
+        ExecutionGroupScope? groupScope,
         SelectionSet selectionSet,
         Path selectionPath,
         int executionBranchId,
@@ -106,6 +123,7 @@ internal sealed class DeferTask : ExecutionTask
 
         _parent = parent;
         _scopedContext = scopedContext;
+        _groupScope = groupScope;
         _executionBranchId = executionBranchId;
         _deferUsage = deferUsage;
     }
@@ -116,6 +134,7 @@ internal sealed class DeferTask : ExecutionTask
         _deferContextOwner = null!;
         _parent = null!;
         _scopedContext = null!;
+        _groupScope = null;
         _executionBranchId = 0;
         _deferUsage = null!;
 

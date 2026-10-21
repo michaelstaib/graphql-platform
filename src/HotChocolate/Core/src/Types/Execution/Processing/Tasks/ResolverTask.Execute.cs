@@ -15,20 +15,7 @@ internal sealed partial class ResolverTask
                 var success = await TryExecuteAsync(cancellationToken).ConfigureAwait(false);
                 CompleteValue(success, cancellationToken);
 
-                switch (_taskBuffer.Count)
-                {
-                    case 0:
-                        break;
-
-                    case 1:
-                        _operationContext.Scheduler.Register(_taskBuffer[0]);
-                        break;
-
-                    default:
-                        _operationContext.Scheduler.Register(
-                            CollectionsMarshal.AsSpan(_taskBuffer));
-                        break;
-                }
+                RegisterChildTasks();
             }
 
             Status = _completionStatus;
@@ -49,11 +36,6 @@ internal sealed partial class ResolverTask
         }
         finally
         {
-            if (_groupInstance is not null)
-            {
-                EndGroupTurn();
-            }
-
             try
             {
                 if (_context.HasCleanupTasks)
@@ -63,6 +45,11 @@ internal sealed partial class ResolverTask
             }
             finally
             {
+                if (_groupScope is not null)
+                {
+                    EndGroupTurn();
+                }
+
                 _operationContext.Scheduler.Complete(this);
                 objectPool.Return(this);
             }
@@ -82,11 +69,6 @@ internal sealed partial class ResolverTask
 
         try
         {
-            if (_groupInstance is not null)
-            {
-                await _groupInstance.WaitForTurnAsync(_groupNode!, cancellationToken).ConfigureAwait(false);
-            }
-
             // If the arguments are already parsed and processed we can just process.
             // Arguments need no pre-processing if they have no variables.
             if (Selection.Arguments.IsFullyCoercedNoErrors)
@@ -135,19 +117,43 @@ internal sealed partial class ResolverTask
         return false;
     }
 
+    private void RegisterChildTasks()
+    {
+        if (_taskBuffer.Count == 0)
+        {
+            return;
+        }
+
+        var scheduler = _operationContext.Scheduler;
+
+        if (scheduler.HasExecutionGroups)
+        {
+            ExecutionGroupScope.Register(scheduler, CollectionsMarshal.AsSpan(_taskBuffer));
+            return;
+        }
+
+        if (_taskBuffer.Count == 1)
+        {
+            scheduler.Register(_taskBuffer[0]);
+            return;
+        }
+
+        scheduler.Register(CollectionsMarshal.AsSpan(_taskBuffer));
+    }
+
     private void EndGroupTurn()
     {
-        var instance = _groupInstance!;
-        var node = _groupNode!;
+        var scope = _groupScope!;
 
-        _groupInstance = null;
-        _groupNode = null;
-
-        // created child tasks release their own turns, so descendants are only released
-        // when no child task was created.
-        var releaseDescendants = !node.DescendantSlotIndexes.IsEmpty && _taskBuffer.Count == 0;
-
-        instance.Complete(node, releaseDescendants);
+        if (_groupSlot >= 0)
+        {
+            scope.Release(_groupSlot);
+        }
+        else if (_taskBuffer.Count == 0 && scope.Plan.TryGetNode(_selection.Id, out var node))
+        {
+            // without child tasks nothing below this selection can ever start, so its members are skipped.
+            scope.ReleaseDescendants(node);
+        }
     }
 
     private async ValueTask ExecuteResolverPipelineAsync(CancellationToken cancellationToken)
