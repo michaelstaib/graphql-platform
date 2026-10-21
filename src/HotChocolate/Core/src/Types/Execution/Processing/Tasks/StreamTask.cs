@@ -29,7 +29,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly int _maxItemsPerPayload;
     private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
-    private Task _producer = Task.CompletedTask;
     private int _nextItemIndex;
     private int _streamBranchId;
 
@@ -89,23 +88,15 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     /// Starts reading the items of the source into the buffer of the stream.
     /// </summary>
     public void StartProducer()
-        => _producer = ProduceAsync();
+        => _ = ProduceAsync();
 
     /// <summary>
-    /// Stops the stream and disposes the enumerator exactly once.
+    /// Stops the stream. The enumerator is disposed by the producer once the source returns control.
     /// </summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         Cancel();
-
-        try
-        {
-            await _producer.ConfigureAwait(false);
-        }
-        finally
-        {
-            _cancellation.Dispose();
-        }
+        return ValueTask.CompletedTask;
     }
 
     protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
@@ -139,7 +130,18 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
         finally
         {
-            await _enumerator.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await _enumerator.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // the stream already ended or was discarded, so a failing disposal has nobody to report to.
+            }
+            finally
+            {
+                _cancellation.Dispose();
+            }
         }
     }
 
