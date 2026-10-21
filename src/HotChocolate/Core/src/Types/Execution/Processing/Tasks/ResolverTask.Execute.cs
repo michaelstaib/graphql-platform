@@ -143,10 +143,9 @@ internal sealed partial class ResolverTask
         _groupInstance = null;
         _groupNode = null;
 
-        // the selections below a selection without an object result are never created.
-        var releaseDescendants =
-            !node.DescendantSlotIndexes.IsEmpty
-            && (Status is ExecutionTaskStatus.Faulted || _context.ResultValue.IsNullOrInvalidated);
+        // created child tasks release their own turns, so descendants are only released
+        // when no child task was created.
+        var releaseDescendants = !node.DescendantSlotIndexes.IsEmpty && _taskBuffer.Count == 0;
 
         instance.Complete(node, releaseDescendants);
     }

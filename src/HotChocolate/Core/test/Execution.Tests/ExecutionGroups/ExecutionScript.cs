@@ -40,6 +40,8 @@ internal sealed class ExecutionScript
 
     public void Cancel(string path) => GetGate(path).TrySetCanceled();
 
+    public void Reached(string name) => GetStarted(name).TrySetResult();
+
     public Task Started(string path) => GetStarted(path).Task.WaitAsync(s_timeout);
 
     public void Log(string text)

@@ -612,6 +612,147 @@ public class ExecutionGroupTests
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_SequenceMembersPerConcreteResult_When_GroupRootIsAnInterface()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("pages[0].nodes");
+        script.Release("pages[1].nodes");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ pages { nodes { name } pageInfo { hasNextPage probe } } }",
+            cts.Token);
+
+        await script.Started("pages[0].pageInfo.probe");
+        await script.Started("pages[1].pageInfo.probe");
+        var eventsWhileFirstMembersRun = script.Events.Order().ToArray();
+        script.Release("pages[0].pageInfo.hasNextPage");
+        script.Release("pages[1].pageInfo.hasNextPage");
+        await execution;
+
+        // assert
+        eventsWhileFirstMembersRun.MatchInlineSnapshots(
+        [
+            "start pages[0].pageInfo.hasNextPage",
+            "start pages[1].pageInfo.hasNextPage"
+        ]);
+        script.Events.OrderBy(e => e.Contains("pages[0]") ? 0 : 1).MatchInlineSnapshots(
+        [
+            "start pages[0].pageInfo.hasNextPage",
+            "end pages[0].pageInfo.hasNextPage",
+            "start pages[0].nodes",
+            "end pages[0].nodes",
+            "start pages[1].pageInfo.hasNextPage",
+            "end pages[1].pageInfo.hasNextPage",
+            "start pages[1].nodes",
+            "end pages[1].nodes"
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_KeepMemberTurn_When_NullableAncestorIsNulledAfterChildTasksWereCreated()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("reversed.nodes");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ reversed { nodes { name } pageInfo { hasNextPage bad } } }",
+            cts.Token);
+
+        await script.Started("reversed.pageInfo.hasNextPage");
+        await script.Started("bad");
+
+        // the pure child has nulled pageInfo, give a wrongly released member the chance to start
+        await Task.Delay(TimeSpan.FromMilliseconds(250), cts.Token);
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("reversed.pageInfo.hasNextPage");
+        var result = await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start reversed.pageInfo.hasNextPage"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start reversed.pageInfo.hasNextPage",
+            "end reversed.pageInfo.hasNextPage",
+            "start reversed.nodes",
+            "end reversed.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "reversed",
+                    "pageInfo",
+                    "bad"
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ],
+              "data": {
+                "reversed": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    }
+                  ],
+                  "pageInfo": null
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact(Skip = "A field selected in several sibling @defer fragments currently executes once per fragment.")]
+    public async Task Execute_Should_RunMemberOnce_When_MemberIsSelectedInSiblingDeferFragments()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("connection.nodes");
+        script.Release("connection.edges");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            """
+            {
+                connection {
+                    nodes { name }
+                    ... @defer(label: "first") { edges }
+                    ... @defer(label: "second") { edges }
+                }
+            }
+            """,
+            cts.Token);
+
+        await ReadPayloadsAsync(execution, cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "start connection.nodes",
+            "end connection.nodes",
+            "start connection.edges",
+            "end connection.edges"
+        ]);
+    }
+
     private static async Task<List<string>> ReadPayloadsAsync(
         Task<IExecutionResult> execution,
         CancellationToken cancellationToken)

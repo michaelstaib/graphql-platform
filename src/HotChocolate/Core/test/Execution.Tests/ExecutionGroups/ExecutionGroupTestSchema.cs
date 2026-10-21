@@ -37,6 +37,38 @@ internal static class ExecutionGroupTestSchema
                     .ExecutionGroup(
                         new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
                         new ExecutionGroupEntry("nodes", 1, isStreamable: true));
+
+                descriptor
+                    .Field("pages")
+                    .Type("[Page!]!")
+                    .Resolve(_ => new object[] { new PageA(), new PageB() })
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                        new ExecutionGroupEntry("nodes", 1, isStreamable: true));
+            })
+            .AddInterfaceType(descriptor =>
+            {
+                descriptor.Name("Page");
+                descriptor.Field("nodes").Type("[Item!]!");
+                descriptor.Field("pageInfo").Type("PageInfo");
+            })
+            .AddObjectType<PageA>(descriptor =>
+            {
+                descriptor.Name("PageA").Implements("Page");
+                descriptor.Field("nodes").Type("[Item!]!").Resolve(ctx => script.RunAsync(ctx, Items()));
+                descriptor
+                    .Field("pageInfo")
+                    .Type("PageInfo")
+                    .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
+            })
+            .AddObjectType<PageB>(descriptor =>
+            {
+                descriptor.Name("PageB").Implements("Page");
+                descriptor.Field("nodes").Type("[Item!]!").Resolve(ctx => script.RunAsync(ctx, Items()));
+                descriptor
+                    .Field("pageInfo")
+                    .Type("PageInfo")
+                    .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
             })
             .AddObjectType<Connection>(descriptor =>
             {
@@ -46,20 +78,24 @@ internal static class ExecutionGroupTestSchema
                 descriptor
                     .Field("pageInfo")
                     .Type("PageInfo")
-                    .Resolve(ctx => script.Resolve(ctx, new PageInfo()));
+                    .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
                 descriptor.Field("probe").Type("String").Resolve(ctx => script.Resolve(ctx, "probe"));
             })
             .AddObjectType<StrictConnection>(descriptor =>
             {
                 descriptor.Name("StrictConnection");
                 descriptor.Field("nodes").Type("[Item!]!").Resolve(ctx => script.RunAsync(ctx, Items()));
-                descriptor.Field("pageInfo").Type("PageInfo!").Resolve(ctx => script.Resolve(ctx, new PageInfo()));
+                descriptor
+                    .Field("pageInfo")
+                    .Type("PageInfo!")
+                    .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
             })
             .AddObjectType<PageInfo>(descriptor =>
             {
                 descriptor.Name("PageInfo");
                 descriptor.Field("hasNextPage").Type("Boolean!").Resolve(ctx => script.RunAsync(ctx, true));
                 descriptor.Field("probe").Type("String").Resolve(ctx => script.Resolve(ctx, "probe"));
+                descriptor.Field(p => p.Bad).Type<NonNullType<StringType>>();
             })
             .AddObjectType<Item>(descriptor =>
             {
@@ -86,7 +122,21 @@ internal static class ExecutionGroupTestSchema
 
     internal sealed class StrictConnection;
 
-    internal sealed class PageInfo;
+    internal sealed class PageA;
+
+    internal sealed class PageB;
+
+    internal sealed class PageInfo(ExecutionScript script)
+    {
+        public string? Bad
+        {
+            get
+            {
+                script.Reached("bad");
+                return null;
+            }
+        }
+    }
 
     internal sealed record Item(string Name);
 }

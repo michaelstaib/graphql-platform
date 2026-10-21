@@ -101,7 +101,7 @@ internal sealed class ExecutionGroupInstance
 
     /// <summary>
     /// Ends the turn of the member of <paramref name="node"/>. When <paramref name="releaseDescendants"/>
-    /// is <c>true</c> the members below the selection are released as well because they will not run.
+    /// is <c>true</c> the members below the selection are released as well because no task exists for them.
     /// </summary>
     public void Complete(ExecutionGroupNode node, bool releaseDescendants)
     {
