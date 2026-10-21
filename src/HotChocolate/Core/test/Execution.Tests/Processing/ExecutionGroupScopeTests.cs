@@ -38,7 +38,15 @@ public class ExecutionGroupScopeTests
     {
         // arrange
         var plan = await CreatePlanAsync(
-            "query ($skip: Boolean!) { connection { nodes @skip(if: $skip) { name } edges pageInfo { hasNextPage } } }");
+            """
+            query ($skip: Boolean!) {
+                connection {
+                    nodes @skip(if: $skip) { name }
+                    edges
+                    pageInfo { hasNextPage }
+                }
+            }
+            """);
 
         // act
         var scope = ExecutionGroupScope.Open(plan, default);
@@ -54,7 +62,7 @@ public class ExecutionGroupScopeTests
         var plan = await CreatePlanAsync(
             """
             query ($skip: Boolean!) {
-                connection {
+                reversed {
                     pageInfo @skip(if: $skip) { hasNextPage }
                     nodes { name }
                     edges
@@ -66,7 +74,7 @@ public class ExecutionGroupScopeTests
         var scope = ExecutionGroupScope.Open(plan, default);
 
         // assert
-        Assert.Equal(0, scope!.Position);
+        Assert.Equal(1, scope!.Position);
     }
 
     [Fact]
