@@ -43,7 +43,12 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
         {
             if (!paths.Add(entry.Path))
             {
-                errors.Add(ExecutionGroup_InvalidEntry(type, field, entry, "is declared more than once."));
+                errors.Add(
+                    ExecutionGroup_InvalidEntry(
+                        type, 
+                        field, 
+                        entry, 
+                        "is declared more than once."));
                 continue;
             }
 
