@@ -265,6 +265,8 @@ There are two wire formats for how incremental results are represented in the re
 {"incremental":[{"id":"2","data":{"description":"Abc desc"}}],"completed":[{"id":"2"}],"hasNext":false}
 ```
 
+When a streamed item raises a non-null error that bubbles above the list, the stream ends with a completed entry carrying the error, and the client applies null propagation, which can null the list and its parents.
+
 **v0.1 (legacy)** uses `path` and `label` directly on incremental entries:
 
 ```json
