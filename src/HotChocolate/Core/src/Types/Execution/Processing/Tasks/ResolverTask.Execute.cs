@@ -1,4 +1,5 @@
 using HotChocolate.Execution.Internal;
+using HotChocolate.Execution.Options;
 using HotChocolate.Types;
 using System.Runtime.InteropServices;
 
@@ -169,7 +170,8 @@ internal sealed partial class ResolverTask
 
         if (_selection.IsStreamable
             && _operationContext.Operation.HasIncrementalParts
-            && StreamUsage.TryCreate(_selection, _context.Variables, out var streamUsage))
+            && StreamUsage.TryCreate(_selection, _context.Variables, out var streamUsage)
+            && postProcessor.TryCreateStream(result, out var stream))
         {
             if (streamUsage.InitialCount < 0)
             {
@@ -178,11 +180,7 @@ internal sealed partial class ResolverTask
                 return;
             }
 
-            _context.Result = await ReadInitialStreamItemsAsync(
-                    postProcessor,
-                    result,
-                    streamUsage,
-                    cancellationToken)
+            _context.Result = await ReadInitialStreamItemsAsync(stream, streamUsage, cancellationToken)
                 .ConfigureAwait(false);
             return;
         }
@@ -191,8 +189,7 @@ internal sealed partial class ResolverTask
     }
 
     private async ValueTask<List<object?>> ReadInitialStreamItemsAsync(
-        IResolverResultPostProcessor postProcessor,
-        object result,
+        IAsyncEnumerable<object?> stream,
         StreamUsage streamUsage,
         CancellationToken cancellationToken)
     {
@@ -202,7 +199,6 @@ internal sealed partial class ResolverTask
 
         try
         {
-            var stream = postProcessor.ToStreamResultAsync(result, cancellation.Token);
             enumerator = stream.GetAsyncEnumerator(cancellation.Token);
 
             var items = new List<object?>();
@@ -220,6 +216,8 @@ internal sealed partial class ResolverTask
 
             if (hasMoreItems)
             {
+                var options = _operationContext.Schema.Services.GetRequiredService<RequestExecutorOptions>();
+
                 _stream = new StreamTask(
                     _operationContext.RootContext,
                     _selection,
@@ -229,9 +227,11 @@ internal sealed partial class ResolverTask
                     _context.Path,
                     streamUsage.Label,
                     items.Count,
+                    options.MaxStreamBatchSize,
                     enumerator,
                     cancellation);
                 isStreaming = true;
+                _stream.StartProducer();
             }
 
             return items;

@@ -229,32 +229,33 @@ internal sealed partial class DeferExecutionCoordinator
     }
 
     /// <summary>
-    /// Unregisters the child branches of <paramref name="parentBranchId"/> that will not deliver a result.
+    /// Unregisters the child branches of <paramref name="parentBranchId"/> and everything below them
+    /// that will not deliver a result, and stops the streams among them.
     /// </summary>
-    public void ReleaseChildBranches(int parentBranchId)
+    public ValueTask ReleaseChildBranches(int parentBranchId)
     {
         AssertInitialized();
+
+        List<IAsyncDisposable>? discarded;
 
         lock (_sync)
         {
             ref var parent = ref CollectionsMarshal.GetValueRefOrNullRef(_branchLookup, parentBranchId);
 
-            if (Unsafe.IsNullRef(ref parent) || parent.Children is not { Count: > 0 } children)
+            if (!Unsafe.IsNullRef(ref parent) && parent.Children is { Count: > 0 } children)
             {
-                return;
-            }
-
-            foreach (var childId in children)
-            {
-                if (_branchLookup.Remove(childId, out var child))
+                foreach (var childId in children)
                 {
-                    _branchIdLookup.Remove(new DeferredBranchKey(child.Path, child.Group, child.ParentBranchId));
-                    _pendingBranches--;
+                    DiscardBranchUnsafe(childId);
                 }
+
+                children.Clear();
             }
 
-            children.Clear();
+            discarded = TakeDiscardedUnsafe();
         }
+
+        return DisposeAsync(discarded);
     }
 
     /// <summary>

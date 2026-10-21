@@ -124,7 +124,11 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
                 ---
                 Content-Type: application/json; charset=utf-8
 
-                {"incremental":[{"id":"2","items":["c"]}],"completed":[{"id":"2"}],"hasNext":false}
+                {"incremental":[{"id":"2","items":["c"]}],"hasNext":true}
+                ---
+                Content-Type: application/json; charset=utf-8
+
+                {"completed":[{"id":"2"}],"hasNext":false}
                 -----
 
                 """);
@@ -1462,6 +1466,7 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             yield return "b";
             await Task.Delay(300);
             yield return "c";
+            await Task.Delay(300);
         }
     }
 

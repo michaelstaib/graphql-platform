@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace HotChocolate.Execution;
 
 /// <summary>
@@ -43,4 +45,25 @@ public interface IResolverResultPostProcessor
     IAsyncEnumerable<object?> ToStreamResultAsync(
         object result,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates an async enumerable that streams the elements of the result if the result is an async source.
+    /// </summary>
+    /// <param name="result">
+    /// The result of the resolver pipeline.
+    /// </param>
+    /// <param name="stream">
+    /// The async enumerable that streams the elements of the result.
+    /// </param>
+    /// <returns>
+    /// <c>true</c> if the result can be streamed; otherwise, <c>false</c>,
+    /// which is the default for post processors that do not implement this member.
+    /// </returns>
+    bool TryCreateStream(
+        object result,
+        [NotNullWhen(true)] out IAsyncEnumerable<object?>? stream)
+    {
+        stream = null;
+        return false;
+    }
 }
