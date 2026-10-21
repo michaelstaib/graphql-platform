@@ -1971,6 +1971,7 @@ public class StreamTests
         var stream = Assert.IsType<ResponseStream>(result);
         await listener.TaskCompleted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         await listener.Disposal.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         await stream.DisposeAsync();
 
         // assert
@@ -2892,6 +2893,348 @@ public class StreamTests
         ]);
     }
 
+    [Fact]
+    public async Task Stream_Should_EndResponse_When_DroppedBatchHasNestedStreamThatIgnoresCancellation()
+    {
+        // arrange
+        var state = new StreamState();
+        state.ReleaseHeld(1);
+        state.ReleaseStrict(1);
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsWithStepsAsync(
+                executor,
+                """
+                {
+                    items(count: 3) @stream(initialCount: 1) {
+                        id
+                        held
+                        gatedStrict
+                        stuckChildren @stream(initialCount: 0) {
+                            id
+                            gatedName
+                        }
+                    }
+                }
+                """,
+                [
+                    async () =>
+                    {
+                        state.ReleaseHeld(2);
+                        state.ReleaseHeld(3);
+                        await state.WaitForNameStartedAsync(21);
+                        await state.WaitForNameStartedAsync(31);
+                        state.ReleaseStrict(2);
+                        state.ReleaseStrict(3);
+                        state.ReleaseName(21);
+                        state.ReleaseName(31);
+                    }
+                ])
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        state.ReleaseChildren(2);
+        state.ReleaseChildren(3);
+        await WaitUntilAsync(() => state.EnumeratorDisposeCalls >= 2);
+
+        // assert
+        Assert.Equal(2, state.EnumeratorDisposeCalls);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1,
+                    "held": 1,
+                    "gatedStrict": "ok-1",
+                    "stuckChildren": null
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "gated strict item",
+                      "path": [
+                        "items",
+                        2,
+                        "gatedStrict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_CompleteResponse_When_FailedBatchSourceIgnoresCancellation()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+                executor,
+                "{ stuckItems(count: 6) @stream(initialCount: 1) { id strict } }",
+                state.ReleaseNextItem,
+                state.ReleaseNextItem)
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        state.ReleaseNextItem();
+        await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(1, state.EnumeratorDisposeCalls);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "stuckItems": [
+                  {
+                    "id": 1,
+                    "strict": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "stuckItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "strict": "ok-2"
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "strict item",
+                      "path": [
+                        "stuckItems",
+                        2,
+                        "strict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_PutAllItemsInInitialPayload_When_InitialCountExceedsBatchMaximum()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state, maxStreamBatchSize: 16);
+
+        // act
+        var payloads = await ReadPayloadsAsync(executor, "{ numbers(count: 41) @stream(initialCount: 40) }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "numbers": [
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    12,
+                    13,
+                    14,
+                    15,
+                    16,
+                    17,
+                    18,
+                    19,
+                    20,
+                    21,
+                    22,
+                    23,
+                    24,
+                    25,
+                    26,
+                    27,
+                    28,
+                    29,
+                    30,
+                    31,
+                    32,
+                    33,
+                    34,
+                    35,
+                    36,
+                    37,
+                    38,
+                    39,
+                    40
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "numbers"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    41
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_DeliverInitialCountItems_When_SourceWaitsBeforeEveryItem()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ gatedItems(count: 5) @stream(initialCount: 5) { id } }",
+            TestContext.Current.CancellationToken);
+        state.ReleaseNextItem();
+        state.ReleaseNextItem();
+        state.ReleaseNextItem();
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => execution.WaitAsync(TimeSpan.FromMilliseconds(250), TestContext.Current.CancellationToken));
+        state.ReleaseNextItem();
+        var result = await execution.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var payloads = new List<string>();
+
+        await foreach (var payload in Assert.IsType<ResponseStream>(result)
+            .ReadResultsAsync()
+            .WithCancellation(TestContext.Current.CancellationToken))
+        {
+            await using var cleanup = payload;
+            payloads.Add(payload.ToJson());
+            state.ReleaseNextItem();
+        }
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "gatedItems": [
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 2
+                  },
+                  {
+                    "id": 3
+                  },
+                  {
+                    "id": 4
+                  },
+                  {
+                    "id": 5
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "gatedItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
@@ -3142,6 +3485,25 @@ public class StreamTests
             }
         }
 
+        public IAsyncEnumerable<Item>? GetStuckChildren([Service] StreamState state)
+            => id == 1 ? null : ProduceStuckChildrenAsync(state);
+
+        private async IAsyncEnumerable<Item> ProduceStuckChildrenAsync(StreamState state)
+        {
+            try
+            {
+                yield return new Item((id * 10) + 1);
+
+                await state.WaitForChildrenAsync(id);
+
+                yield return new Item((id * 10) + 2);
+            }
+            finally
+            {
+                state.EnumeratorDisposedCalled();
+            }
+        }
+
         public async Task<int> GetHeldAsync([Service] StreamState state)
         {
             await state.WaitForHeldAsync(id);
@@ -3312,6 +3674,11 @@ public class StreamTests
             throw new GraphQLException("enumerator failed");
         }
 
+        public IAsyncEnumerable<Item> GetStuckItems(
+            [Service] StreamState state,
+            int count = 3)
+            => ProduceStuckItemsAsync(state, count);
+
         public IAsyncEnumerable<Item> GetEndlessItems([Service] StreamState state)
             => new EndlessItems(state);
 
@@ -3360,6 +3727,24 @@ public class StreamTests
                 }
 
                 await state.WaitForNextItemAsync(cancellationToken);
+            }
+            finally
+            {
+                state.EnumeratorDisposedCalled();
+            }
+        }
+
+        private static async IAsyncEnumerable<Item> ProduceStuckItemsAsync(StreamState state, int count)
+        {
+            try
+            {
+                yield return new Item(1);
+
+                for (var i = 2; i <= count; i++)
+                {
+                    await state.WaitForNextItemAsync(CancellationToken.None);
+                    yield return new Item(i);
+                }
             }
             finally
             {
