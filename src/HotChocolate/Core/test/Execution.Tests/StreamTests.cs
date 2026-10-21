@@ -3075,55 +3075,56 @@ public class StreamTests
         var executor = await CreateExecutorAsync(state, maxStreamBatchSize: 16);
 
         // act
-        var payloads = await ReadPayloadsAsync(executor, "{ numbers(count: 41) @stream(initialCount: 40) }");
+        var result = await executor.ExecuteAsync(
+            "{ numbers(count: 41) @stream(initialCount: 40) }",
+            TestContext.Current.CancellationToken);
 
         // assert
-        payloads.MatchInlineSnapshots(
-        [
+        Assert.IsType<ResponseStream>(result).MatchInlineSnapshot(
             """
             {
               "data": {
                 "numbers": [
-                    1,
-                    2,
-                    3,
-                    4,
-                    5,
-                    6,
-                    7,
-                    8,
-                    9,
-                    10,
-                    11,
-                    12,
-                    13,
-                    14,
-                    15,
-                    16,
-                    17,
-                    18,
-                    19,
-                    20,
-                    21,
-                    22,
-                    23,
-                    24,
-                    25,
-                    26,
-                    27,
-                    28,
-                    29,
-                    30,
-                    31,
-                    32,
-                    33,
-                    34,
-                    35,
-                    36,
-                    37,
-                    38,
-                    39,
-                    40
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9,
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15,
+                  16,
+                  17,
+                  18,
+                  19,
+                  20,
+                  21,
+                  22,
+                  23,
+                  24,
+                  25,
+                  26,
+                  27,
+                  28,
+                  29,
+                  30,
+                  31,
+                  32,
+                  33,
+                  34,
+                  35,
+                  36,
+                  37,
+                  38,
+                  39,
+                  40
                 ]
               },
               "pending": [
@@ -3134,11 +3135,6 @@ public class StreamTests
                   ]
                 }
               ],
-              "hasNext": true
-            }
-            """,
-            """
-            {
               "incremental": [
                 {
                   "id": "2",
@@ -3154,8 +3150,8 @@ public class StreamTests
               ],
               "hasNext": false
             }
-            """
-        ]);
+
+            """);
     }
 
     [Fact]
