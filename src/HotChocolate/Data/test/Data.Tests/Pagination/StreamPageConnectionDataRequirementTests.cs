@@ -17,7 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace HotChocolate.Data.Pagination;
 
 [Collection(PostgresCacheCollectionFixture.DefinitionName)]
-public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
+public class StreamPageConnectionDataRequirementTests(PostgreSqlResource resource)
 {
     [Fact]
     public async Task Execute_Should_ReadOnlyTheRequiredRowsBeforeTheResolverReturns_When_OnlyNodesAreSelected()
@@ -289,7 +289,7 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
     }
 
     [Fact]
-    public async Task Execute_Should_NotPreReadStreamedMembers_When_NodesAreStreamed()
+    public async Task Execute_Should_NotLoadStreamedMembers_When_NodesAreStreamed()
     {
         // arrange
         var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
@@ -309,6 +309,60 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
               "ReadAfterResolver": true
             }
             """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_LoadStreamedMembers_When_StreamIsDisabledByLiteral()
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(store);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ items(first: 2) { nodes @stream(if: false, initialCount: 1) { id } } }",
+            TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+
+        // assert
+        store.Summarize().MatchInlineSnapshot(
+            """
+            {
+              "RowsWereRead": true,
+              "ReadAfterResolver": false
+            }
+            """);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task Execute_Should_HonorTheStreamCondition_When_TheConditionIsAVariable(
+        bool stream,
+        bool expectedReadAfterResolver)
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var executor = await CreateExecutorAsync(store);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            OperationRequestBuilder.New()
+                .SetDocument(
+                    """
+                    query($s: Boolean!) {
+                      items(first: 2) {
+                        nodes @stream(if: $s, initialCount: 1) { id }
+                      }
+                    }
+                    """)
+                .SetVariableValues(new Dictionary<string, object?> { ["s"] = stream })
+                .Build(),
+            TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Equal(expectedReadAfterResolver, store.Summarize().ReadAfterResolver);
     }
 
     [Theory]
@@ -347,7 +401,7 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
     }
 
     [Fact]
-    public async Task Execute_Should_PreReadAndDisposeAtRequestEnd_When_TheFieldIsSourceGenerated()
+    public async Task Execute_Should_LoadRequirementsAndDisposeAtRequestEnd_When_TheFieldIsSourceGenerated()
     {
         // arrange
         var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
@@ -768,9 +822,9 @@ public class StreamPageConnectionPreReadTests(PostgreSqlResource resource)
 public static partial class GeneratedQuery
 {
     [UseConnection(IncludeTotalCount = true)]
-    public static async Task<StreamPageConnection<StreamPageConnectionPreReadTests.Item>> GetGeneratedItems(
+    public static async Task<StreamPageConnection<StreamPageConnectionDataRequirementTests.Item>> GetGeneratedItems(
         PagingArguments arguments,
-        [Service] StreamPageConnectionPreReadTests.Store store,
+        [Service] StreamPageConnectionDataRequirementTests.Store store,
         CancellationToken cancellationToken)
     {
         var context = store.CreateContext();
@@ -796,6 +850,6 @@ public static partial class GeneratedQuery
         => async context =>
         {
             await next(context);
-            context.Service<StreamPageConnectionPreReadTests.Store>().RecordResolverReturn();
+            context.Service<StreamPageConnectionDataRequirementTests.Store>().RecordResolverReturn();
         };
 }

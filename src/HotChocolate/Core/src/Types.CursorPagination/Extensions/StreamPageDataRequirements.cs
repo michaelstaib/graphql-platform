@@ -1,7 +1,7 @@
 namespace HotChocolate.Types.Pagination;
 
 [Flags]
-internal enum StreamPageReads
+internal enum StreamPageDataRequirements
 {
     None = 0,
     TotalCount = 1,

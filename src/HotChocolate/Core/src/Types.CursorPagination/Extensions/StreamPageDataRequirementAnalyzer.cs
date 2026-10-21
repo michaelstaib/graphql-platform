@@ -1,30 +1,31 @@
 using HotChocolate.Execution;
 using HotChocolate.Execution.Processing;
+using HotChocolate.Language;
 using HotChocolate.Resolvers;
 
 namespace HotChocolate.Types.Pagination;
 
-internal static class StreamPageReadResolver
+internal static class StreamPageDataRequirementAnalyzer
 {
     private const string ForwardCursors = "forwardCursors";
     private const string BackwardCursors = "backwardCursors";
 
-    public static StreamPageReads Resolve(IResolverContext context)
+    public static StreamPageDataRequirements Analyze(IResolverContext context)
     {
         var selection = context.Selection;
 
         if (selection.Type.NamedType() is not ObjectType connectionType)
         {
-            return StreamPageReads.None;
+            return StreamPageDataRequirements.None;
         }
 
         var deferFlags = context.Operation.CreateDeferConditionFlags(context.Variables);
         var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags);
-        var reads = StreamPageReads.None;
+        var requirements = StreamPageDataRequirements.None;
 
         foreach (var child in context.GetSelections(connectionType))
         {
-            if (IsDeferredOrStreamed(child, deferFlags, connectionDeferUsage))
+            if (IsDeferredOrStreamed(child, context.Variables, deferFlags, connectionDeferUsage))
             {
                 continue;
             }
@@ -33,23 +34,23 @@ internal static class StreamPageReadResolver
             {
                 case ConnectionType.Names.Edges:
                 case ConnectionType.Names.Nodes:
-                    reads |= StreamPageReads.AllRows;
+                    requirements |= StreamPageDataRequirements.AllRows;
                     break;
 
                 case ConnectionType.Names.TotalCount:
-                    reads |= StreamPageReads.TotalCount;
+                    requirements |= StreamPageDataRequirements.TotalCount;
                     break;
 
                 case ConnectionType.Names.PageInfo:
-                    reads |= ResolvePageInfo(context, child, deferFlags, connectionDeferUsage);
+                    requirements |= AnalyzePageInfo(context, child, deferFlags, connectionDeferUsage);
                     break;
             }
         }
 
-        return reads;
+        return requirements;
     }
 
-    private static StreamPageReads ResolvePageInfo(
+    private static StreamPageDataRequirements AnalyzePageInfo(
         IResolverContext context,
         Selection pageInfo,
         ConditionFlags deferFlags,
@@ -57,14 +58,14 @@ internal static class StreamPageReadResolver
     {
         if (pageInfo.Type.NamedType() is not ObjectType pageInfoType)
         {
-            return StreamPageReads.None;
+            return StreamPageDataRequirements.None;
         }
 
-        var reads = StreamPageReads.None;
+        var requirements = StreamPageDataRequirements.None;
 
         foreach (var child in context.GetSelections(pageInfoType, pageInfo))
         {
-            if (IsDeferredOrStreamed(child, deferFlags, connectionDeferUsage))
+            if (IsDeferredOrStreamed(child, context.Variables, deferFlags, connectionDeferUsage))
             {
                 continue;
             }
@@ -73,23 +74,24 @@ internal static class StreamPageReadResolver
             {
                 case PageInfo.Names.HasPreviousPage:
                 case PageInfo.Names.StartCursor:
-                    reads |= StreamPageReads.FirstRow;
+                    requirements |= StreamPageDataRequirements.FirstRow;
                     break;
 
                 case PageInfo.Names.HasNextPage:
                 case PageInfo.Names.EndCursor:
                 case ForwardCursors:
                 case BackwardCursors:
-                    reads |= StreamPageReads.AllRows;
+                    requirements |= StreamPageDataRequirements.AllRows;
                     break;
             }
         }
 
-        return reads;
+        return requirements;
     }
 
     private static bool IsDeferredOrStreamed(
         Selection selection,
+        IVariableValueCollection variables,
         ConditionFlags deferFlags,
         DeferUsage? connectionDeferUsage)
     {
@@ -102,7 +104,8 @@ internal static class StreamPageReadResolver
         {
             foreach (var directive in syntaxNode.Node.Directives)
             {
-                if (directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal))
+                if (directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal)
+                    && IsStreamEnabled(directive, variables))
                 {
                     return true;
                 }
@@ -110,5 +113,19 @@ internal static class StreamPageReadResolver
         }
 
         return false;
+    }
+
+    private static bool IsStreamEnabled(DirectiveNode directive, IVariableValueCollection variables)
+    {
+        var value = directive.GetArgumentValue(DirectiveNames.Stream.Arguments.If);
+
+        return value switch
+        {
+            null => true,
+            BooleanValueNode literal => literal.Value,
+            VariableNode variable => !variables.TryGetValue<BooleanValueNode>(variable.Name.Value, out var coerced)
+                || coerced.Value,
+            _ => true
+        };
     }
 }

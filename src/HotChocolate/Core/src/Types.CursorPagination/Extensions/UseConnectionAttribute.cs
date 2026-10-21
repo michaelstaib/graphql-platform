@@ -213,10 +213,10 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
 
             if (task.IsCompletedSuccessfully)
             {
-                return PreReadAsync(context);
+                return LoadRequirementsAsync(context);
             }
 
-            return AwaitAndPreReadAsync(task, context);
+            return AwaitAndLoadRequirementsAsync(task, context);
         };
 
     private static void Validate(IMiddlewareContext context)
@@ -240,15 +240,15 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
         }
     }
 
-    private static async ValueTask AwaitAndPreReadAsync(
+    private static async ValueTask AwaitAndLoadRequirementsAsync(
         ValueTask task,
         IMiddlewareContext context)
     {
         await task.ConfigureAwait(false);
-        await PreReadAsync(context).ConfigureAwait(false);
+        await LoadRequirementsAsync(context).ConfigureAwait(false);
     }
 
-    private static ValueTask PreReadAsync(IMiddlewareContext context)
+    private static ValueTask LoadRequirementsAsync(IMiddlewareContext context)
     {
         if (context.Result is not IStreamPageConnection connection)
         {
@@ -257,11 +257,11 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
 
         context.RegisterForCleanup(connection.DisposeAsync, CleanAfter.Request);
 
-        var reads = StreamPageReadResolver.Resolve(context);
+        var requirements = StreamPageDataRequirementAnalyzer.Analyze(context);
 
-        return reads is StreamPageReads.None
+        return requirements is StreamPageDataRequirements.None
             ? ValueTask.CompletedTask
-            : connection.PreReadAsync(reads, context.RequestAborted);
+            : connection.LoadRequirementsAsync(requirements, context.RequestAborted);
     }
 
     private static void ValidateContext(
