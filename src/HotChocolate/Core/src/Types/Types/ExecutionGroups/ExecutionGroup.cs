@@ -5,19 +5,15 @@ namespace HotChocolate.Types;
 /// <summary>
 /// Defines the selections below a field that run one after the other instead of in parallel.
 /// A member runs after its predecessor has completed its own resolver task. Member paths cannot pass through
-/// list fields, abstract types, other group roots or batch resolver fields, and members cannot be serial.
+/// list fields, abstract types, other group roots or batch resolver fields.
 /// </summary>
-public sealed class ExecutionGroupDefinition
+public sealed class ExecutionGroup
 {
-    /// <summary>
-    /// Initializes a new instance of <see cref="ExecutionGroupDefinition"/>.
-    /// </summary>
-    /// <param name="entries">The members of the group.</param>
-    public ExecutionGroupDefinition(IEnumerable<ExecutionGroupEntry> entries)
+    internal ExecutionGroup(ExecutionGroupConfiguration configuration)
     {
-        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(configuration);
 
-        Entries = [.. entries];
+        Entries = [.. configuration.Entries];
     }
 
     /// <summary>

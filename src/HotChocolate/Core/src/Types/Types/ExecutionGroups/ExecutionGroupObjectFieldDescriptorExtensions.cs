@@ -19,8 +19,8 @@ public static class ExecutionGroupObjectFieldDescriptorExtensions
         ArgumentNullException.ThrowIfNull(descriptor);
         ArgumentNullException.ThrowIfNull(entries);
 
-        var definition = new ExecutionGroupDefinition(entries);
-        descriptor.Extend().OnBeforeCreate(c => c.SetExecutionGroup(definition));
+        var configuration = new ExecutionGroupConfiguration(entries);
+        descriptor.Extend().OnBeforeCreate(c => c.ExecutionGroup = configuration);
         return descriptor;
     }
 }

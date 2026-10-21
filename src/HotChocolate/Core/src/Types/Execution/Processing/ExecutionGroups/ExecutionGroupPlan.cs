@@ -32,22 +32,22 @@ internal sealed class ExecutionGroupPlan
         => _nodes.TryGetValue(selectionId, out node);
 
     /// <summary>
-    /// Resolves the entries of <paramref name="definition"/> against the selection set of a group root.
+    /// Resolves the entries of <paramref name="group"/> against the selection set of a group root.
     /// Members are ordered by ascending priority, then by entry order, then by selection order.
     /// </summary>
     public static ExecutionGroupPlan Create(
         Operation operation,
         SelectionSet rootSelectionSet,
-        ExecutionGroupDefinition definition)
+        ExecutionGroup group)
     {
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(rootSelectionSet);
-        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(group);
 
         var found = new List<Candidate>();
         var ancestors = new List<Selection>();
 
-        foreach (var entry in definition.Entries)
+        foreach (var entry in group.Entries)
         {
             Collect(operation, rootSelectionSet, entry, 0, ancestors, found);
         }

@@ -16,9 +16,9 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
         {
             foreach (var field in objectType.Fields.AsSpan())
             {
-                if (field.ExecutionGroup is { } definition)
+                if (field.ExecutionGroup is { } group)
                 {
-                    ValidateGroup(schema, objectType, field, definition, errors);
+                    ValidateGroup(schema, objectType, field, group, errors);
                 }
             }
         }
@@ -28,10 +28,10 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
         ISchemaDefinition schema,
         ObjectType type,
         ObjectField field,
-        ExecutionGroupDefinition definition,
+        ExecutionGroup group,
         ICollection<ISchemaError> errors)
     {
-        if (definition.Entries.IsEmpty)
+        if (group.Entries.IsEmpty)
         {
             errors.Add(ExecutionGroup_NoEntries(type, field));
             return;
@@ -39,7 +39,7 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
 
         var paths = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var entry in definition.Entries)
+        foreach (var entry in group.Entries)
         {
             if (!paths.Add(entry.Path))
             {
@@ -60,9 +60,9 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
             errors.Add(ExecutionGroup_InvalidEntry(type, field, entry, reason));
         }
 
-        foreach (var entry in definition.Entries)
+        foreach (var entry in group.Entries)
         {
-            foreach (var other in definition.Entries)
+            foreach (var other in group.Entries)
             {
                 if (IsNestedBelow(entry, other))
                 {

@@ -3,10 +3,10 @@ using HotChocolate.Types;
 
 namespace HotChocolate.Execution.ExecutionGroups;
 
-public class ExecutionGroupDefinitionTests
+public class ExecutionGroupConfigurationTests
 {
     [Fact]
-    public void Create_Should_ExposeTheDefinition_When_FieldHasAnExecutionGroup()
+    public void Create_Should_ExposeTheExecutionGroup_When_FieldHasAnExecutionGroup()
     {
         // arrange
         // act

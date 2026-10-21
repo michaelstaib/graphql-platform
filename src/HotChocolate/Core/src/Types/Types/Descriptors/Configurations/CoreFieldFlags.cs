@@ -69,10 +69,5 @@ internal enum CoreFieldFlags : long
     /// <summary>
     /// The field registers an <c>ISelectionSetHandler</c> in its features.
     /// </summary>
-    HasSelectionSetHandler = 1L << 43,
-
-    /// <summary>
-    /// The field is the root of an execution group.
-    /// </summary>
-    ExecutionGroup = 1L << 44
+    HasSelectionSetHandler = 1L << 43
 }
