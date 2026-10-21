@@ -254,6 +254,8 @@ When using `@defer` or `@stream`, Hot Chocolate streams results to the client us
 
 If no streaming `Accept` header is provided, the default is `multipart/mixed`.
 
+`@stream` is a client request; the server honors it where streaming pays off. Hot Chocolate streams list fields whose resolver returns `IAsyncEnumerable<T>`, including `StreamPage<T>` behind `StreamPageConnection`, which combines with filtering, sorting and projection. Every other list is delivered whole: no pending entry, every item in the initial payload.
+
 ## Incremental Delivery Wire Format
 
 There are two wire formats for how incremental results are represented in the response payload.

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading.Channels;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Text.Json;
 using static HotChocolate.Execution.Processing.ValueCompletion;
@@ -13,12 +14,7 @@ namespace HotChocolate.Execution.Processing.Tasks;
 /// </summary>
 internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 {
-    private const int MaxItemsPerPayload = 100;
-
-    private const int Idle = 0;
-    private const int Moving = 1;
-    private const int DisposeRequested = 2;
-    private const int Disposed = 3;
+    private const int BufferedBatches = 4;
 
     private readonly OperationContext _parentContext;
     private readonly Selection _selection;
@@ -30,10 +26,12 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly IAsyncEnumerator<object?> _enumerator;
     private readonly CancellationTokenSource _cancellation;
     private readonly CancellationToken _cancellationToken;
+    private readonly int _maxItemsPerPayload;
+    private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
+    private Task _producer = Task.CompletedTask;
     private int _nextItemIndex;
     private int _streamBranchId;
-    private int _enumeratorState;
 
     public StreamTask(
         OperationContext parentContext,
@@ -44,6 +42,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         Path path,
         string? label,
         int firstStreamedIndex,
+        int maxItemsPerPayload,
         IAsyncEnumerator<object?> enumerator,
         CancellationTokenSource cancellation)
     {
@@ -55,6 +54,14 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         _path = path;
         _label = label;
         _nextItemIndex = firstStreamedIndex;
+        _maxItemsPerPayload = maxItemsPerPayload;
+        _buffer = Channel.CreateBounded<object?>(
+            new BoundedChannelOptions((int)Math.Min((long)maxItemsPerPayload * BufferedBatches, int.MaxValue))
+            {
+                SingleWriter = true,
+                SingleReader = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
         _enumerator = enumerator;
         _cancellation = cancellation;
         _cancellationToken = cancellation.Token;
@@ -79,28 +86,25 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             this);
 
     /// <summary>
+    /// Starts reading the items of the source into the buffer of the stream.
+    /// </summary>
+    public void StartProducer()
+        => _producer = ProduceAsync();
+
+    /// <summary>
     /// Stops the stream and disposes the enumerator exactly once.
     /// </summary>
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         Cancel();
 
-        while (true)
+        try
         {
-            var state = Volatile.Read(ref _enumeratorState);
-
-            if (state is DisposeRequested or Disposed)
-            {
-                return ValueTask.CompletedTask;
-            }
-
-            // an enumerator that is moving is disposed by the stream once the move has ended.
-            var next = state is Idle ? Disposed : DisposeRequested;
-
-            if (Interlocked.CompareExchange(ref _enumeratorState, next, state) == state)
-            {
-                return next is Disposed ? DisposeEnumeratorAsync() : ValueTask.CompletedTask;
-            }
+            await _producer.ConfigureAwait(false);
+        }
+        finally
+        {
+            _cancellation.Dispose();
         }
     }
 
@@ -116,32 +120,47 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
     }
 
+    private async Task ProduceAsync()
+    {
+        var writer = _buffer.Writer;
+
+        try
+        {
+            while (await _enumerator.MoveNextAsync().ConfigureAwait(false))
+            {
+                await writer.WriteAsync(_enumerator.Current, _cancellationToken).ConfigureAwait(false);
+            }
+
+            writer.Complete();
+        }
+        catch (Exception ex)
+        {
+            writer.TryComplete(ex);
+        }
+        finally
+        {
+            await _enumerator.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private async ValueTask StreamAsync()
     {
         var coordinator = _parentContext.DeferExecutionCoordinator;
         var token = _cancellationToken;
+        var reader = _buffer.Reader;
         var items = new List<object?>();
-        var move = default(ValueTask<bool>);
-        var isMoving = false;
 
         try
         {
-            if (!TryBeginMove())
-            {
-                return;
-            }
-
-            move = ReadNextAsync();
-            isMoving = true;
-
             while (true)
             {
-                isMoving = false;
-
-                var hasItem = await move.ConfigureAwait(false);
-
-                if (!hasItem)
+                if (!reader.TryRead(out var item))
                 {
+                    if (await reader.WaitToReadAsync(token).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+
                     if (!token.IsCancellationRequested)
                     {
                         coordinator.CompleteStream(_streamBranchId, errors: null);
@@ -151,54 +170,20 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
                 }
 
                 items.Clear();
-                items.Add(_enumerator.Current);
+                items.Add(item);
 
-                // everything the enumerator has readily available is delivered with the same payload.
-                var hasEnded = false;
-
-                while (items.Count < MaxItemsPerPayload)
+                while (items.Count < _maxItemsPerPayload && reader.TryRead(out item))
                 {
-                    if (!TryBeginMove())
-                    {
-                        return;
-                    }
-
-                    move = ReadNextAsync();
-                    isMoving = true;
-
-                    if (!move.IsCompletedSuccessfully)
-                    {
-                        break;
-                    }
-
-                    hasItem = move.Result;
-                    isMoving = false;
-
-                    if (!hasItem)
-                    {
-                        hasEnded = true;
-                        break;
-                    }
-
-                    items.Add(_enumerator.Current);
+                    items.Add(item);
                 }
+
+                var completesStream = reader.Completion.IsCompletedSuccessfully;
 
                 if (token.IsCancellationRequested
-                    || !await DeliverAsync(items, completesStream: hasEnded).ConfigureAwait(false)
-                    || hasEnded)
+                    || !await DeliverAsync(items, completesStream).ConfigureAwait(false)
+                    || completesStream)
                 {
                     return;
-                }
-
-                if (!isMoving)
-                {
-                    if (!TryBeginMove())
-                    {
-                        return;
-                    }
-
-                    move = ReadNextAsync();
-                    isMoving = true;
                 }
             }
         }
@@ -209,22 +194,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         catch (Exception ex)
         {
             coordinator.CompleteStream(_streamBranchId, CreateErrors(ex));
-        }
-        finally
-        {
-            if (isMoving)
-            {
-                Cancel();
-
-                try
-                {
-                    await move.ConfigureAwait(false);
-                }
-                catch
-                {
-                    // the stream already ended, we only wait for the pending move to settle.
-                }
-            }
         }
     }
 
@@ -254,7 +223,8 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
             try
             {
-                var listResult = CompleteItems(context, items, tasks, itemsBranchId);
+                var listResult = await CompleteItemsAsync(context, items, tasks, itemsBranchId)
+                    .ConfigureAwait(false);
 
                 if (tasks.Count > 0)
                 {
@@ -268,7 +238,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
                 if (listResult.IsNullOrInvalidated || result.Data is { IsValueNull: true })
                 {
-                    coordinator.ReleaseChildBranches(itemsBranchId);
+                    await coordinator.ReleaseChildBranches(itemsBranchId).ConfigureAwait(false);
                     await coordinator.EnqueueStreamItems(
                             result,
                             itemsBranchId,
@@ -314,7 +284,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
             if (tasks.Count > 0 && !tasksRegistered)
             {
-                coordinator.ReleaseChildBranches(itemsBranchId);
+                await coordinator.ReleaseChildBranches(itemsBranchId).ConfigureAwait(false);
 
                 foreach (var task in tasks)
                 {
@@ -336,7 +306,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
     }
 
-    private ResultElement CompleteItems(
+    private async ValueTask<ResultElement> CompleteItemsAsync(
         OperationContext context,
         List<object?> items,
         List<IExecutionTask> tasks,
@@ -384,7 +354,8 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
             context.Result.AddNonNullViolation(listResult.Path);
 
-            _parentContext.DeferExecutionCoordinator.ReleaseChildBranches(itemsBranchId);
+            await _parentContext.DeferExecutionCoordinator.ReleaseChildBranches(itemsBranchId)
+                .ConfigureAwait(false);
 
             foreach (var task in tasks)
             {
@@ -442,51 +413,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         catch (ObjectDisposedException)
         {
             // the stream already ended and released its resources.
-        }
-    }
-
-    private bool TryBeginMove()
-        => Interlocked.CompareExchange(ref _enumeratorState, Moving, Idle) == Idle;
-
-    private async ValueTask<bool> ReadNextAsync()
-    {
-        bool hasItem;
-
-        try
-        {
-            hasItem = await _enumerator.MoveNextAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            await EndMoveAsync().ConfigureAwait(false);
-            throw;
-        }
-
-        // an enumerator that was disposed during the move has no item to offer.
-        return await EndMoveAsync().ConfigureAwait(false) && hasItem;
-    }
-
-    private async ValueTask<bool> EndMoveAsync()
-    {
-        if (Interlocked.CompareExchange(ref _enumeratorState, Idle, Moving) == Moving)
-        {
-            return true;
-        }
-
-        Volatile.Write(ref _enumeratorState, Disposed);
-        await DisposeEnumeratorAsync().ConfigureAwait(false);
-        return false;
-    }
-
-    private async ValueTask DisposeEnumeratorAsync()
-    {
-        try
-        {
-            await _enumerator.DisposeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            _cancellation.Dispose();
         }
     }
 

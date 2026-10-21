@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
 namespace HotChocolate.Execution;
@@ -74,6 +75,18 @@ public sealed class ListPostProcessor<T> : IResolverResultPostProcessor
         }
 
         return ToExecutable(result).ToAsyncEnumerable(cancellationToken);
+    }
+
+    public bool TryCreateStream(object result, [NotNullWhen(true)] out IAsyncEnumerable<object?>? stream)
+    {
+        if (result is IAsyncEnumerable<T>)
+        {
+            stream = ToStreamResultAsync(result, CancellationToken.None);
+            return true;
+        }
+
+        stream = null;
+        return false;
     }
 
     private static IExecutable ToExecutable(object result)

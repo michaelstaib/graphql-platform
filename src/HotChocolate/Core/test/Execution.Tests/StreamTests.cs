@@ -5,6 +5,7 @@ using GreenDonut.Data;
 using HotChocolate.Execution.Configuration;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.Instrumentation;
+using HotChocolate.Execution.Options;
 using HotChocolate.Execution.Processing;
 using HotChocolate.Execution.Processing.Tasks;
 using HotChocolate.Types;
@@ -416,17 +417,23 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task Stream_Should_DeliverItemsReadyInOnePassInOnePayload_When_EnumeratorYieldsSynchronously()
+    public async Task Stream_Should_DeliverBufferedItemsInOnePayload_When_SourceYieldsSynchronously()
     {
         // arrange
         var state = new StreamState();
+        state.ReleaseHeld(1);
         var executor = await CreateExecutorAsync(state);
 
         // act
         var payloads = await ReadPayloadsAsync(
             executor,
-            "{ burstItems @stream(initialCount: 1) { id } }",
-            state.ReleaseNextItem);
+            "{ items(count: 4) @stream(initialCount: 1) { id held } }",
+            () =>
+            {
+                state.ReleaseHeld(2);
+                state.ReleaseHeld(3);
+                state.ReleaseHeld(4);
+            });
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -434,9 +441,10 @@ public class StreamTests
             """
             {
               "data": {
-                "burstItems": [
+                "items": [
                   {
-                    "id": 1
+                    "id": 1,
+                    "held": 1
                   }
                 ]
               },
@@ -444,7 +452,7 @@ public class StreamTests
                 {
                   "id": "2",
                   "path": [
-                    "burstItems"
+                    "items"
                   ]
                 }
               ],
@@ -458,13 +466,16 @@ public class StreamTests
                   "id": "2",
                   "items": [
                     {
-                      "id": 2
+                      "id": 2,
+                      "held": 2
                     },
                     {
-                      "id": 3
+                      "id": 3,
+                      "held": 3
                     },
                     {
-                      "id": 4
+                      "id": 4,
+                      "held": 4
                     }
                   ]
                 }
@@ -481,7 +492,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task Stream_Should_DeliverOnePayloadPerItem_When_ItemsAreProducedAsynchronously()
+    public async Task Stream_Should_DeliverOnePayloadPerItem_When_SourceWaitsBeforeEveryItem()
     {
         // arrange
         var state = new StreamState();
@@ -491,6 +502,7 @@ public class StreamTests
         var payloads = await ReadPayloadsAsync(
             executor,
             "{ gatedItems @stream(initialCount: 1) { id } }",
+            state.ReleaseNextItem,
             state.ReleaseNextItem,
             state.ReleaseNextItem);
 
@@ -544,6 +556,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "2"
@@ -556,32 +573,45 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task Stream_Should_BatchChildResolvers_When_ItemsAreReadyInOnePass()
+    public async Task Stream_Should_BatchChildResolvers_When_ItemsAreBufferedTogether()
     {
         // arrange
         var state = new StreamState();
+        state.ReleaseHeld(1);
         var executor = await CreateExecutorAsync(state);
 
         // act
         var payloads = await ReadPayloadsAsync(
             executor,
-            "{ lateBurstItems @stream { id loaded } }",
-            state.ReleaseNextItem);
+            "{ items(count: 5) @stream(initialCount: 1) { id loadedAfterFirst held } }",
+            () =>
+            {
+                state.ReleaseHeld(2);
+                state.ReleaseHeld(3);
+                state.ReleaseHeld(4);
+                state.ReleaseHeld(5);
+            });
 
         // assert
-        Assert.Equal(["1,2,3,4"], state.Batches);
+        Assert.Equal(["2,3,4,5"], state.Batches);
         payloads.MatchInlineSnapshots(
         [
             """
             {
               "data": {
-                "lateBurstItems": []
+                "items": [
+                  {
+                    "id": 1,
+                    "loadedAfterFirst": "initial",
+                    "held": 1
+                  }
+                ]
               },
               "pending": [
                 {
                   "id": "2",
                   "path": [
-                    "lateBurstItems"
+                    "items"
                   ]
                 }
               ],
@@ -595,20 +625,24 @@ public class StreamTests
                   "id": "2",
                   "items": [
                     {
-                      "id": 1,
-                      "loaded": "loaded-1"
-                    },
-                    {
                       "id": 2,
-                      "loaded": "loaded-2"
+                      "loadedAfterFirst": "loaded-2",
+                      "held": 2
                     },
                     {
                       "id": 3,
-                      "loaded": "loaded-3"
+                      "loadedAfterFirst": "loaded-3",
+                      "held": 3
                     },
                     {
                       "id": 4,
-                      "loaded": "loaded-4"
+                      "loadedAfterFirst": "loaded-4",
+                      "held": 4
+                    },
+                    {
+                      "id": 5,
+                      "loadedAfterFirst": "loaded-5",
+                      "held": 5
                     }
                   ]
                 }
@@ -644,6 +678,7 @@ public class StreamTests
                 }
             }
             """,
+            state.ReleaseNextItem,
             state.ReleaseNextItem,
             () => state.ReleaseName(1),
             () => state.ReleaseName(2));
@@ -699,6 +734,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "3"
@@ -823,7 +863,9 @@ public class StreamTests
             executor,
             "{ items(count: 2) { id gatedChildren @stream(initialCount: 1) { id } } }",
             () => state.ReleaseChildren(1),
-            () => state.ReleaseChildren(2));
+            () => state.ReleaseChildrenEnd(1),
+            () => state.ReleaseChildren(2),
+            () => state.ReleaseChildrenEnd(2));
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -883,6 +925,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "2"
@@ -903,6 +950,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "3"
@@ -926,8 +978,11 @@ public class StreamTests
             executor,
             "{ burstItems(count: 2) @stream(initialCount: 1) { id gatedChildren @stream(initialCount: 1) { id } } }",
             state.ReleaseNextItem,
+            state.ReleaseNextItem,
             () => state.ReleaseChildren(1),
-            () => state.ReleaseChildren(2));
+            () => state.ReleaseChildrenEnd(1),
+            () => state.ReleaseChildren(2),
+            () => state.ReleaseChildrenEnd(2));
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -992,6 +1047,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "2"
@@ -1012,6 +1072,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "3"
@@ -1032,6 +1097,11 @@ public class StreamTests
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "5"
@@ -1054,6 +1124,7 @@ public class StreamTests
         var payloads = await ReadPayloadsAsync(
             executor,
             "{ burstNames @stream(initialCount: 1) }",
+            state.ReleaseNextItem,
             state.ReleaseNextItem);
 
         // assert
@@ -1083,11 +1154,15 @@ public class StreamTests
                 {
                   "id": "2",
                   "items": [
-                    "b",
-                    "c"
+                    "b"
                   ]
                 }
               ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
               "completed": [
                 {
                   "id": "2"
@@ -1457,6 +1532,7 @@ public class StreamTests
     {
         // arrange
         var state = new StreamState();
+        state.ReleaseHeld(1);
         var executor = await CreateExecutorAsync(state);
 
         // act
@@ -1464,8 +1540,9 @@ public class StreamTests
                 executor,
                 """
                 {
-                    burstItems(count: 4) @stream(initialCount: 1) {
+                    items(count: 4) @stream(initialCount: 1) {
                         id
+                        held
                         strict
                         ... @defer {
                             gatedName
@@ -1475,10 +1552,12 @@ public class StreamTests
                 """,
                 () =>
                 {
+                    state.ReleaseHeld(2);
+                    state.ReleaseHeld(3);
+                    state.ReleaseHeld(4);
                     state.ReleaseName(2);
                     state.ReleaseName(3);
                     state.ReleaseName(4);
-                    state.ReleaseNextItem();
                 },
                 () => state.ReleaseName(1))
             .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
@@ -1489,9 +1568,10 @@ public class StreamTests
             """
             {
               "data": {
-                "burstItems": [
+                "items": [
                   {
                     "id": 1,
+                    "held": 1,
                     "strict": "ok-1"
                   }
                 ]
@@ -1500,14 +1580,14 @@ public class StreamTests
                 {
                   "id": "2",
                   "path": [
-                    "burstItems",
+                    "items",
                     0
                   ]
                 },
                 {
                   "id": "3",
                   "path": [
-                    "burstItems"
+                    "items"
                   ]
                 }
               ],
@@ -1523,7 +1603,7 @@ public class StreamTests
                     {
                       "message": "strict item",
                       "path": [
-                        "burstItems",
+                        "items",
                         2,
                         "strict"
                       ]
@@ -1902,12 +1982,14 @@ public class StreamTests
     public async Task Stream_Should_EndWithErrors_When_ItemsBatchCannotBeStarted()
     {
         // arrange
-        var executor = await CreateFaultingExecutorAsync(new StreamState(), failOnCall: 2);
+        var state = new StreamState();
+        var executor = await CreateFaultingExecutorAsync(state, failOnCall: 2);
 
         // act
         var payloads = await ReadPayloadsAsync(
                 executor,
-                "{ items(count: 3) @stream(initialCount: 1) { id } }")
+                "{ gatedItems @stream(initialCount: 1) { id } }",
+                state.ReleaseNextItem)
             .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
         // assert
@@ -1916,7 +1998,7 @@ public class StreamTests
             """
             {
               "data": {
-                "items": [
+                "gatedItems": [
                   {
                     "id": 1
                   }
@@ -1926,7 +2008,7 @@ public class StreamTests
                 {
                   "id": "2",
                   "path": [
-                    "items"
+                    "gatedItems"
                   ]
                 }
               ],
@@ -1942,7 +2024,7 @@ public class StreamTests
                     {
                       "message": "Unexpected Execution Error",
                       "path": [
-                        "items"
+                        "gatedItems"
                       ]
                     }
                   ]
@@ -1959,13 +2041,13 @@ public class StreamTests
     {
         // arrange
         var state = new StreamState();
-        var executor = await CreateFaultingExecutorAsync(state, failOnCall: 5);
+        var executor = await CreateFaultingExecutorAsync(state, failOnCall: 4);
 
         // act
         var payloads = await ReadPayloadsAsync(
                 executor,
-                "{ requiredItems(count: 3) @stream(initialCount: 1) { id ... @defer { gatedName } } }",
-                () => { },
+                "{ gatedRequiredItems(count: 2) @stream(initialCount: 1) { id ... @defer { gatedName } } }",
+                state.ReleaseNextItem,
                 () => state.ReleaseName(1))
             .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
@@ -1975,7 +2057,7 @@ public class StreamTests
             """
             {
               "data": {
-                "requiredItems": [
+                "gatedRequiredItems": [
                   {
                     "id": 1
                   }
@@ -1985,14 +2067,14 @@ public class StreamTests
                 {
                   "id": "2",
                   "path": [
-                    "requiredItems",
+                    "gatedRequiredItems",
                     0
                   ]
                 },
                 {
                   "id": "3",
                   "path": [
-                    "requiredItems"
+                    "gatedRequiredItems"
                   ]
                 }
               ],
@@ -2008,7 +2090,7 @@ public class StreamTests
                     {
                       "message": "Unexpected Execution Error",
                       "path": [
-                        "requiredItems"
+                        "gatedRequiredItems"
                       ]
                     }
                   ]
@@ -2037,6 +2119,794 @@ public class StreamTests
             """
         ]);
     }
+
+    [Theory]
+    [InlineData("taskItems")]
+    [InlineData("valueTaskItems")]
+    [InlineData("queryableItems")]
+    [InlineData("executableItems")]
+    [InlineData("serviceItems")]
+    [InlineData("pureItems")]
+    [InlineData("lazyItems")]
+    public async Task Stream_Should_BeIgnored_When_ResultIsNotAsyncEnumerable(string field)
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            $"{{ items: {field}(count: 3) @stream(initialCount: 1) {{ id }} }}",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<OperationResult>(result).MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 2
+                  },
+                  {
+                    "id": 3
+                  }
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_StreamValueTypeElements_When_SourceIsAsyncEnumerableOfInt()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ numbers(count: 4) @stream(initialCount: 1) }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<ResponseStream>(result).MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "numbers": [
+                  1
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "numbers"
+                  ]
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    2,
+                    3,
+                    4
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_LimitBatchesToDefaultMaximum_When_MoreItemsAreBufferedThanMaximum()
+    {
+        // arrange
+        var state = new StreamState();
+        state.ReleaseHeld(1);
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+            executor,
+            "{ items(count: 20) @stream(initialCount: 1) { id held } }",
+            () =>
+            {
+                for (var id = 2; id <= 20; id++)
+                {
+                    state.ReleaseHeld(id);
+                }
+            });
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1,
+                    "held": 1
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "held": 2
+                    },
+                    {
+                      "id": 3,
+                      "held": 3
+                    },
+                    {
+                      "id": 4,
+                      "held": 4
+                    },
+                    {
+                      "id": 5,
+                      "held": 5
+                    },
+                    {
+                      "id": 6,
+                      "held": 6
+                    },
+                    {
+                      "id": 7,
+                      "held": 7
+                    },
+                    {
+                      "id": 8,
+                      "held": 8
+                    },
+                    {
+                      "id": 9,
+                      "held": 9
+                    },
+                    {
+                      "id": 10,
+                      "held": 10
+                    },
+                    {
+                      "id": 11,
+                      "held": 11
+                    },
+                    {
+                      "id": 12,
+                      "held": 12
+                    },
+                    {
+                      "id": 13,
+                      "held": 13
+                    },
+                    {
+                      "id": 14,
+                      "held": 14
+                    },
+                    {
+                      "id": 15,
+                      "held": 15
+                    },
+                    {
+                      "id": 16,
+                      "held": 16
+                    },
+                    {
+                      "id": 17,
+                      "held": 17
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 18,
+                      "held": 18
+                    },
+                    {
+                      "id": 19,
+                      "held": 19
+                    },
+                    {
+                      "id": 20,
+                      "held": 20
+                    }
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_LimitBatchesToConfiguredMaximum_When_OptionIsChanged()
+    {
+        // arrange
+        var state = new StreamState();
+        state.ReleaseHeld(1);
+        var executor = await CreateExecutorAsync(state, maxStreamBatchSize: 2);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+            executor,
+            "{ items(count: 6) @stream(initialCount: 1) { id held } }",
+            () =>
+            {
+                for (var id = 2; id <= 6; id++)
+                {
+                    state.ReleaseHeld(id);
+                }
+            });
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1,
+                    "held": 1
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "held": 2
+                    },
+                    {
+                      "id": 3,
+                      "held": 3
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 4,
+                      "held": 4
+                    },
+                    {
+                      "id": 5,
+                      "held": 5
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 6,
+                      "held": 6
+                    }
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_DeliverBufferedItemsBeforeErrors_When_SourceThrowsAfterItems()
+    {
+        // arrange
+        var state = new StreamState();
+        state.ReleaseHeld(1);
+        var executor = await CreateExecutorAsync(state, maxStreamBatchSize: 2);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+            executor,
+            "{ failingItems(count: 5) @stream(initialCount: 1) { id held } }",
+            () =>
+            {
+                for (var id = 2; id <= 5; id++)
+                {
+                    state.ReleaseHeld(id);
+                }
+            });
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "failingItems": [
+                  {
+                    "id": 1,
+                    "held": 1
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "failingItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "held": 2
+                    },
+                    {
+                      "id": 3,
+                      "held": 3
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 4,
+                      "held": 4
+                    },
+                    {
+                      "id": 5,
+                      "held": 5
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "enumerator failed",
+                      "path": [
+                        "failingItems"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    public void MaxStreamBatchSize_Should_BeClampedToOne_When_ValueIsBelowOne(int value)
+    {
+        // arrange
+        var options = new RequestExecutorOptions();
+
+        // act
+        options.MaxStreamBatchSize = value;
+
+        // assert
+        Assert.Equal(1, options.MaxStreamBatchSize);
+    }
+
+    [Fact]
+    public void MaxStreamBatchSize_Should_DefaultToSixteen_When_NotConfigured()
+    {
+        // arrange
+        // act
+        var options = new RequestExecutorOptions();
+
+        // assert
+        Assert.Equal(16, options.MaxStreamBatchSize);
+    }
+
+    [Fact]
+    public async Task Stream_Should_StopProducerAndDisposeOnce_When_ClientDisconnectsWhileBufferIsFull()
+    {
+        // arrange
+        var state = new StreamState();
+        var listener = new StreamTaskListener(disposeBeforeStart: false);
+        var executor = await CreateBuilder(state)
+            .AddDiagnosticEventListener(_ => listener)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        using var requestAborted = new CancellationTokenSource();
+        var result = await executor.ExecuteAsync(
+            "{ bufferingItems @stream(initialCount: 1) { id blockedOnSecond } }",
+            requestAborted.Token);
+        var stream = Assert.IsType<ResponseStream>(result);
+        await state.SecondItemBlocked.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // act
+        state.ReleaseNextItem();
+        await WaitUntilAsync(() => state.Produced >= 67);
+        await requestAborted.CancelAsync();
+        await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await listener.TaskCompleted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await stream.DisposeAsync();
+
+        // assert
+        Assert.Equal(1, state.EnumeratorDisposeCalls);
+        Assert.Equal(67, state.Produced);
+    }
+
+    [Fact]
+    public async Task Stream_Should_StopSourceAndDisposeOnce_When_FailedBatchLeavesMoreItems()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+                executor,
+                "{ gatedItems(count: 6) @stream(initialCount: 1) { id strict } }",
+                state.ReleaseNextItem,
+                state.ReleaseNextItem)
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(1, state.EnumeratorDisposeCalls);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "gatedItems": [
+                  {
+                    "id": 1,
+                    "strict": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "gatedItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "strict": "ok-2"
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "strict item",
+                      "path": [
+                        "gatedItems",
+                        2,
+                        "strict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_EndResponse_When_DroppedBatchHasNestedStreamWithNestedDefer()
+    {
+        // arrange
+        var state = new StreamState();
+        state.ReleaseHeld(1);
+        state.ReleaseStrict(1);
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsWithStepsAsync(
+                executor,
+                """
+                {
+                    items(count: 3) @stream(initialCount: 1) {
+                        id
+                        held
+                        gatedStrict
+                        nestedChildren @stream(initialCount: 0) {
+                            id
+                            ... @defer {
+                                gatedName
+                            }
+                        }
+                    }
+                }
+                """,
+                [
+                    async () =>
+                    {
+                        state.ReleaseHeld(2);
+                        state.ReleaseHeld(3);
+                        await state.WaitForNameStartedAsync(21);
+                        await state.WaitForNameStartedAsync(31);
+                        state.ReleaseStrict(2);
+                        state.ReleaseStrict(3);
+                        state.ReleaseName(21);
+                        state.ReleaseName(31);
+                    }
+                ])
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await state.NestedDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(2, state.NestedDisposeCalls);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1,
+                    "held": 1,
+                    "gatedStrict": "ok-1",
+                    "nestedChildren": null
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "gated strict item",
+                      "path": [
+                        "items",
+                        2,
+                        "gatedStrict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_EndResponse_When_DroppedBatchHasNestedStreamThatNeverEnds()
+    {
+        // arrange
+        var state = new StreamState();
+        state.ReleaseHeld(1);
+        state.ReleaseStrict(1);
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsWithStepsAsync(
+                executor,
+                """
+                {
+                    items(count: 3) @stream(initialCount: 1) {
+                        id
+                        held
+                        gatedStrict
+                        nestedChildren @stream(initialCount: 0) {
+                            id
+                            gatedName
+                        }
+                    }
+                }
+                """,
+                [
+                    async () =>
+                    {
+                        state.ReleaseHeld(2);
+                        state.ReleaseHeld(3);
+                        await state.WaitForNameStartedAsync(21);
+                        await state.WaitForNameStartedAsync(31);
+                        state.ReleaseStrict(2);
+                        state.ReleaseStrict(3);
+                        state.ReleaseName(21);
+                        state.ReleaseName(31);
+                    }
+                ])
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await state.NestedDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(2, state.NestedDisposeCalls);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1,
+                    "held": 1,
+                    "gatedStrict": "ok-1",
+                    "nestedChildren": null
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "gated strict item",
+                      "path": [
+                        "items",
+                        2,
+                        "gatedStrict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(s_timeout);
+
+        while (!condition())
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+    }
+
+    private static async Task<IRequestExecutor> CreateExecutorAsync(StreamState state, int maxStreamBatchSize)
+        => await CreateBuilder(state)
+            .ModifyRequestOptions(o => o.MaxStreamBatchSize = maxStreamBatchSize)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
     private static async Task<IRequestExecutor> CreateExecutorAsync(StreamState? state = null)
         => await CreateBuilder(state ?? new StreamState()).BuildRequestExecutorAsync();
@@ -2072,6 +2942,20 @@ public class StreamTests
         IRequestExecutor executor,
         string query,
         params Action[] steps)
+        => await ReadPayloadsWithStepsAsync(
+            executor,
+            query,
+            [.. steps.Select(step => new Func<Task>(
+                () =>
+                {
+                    step();
+                    return Task.CompletedTask;
+                }))]);
+
+    private static async Task<List<string>> ReadPayloadsWithStepsAsync(
+        IRequestExecutor executor,
+        string query,
+        Func<Task>[] steps)
     {
         var result = await executor.ExecuteAsync(query, TestContext.Current.CancellationToken);
         var payloads = new List<string>();
@@ -2086,7 +2970,7 @@ public class StreamTests
 
             if (nextStep < steps.Length)
             {
-                steps[nextStep++]();
+                await steps[nextStep++]().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
             }
         }
 
@@ -2098,8 +2982,14 @@ public class StreamTests
         private readonly SemaphoreSlim _items = new(0);
         private readonly ConcurrentDictionary<int, TaskCompletionSource> _names = new();
         private readonly ConcurrentDictionary<int, TaskCompletionSource> _children = new();
+        private readonly ConcurrentDictionary<int, TaskCompletionSource> _childrenEnd = new();
+        private readonly ConcurrentDictionary<int, TaskCompletionSource> _held = new();
+        private readonly ConcurrentDictionary<int, TaskCompletionSource> _namesStarted = new();
+        private readonly ConcurrentDictionary<int, TaskCompletionSource> _strict = new();
         private readonly List<string> _batches = [];
         private int _enumeratorDisposeCalls;
+        private int _nestedDisposeCalls;
+        private int _produced;
 
         public IReadOnlyList<string> Batches
         {
@@ -2113,6 +3003,34 @@ public class StreamTests
         }
 
         public int EnumeratorDisposeCalls => Volatile.Read(ref _enumeratorDisposeCalls);
+
+        public int NestedDisposeCalls => Volatile.Read(ref _nestedDisposeCalls);
+
+        public int Produced => Volatile.Read(ref _produced);
+
+        public TaskCompletionSource NestedDisposed { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondItemBlocked { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseStrict(int id) => GetGate(_strict, id).TrySetResult();
+
+        public Task WaitForStrictAsync(int id) => GetGate(_strict, id).Task;
+
+        public void NameStarted(int id) => GetGate(_namesStarted, id).TrySetResult();
+
+        public Task WaitForNameStartedAsync(int id) => GetGate(_namesStarted, id).Task;
+
+        public void ItemProduced() => Interlocked.Increment(ref _produced);
+
+        public void NestedDisposedCalled()
+        {
+            if (Interlocked.Increment(ref _nestedDisposeCalls) == 2)
+            {
+                NestedDisposed.TrySetResult();
+            }
+        }
 
         public TaskCompletionSource EnumeratorDisposed { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2128,6 +3046,14 @@ public class StreamTests
         public void ReleaseChildren(int id) => GetGate(_children, id).TrySetResult();
 
         public Task WaitForChildrenAsync(int id) => GetGate(_children, id).Task;
+
+        public void ReleaseHeld(int id) => GetGate(_held, id).TrySetResult();
+
+        public Task WaitForHeldAsync(int id) => GetGate(_held, id).Task;
+
+        public void ReleaseChildrenEnd(int id) => GetGate(_childrenEnd, id).TrySetResult();
+
+        public Task WaitForChildrenEndAsync(int id) => GetGate(_childrenEnd, id).Task;
 
         public void AddBatch(IReadOnlyList<int> keys)
         {
@@ -2168,8 +3094,58 @@ public class StreamTests
 
         public async Task<string> GetGatedNameAsync([Service] StreamState state)
         {
+            state.NameStarted(id);
             await state.WaitForNameAsync(id);
             return $"item-{id}";
+        }
+
+        public async Task<string> GetGatedStrictAsync([Service] StreamState state)
+        {
+            await state.WaitForStrictAsync(id);
+
+            return id == 3
+                ? throw new GraphQLException("gated strict item")
+                : $"ok-{id}";
+        }
+
+        public async Task<string> GetBlockedOnSecondAsync(
+            [Service] StreamState state,
+            CancellationToken cancellationToken)
+        {
+            if (id == 2)
+            {
+                state.SecondItemBlocked.TrySetResult();
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return $"ok-{id}";
+        }
+
+        public IAsyncEnumerable<Item>? GetNestedChildren([Service] StreamState state)
+            => id == 1 ? null : ProduceNestedChildrenAsync(state);
+
+        private async IAsyncEnumerable<Item> ProduceNestedChildrenAsync(
+            StreamState state,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                yield return new Item((id * 10) + 1);
+
+                await state.WaitForChildrenAsync(id).WaitAsync(cancellationToken);
+
+                yield return new Item((id * 10) + 2);
+            }
+            finally
+            {
+                state.NestedDisposedCalled();
+            }
+        }
+
+        public async Task<int> GetHeldAsync([Service] StreamState state)
+        {
+            await state.WaitForHeldAsync(id);
+            return id;
         }
 
         public async IAsyncEnumerable<Item> GetGatedChildren(
@@ -2181,10 +3157,17 @@ public class StreamTests
             await state.WaitForChildrenAsync(id).WaitAsync(cancellationToken);
 
             yield return new Item((id * 10) + 2);
+
+            await state.WaitForChildrenEndAsync(id).WaitAsync(cancellationToken);
         }
 
         public async Task<string> GetLoadedAsync(StreamLoadedDataLoader loader, CancellationToken cancellationToken)
             => await loader.LoadRequiredAsync(id, cancellationToken);
+
+        public async Task<string> GetLoadedAfterFirstAsync(
+            StreamLoadedDataLoader loader,
+            CancellationToken cancellationToken)
+            => id == 1 ? "initial" : await loader.LoadRequiredAsync(id, cancellationToken);
 
         public async Task<string?> GetFlakyAsync()
         {
@@ -2207,37 +3190,67 @@ public class StreamTests
 
     public sealed class StreamQuery
     {
-        public async Task<List<Item>> GetItemsAsync(int count)
-        {
-            await Task.Yield();
-            return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
-        }
+        public IAsyncEnumerable<Item> GetItems(int count)
+            => ProduceItemsAsync(count);
 
         [GraphQLType<NonNullType<ListType<NonNullType<ObjectType<Item>>>>>]
-        public async Task<List<Item>> GetRequiredItemsAsync(int count)
-        {
-            await Task.Yield();
-            return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
-        }
+        public IAsyncEnumerable<Item> GetRequiredItems(int count)
+            => ProduceItemsAsync(count);
 
         [GraphQLType<NonNullType<ListType<ObjectType<Item>>>>]
-        public async Task<List<Item>> GetOptionalItemsAsync(int count)
-        {
-            await Task.Yield();
-            return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
-        }
+        public IAsyncEnumerable<Item> GetOptionalItems(int count)
+            => ProduceItemsAsync(count);
 
         [GraphQLType<ListType<NonNullType<ObjectType<Item>>>>]
-        public async Task<List<Item>> GetStrictItemsAsync(int count)
+        public IAsyncEnumerable<Item> GetStrictItems(int count)
+            => ProduceItemsAsync(count);
+
+        public async IAsyncEnumerable<int> GetNumbers(int count)
         {
             await Task.Yield();
-            return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
+
+            for (var i = 1; i <= count; i++)
+            {
+                yield return i;
+            }
+        }
+
+        public async Task<List<Item>> GetTaskItems(int count)
+        {
+            await Task.Yield();
+            return CreateItems(count);
+        }
+
+        public async ValueTask<List<Item>> GetValueTaskItems(int count)
+        {
+            await Task.Yield();
+            return CreateItems(count);
+        }
+
+        public IQueryable<Item> GetQueryableItems(int count)
+            => CreateItems(count).AsQueryable();
+
+        public IExecutable<Item> GetExecutableItems(int count)
+            => Executable.From(CreateItems(count).AsQueryable());
+
+        public List<Item> GetServiceItems([Service] StreamState state, int count)
+            => CreateItems(count);
+
+        public List<Item> GetPureItems(int count)
+            => CreateItems(count);
+
+        public IEnumerable<Item> GetLazyItems(int count)
+        {
+            for (var i = 1; i <= count; i++)
+            {
+                yield return new Item(i);
+            }
         }
 
         public async IAsyncEnumerable<Item> GetBurstItems(
             [Service] StreamState state,
             [EnumeratorCancellation] CancellationToken cancellationToken,
-            int count = 4)
+            int count = 2)
         {
             yield return new Item(1);
 
@@ -2247,6 +3260,8 @@ public class StreamTests
             {
                 yield return new Item(i);
             }
+
+            await state.WaitForNextItemAsync(cancellationToken);
         }
 
         [GraphQLType<NonNullType<ObjectType<PageConnection<Item>>>>]
@@ -2269,45 +3284,98 @@ public class StreamTests
             await state.WaitForNextItemAsync(cancellationToken);
 
             yield return "b";
-            yield return "c";
-        }
 
-        public async IAsyncEnumerable<Item> GetLateBurstItems(
-            [Service] StreamState state,
-            [EnumeratorCancellation] CancellationToken cancellationToken)
-        {
             await state.WaitForNextItemAsync(cancellationToken);
-
-            for (var i = 1; i <= 4; i++)
-            {
-                yield return new Item(i);
-            }
         }
 
-        public async IAsyncEnumerable<Item> GetGatedItems(
+        public IAsyncEnumerable<Item> GetGatedItems(
             [Service] StreamState state,
-            [EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            yield return new Item(1);
+            int count = 3)
+            => ProduceGatedItemsAsync(state, count);
 
-            for (var i = 2; i <= 3; i++)
-            {
-                await state.WaitForNextItemAsync(cancellationToken);
-                yield return new Item(i);
-            }
-        }
+        [GraphQLType<NonNullType<ListType<NonNullType<ObjectType<Item>>>>>]
+        public IAsyncEnumerable<Item> GetGatedRequiredItems(
+            [Service] StreamState state,
+            int count = 3)
+            => ProduceGatedItemsAsync(state, count);
 
         public async IAsyncEnumerable<Item> GetFailingItems(
-            [EnumeratorCancellation] CancellationToken cancellationToken)
+            [EnumeratorCancellation] CancellationToken cancellationToken,
+            int count = 2)
         {
-            yield return new Item(1);
-            yield return new Item(2);
+            for (var i = 1; i <= count; i++)
+            {
+                yield return new Item(i);
+            }
+
             await Task.Delay(10, cancellationToken);
             throw new GraphQLException("enumerator failed");
         }
 
         public IAsyncEnumerable<Item> GetEndlessItems([Service] StreamState state)
             => new EndlessItems(state);
+
+        public async IAsyncEnumerable<Item> GetBufferingItems(
+            [Service] StreamState state,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            try
+            {
+                state.ItemProduced();
+                yield return new Item(1);
+
+                state.ItemProduced();
+                yield return new Item(2);
+
+                await state.WaitForNextItemAsync(cancellationToken);
+
+                for (var i = 3; ; i++)
+                {
+                    state.ItemProduced();
+                    yield return new Item(i);
+                }
+            }
+            finally
+            {
+                state.EnumeratorDisposedCalled();
+            }
+        }
+
+        private static List<Item> CreateItems(int count)
+            => [.. Enumerable.Range(1, count).Select(i => new Item(i))];
+
+        private static async IAsyncEnumerable<Item> ProduceGatedItemsAsync(
+            StreamState state,
+            int count,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                yield return new Item(1);
+
+                for (var i = 2; i <= count; i++)
+                {
+                    await state.WaitForNextItemAsync(cancellationToken);
+                    yield return new Item(i);
+                }
+
+                await state.WaitForNextItemAsync(cancellationToken);
+            }
+            finally
+            {
+                state.EnumeratorDisposedCalled();
+            }
+        }
+
+        private static async IAsyncEnumerable<Item> ProduceItemsAsync(int count)
+        {
+            await Task.Yield();
+
+            for (var i = 1; i <= count; i++)
+            {
+                yield return new Item(i);
+            }
+        }
     }
 
     public sealed class ConnectionLike
