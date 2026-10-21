@@ -19,8 +19,20 @@ internal static class StreamPageDataRequirementAnalyzer
             return StreamPageDataRequirements.None;
         }
 
-        var deferFlags = context.Operation.CreateDeferConditionFlags(context.Variables);
-        var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags);
+        var cache = selection.Features.GetOrSetSafe(
+            static state => StreamPageDataRequirementCache.Create(state.Selection, state.ConnectionType),
+            (Selection: selection, ConnectionType: connectionType));
+
+        return cache.GetOrAnalyze(context, connectionType);
+    }
+
+    public static StreamPageDataRequirements Compute(
+        IResolverContext context,
+        ObjectType connectionType,
+        ConditionFlags deferFlags)
+    {
+        var selection = context.Selection;
+        var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags.Word0, deferFlags.Overflow);
         var requirements = StreamPageDataRequirements.None;
 
         foreach (var child in context.GetSelections(connectionType))
@@ -49,6 +61,9 @@ internal static class StreamPageDataRequirementAnalyzer
 
         return requirements;
     }
+
+    public static bool IsStreamEnabled(string variableName, IVariableValueCollection variables)
+        => !variables.TryGetValue<BooleanValueNode>(variableName, out var coerced) || coerced.Value;
 
     private static StreamPageDataRequirements AnalyzePageInfo(
         IResolverContext context,
@@ -95,7 +110,7 @@ internal static class StreamPageDataRequirementAnalyzer
         ConditionFlags deferFlags,
         DeferUsage? connectionDeferUsage)
     {
-        if (selection.GetPrimaryDeferUsage(deferFlags) != connectionDeferUsage)
+        if (selection.GetPrimaryDeferUsage(deferFlags.Word0, deferFlags.Overflow) != connectionDeferUsage)
         {
             return true;
         }
@@ -123,8 +138,7 @@ internal static class StreamPageDataRequirementAnalyzer
         {
             null => true,
             BooleanValueNode literal => literal.Value,
-            VariableNode variable => !variables.TryGetValue<BooleanValueNode>(variable.Name.Value, out var coerced)
-                || coerced.Value,
+            VariableNode variable => IsStreamEnabled(variable.Name.Value, variables),
             _ => true
         };
     }
