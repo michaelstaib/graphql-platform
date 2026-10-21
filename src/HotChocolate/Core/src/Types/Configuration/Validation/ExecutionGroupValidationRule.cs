@@ -18,13 +18,14 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
             {
                 if (field.ExecutionGroup is { } definition)
                 {
-                    ValidateGroup(objectType, field, definition, errors);
+                    ValidateGroup(schema, objectType, field, definition, errors);
                 }
             }
         }
     }
 
     private static void ValidateGroup(
+        ISchemaDefinition schema,
         ObjectType type,
         ObjectField field,
         ExecutionGroupDefinition definition,
@@ -46,7 +47,7 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
                 continue;
             }
 
-            if (TryValidateEntry(field, entry, out var reason))
+            if (TryValidateEntry(schema, field, entry, out var reason))
             {
                 continue;
             }
@@ -90,7 +91,11 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
         return true;
     }
 
-    private static bool TryValidateEntry(ObjectField root, ExecutionGroupEntry entry, out string reason)
+    private static bool TryValidateEntry(
+        ISchemaDefinition schema,
+        ObjectField root,
+        ExecutionGroupEntry entry,
+        out string reason)
     {
         foreach (var name in entry.Segments)
         {
@@ -101,12 +106,36 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
             }
         }
 
-        if (root.Type.NamedType() is not IComplexTypeDefinition currentType)
+        switch (root.Type.NamedType())
         {
-            reason = "cannot be resolved because the type of the group root must be an object type or interface type.";
-            return false;
-        }
+            case ObjectType objectType:
+                return TryValidatePath(objectType, entry, out reason);
 
+            case InterfaceType interfaceType:
+                foreach (var possibleType in schema.GetPossibleTypes(interfaceType))
+                {
+                    if (!TryValidatePath(possibleType, entry, out reason))
+                    {
+                        return false;
+                    }
+                }
+
+                reason = string.Empty;
+                return true;
+
+            default:
+                reason =
+                    "cannot be resolved because the type of the group root must be an object type "
+                    + "or interface type.";
+                return false;
+        }
+    }
+
+    private static bool TryValidatePath(
+        IComplexTypeDefinition currentType,
+        ExecutionGroupEntry entry,
+        out string reason)
+    {
         for (var i = 0; i < entry.Segments.Length; i++)
         {
             var segment = entry.Segments[i];

@@ -1,3 +1,4 @@
+using HotChocolate.Resolvers;
 using HotChocolate.Types;
 
 namespace HotChocolate.Execution.ExecutionGroups;
@@ -227,6 +228,66 @@ public class ExecutionGroupDefinitionTests
         ]);
     }
 
+    [Fact]
+    public void Create_Should_Throw_When_ImplementingTypeHasANestedGroupRootOnThePath()
+    {
+        // arrange
+        // act
+        var exception = Assert.Throws<SchemaException>(
+            () => CreateInterfaceSchema(
+                new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                nodes => { },
+                pageInfo => pageInfo.ExecutionGroup(
+                    new ExecutionGroupEntry("hasNextPage", 0, isStreamable: false))));
+
+        // assert
+        GetMessages(exception).MatchInlineSnapshots(
+        [
+            "The execution group of field `Query.conn` is invalid: the entry `pageInfo.hasNextPage` "
+            + "passes through the field `ConnB.pageInfo` that is an execution group root."
+        ]);
+    }
+
+    [Fact]
+    public void Create_Should_Throw_When_ImplementingTypeHasASerialMember()
+    {
+        // arrange
+        // act
+        var exception = Assert.Throws<SchemaException>(
+            () => CreateInterfaceSchema(
+                new ExecutionGroupEntry("nodes", 0, isStreamable: false),
+                nodes => nodes.Serial(),
+                pageInfo => { }));
+
+        // assert
+        GetMessages(exception).MatchInlineSnapshots(
+        [
+            "The execution group of field `Query.conn` is invalid: the entry `nodes` "
+            + "references the field `ConnB.nodes` that is not parallel executable."
+        ]);
+    }
+
+    [Fact]
+    public void Create_Should_Throw_When_ImplementingTypeHasABatchMember()
+    {
+        // arrange
+        // act
+        var exception = Assert.Throws<SchemaException>(
+            () => CreateInterfaceSchema(
+                new ExecutionGroupEntry("nodes", 0, isStreamable: false),
+                nodes => nodes.ResolveBatch(
+                    contexts => new ValueTask<IReadOnlyList<ResolverResult>>(
+                        contexts.Select(_ => ResolverResult.Ok(Array.Empty<object>())).ToArray())),
+                pageInfo => { }));
+
+        // assert
+        GetMessages(exception).MatchInlineSnapshots(
+        [
+            "The execution group of field `Query.conn` is invalid: the entry `nodes` "
+            + "references the field `ConnB.nodes` that uses a batch resolver."
+        ]);
+    }
+
     private static string[] GetMessages(SchemaException exception)
         => [.. exception.Errors.Select(e => e.Message)];
 
@@ -252,6 +313,50 @@ public class ExecutionGroupDefinitionTests
                     .Type("Connection")
                     .Resolve(_ => new object())
                     .ExecutionGroup(new ExecutionGroupEntry("nodes", 0, isStreamable: false));
+            })
+            .AddObjectType(descriptor =>
+            {
+                descriptor.Name("PageInfo");
+                descriptor.Field("hasNextPage").Type("Boolean!").Resolve(_ => true);
+            })
+            .AddObjectType(descriptor =>
+            {
+                descriptor.Name("Item");
+                descriptor.Field("name").Type("String").Resolve(_ => "name");
+            })
+            .Create();
+
+    private static Schema CreateInterfaceSchema(
+        ExecutionGroupEntry entry,
+        Action<IObjectFieldDescriptor> configureNodes,
+        Action<IObjectFieldDescriptor> configurePageInfo)
+        => SchemaBuilder.New()
+            .AddQueryType(descriptor =>
+            {
+                descriptor.Name("Query");
+                descriptor
+                    .Field("conn")
+                    .Type("Conn")
+                    .Resolve(_ => new object())
+                    .ExecutionGroup(entry);
+            })
+            .AddInterfaceType(descriptor =>
+            {
+                descriptor.Name("Conn");
+                descriptor.Field("nodes").Type("[Item!]!");
+                descriptor.Field("pageInfo").Type("PageInfo");
+            })
+            .AddObjectType(descriptor =>
+            {
+                descriptor.Name("ConnA").Implements("Conn");
+                descriptor.Field("nodes").Type("[Item!]!").Resolve(_ => Array.Empty<object>());
+                descriptor.Field("pageInfo").Type("PageInfo").Resolve(_ => new object());
+            })
+            .AddObjectType(descriptor =>
+            {
+                descriptor.Name("ConnB").Implements("Conn");
+                configureNodes(descriptor.Field("nodes").Type("[Item!]!").Resolve(_ => Array.Empty<object>()));
+                configurePageInfo(descriptor.Field("pageInfo").Type("PageInfo").Resolve(_ => new object()));
             })
             .AddObjectType(descriptor =>
             {
