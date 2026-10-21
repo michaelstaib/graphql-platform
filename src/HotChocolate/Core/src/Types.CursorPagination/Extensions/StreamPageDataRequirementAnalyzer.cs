@@ -123,8 +123,10 @@ internal static class StreamPageDataRequirementAnalyzer
         {
             null => true,
             BooleanValueNode literal => literal.Value,
-            VariableNode variable => !variables.TryGetValue<BooleanValueNode>(variable.Name.Value, out var coerced)
-                || coerced.Value,
+            VariableNode variable => DirectiveIfCondition.IsEnabled(
+                DirectiveNames.Stream.Name,
+                variable.Name.Value,
+                variables),
             _ => true
         };
     }

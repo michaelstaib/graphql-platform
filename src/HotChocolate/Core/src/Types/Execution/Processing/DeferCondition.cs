@@ -10,20 +10,8 @@ internal readonly struct DeferCondition(string? ifVariableName) : IEquatable<Def
 
     public bool IsDeferred(IVariableValueCollection variableValues)
     {
-        if (ifVariableName is not null)
-        {
-            if (!variableValues.TryGetValue<BooleanValueNode>(ifVariableName, out var value))
-            {
-                throw new InvalidOperationException($"The variable {ifVariableName} has an invalid value.");
-            }
-
-            if (!value.Value)
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return ifVariableName is null
+            || DirectiveIfCondition.IsEnabled(DirectiveNames.Defer.Name, ifVariableName, variableValues);
     }
 
     public bool Equals(DeferCondition other)
