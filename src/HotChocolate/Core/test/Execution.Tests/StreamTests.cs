@@ -1223,6 +1223,339 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task Stream_Should_CompleteWithErrorAndNoItems_When_ItemErrorBubblesAboveRequiredList()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ requiredItems(count: 4) @stream(initialCount: 1) { id strict } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<ResponseStream>(result).MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "requiredItems": [
+                  {
+                    "id": 1,
+                    "strict": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "requiredItems"
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "strict item",
+                      "path": [
+                        "requiredItems",
+                        2,
+                        "strict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_KeepEarlierItemsAndDropLaterBatch_When_ItemErrorBubblesInLaterBatch()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+                executor,
+                "{ gatedItems @stream(initialCount: 1) { id strict } }",
+                state.ReleaseNextItem,
+                state.ReleaseNextItem)
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "gatedItems": [
+                  {
+                    "id": 1,
+                    "strict": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "gatedItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "strict": "ok-2"
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "strict item",
+                      "path": [
+                        "gatedItems",
+                        2,
+                        "strict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_NotAnnounceStream_When_ItemErrorBubblesInInitialItemsOfRequiredList()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ requiredItems(count: 4) @stream(initialCount: 3) { id strict } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<ResponseStream>(result).MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "strict item",
+                  "path": [
+                    "requiredItems",
+                    2,
+                    "strict"
+                  ]
+                }
+              ],
+              "data": null,
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_SendBatchWithNullItem_When_ItemErrorStaysInsideNullableItem()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ optionalItems(count: 4) @stream(initialCount: 1) { id strict } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<ResponseStream>(result).MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "optionalItems": [
+                  {
+                    "id": 1,
+                    "strict": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "optionalItems"
+                  ]
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "strict": "ok-2"
+                    },
+                    null,
+                    {
+                      "id": 4,
+                      "strict": "ok-4"
+                    }
+                  ],
+                  "errors": [
+                    {
+                      "message": "strict item",
+                      "path": [
+                        "optionalItems",
+                        2,
+                        "strict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_NotAnnounceNestedDefer_When_BatchWithItemErrorIsDropped()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+                executor,
+                """
+                {
+                    burstItems(count: 4) @stream(initialCount: 1) {
+                        id
+                        strict
+                        ... @defer {
+                            gatedName
+                        }
+                    }
+                }
+                """,
+                () =>
+                {
+                    state.ReleaseName(2);
+                    state.ReleaseName(3);
+                    state.ReleaseName(4);
+                    state.ReleaseNextItem();
+                },
+                () => state.ReleaseName(1))
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "burstItems": [
+                  {
+                    "id": 1,
+                    "strict": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "burstItems",
+                    0
+                  ]
+                },
+                {
+                  "id": "3",
+                  "path": [
+                    "burstItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "3",
+                  "errors": [
+                    {
+                      "message": "strict item",
+                      "path": [
+                        "burstItems",
+                        2,
+                        "strict"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "data": {
+                    "gatedName": "item-1"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
     public async Task Stream_Should_CompleteWithErrors_When_EnumeratorThrows()
     {
         // arrange
@@ -1882,6 +2215,13 @@ public class StreamTests
 
         [GraphQLType<NonNullType<ListType<NonNullType<ObjectType<Item>>>>>]
         public async Task<List<Item>> GetRequiredItemsAsync(int count)
+        {
+            await Task.Yield();
+            return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
+        }
+
+        [GraphQLType<NonNullType<ListType<ObjectType<Item>>>>]
+        public async Task<List<Item>> GetOptionalItemsAsync(int count)
         {
             await Task.Yield();
             return [.. Enumerable.Range(1, count).Select(i => new Item(i))];
