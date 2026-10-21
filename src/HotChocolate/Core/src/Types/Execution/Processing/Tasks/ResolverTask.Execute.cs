@@ -290,7 +290,7 @@ internal sealed partial class ResolverTask
         if (_completionStatus is ExecutionTaskStatus.Completed && !_context.ResultValue.IsNullOrInvalidated)
         {
             _stream = null;
-            stream.Announce(BranchId);
+            stream.Announce(BranchId, _context.ResultValue);
             _operationContext.RegisterRequestCleanup(stream.DisposeAsync);
             _taskBuffer.Add(stream);
             return;

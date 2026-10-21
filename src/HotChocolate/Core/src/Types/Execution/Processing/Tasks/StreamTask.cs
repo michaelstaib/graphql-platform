@@ -11,7 +11,7 @@ namespace HotChocolate.Execution.Processing.Tasks;
 /// Streams the remaining items of a list field after its initial items were completed
 /// and delivers them in batches through the defer coordinator.
 /// </summary>
-internal sealed class StreamTask : ExecutionTask
+internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 {
     private const int MaxItemsPerPayload = 100;
 
@@ -70,8 +70,13 @@ internal sealed class StreamTask : ExecutionTask
     /// <summary>
     /// Announces the stream with the payload of the specified branch.
     /// </summary>
-    public void Announce(int parentBranchId)
-        => _streamBranchId = _parentContext.DeferExecutionCoordinator.BranchStream(parentBranchId, _path, _label);
+    public void Announce(int parentBranchId, ResultElement list)
+        => _streamBranchId = _parentContext.DeferExecutionCoordinator.BranchStream(
+            parentBranchId,
+            _path,
+            _label,
+            list,
+            this);
 
     /// <summary>
     /// Stops the stream and disposes the enumerator exactly once.
@@ -229,10 +234,17 @@ internal sealed class StreamTask : ExecutionTask
         var itemsBranchId = BranchTracker.SystemBranchId;
         OperationContextOwner? contextOwner = null;
         var tasks = new List<IExecutionTask>();
+        var tasksRegistered = false;
 
         try
         {
             itemsBranchId = coordinator.BranchStreamItems(_streamBranchId);
+
+            if (itemsBranchId == BranchTracker.SystemBranchId)
+            {
+                return false;
+            }
+
             var contextFactory = _parentContext.Services.GetRequiredService<IFactory<OperationContextOwner>>();
             contextOwner = contextFactory.Create();
             var context = contextOwner.OperationContext;
@@ -247,19 +259,22 @@ internal sealed class StreamTask : ExecutionTask
                 if (tasks.Count > 0)
                 {
                     context.Scheduler.Register(CollectionsMarshal.AsSpan(tasks));
+                    tasksRegistered = true;
                 }
 
                 await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
 
                 var result = context.BuildResult();
 
-                if (listResult.IsNullOrInvalidated)
+                if (listResult.IsNullOrInvalidated || result.Data is { IsValueNull: true })
                 {
-                    coordinator.EnqueueStreamItems(
-                        result,
-                        itemsBranchId,
-                        items: null,
-                        completesStream: completesStream);
+                    coordinator.ReleaseChildBranches(itemsBranchId);
+                    await coordinator.EnqueueStreamItems(
+                            result,
+                            itemsBranchId,
+                            items: null,
+                            completesStream: completesStream)
+                        .ConfigureAwait(false);
                     return false;
                 }
 
@@ -270,11 +285,12 @@ internal sealed class StreamTask : ExecutionTask
                     streamedItems.Add(new StreamedItem(item));
                 }
 
-                coordinator.EnqueueStreamItems(
-                    result,
-                    itemsBranchId,
-                    streamedItems,
-                    completesStream: completesStream);
+                await coordinator.EnqueueStreamItems(
+                        result,
+                        itemsBranchId,
+                        streamedItems,
+                        completesStream: completesStream)
+                    .ConfigureAwait(false);
                 return true;
             }
             finally
@@ -290,12 +306,28 @@ internal sealed class StreamTask : ExecutionTask
         catch (Exception ex) when (ex is not OperationCanceledException
             || !_cancellationToken.IsCancellationRequested)
         {
-            if (itemsBranchId != BranchTracker.SystemBranchId)
+            if (itemsBranchId == BranchTracker.SystemBranchId)
             {
-                var result = new OperationResult(CreateErrors(ex));
-                coordinator.EnqueueStreamItems(result, itemsBranchId, items: null, completesStream: true);
+                coordinator.CompleteStream(_streamBranchId, CreateErrors(ex));
+                return false;
             }
 
+            if (tasks.Count > 0 && !tasksRegistered)
+            {
+                coordinator.ReleaseChildBranches(itemsBranchId);
+
+                foreach (var task in tasks)
+                {
+                    if (task is DeferTask deferTask)
+                    {
+                        deferTask.Reset();
+                    }
+                }
+            }
+
+            var result = new OperationResult(CreateErrors(ex));
+            await coordinator.EnqueueStreamItems(result, itemsBranchId, items: null, completesStream: true)
+                .ConfigureAwait(false);
             return false;
         }
         finally
