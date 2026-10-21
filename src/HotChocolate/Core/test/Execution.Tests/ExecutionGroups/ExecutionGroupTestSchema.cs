@@ -1,3 +1,4 @@
+using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -20,6 +21,8 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("nodes", 0, isStreamable: true),
                         new ExecutionGroupEntry("edges", 1, isStreamable: false),
                         new ExecutionGroupEntry("pageInfo.hasNextPage", 2, isStreamable: false));
+
+                descriptor.Field("holder").Type("Holder").Resolve(_ => new Holder());
 
                 descriptor
                     .Field("reversed")
@@ -90,6 +93,36 @@ internal static class ExecutionGroupTestSchema
                     .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
                 descriptor.Field("probe").Type("String").Resolve(ctx => script.Resolve(ctx, "probe"));
             })
+            .AddObjectType<Holder>(descriptor =>
+            {
+                descriptor.Name("Holder");
+                descriptor
+                    .Field("batched")
+                    .Type("Connection")
+                    .ResolveBatch(
+                        contexts => new ValueTask<IReadOnlyList<ResolverResult>>(
+                            contexts.Select(_ => ResolverResult.Ok(new Connection())).ToArray()))
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("nodes", 0, isStreamable: true),
+                        new ExecutionGroupEntry("edges", 1, isStreamable: false));
+
+                descriptor
+                    .Field("wrapper")
+                    .Type("Wrapper")
+                    .ResolveBatch(
+                        contexts => new ValueTask<IReadOnlyList<ResolverResult>>(
+                            contexts.Select(_ => ResolverResult.Ok(new Wrapper(new Connection()))).ToArray()));
+            })
+            .AddObjectType<Wrapper>(descriptor =>
+            {
+                descriptor.Name("Wrapper");
+                descriptor
+                    .Field(w => w.Connection)
+                    .Type("Connection")
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("nodes", 0, isStreamable: true),
+                        new ExecutionGroupEntry("edges", 1, isStreamable: false));
+            })
             .AddObjectType<SerialConnection>(descriptor =>
             {
                 descriptor.Name("SerialConnection");
@@ -139,6 +172,10 @@ internal static class ExecutionGroupTestSchema
     private static Item[] Items() => [new Item("a"), new Item("b")];
 
     internal sealed class Connection;
+
+    internal sealed class Holder;
+
+    internal sealed record Wrapper(Connection Connection);
 
     internal sealed class StrictConnection;
 

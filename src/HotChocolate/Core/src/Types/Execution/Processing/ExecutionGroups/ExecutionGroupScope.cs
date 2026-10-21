@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using HotChocolate.Execution.Processing.Tasks;
 using Microsoft.Extensions.ObjectPool;
 
@@ -72,6 +73,31 @@ internal sealed class ExecutionGroupScope
         }
 
         return scope;
+    }
+
+    /// <summary>
+    /// Registers the tasks that a resolver task created during value completion with the scheduler.
+    /// </summary>
+    public static void RegisterChildTasks(WorkScheduler scheduler, List<IExecutionTask> tasks)
+    {
+        if (tasks.Count == 0)
+        {
+            return;
+        }
+
+        if (scheduler.HasExecutionGroups)
+        {
+            Register(scheduler, CollectionsMarshal.AsSpan(tasks));
+            return;
+        }
+
+        if (tasks.Count == 1)
+        {
+            scheduler.Register(tasks[0]);
+            return;
+        }
+
+        scheduler.Register(CollectionsMarshal.AsSpan(tasks));
     }
 
     /// <summary>

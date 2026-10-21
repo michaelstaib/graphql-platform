@@ -1,6 +1,5 @@
 using HotChocolate.Execution.Internal;
 using HotChocolate.Types;
-using System.Runtime.InteropServices;
 
 namespace HotChocolate.Execution.Processing.Tasks;
 
@@ -15,7 +14,7 @@ internal sealed partial class ResolverTask
                 var success = await TryExecuteAsync(cancellationToken).ConfigureAwait(false);
                 CompleteValue(success, cancellationToken);
 
-                RegisterChildTasks();
+                ExecutionGroupScope.RegisterChildTasks(_operationContext.Scheduler, _taskBuffer);
             }
 
             Status = _completionStatus;
@@ -115,30 +114,6 @@ internal sealed partial class ResolverTask
         }
 
         return false;
-    }
-
-    private void RegisterChildTasks()
-    {
-        if (_taskBuffer.Count == 0)
-        {
-            return;
-        }
-
-        var scheduler = _operationContext.Scheduler;
-
-        if (scheduler.HasExecutionGroups)
-        {
-            ExecutionGroupScope.Register(scheduler, CollectionsMarshal.AsSpan(_taskBuffer));
-            return;
-        }
-
-        if (_taskBuffer.Count == 1)
-        {
-            scheduler.Register(_taskBuffer[0]);
-            return;
-        }
-
-        scheduler.Register(CollectionsMarshal.AsSpan(_taskBuffer));
     }
 
     private void EndGroupTurn()

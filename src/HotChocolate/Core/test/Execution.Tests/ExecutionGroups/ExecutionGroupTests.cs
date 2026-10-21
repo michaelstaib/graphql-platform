@@ -557,6 +557,66 @@ public class ExecutionGroupTests
     }
 
     [Fact]
+    public async Task Execute_Should_SequenceMembers_When_GroupRootIsBatchResolved()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("holder.batched.edges");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ holder { batched { nodes { name } edges probe } } }",
+            cts.Token);
+
+        await script.Started("holder.batched.probe");
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("holder.batched.nodes");
+        await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start holder.batched.nodes"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start holder.batched.nodes",
+            "end holder.batched.nodes",
+            "start holder.batched.edges",
+            "end holder.batched.edges"
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_SequenceMembers_When_GroupRootIsInlinedBelowBatchField()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("holder.wrapper.connection.edges");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ holder { wrapper { connection { nodes { name } edges probe } } } }",
+            cts.Token);
+
+        await script.Started("holder.wrapper.connection.probe");
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("holder.wrapper.connection.nodes");
+        await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start holder.wrapper.connection.nodes"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start holder.wrapper.connection.nodes",
+            "end holder.wrapper.connection.nodes",
+            "start holder.wrapper.connection.edges",
+            "end holder.wrapper.connection.edges"
+        ]);
+    }
+
+    [Fact]
     public async Task Execute_Should_RunPureMembersInSequence_When_PureMemberIsSelectedFirst()
     {
         // arrange
