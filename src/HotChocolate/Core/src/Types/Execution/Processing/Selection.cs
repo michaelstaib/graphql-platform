@@ -1086,8 +1086,7 @@ nextItem:
     }
 
     /// <summary>
-    /// Marks this selection as taking part in an execution group. Participants always run as
-    /// resolver tasks so that they can wait for their turn.
+    /// Marks this selection as taking part in an execution group; participants run as resolver tasks.
     /// </summary>
     internal void MarkAsExecutionGroupParticipant()
     {
