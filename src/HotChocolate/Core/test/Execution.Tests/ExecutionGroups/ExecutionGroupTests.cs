@@ -779,69 +779,6 @@ public class ExecutionGroupTests
     }
 
     [Fact]
-    public async Task Execute_Should_RunSerialMemberInSequence_When_GroupContainsASerialField()
-    {
-        // arrange
-        var script = new ExecutionScript();
-        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
-        using var cts = new CancellationTokenSource(s_timeout);
-        script.Release("serial.pageInfo.hasNextPage");
-        script.Release("serial.edges");
-
-        // act
-        var execution = executor.ExecuteAsync(
-            "{ serial { edges nodes { name } pageInfo { hasNextPage } probe } }",
-            cts.Token);
-
-        await script.Started("serial.nodes");
-        await script.Started("serial.probe");
-        var eventsWhileSerialMemberRuns = script.Events;
-        script.Release("serial.nodes");
-        var result = await execution;
-
-        // assert
-        eventsWhileSerialMemberRuns.MatchInlineSnapshots(
-        [
-            "start serial.pageInfo.hasNextPage",
-            "end serial.pageInfo.hasNextPage",
-            "start serial.nodes"
-        ]);
-        script.Events.MatchInlineSnapshots(
-        [
-            "start serial.pageInfo.hasNextPage",
-            "end serial.pageInfo.hasNextPage",
-            "start serial.nodes",
-            "end serial.nodes",
-            "start serial.edges",
-            "end serial.edges"
-        ]);
-        result.MatchInlineSnapshot(
-            """
-            {
-              "data": {
-                "serial": {
-                  "edges": [
-                    "e1"
-                  ],
-                  "nodes": [
-                    {
-                      "name": "a"
-                    },
-                    {
-                      "name": "b"
-                    }
-                  ],
-                  "pageInfo": {
-                    "hasNextPage": true
-                  },
-                  "probe": "probe"
-                }
-              }
-            }
-            """);
-    }
-
-    [Fact]
     public async Task Execute_Should_SkipMembersBelowSelection_When_SelectionIsExcluded()
     {
         // arrange

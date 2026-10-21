@@ -42,15 +42,6 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("nodes", 1, isStreamable: true));
 
                 descriptor
-                    .Field("serial")
-                    .Type("SerialConnection")
-                    .Resolve(_ => new SerialConnection())
-                    .ExecutionGroup(
-                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
-                        new ExecutionGroupEntry("nodes", 1, isStreamable: true),
-                        new ExecutionGroupEntry("edges", 2, isStreamable: false));
-
-                descriptor
                     .Field("pages")
                     .Type("[Page!]!")
                     .Resolve(_ => new object[] { new PageA(), new PageB() })
@@ -123,17 +114,6 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("nodes", 0, isStreamable: true),
                         new ExecutionGroupEntry("edges", 1, isStreamable: false));
             })
-            .AddObjectType<SerialConnection>(descriptor =>
-            {
-                descriptor.Name("SerialConnection");
-                descriptor.Field("nodes").Type("[Item!]!").Serial().Resolve(ctx => script.RunAsync(ctx, Items()));
-                descriptor.Field("edges").Type("[String!]!").Resolve(ctx => script.RunAsync(ctx, new[] { "e1" }));
-                descriptor
-                    .Field("pageInfo")
-                    .Type("PageInfo")
-                    .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
-                descriptor.Field("probe").Type("String").Resolve(ctx => script.Resolve(ctx, "probe"));
-            })
             .AddObjectType<StrictConnection>(descriptor =>
             {
                 descriptor.Name("StrictConnection");
@@ -178,8 +158,6 @@ internal static class ExecutionGroupTestSchema
     internal sealed record Wrapper(Connection Connection);
 
     internal sealed class StrictConnection;
-
-    internal sealed class SerialConnection;
 
     internal sealed class PageA;
 

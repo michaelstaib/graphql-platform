@@ -139,6 +139,11 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
                 return ExecutionGroup_BatchResolverField(type, root, entry, currentType.Name, segment);
             }
 
+            if (field is ObjectField { IsParallelExecutable: false })
+            {
+                return ExecutionGroup_NotParallelExecutableField(type, root, entry, currentType.Name, segment);
+            }
+
             if (i == entry.Segments.Length - 1)
             {
                 break;

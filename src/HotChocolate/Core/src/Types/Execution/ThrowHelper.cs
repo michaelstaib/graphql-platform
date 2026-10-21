@@ -19,6 +19,9 @@ internal static class ThrowHelper
     public static InvalidOperationException ExecutionGroup_BatchSelectionNotSupported(Selection selection)
         => new(string.Format(ThrowHelper_ExecutionGroup_BatchSelectionNotSupported, selection.Field.Coordinate));
 
+    public static InvalidOperationException ExecutionGroup_SerialSelectionNotSupported(Selection selection)
+        => new(string.Format(ThrowHelper_ExecutionGroup_SerialSelectionNotSupported, selection.Field.Coordinate));
+
     public static GraphQLException VariableIsNotAnInputType(
         VariableDefinitionNode variableDefinition)
     {

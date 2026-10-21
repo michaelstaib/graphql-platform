@@ -1188,6 +1188,9 @@ Type: `{0}`</value>
   <data name="ErrorHelper_ExecutionGroup_BatchResolverField" xml:space="preserve">
     <value>The execution group of field `{0}` is invalid: the entry `{1}` references the field `{2}.{3}` that uses a batch resolver.</value>
   </data>
+  <data name="ErrorHelper_ExecutionGroup_NotParallelExecutableField" xml:space="preserve">
+    <value>The execution group of field `{0}` is invalid: the entry `{1}` references the field `{2}.{3}` that is not parallel executable.</value>
+  </data>
   <data name="ErrorHelper_ExecutionGroup_ListField" xml:space="preserve">
     <value>The execution group of field `{0}` is invalid: the entry `{1}` passes through the list field `{2}.{3}`.</value>
   </data>

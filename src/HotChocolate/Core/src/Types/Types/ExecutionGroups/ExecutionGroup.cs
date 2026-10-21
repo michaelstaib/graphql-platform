@@ -5,7 +5,7 @@ namespace HotChocolate.Types;
 /// <summary>
 /// Defines the selections below a field that run one after the other, each after its predecessor has completed
 /// its own resolver task. Member paths cannot pass through list fields, abstract types, other group roots or
-/// batch resolver fields.
+/// batch resolver fields, and every field on a member path must be parallel executable.
 /// </summary>
 public sealed class ExecutionGroup
 {
