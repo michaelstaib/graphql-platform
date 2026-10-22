@@ -113,6 +113,30 @@ internal static class ThrowHelper
             .SetExtension("directive", directiveName)
             .Build());
 
+    public static GraphQLException DirectiveIfVariableNotProvided(
+        string directiveName,
+        string variableName) =>
+        new(ErrorBuilder.New()
+            .SetMessage(
+                ThrowHelper_DirectiveIfVariableNotProvided_Message,
+                variableName,
+                directiveName)
+            .SetExtension("variable", variableName)
+            .SetExtension("directive", directiveName)
+            .Build());
+
+    public static GraphQLException DirectiveIfVariableInvalidValue(
+        string directiveName,
+        string variableName) =>
+        new(ErrorBuilder.New()
+            .SetMessage(
+                ThrowHelper_DirectiveIfVariableInvalidValue_Message,
+                variableName,
+                directiveName)
+            .SetExtension("variable", variableName)
+            .SetExtension("directive", directiveName)
+            .Build());
+
     public static GraphQLException RootTypeNotSupported(
         OperationType operationType) =>
         new(ErrorBuilder.New()

@@ -11,7 +11,11 @@ internal readonly struct DeferCondition(string? ifVariableName) : IEquatable<Def
     public bool IsDeferred(IVariableValueCollection variableValues)
     {
         return ifVariableName is null
-            || DirectiveIfCondition.IsEnabled(DirectiveNames.Defer.Name, ifVariableName, variableValues);
+            || DirectiveIfCondition.IsEnabled(
+                DirectiveNames.Defer.Name,
+                ifVariableName,
+                variableValues,
+                defaultValue: true);
     }
 
     public bool Equals(DeferCondition other)

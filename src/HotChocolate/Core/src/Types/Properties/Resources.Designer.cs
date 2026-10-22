@@ -153,6 +153,18 @@ namespace HotChocolate.Properties {
             }
         }
         
+        internal static string ThrowHelper_DirectiveIfVariableNotProvided_Message {
+            get {
+                return ResourceManager.GetString("ThrowHelper_DirectiveIfVariableNotProvided_Message", resourceCulture);
+            }
+        }
+        
+        internal static string ThrowHelper_DirectiveIfVariableInvalidValue_Message {
+            get {
+                return ResourceManager.GetString("ThrowHelper_DirectiveIfVariableInvalidValue_Message", resourceCulture);
+            }
+        }
+        
         internal static string ThrowHelper_DirectiveIfVariableIsNull_Message {
             get {
                 return ResourceManager.GetString("ThrowHelper_DirectiveIfVariableIsNull_Message", resourceCulture);

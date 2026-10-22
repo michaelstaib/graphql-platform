@@ -21,30 +21,16 @@ internal readonly struct IncludeCondition : IEquatable<IncludeCondition>
 
     public bool IsIncluded(IVariableValueCollection variableValues)
     {
-        if (_skip is not null)
+        if (_skip is not null
+            && DirectiveIfCondition.IsEnabled(DirectiveNames.Skip.Name, _skip, variableValues))
         {
-            if (!variableValues.TryGetValue<BooleanValueNode>(_skip, out var value))
-            {
-                throw new InvalidOperationException($"The variable {_skip} has an invalid value.");
-            }
-
-            if (value.Value)
-            {
-                return false;
-            }
+            return false;
         }
 
-        if (_include is not null)
+        if (_include is not null
+            && !DirectiveIfCondition.IsEnabled(DirectiveNames.Include.Name, _include, variableValues))
         {
-            if (!variableValues.TryGetValue<BooleanValueNode>(_include, out var value))
-            {
-                throw new InvalidOperationException($"The variable {_include} has an invalid value.");
-            }
-
-            if (!value.Value)
-            {
-                return false;
-            }
+            return false;
         }
 
         return true;

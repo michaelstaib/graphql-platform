@@ -5,9 +5,24 @@ namespace HotChocolate.Execution.Processing;
 internal static class DirectiveIfCondition
 {
     /// <summary>
-    /// Evaluates a variable used for the <c>if</c> argument of <c>@defer</c> or <c>@stream</c>.
-    /// A variable that was not provided yields the argument default <c>true</c>; a variable that
-    /// is explicitly <c>null</c> raises an error.
+    /// Evaluates the variable used for the <c>if</c> argument of a conditional directive.
+    /// A variable that was not provided yields <paramref name="defaultValue"/>, a variable
+    /// that is explicitly <c>null</c> raises an error.
+    /// </summary>
+    public static bool IsEnabled(
+        string directiveName,
+        string variableName,
+        IVariableValueCollection variableValues,
+        bool defaultValue)
+    {
+        return variableValues.TryGetValue<IValueNode>(variableName, out var value)
+            ? ToBoolean(directiveName, variableName, value)
+            : defaultValue;
+    }
+
+    /// <summary>
+    /// Evaluates the variable used for the <c>if</c> argument of a conditional directive.
+    /// A variable that was not provided or that is explicitly <c>null</c> raises an error.
     /// </summary>
     public static bool IsEnabled(
         string directiveName,
@@ -16,14 +31,19 @@ internal static class DirectiveIfCondition
     {
         if (!variableValues.TryGetValue<IValueNode>(variableName, out var value))
         {
-            return true;
+            throw ThrowHelper.DirectiveIfVariableNotProvided(directiveName, variableName);
         }
 
+        return ToBoolean(directiveName, variableName, value);
+    }
+
+    private static bool ToBoolean(string directiveName, string variableName, IValueNode value)
+    {
         return value switch
         {
             BooleanValueNode boolean => boolean.Value,
             NullValueNode => throw ThrowHelper.DirectiveIfVariableIsNull(directiveName, variableName),
-            _ => throw new InvalidOperationException($"The variable {variableName} has an invalid value.")
+            _ => throw ThrowHelper.DirectiveIfVariableInvalidValue(directiveName, variableName)
         };
     }
 }
