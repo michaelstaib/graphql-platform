@@ -8,14 +8,15 @@ public class ResultDocumentLifetimeTests
         // arrange
         var operation = CommonTestExtensions.CreateOperation();
         var arena = CommonTestExtensions.CreateArena();
-        Assert.IsAssignableFrom<IDisposable>(arena).Dispose();
+        ((IDisposable)arena).Dispose();
 
         // act
-        Assert.Throws<ObjectDisposedException>(() => new ResultDocument(arena, operation, 0));
-
-        // assert
         // an exception thrown by the finalizer terminates the test process.
+        var exception = Record.Exception(() => new ResultDocument(arena, operation, 0));
         GC.Collect();
         GC.WaitForPendingFinalizers();
+
+        // assert
+        Assert.IsType<ObjectDisposedException>(exception);
     }
 }

@@ -81,13 +81,15 @@ public static class ListPostProcessorTests
 
         // act
         var stream = ListPostProcessor<int>.Default.ToStreamResultAsync(source, cancellation.Token);
+        await using var enumerator = stream?.GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
-        Assert.NotNull(stream);
-
-        await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
-        await enumerator.MoveNextAsync();
+        if (enumerator is not null)
+        {
+            await enumerator.MoveNextAsync();
+        }
 
         // assert
+        Assert.NotNull(stream);
         Assert.True(source.WasCancelled);
     }
 
