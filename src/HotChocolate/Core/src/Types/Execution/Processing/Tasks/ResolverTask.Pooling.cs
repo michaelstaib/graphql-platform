@@ -41,17 +41,17 @@ internal sealed partial class ResolverTask
     /// <summary>
     /// Registers this task with the work scheduler.
     /// </summary>
-    internal void Register() => _operationContext.Scheduler.Register(this);
+    public void Register() => _operationContext.Scheduler.Register(this);
 
     /// <summary>
     /// Counts this task with the work scheduler without making it available for execution.
     /// </summary>
-    internal void Reserve() => _operationContext.Scheduler.Reserve(this);
+    public void Reserve() => _operationContext.Scheduler.Reserve(this);
 
     /// <summary>
     /// Makes this task available for execution after it was counted with <see cref="Reserve"/>.
     /// </summary>
-    internal void RegisterReserved() => _operationContext.Scheduler.RegisterReserved(this);
+    public void RegisterReserved() => _operationContext.Scheduler.RegisterReserved(this);
 
     /// <summary>
     /// Resets the resolver task before returning it to the pool.

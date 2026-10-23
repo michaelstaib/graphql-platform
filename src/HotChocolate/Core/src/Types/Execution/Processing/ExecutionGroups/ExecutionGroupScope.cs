@@ -15,7 +15,7 @@ internal sealed class ExecutionGroupScope
         new DefaultObjectPool<ExecutionGroupScope>(new ScopePolicy(), 1024);
 
     private ulong[] _released = new ulong[1];
-    private ResolverTask?[] _tasks = new ResolverTask?[4];
+    private IExecutionGroupTask?[] _tasks = new IExecutionGroupTask?[4];
     private ExecutionGroupPlan _plan = null!;
     private int _slotCount;
     private int _wordCount;
@@ -138,7 +138,7 @@ internal sealed class ExecutionGroupScope
     /// <summary>
     /// Queues the task of a member until all members in front of it have ended their turn.
     /// </summary>
-    public void Submit(ResolverTask task)
+    public void Submit(IExecutionGroupTask task)
     {
         var slot = task.GroupSlot;
 
@@ -167,6 +167,7 @@ internal sealed class ExecutionGroupScope
 
         if ((Interlocked.Or(ref word, bit) & bit) == 0)
         {
+            Dispatch(slot);
             Dispatch(Position);
         }
     }
@@ -224,7 +225,7 @@ internal sealed class ExecutionGroupScope
 
         if (_tasks.Length < slotCount)
         {
-            _tasks = new ResolverTask?[slotCount];
+            _tasks = new IExecutionGroupTask?[slotCount];
         }
 
         Array.Clear(_released, 0, wordCount);
