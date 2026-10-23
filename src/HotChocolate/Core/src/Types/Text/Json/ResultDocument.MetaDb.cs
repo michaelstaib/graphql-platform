@@ -382,7 +382,7 @@ public sealed partial class ResultDocument
 
         public void Dispose()
         {
-            if (!_disposed && _chunks is not null)
+            if (!_disposed)
             {
                 var cursor = _next;
                 var chunksLength = cursor.Chunk + 1;
