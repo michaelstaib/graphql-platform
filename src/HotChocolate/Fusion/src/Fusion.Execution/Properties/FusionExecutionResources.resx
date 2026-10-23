@@ -153,8 +153,8 @@
   <data name="PolicyResolver_PolicyNotResolved" xml:space="preserve">
     <value>No policy provider knows the policy '{0}' of the directive '@{1}'.</value>
   </data>
-  <data name="Operation_AuthorizationAlreadySet" xml:space="preserve">
-    <value>The authorization of the operation was already set and cannot be set again.</value>
+  <data name="Operation_PoliciesAlreadySet" xml:space="preserve">
+    <value>The policies of the operation were already set and cannot be set again.</value>
   </data>
   <data name="FusionAuthorizationOptions_ReadOnly" xml:space="preserve">
     <value>The authorization options are read-only.</value>
@@ -180,8 +180,8 @@
   <data name="PolicyEvaluationContext_EntryAlreadyAnswered" xml:space="preserve">
     <value>The policy '{1}' already answered the entry of the field '{0}'. An entry takes exactly one verdict.</value>
   </data>
-  <data name="OperationAuthorization_OperationPlanMissing" xml:space="preserve">
-    <value>The operation authorization requires an operation plan.</value>
+  <data name="OperationPolicy_OperationPlanMissing" xml:space="preserve">
+    <value>The operation policy middleware requires an operation plan.</value>
   </data>
   <data name="ErrorHelper_NotAuthenticated" xml:space="preserve">
     <value>The current user is not authenticated.</value>
@@ -195,8 +195,8 @@
   <data name="ErrorHelper_AuthorizationFailed" xml:space="preserve">
     <value>The authorization of the request could not be evaluated.</value>
   </data>
-  <data name="OperationAuthorization_BooleanTypeMissing" xml:space="preserve">
-    <value>The schema does not define the Boolean type that the authorization variables require.</value>
+  <data name="OperationPolicy_BooleanTypeMissing" xml:space="preserve">
+    <value>The schema does not define the Boolean type that the policy variables require.</value>
   </data>
   <data name="DeliveryGroup_InvalidIfVariable" xml:space="preserve">
     <value>The variable {0} has an invalid value.</value>

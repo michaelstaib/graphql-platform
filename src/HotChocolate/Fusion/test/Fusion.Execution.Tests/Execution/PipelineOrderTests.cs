@@ -43,7 +43,7 @@ public class PipelineOrderTests
                     WellKnownRequestMiddleware.OperationPlanCacheMiddleware,
                     WellKnownRequestMiddleware.OperationPlanMiddleware,
                     WellKnownRequestMiddleware.SkipWarmupExecutionMiddleware,
-                    FusionMiddleware.OperationAuthorization.Key,
+                    FusionMiddleware.OperationPolicy.Key,
                     WellKnownRequestMiddleware.ConcurrencyGateMiddleware,
                     WellKnownRequestMiddleware.OperationExecutionMiddleware
                 ]
@@ -65,7 +65,7 @@ public class PipelineOrderTests
                     WellKnownRequestMiddleware.OperationPlanCacheMiddleware,
                     WellKnownRequestMiddleware.OperationPlanMiddleware,
                     WellKnownRequestMiddleware.SkipWarmupExecutionMiddleware,
-                    FusionMiddleware.OperationAuthorization.Key,
+                    FusionMiddleware.OperationPolicy.Key,
                     WellKnownRequestMiddleware.ConcurrencyGateMiddleware,
                     WellKnownRequestMiddleware.OperationExecutionMiddleware
                 ]
@@ -87,7 +87,7 @@ public class PipelineOrderTests
                     WellKnownRequestMiddleware.OperationPlanCacheMiddleware,
                     WellKnownRequestMiddleware.OperationPlanMiddleware,
                     WellKnownRequestMiddleware.SkipWarmupExecutionMiddleware,
-                    FusionMiddleware.OperationAuthorization.Key,
+                    FusionMiddleware.OperationPolicy.Key,
                     WellKnownRequestMiddleware.ConcurrencyGateMiddleware,
                     WellKnownRequestMiddleware.OperationExecutionMiddleware
                 ]

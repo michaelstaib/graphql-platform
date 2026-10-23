@@ -104,7 +104,7 @@ internal static partial class OperationPlanExecutor
 
             // Compute the active delivery groups (one per @defer occurrence whose
             // @defer(if:) evaluates to true) and the incremental plans that will actually run.
-            // The running plans come from the rule the authorization evaluator shares.
+            // The running plans come from the rule the policy evaluator shares.
             var activeDeliveryGroups = GetActiveDeliveryGroups(operationPlan, variables);
             var deliveryPaths = CreateDeliveryPaths(operationPlan);
 

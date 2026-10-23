@@ -1,7 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Execution;
@@ -12,19 +12,19 @@ internal sealed class VariableValueCollection : IVariableValueCollection
 
     public VariableValueCollection(
         Dictionary<string, VariableValue> coercedValues,
-        AuthorizationDecisions? authorizationDecisions)
+        PolicyDecisions? policyDecisions)
     {
         ArgumentNullException.ThrowIfNull(coercedValues);
 
         _coercedValues = coercedValues;
-        AuthorizationDecisions = authorizationDecisions;
+        PolicyDecisions = policyDecisions;
     }
 
     public static VariableValueCollection Empty { get; } = new([], null);
 
     public bool IsEmpty => _coercedValues.Count == 0;
 
-    public AuthorizationDecisions? AuthorizationDecisions { get; }
+    public PolicyDecisions? PolicyDecisions { get; }
 
     public T GetValue<T>(string name) where T : IValueNode
     {

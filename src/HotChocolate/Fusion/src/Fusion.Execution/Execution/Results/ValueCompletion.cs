@@ -5,13 +5,13 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Properties;
+using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Types.Collections;
-using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
 using HotChocolate.Types;
 
@@ -473,7 +473,7 @@ internal sealed class ValueCompletion
 
     public void FinalizeDeniedSelections(
         CompositeResultElement resultData,
-        AuthorizationDecisions decisions)
+        PolicyDecisions decisions)
         => VisitDeniedSelections(resultData, decisions);
 
     /// <summary>
@@ -484,7 +484,7 @@ internal sealed class ValueCompletion
     /// </returns>
     private bool VisitDeniedSelections(
         CompositeResultElement current,
-        AuthorizationDecisions decisions)
+        PolicyDecisions decisions)
     {
         if (current.IsNullOrInvalidated || current.IsNullMarker)
         {
@@ -508,7 +508,7 @@ internal sealed class ValueCompletion
                         continue;
                     }
 
-                    var canExecutionContinue = selection.HasAuthorization && decisions.IsDenied(selection)
+                    var canExecutionContinue = selection.HasPolicies && decisions.IsDenied(selection)
                         ? ApplyDenial(field, selection, decisions)
                         : VisitDeniedSelections(field, decisions);
 
@@ -549,7 +549,7 @@ internal sealed class ValueCompletion
     private bool ApplyDenial(
         CompositeResultElement field,
         Selection selection,
-        AuthorizationDecisions decisions)
+        PolicyDecisions decisions)
     {
         var path = field.Path;
         var error = decisions.CreateError(selection, path);

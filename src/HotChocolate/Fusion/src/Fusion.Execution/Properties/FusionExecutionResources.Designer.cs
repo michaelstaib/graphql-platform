@@ -315,9 +315,9 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string Operation_AuthorizationAlreadySet {
+        internal static string Operation_PoliciesAlreadySet {
             get {
-                return ResourceManager.GetString("Operation_AuthorizationAlreadySet", resourceCulture);
+                return ResourceManager.GetString("Operation_PoliciesAlreadySet", resourceCulture);
             }
         }
 
@@ -369,9 +369,9 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string OperationAuthorization_OperationPlanMissing {
+        internal static string OperationPolicy_OperationPlanMissing {
             get {
-                return ResourceManager.GetString("OperationAuthorization_OperationPlanMissing", resourceCulture);
+                return ResourceManager.GetString("OperationPolicy_OperationPlanMissing", resourceCulture);
             }
         }
 
@@ -399,9 +399,9 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string OperationAuthorization_BooleanTypeMissing {
+        internal static string OperationPolicy_BooleanTypeMissing {
             get {
-                return ResourceManager.GetString("OperationAuthorization_BooleanTypeMissing", resourceCulture);
+                return ResourceManager.GetString("OperationPolicy_BooleanTypeMissing", resourceCulture);
             }
         }
 

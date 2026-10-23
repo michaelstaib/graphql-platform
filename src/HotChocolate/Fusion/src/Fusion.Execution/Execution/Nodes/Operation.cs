@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using HotChocolate.Execution;
 using HotChocolate.Features;
-using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Types;
@@ -25,7 +25,7 @@ public sealed class Operation : IOperation
     private readonly IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> _deliveryGroupByFragment;
     private readonly OperationFeatureCollection _features;
     private readonly bool _hasIncrementalParts;
-    private bool _authorizationSet;
+    private bool _policiesSet;
     private object[] _elementsById;
     private int _lastId;
 
@@ -131,29 +131,29 @@ public sealed class Operation : IOperation
     public bool HasIncrementalParts => _hasIncrementalParts;
 
     /// <summary>
-    /// Gets the authorization requirements of the operation, or <c>null</c> if no selection of
+    /// Gets the policy requirements of the operation, or <c>null</c> if no selection of
     /// the operation is protected.
     /// </summary>
-    public OperationAuthorization? Authorization { get; private set; }
+    public OperationPolicies? Policies { get; private set; }
 
     /// <summary>
-    /// Sets the authorization requirements of the operation. It can be called only once.
+    /// Sets the policy requirements of the operation. It can be called only once.
     /// </summary>
-    /// <param name="authorization">
-    /// The authorization requirements, or <c>null</c> if no selection of the operation is protected.
+    /// <param name="policies">
+    /// The policy requirements, or <c>null</c> if no selection of the operation is protected.
     /// </param>
     /// <exception cref="InvalidOperationException">
-    /// The authorization was already set.
+    /// The policies were already set.
     /// </exception>
-    internal void SetAuthorization(OperationAuthorization? authorization)
+    internal void SetPolicies(OperationPolicies? policies)
     {
-        if (_authorizationSet)
+        if (_policiesSet)
         {
-            throw ThrowHelper.OperationAuthorizationAlreadySet();
+            throw ThrowHelper.OperationPoliciesAlreadySet();
         }
 
-        _authorizationSet = true;
-        Authorization = authorization;
+        _policiesSet = true;
+        Policies = policies;
     }
 
     /// <summary>

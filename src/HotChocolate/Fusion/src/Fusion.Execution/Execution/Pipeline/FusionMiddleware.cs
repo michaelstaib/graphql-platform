@@ -20,8 +20,8 @@ public static class FusionMiddleware
     public static RequestMiddlewareConfiguration OperationPlan
         => OperationPlanMiddleware.Create();
 
-    public static RequestMiddlewareConfiguration OperationAuthorization
-        => OperationAuthorizationMiddleware.Create();
+    public static RequestMiddlewareConfiguration OperationPolicy
+        => OperationPolicyMiddleware.Create();
 
     public static RequestMiddlewareConfiguration OperationVariableCoercion
         => OperationVariableCoercionMiddleware.Create();

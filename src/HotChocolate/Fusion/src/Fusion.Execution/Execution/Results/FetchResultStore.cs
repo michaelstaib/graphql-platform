@@ -7,15 +7,15 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Language;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
-using HotChocolate.Types;
 using HotChocolate.Text.Json;
+using HotChocolate.Types;
 using IntValueNode = HotChocolate.Language.IntValueNode;
 using FloatValueNode = HotChocolate.Language.FloatValueNode;
 using StringValueNode = HotChocolate.Language.StringValueNode;
@@ -695,7 +695,7 @@ AddErrors_Next:
         }
     }
 
-    public void FinalizeDeniedSelections(AuthorizationDecisions decisions)
+    public void FinalizeDeniedSelections(PolicyDecisions decisions)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(decisions);

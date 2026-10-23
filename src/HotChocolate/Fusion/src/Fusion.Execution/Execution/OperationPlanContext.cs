@@ -6,13 +6,13 @@ using System.Runtime.InteropServices;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Features;
-using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.ApolloFederation;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
 using HotChocolate.Fusion.Execution.Results;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
@@ -45,7 +45,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private bool _collectTelemetry;
     private bool _usesDynamicSchemaNames;
     private bool _usesBatchNodes;
-    private AuthorizationDecisions? _authorizationDecisions;
+    private PolicyDecisions? _policyDecisions;
 #pragma warning disable IDE0370 // Remove unnecessary suppression
     private ISourceSchemaClientScope _clientScope = default!;
 #pragma warning restore IDE0370 // Remove unnecessary suppression
@@ -785,9 +785,9 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     {
         _resultStore.FinalizePocketedErrors();
 
-        if (_authorizationDecisions is { RequiresFinalization: true } authorizationDecisions)
+        if (_policyDecisions is { RequiresFinalization: true } policyDecisions)
         {
-            _resultStore.FinalizeDeniedSelections(authorizationDecisions);
+            _resultStore.FinalizeDeniedSelections(policyDecisions);
         }
 
         var environment = Schema.TryGetEnvironment();

@@ -18,11 +18,11 @@ internal static class ThrowHelper
             fieldCoordinate,
             policy));
 
-    public static InvalidOperationException OperationAuthorizationRequiresPlan()
-        => new(FusionExecutionResources.OperationAuthorization_OperationPlanMissing);
+    public static InvalidOperationException OperationPolicyRequiresPlan()
+        => new(FusionExecutionResources.OperationPolicy_OperationPlanMissing);
 
-    public static InvalidOperationException OperationAuthorizationRequiresBooleanType()
-        => new(FusionExecutionResources.OperationAuthorization_BooleanTypeMissing);
+    public static InvalidOperationException OperationPolicyRequiresBooleanType()
+        => new(FusionExecutionResources.OperationPolicy_BooleanTypeMissing);
 
     public static InvalidOperationException AuthorizationOptionsAreReadOnly()
         => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
@@ -62,8 +62,8 @@ internal static class ThrowHelper
             policyName ?? string.Empty,
             directiveName));
 
-    public static InvalidOperationException OperationAuthorizationAlreadySet()
-        => new(FusionExecutionResources.Operation_AuthorizationAlreadySet);
+    public static InvalidOperationException OperationPoliciesAlreadySet()
+        => new(FusionExecutionResources.Operation_PoliciesAlreadySet);
 
     public static InvalidOperationException MissingBooleanVariable(string variableName)
         => new(string.Format(

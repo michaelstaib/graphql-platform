@@ -3,8 +3,8 @@ using System.Net;
 using HotChocolate.Collections.Immutable;
 using HotChocolate.CostAnalysis;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.CostAnalysis;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Properties;
 
 namespace HotChocolate.Fusion.Execution;

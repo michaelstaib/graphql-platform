@@ -1,8 +1,8 @@
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 using HotChocolate.Buffers;
-using HotChocolate.Fusion.Authorization;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
@@ -41,7 +41,7 @@ public sealed record OperationPlan : IOperationPlan
         MaxNodeId = _nodesById.Length > 0 ? _nodesById.Length - 1 : 0;
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
-        Authorization = CreateAuthorization(operation, incrementalPlans);
+        Policies = CreatePolicies(operation, incrementalPlans);
     }
 
     /// <summary>
@@ -112,10 +112,10 @@ public sealed record OperationPlan : IOperationPlan
     internal bool UsesBatchNodes { get; }
 
     /// <summary>
-    /// Gets the authorization requirements of the operation and its incremental plans,
+    /// Gets the policy requirements of the operation and its incremental plans,
     /// or <c>null</c> if nothing is protected.
     /// </summary>
-    internal OperationAuthorization? Authorization { get; }
+    internal OperationPolicies? Policies { get; }
 
     /// <summary>
     /// Retrieves the execution node associated with a plan node identifier.
@@ -262,32 +262,32 @@ public sealed record OperationPlan : IOperationPlan
             expandedNodes);
     }
 
-    private static OperationAuthorization? CreateAuthorization(
+    private static OperationPolicies? CreatePolicies(
         Operation operation,
         ImmutableArray<IncrementalPlan> incrementalPlans)
     {
-        var root = operation.Authorization;
-        var hasIncrementalAuthorization = false;
+        var root = operation.Policies;
+        var hasIncrementalPolicies = false;
 
         if (!incrementalPlans.IsDefaultOrEmpty)
         {
             foreach (var incrementalPlan in incrementalPlans)
             {
-                if (incrementalPlan.Operation.Authorization is not null)
+                if (incrementalPlan.Operation.Policies is not null)
                 {
-                    hasIncrementalAuthorization = true;
+                    hasIncrementalPolicies = true;
                     break;
                 }
             }
         }
 
-        if (!hasIncrementalAuthorization)
+        if (!hasIncrementalPolicies)
         {
             return root;
         }
 
         var descriptors = ImmutableArray.CreateBuilder<PolicyDescriptor>();
-        var variables = ImmutableArray.CreateBuilder<AuthorizationVariable>();
+        var variables = ImmutableArray.CreateBuilder<PolicyVariable>();
 
         if (root is not null)
         {
@@ -297,14 +297,14 @@ public sealed record OperationPlan : IOperationPlan
 
         foreach (var incrementalPlan in incrementalPlans)
         {
-            if (incrementalPlan.Operation.Authorization is { } authorization)
+            if (incrementalPlan.Operation.Policies is { } policies)
             {
-                descriptors.AddRange(authorization.Descriptors);
-                variables.AddRange(authorization.Variables);
+                descriptors.AddRange(policies.Descriptors);
+                variables.AddRange(policies.Variables);
             }
         }
 
-        return new OperationAuthorization(descriptors.ToImmutable(), variables.ToImmutable());
+        return new OperationPolicies(descriptors.ToImmutable(), variables.ToImmutable());
     }
 
     private static ExecutionNode?[] CreateNodeLookup(

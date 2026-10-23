@@ -30,7 +30,7 @@ public sealed partial class OperationPlanner
         int searchSpace,
         int expandedNodes,
         int nextNodeId,
-        AuthorizationPlanContext? authorization,
+        PolicyPlanContext? policyContext,
         CancellationToken cancellationToken)
     {
         if (operation.IsIntrospectionOnly())
@@ -47,16 +47,16 @@ public sealed partial class OperationPlanner
         }
 
         var ctx = new ExecutionPlanBuildContext(nextNodeId);
-        var marker = authorization is null
+        var marker = policyContext is null
             ? null
-            : AuthorizationMarker.TryCreate(_schema, authorization, operation);
+            : PolicyMarker.TryCreate(_schema, policyContext, operation);
 
         planSteps = TransformPlanSteps(planSteps, operationDefinition, marker);
 
         var hasVariables = operationDefinition.VariableDefinitions.Count > 0
             || marker is { HasVariables: true };
 
-        operation.SetAuthorization(marker?.CreateAuthorization());
+        operation.SetPolicies(marker?.CreatePolicies());
 
         IndexDependencies(planSteps, ctx);
         BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);
@@ -292,7 +292,7 @@ public sealed partial class OperationPlanner
     private static ImmutableList<PlanStep> TransformPlanSteps(
         ImmutableList<PlanStep> planSteps,
         OperationDefinitionNode originalOperation,
-        AuthorizationMarker? marker)
+        PolicyMarker? marker)
     {
         var forwardVariableContext = new ForwardVariableRewriter.Context();
 
