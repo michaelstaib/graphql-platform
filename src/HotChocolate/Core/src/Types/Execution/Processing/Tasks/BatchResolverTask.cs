@@ -471,8 +471,6 @@ internal sealed class BatchResolverTask : IResolverTask
         Status = ExecutionTaskStatus.WaitingToRun;
         IsSerial = false;
         IsRegistered = false;
-        Next = null;
-        Previous = null;
         State = null;
         return true;
     }

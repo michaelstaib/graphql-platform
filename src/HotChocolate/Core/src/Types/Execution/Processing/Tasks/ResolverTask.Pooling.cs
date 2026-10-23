@@ -41,8 +41,6 @@ internal sealed partial class ResolverTask
         BranchId = int.MinValue;
         DeferUsage = null;
         IsRegistered = false;
-        Next = null;
-        Previous = null;
         State = null;
         _taskBuffer.Clear();
         _args.Clear();
