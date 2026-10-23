@@ -5,7 +5,7 @@ namespace HotChocolate.Execution;
 /// <summary>
 /// Represents an incremental result that delivers additional list items for a @stream directive.
 /// </summary>
-public sealed class IncrementalListResult : IIncrementalListResult
+public sealed class IncrementalListResult : IIncrementalResult
 {
     /// <summary>
     /// Initializes a new instance of <see cref="IncrementalListResult"/>.
@@ -22,10 +22,8 @@ public sealed class IncrementalListResult : IIncrementalListResult
     public IncrementalListResult(
         int id,
         ImmutableList<IError>? errors,
-        IReadOnlyList<object?> items)
+        OperationResultData items)
     {
-        ArgumentNullException.ThrowIfNull(items);
-
         Id = id;
         Errors = errors ?? [];
         Items = items;
@@ -37,6 +35,8 @@ public sealed class IncrementalListResult : IIncrementalListResult
     /// <inheritdoc />
     public ImmutableList<IError> Errors { get; }
 
-    /// <inheritdoc />
-    public IReadOnlyList<object?> Items { get; }
+    /// <summary>
+    /// Gets the list items to append to the streamed list field.
+    /// </summary>
+    public OperationResultData Items { get; }
 }

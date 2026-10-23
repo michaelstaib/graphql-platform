@@ -20,6 +20,7 @@ public sealed partial class ResultDocument : IDisposable
     private readonly ulong[]? _wideIncludeFlags;
     private readonly Path _rootPath = Path.Root;
     private readonly int _arrayIndexOffset;
+    private readonly bool _isStreamItems;
     internal MetaDb _metaDb;
     private long _dataHead;
     private int _rentedDataChunks;
@@ -110,6 +111,7 @@ public sealed partial class ResultDocument : IDisposable
         _wideIncludeFlags = includeFlags.Overflow;
         _rootPath = path;
         _arrayIndexOffset = arrayIndexOffset;
+        _isStreamItems = true;
 
         Data = CreateObject(Cursor.CreateZero(), selection);
     }

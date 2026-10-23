@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.Threading.Channels;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Text.Json;
@@ -244,23 +243,16 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
                     await coordinator.EnqueueStreamItems(
                             result,
                             itemsBranchId,
-                            items: null,
+                            hasItems: false,
                             completesStream: completesStream)
                         .ConfigureAwait(false);
                     return false;
                 }
 
-                var streamedItems = new List<object?>(listResult.GetArrayLength());
-
-                foreach (var item in listResult.EnumerateArray())
-                {
-                    streamedItems.Add(new StreamedItem(item));
-                }
-
                 await coordinator.EnqueueStreamItems(
                         result,
                         itemsBranchId,
-                        streamedItems,
+                        hasItems: true,
                         completesStream: completesStream)
                     .ConfigureAwait(false);
                 return true;
@@ -298,7 +290,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             }
 
             var result = new OperationResult(CreateErrors(ex));
-            await coordinator.EnqueueStreamItems(result, itemsBranchId, items: null, completesStream: true)
+            await coordinator.EnqueueStreamItems(result, itemsBranchId, hasItems: false, completesStream: true)
                 .ConfigureAwait(false);
             return false;
         }
@@ -416,11 +408,5 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         {
             // the stream already ended and released its resources.
         }
-    }
-
-    private sealed class StreamedItem(ResultElement element) : IResultDataJsonFormatter
-    {
-        public void WriteTo(JsonWriter writer, JsonSerializerOptions? options = null)
-            => element.WriteTo(writer);
     }
 }
