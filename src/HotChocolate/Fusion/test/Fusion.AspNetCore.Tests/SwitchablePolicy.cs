@@ -1,4 +1,4 @@
-using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Policies;
 
 namespace HotChocolate.Fusion;
 

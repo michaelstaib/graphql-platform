@@ -1,8 +1,8 @@
-using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Policies;
 
 namespace HotChocolate.Fusion;
 
-public class SubscriptionAuthorizationSseTests : SubscriptionAuthorizationTransportTestBase
+public class SubscriptionPoliciesSseTests : SubscriptionPoliciesTransportTestBase
 {
     [Fact]
     public async Task StartAsync_Should_RefuseWithUnauthorized_When_TheSubscribeFieldIsDeniedForAnonymous()

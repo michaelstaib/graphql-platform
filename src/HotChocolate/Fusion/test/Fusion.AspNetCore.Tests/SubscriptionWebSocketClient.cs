@@ -26,12 +26,12 @@ public sealed class SubscriptionWebSocketClient : IDisposable
 
             if (user is not null)
             {
-                request.Headers[SubscriptionAuthorizationTransportTestBase.UserHeader] = user;
+                request.Headers[SubscriptionPoliciesTransportTestBase.UserHeader] = user;
             }
 
             if (expiry is not null)
             {
-                request.Headers[SubscriptionAuthorizationTransportTestBase.ExpiryHeader] = expiry;
+                request.Headers[SubscriptionPoliciesTransportTestBase.ExpiryHeader] = expiry;
             }
         };
 
