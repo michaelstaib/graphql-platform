@@ -1,7 +1,7 @@
 using System.Text;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Authorization;
-using HotChocolate.Fusion.Authorization.InMemory;
+using HotChocolate.Fusion.Policies;
+using HotChocolate.Fusion.Policies.InMemory;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Execution;
