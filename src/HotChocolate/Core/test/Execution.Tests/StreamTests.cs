@@ -231,6 +231,95 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task Stream_Should_Stream_When_NullableIfVariableIsNotProvided()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "query ($stream: Boolean) { items(count: 2) @stream(initialCount: 1, if: $stream) { id } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<ResponseStream>(result).MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "items": [
+                  {
+                    "id": 1
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "items"
+                  ]
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2
+                    }
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_BeRejected_When_NullableIfVariableIsNull()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            OperationRequestBuilder
+                .New()
+                .SetDocument(
+                    "query ($stream: Boolean) { items(count: 2) @stream(initialCount: 1, if: $stream) { id } }")
+                .SetVariableValues(new Dictionary<string, object?> { { "stream", null } })
+                .Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.IsType<OperationResult>(result).MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The variable `stream` is null, but the `if` argument of the `@stream` directive must not be null.",
+                  "path": [
+                    "items"
+                  ],
+                  "extensions": {
+                    "code": "HC0018",
+                    "variable": "stream",
+                    "directive": "stream"
+                  }
+                }
+              ],
+              "data": null
+            }
+            """);
+    }
+
+    [Fact]
     public async Task AsyncEnumerable_Result()
     {
         // arrange
