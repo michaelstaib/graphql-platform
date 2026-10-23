@@ -145,14 +145,14 @@ internal sealed partial class DeferExecutionCoordinator
     }
 
     /// <summary>
-    /// Enqueues the result of a batch of streamed items. The <paramref name="items"/> are the list items
-    /// to deliver, or <c>null</c> if the errors of the batch bubbled above the streamed list.
+    /// Enqueues the result of a batch of streamed items. If <paramref name="hasItems"/> is <c>false</c>,
+    /// the errors of the batch bubbled above the streamed list and the result carries no items to deliver.
     /// If <paramref name="completesStream"/> is <c>true</c>, the batch is the last one of the stream.
     /// </summary>
     public ValueTask EnqueueStreamItems(
         OperationResult result,
         int itemsBranchId,
-        IReadOnlyList<object?>? items,
+        bool hasItems,
         bool completesStream)
     {
         AssertInitialized();
@@ -165,7 +165,7 @@ internal sealed partial class DeferExecutionCoordinator
             {
                 if (_branchLookup.TryGetValue(itemsBranch.ParentBranchId, out var streamBranch))
                 {
-                    itemsBranch.StreamItems = items;
+                    itemsBranch.HasStreamItems = hasItems;
 
                     if (completesStream)
                     {
@@ -548,7 +548,7 @@ internal sealed partial class DeferExecutionCoordinator
 
         stream.DeliveredItems++;
 
-        if (itemsBranch.StreamItems is { } items)
+        if (itemsBranch.HasStreamItems && itemsResult.Data is { } items)
         {
             incrementalBuilder.Add(new IncrementalListResult(streamBranchId, itemsResult.Errors, items));
         }
@@ -709,7 +709,7 @@ internal sealed partial class DeferExecutionCoordinator
         public BranchKind Kind { get; } = kind;
         public HashSet<int>? Children { get; set; }
         public StreamState? Stream { get; set; }
-        public IReadOnlyList<object?>? StreamItems { get; set; }
+        public bool HasStreamItems { get; set; }
     }
 
     private sealed class StreamState(ResultElement list, StreamTask task)

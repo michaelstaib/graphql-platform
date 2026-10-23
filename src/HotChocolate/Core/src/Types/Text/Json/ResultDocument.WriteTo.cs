@@ -23,6 +23,12 @@ public sealed partial class ResultDocument : IRawJsonFormatter
             {
                 writer.WriteNullValue();
             }
+            else if (document._isStreamItems)
+            {
+                // the document of a stream batch has a single property, whose value is the list of items.
+                var items = root + 2;
+                WriteValue(items, document._metaDb.Get(items));
+            }
             else
             {
                 WriteObject(root, row);
