@@ -938,9 +938,9 @@ internal static partial class OperationPlanExecutor
             // and the unsealed arena is abandoned instead.
             requestContext.Memory?.Seal();
 
-            var authorization =
-                requestContext.Features.TryGet(out SubscriptionPolicies? subscriptionAuthorization)
-                    ? subscriptionAuthorization
+            var subscriptionPolicies =
+                requestContext.Features.TryGet(out SubscriptionPolicies? policies)
+                    ? policies
                     : null;
             var concurrencyGate = requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>();
             var eventTimeout = requestContext.Schema.GetRequestOptions().ExecutionTimeout;
@@ -952,7 +952,7 @@ internal static partial class OperationPlanExecutor
                     context,
                     root,
                     subscriptionResult,
-                    authorization,
+                    subscriptionPolicies,
                     concurrencyGate,
                     eventTimeout,
                     stream!,
@@ -1121,7 +1121,7 @@ internal static partial class OperationPlanExecutor
         OperationPlanContext context,
         ExecutionNode subscriptionNode,
         SubscriptionResult subscriptionResult,
-        SubscriptionPolicies? authorization,
+        SubscriptionPolicies? subscriptionPolicies,
         ExecutionConcurrencyGate? concurrencyGate,
         TimeSpan eventTimeout,
         IExecutionResult responseStream,
@@ -1144,20 +1144,20 @@ internal static partial class OperationPlanExecutor
 
         var schemaName = GetSubscriptionSchemaName(context, subscriptionNode);
         var events = subscriptionResult.ReadStreamAsync();
-        Exception? authorizationFault = null;
+        Exception? policyFault = null;
 
-        if (authorization is not null
+        if (subscriptionPolicies is not null
             && SubscriptionPolicies.GetExpiry(OperationPolicyMiddleware.GetUser(context.RequestContext))
                 is { } expiry)
         {
-            events = authorization.EndOnExpiry(
+            events = subscriptionPolicies.EndOnExpiry(
                 events,
                 responseStream,
                 context.RequestContext,
                 expiry,
                 failure =>
                 {
-                    authorizationFault = failure;
+                    policyFault = failure;
                     context.DiagnosticEvents.SubscriptionEventError(
                         context,
                         subscriptionNode,
@@ -1207,12 +1207,12 @@ internal static partial class OperationPlanExecutor
 
                     context.Begin(eventArgs.StartTimestamp, eventArgs.Activity?.TraceId.ToHexString());
 
-                    if (authorization is { ReevaluatesPerEvent: true })
+                    if (subscriptionPolicies is { ReevaluatesPerEvent: true })
                     {
                         try
                         {
-                            var variables = await authorization.ReevaluateAsync(context.RequestContext, eventToken);
-                            context.ApplyAuthorization(variables, authorization.CurrentDecisions);
+                            var variables = await subscriptionPolicies.ReevaluateAsync(context.RequestContext, eventToken);
+                            context.ApplyAuthorization(variables, subscriptionPolicies.CurrentDecisions);
                         }
                         catch (Exception ex) when (PolicyEvaluator.IsFault(ex, eventToken))
                         {
@@ -1222,7 +1222,7 @@ internal static partial class OperationPlanExecutor
                                 schemaName,
                                 subscriptionResult.Id,
                                 ex);
-                            authorizationFault = ex;
+                            policyFault = ex;
                             break;
                         }
                     }
@@ -1358,9 +1358,9 @@ internal static partial class OperationPlanExecutor
             eventCts?.Dispose();
         }
 
-        if (authorizationFault is not null)
+        if (policyFault is not null)
         {
-            yield return ErrorHelper.SubscriptionFaulted(authorizationFault, context.ErrorHandler);
+            yield return ErrorHelper.SubscriptionFaulted(policyFault, context.ErrorHandler);
         }
 
         // Creates a fresh event-scoped cancellation source, links client-abort / shutdown into it,
