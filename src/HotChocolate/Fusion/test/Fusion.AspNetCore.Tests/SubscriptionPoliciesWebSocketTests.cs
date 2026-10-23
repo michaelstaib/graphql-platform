@@ -1,9 +1,9 @@
-using HotChocolate.Fusion.Authorization;
+using HotChocolate.Fusion.Policies;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
-public class SubscriptionAuthorizationWebSocketTests : SubscriptionAuthorizationTransportTestBase
+public class SubscriptionPoliciesWebSocketTests : SubscriptionPoliciesTransportTestBase
 {
     [Fact]
     public async Task ReceiveAsync_Should_SendTheDenialAsPerIdError_When_TheSubscribeFieldIsDeniedForAnonymous()

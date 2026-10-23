@@ -42,12 +42,12 @@ public sealed class SubscriptionSseClient : IDisposable
 
         if (user is not null)
         {
-            request.Headers.Add(SubscriptionAuthorizationTransportTestBase.UserHeader, user);
+            request.Headers.Add(SubscriptionPoliciesTransportTestBase.UserHeader, user);
         }
 
         if (expiry is not null)
         {
-            request.Headers.Add(SubscriptionAuthorizationTransportTestBase.ExpiryHeader, expiry);
+            request.Headers.Add(SubscriptionPoliciesTransportTestBase.ExpiryHeader, expiry);
         }
 
         var response = await client.SendAsync(

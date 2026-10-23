@@ -9,9 +9,9 @@ namespace HotChocolate.Fusion;
 /// <summary>
 /// The source schema behind the subscription authorization transport tests. Its subscription
 /// fields carry the authorization directives of the gateway and stream the events of a
-/// <see cref="SubscriptionAuthorizationFeed"/>.
+/// <see cref="SubscriptionPoliciesFeed"/>.
 /// </summary>
-public static class SubscriptionAuthorizationSource
+public static class SubscriptionPoliciesSource
 {
     public const string LivePolicy = "live";
     public const string FlipPolicy = "flip";
@@ -35,7 +35,7 @@ public static class SubscriptionAuthorizationSource
     public sealed class Subscription
     {
         public IAsyncEnumerable<Item> Stream(
-            [Service] SubscriptionAuthorizationFeed feed,
+            [Service] SubscriptionPoliciesFeed feed,
             CancellationToken cancellationToken)
             => feed.SubscribeAsync(cancellationToken);
 
