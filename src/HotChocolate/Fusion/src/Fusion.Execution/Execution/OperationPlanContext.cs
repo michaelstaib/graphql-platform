@@ -896,7 +896,16 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     internal PooledArrayWriter CreateRentedBuffer()
         => _resultStore.CreateRentedBuffer();
 
-    internal void ApplyAuthorization(VariableValueCollection variables, PolicyDecisions? policyDecisions)
+    /// <summary>
+    /// Replaces the variable values and the policy decisions of this context.
+    /// </summary>
+    /// <param name="variables">
+    /// The variable values for the next execution.
+    /// </param>
+    /// <param name="policyDecisions">
+    /// The denied selections for the next execution, or <c>null</c> if every selection is allowed.
+    /// </param>
+    internal void SetVariables(IVariableValueCollection variables, PolicyDecisions? policyDecisions)
     {
         Variables = variables;
         PolicyDecisions = policyDecisions;
