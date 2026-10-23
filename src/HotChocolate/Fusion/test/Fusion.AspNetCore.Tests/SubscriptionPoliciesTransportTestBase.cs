@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Security.Claims;
-using HotChocolate.Fusion.Authorization;
-using HotChocolate.Fusion.Authorization.Audit;
 using HotChocolate.Fusion.Configuration;
+using HotChocolate.Fusion.Policies;
+using HotChocolate.Fusion.Policies.Audit;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -10,10 +10,10 @@ using Microsoft.Extensions.Time.Testing;
 namespace HotChocolate.Fusion;
 
 /// <summary>
-/// Builds a gateway in front of the <see cref="SubscriptionAuthorizationSource"/> whose principal
+/// Builds a gateway in front of the <see cref="SubscriptionPoliciesSource"/> whose principal
 /// comes from the test headers.
 /// </summary>
-public abstract class SubscriptionAuthorizationTransportTestBase : FusionTestBase
+public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
 {
     public const string UserHeader = "X-Test-User";
     public const string ExpiryHeader = "X-Test-Expiry";
@@ -22,7 +22,7 @@ public abstract class SubscriptionAuthorizationTransportTestBase : FusionTestBas
 
     protected const string ChangedSubscription = "subscription { changed { id name tag } }";
 
-    protected static readonly SubscriptionAuthorizationSource.Item Event =
+    protected static readonly SubscriptionPoliciesSource.Item Event =
         new("1", "name", "code", "note", "tag");
 
     protected Task<SubscriptionGateway> CreateSubscriptionGatewayAsync(DenyHandling denyHandling)
@@ -32,15 +32,15 @@ public abstract class SubscriptionAuthorizationTransportTestBase : FusionTestBas
         DenyHandling denyHandling,
         Action<IFusionGatewayBuilder> configure)
     {
-        var feed = new SubscriptionAuthorizationFeed();
+        var feed = new SubscriptionPoliciesFeed();
         var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddHours(1));
-        var live = new SwitchablePolicy(SubscriptionAuthorizationSource.LivePolicy, reevaluatesPerEvent: true);
-        var flip = new SwitchablePolicy(SubscriptionAuthorizationSource.FlipPolicy, reevaluatesPerEvent: true);
+        var live = new SwitchablePolicy(SubscriptionPoliciesSource.LivePolicy, reevaluatesPerEvent: true);
+        var flip = new SwitchablePolicy(SubscriptionPoliciesSource.FlipPolicy, reevaluatesPerEvent: true);
         var audit = new RecordingAuditProvider();
 
         var source = CreateSourceSchema(
             "A",
-            SubscriptionAuthorizationSource.Configure,
+            SubscriptionPoliciesSource.Configure,
             configureServices: services => services.AddSingleton(feed));
 
         var gateway = await CreateCompositeSchemaAsync(
@@ -117,7 +117,7 @@ public abstract class SubscriptionAuthorizationTransportTestBase : FusionTestBas
 
     protected sealed class SubscriptionGateway(
         Gateway gateway,
-        SubscriptionAuthorizationFeed feed,
+        SubscriptionPoliciesFeed feed,
         FakeTimeProvider time,
         SwitchablePolicy live,
         SwitchablePolicy flip,
@@ -125,7 +125,7 @@ public abstract class SubscriptionAuthorizationTransportTestBase : FusionTestBas
     {
         public Gateway Gateway { get; } = gateway;
 
-        public SubscriptionAuthorizationFeed Feed { get; } = feed;
+        public SubscriptionPoliciesFeed Feed { get; } = feed;
 
         public FakeTimeProvider Time { get; } = time;
 
