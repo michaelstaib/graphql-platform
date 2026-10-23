@@ -1078,9 +1078,14 @@ public sealed partial class ResultDocument : IDisposable
         // data segments are simply dropped here. The metadb only releases its pooled tracking
         // arrays, not the chunk memory.
         _metaDb.Dispose();
-        _data.AsSpan().Clear();
-        s_arrayPool.Return(_data);
-        _data = [];
+
+        // a document whose construction failed has no data chunks.
+        if (_data is not null)
+        {
+            _data.AsSpan().Clear();
+            s_arrayPool.Return(_data);
+            _data = [];
+        }
     }
 
     ~ResultDocument() => ReleaseTrackingArrays();
