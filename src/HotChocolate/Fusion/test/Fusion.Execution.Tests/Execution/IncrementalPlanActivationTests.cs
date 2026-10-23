@@ -227,6 +227,6 @@ public class IncrementalPlanActivationTests : FusionTestBase
                     value ? BooleanValueNode.True : BooleanValueNode.False));
         }
 
-        return new VariableValueCollection(variables, null);
+        return new VariableValueCollection(variables);
     }
 }
