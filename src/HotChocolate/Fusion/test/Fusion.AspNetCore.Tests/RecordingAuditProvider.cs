@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Security.Claims;
-using HotChocolate.Fusion.Authorization.Audit;
+using HotChocolate.Fusion.Policies.Audit;
 
 namespace HotChocolate.Fusion;
 

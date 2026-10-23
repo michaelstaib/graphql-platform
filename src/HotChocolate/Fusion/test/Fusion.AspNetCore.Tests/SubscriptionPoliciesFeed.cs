@@ -6,10 +6,10 @@ namespace HotChocolate.Fusion;
 /// <summary>
 /// Hands out the events a test publishes to every subscription the source schema has opened.
 /// </summary>
-public sealed class SubscriptionAuthorizationFeed
+public sealed class SubscriptionPoliciesFeed
 {
     private readonly object _sync = new();
-    private readonly List<Channel<SubscriptionAuthorizationSource.Item>> _channels = [];
+    private readonly List<Channel<SubscriptionPoliciesSource.Item>> _channels = [];
     private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
     private int _opened;
 
@@ -30,10 +30,10 @@ public sealed class SubscriptionAuthorizationFeed
     /// <summary>
     /// Opens a source schema subscription that yields every published event until it is canceled.
     /// </summary>
-    public async IAsyncEnumerable<SubscriptionAuthorizationSource.Item> SubscribeAsync(
+    public async IAsyncEnumerable<SubscriptionPoliciesSource.Item> SubscribeAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var channel = Channel.CreateUnbounded<SubscriptionAuthorizationSource.Item>();
+        var channel = Channel.CreateUnbounded<SubscriptionPoliciesSource.Item>();
 
         lock (_sync)
         {
@@ -65,7 +65,7 @@ public sealed class SubscriptionAuthorizationFeed
     /// <summary>
     /// Sends an event to every open source schema subscription.
     /// </summary>
-    public void Publish(SubscriptionAuthorizationSource.Item item)
+    public void Publish(SubscriptionPoliciesSource.Item item)
     {
         lock (_sync)
         {
