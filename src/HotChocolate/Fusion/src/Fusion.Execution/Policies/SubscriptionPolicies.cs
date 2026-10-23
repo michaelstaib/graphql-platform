@@ -30,8 +30,6 @@ internal sealed class SubscriptionPolicies
     private readonly TimeProvider _timeProvider;
     private readonly FrozenSet<PolicyDescriptor> _startDenied;
     private FrozenSet<PolicyDescriptor> _deniedDescriptors;
-    private VariableValueCollection _current;
-    private PolicyDecisions? _currentDecisions;
 
     /// <summary>
     /// Initializes a new instance of <see cref="SubscriptionPolicies"/>.
@@ -49,13 +47,7 @@ internal sealed class SubscriptionPolicies
     /// The policy requirements of the subscription.
     /// </param>
     /// <param name="variables">
-    /// The coerced variable values of the subscription before the synthetic variables were added.
-    /// </param>
-    /// <param name="current">
-    /// The variable values of the subscription including the synthetic variables.
-    /// </param>
-    /// <param name="currentDecisions">
-    /// The decisions made when the subscription started.
+    /// The coerced variable values of the subscription without the synthetic variables.
     /// </param>
     /// <param name="deniedDescriptors">
     /// The descriptors denied when the subscription started.
@@ -72,7 +64,6 @@ internal sealed class SubscriptionPolicies
         OperationPlan plan,
         OperationPolicies policies,
         IVariableValueCollection variables,
-        VariableValueCollection current,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
         IInputType booleanType,
         TimeProvider timeProvider)
@@ -82,7 +73,6 @@ internal sealed class SubscriptionPolicies
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
-        ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(deniedDescriptors);
         ArgumentNullException.ThrowIfNull(booleanType);
         ArgumentNullException.ThrowIfNull(timeProvider);
@@ -94,7 +84,6 @@ internal sealed class SubscriptionPolicies
         _plan = plan;
         _policies = policies;
         _variables = variables;
-        _current = current;
         _startDenied = deniedDescriptors;
         _deniedDescriptors = deniedDescriptors;
         _booleanType = booleanType;
@@ -105,11 +94,6 @@ internal sealed class SubscriptionPolicies
     /// Gets a value that indicates whether the subscription asks policies again for every event.
     /// </summary>
     public bool ReevaluatesPerEvent => _policies.HasReevaluatedPolicies;
-
-    /// <summary>
-    /// Gets the decisions that apply to the next event.
-    /// </summary>
-    public PolicyDecisions? CurrentDecisions => _currentDecisions;
 
     /// <summary>
     /// Gets the time at which the token of the principal expires, or <c>null</c> if the principal
@@ -129,23 +113,24 @@ internal sealed class SubscriptionPolicies
     }
 
     /// <summary>
-    /// Asks the policies that reevaluate again for the current principal and returns the variable
-    /// values for the next event. A change of the denied descriptors is committed in an audit
-    /// scope before the method returns.
+    /// Asks the policies that reevaluate again for the current principal. A change of the denied
+    /// descriptors is committed in an audit scope and sets the variable values and the policy
+    /// decisions for the next event on the operation plan context.
     /// </summary>
     /// <param name="context">
-    /// The request context of the subscription.
+    /// The operation plan context of the subscription.
     /// </param>
     /// <param name="cancellationToken">
     /// The token that bounds the evaluation of the event.
     /// </param>
-    public async ValueTask<VariableValueCollection> ReevaluateAsync(
-        RequestContext context,
+    public async ValueTask ReevaluateAsync(
+        OperationPlanContext context,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var user = OperationPolicyMiddleware.GetUser(context);
+        var requestContext = context.RequestContext;
+        var user = OperationPolicyMiddleware.GetUser(requestContext);
         var buffer = _recordsAudit ? new BufferedAuditScope(_trail, _info, user) : null;
         var scope = buffer ?? (IAuditScope)NoOpAuditScope.Instance;
         PolicyEvaluation evaluation;
@@ -153,7 +138,7 @@ internal sealed class SubscriptionPolicies
         try
         {
             evaluation = await _evaluator.EvaluateAsync(
-                context,
+                requestContext,
                 user,
                 _plan,
                 _policies,
@@ -167,7 +152,7 @@ internal sealed class SubscriptionPolicies
         {
             if (buffer is not null)
             {
-                await _evaluator.CommitFaultedScopeAsync(context, buffer.Replay(), ex);
+                await _evaluator.CommitFaultedScopeAsync(requestContext, buffer.Replay(), ex);
             }
 
             if (ex is OperationCanceledException)
@@ -180,7 +165,7 @@ internal sealed class SubscriptionPolicies
 
         if (_deniedDescriptors.SetEquals(evaluation.DeniedDescriptors))
         {
-            return _current;
+            return;
         }
 
         if (buffer is not null)
@@ -196,14 +181,14 @@ internal sealed class SubscriptionPolicies
         }
 
         _deniedDescriptors = evaluation.DeniedDescriptors;
-        _currentDecisions = evaluation.Decisions;
-        _current = PolicyVariableValues.Create(
-            _variables,
-            _policies.Variables,
-            evaluation.Decisions,
-            _booleanType);
 
-        return _current;
+        context.SetVariables(
+            PolicyVariableValues.Create(
+                _variables,
+                _policies.Variables,
+                evaluation.Decisions,
+                _booleanType),
+            evaluation.Decisions);
     }
 
     /// <summary>

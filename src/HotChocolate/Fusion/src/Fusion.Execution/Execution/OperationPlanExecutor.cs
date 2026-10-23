@@ -1186,8 +1186,7 @@ internal static partial class OperationPlanExecutor
                     {
                         try
                         {
-                            var variables = await subscriptionPolicies.ReevaluateAsync(context.RequestContext, eventToken);
-                            context.ApplyAuthorization(variables, subscriptionPolicies.CurrentDecisions);
+                            await subscriptionPolicies.ReevaluateAsync(context, eventToken);
                         }
                         catch (Exception ex) when (PolicyEvaluator.IsFault(ex, eventToken))
                         {

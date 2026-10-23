@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Policies.Audit;
@@ -277,6 +278,61 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
                 }
                 """
             ]);
+    }
+
+    [Fact]
+    public async Task ReadResultsAsync_Should_KeepTheClientVariablesUnchanged_When_VerdictFlipsToDeny()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Event);
+        var policy = new ToggledPolicy("live", reevaluatesPerEvent: true);
+        IVariableValueCollection? clientVariables = null;
+        IVariableValueCollection? subscribeVariables = null;
+        var executor = await CreateSubscriptionExecutorAsync(
+            client,
+            policy,
+            builder => builder
+                .ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error)
+                .UseRequest(
+                    next => context =>
+                    {
+                        clientVariables = context.VariableValues[0];
+                        return next(context);
+                    },
+                    key: "CaptureClientVariables",
+                    before: "FusionOperationPolicyMiddleware")
+                .UseRequest(
+                    next => context =>
+                    {
+                        subscribeVariables = context.VariableValues[0];
+                        return next(context);
+                    },
+                    key: "CaptureSubscribeVariables",
+                    after: "FusionOperationPolicyMiddleware"));
+        var request = CreateRequest(
+                "subscription($tag: Boolean!) { changed { id name tag @include(if: $tag) } }",
+                Authenticated())
+            .SetVariableValues("""{"tag":true}""")
+            .Build();
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+        await using var events = ReadEvents(result);
+
+        // act
+        client.Publish(Event);
+        var first = await ReadNextAsync(events);
+        policy.Allowed = false;
+        client.Publish(Event);
+        var second = await ReadNextAsync(events);
+
+        // assert
+        Snapshot.Create()
+            .Add(JsonDocument.Parse(first).RootElement, "First event")
+            .Add(JsonDocument.Parse(second).RootElement, "Second event")
+            .Add(clientVariables!.Select(static v => v.Name).ToArray(), "Client variables")
+            .Add(subscribeVariables!.Select(static v => v.Name).ToArray(), "Subscribe variables")
+            .MatchMarkdownSnapshot();
     }
 
     [Fact]
