@@ -52,7 +52,11 @@ internal readonly record struct StreamUsage(int InitialCount, string? Label)
 
             if (name.Equals(DirectiveNames.Stream.Arguments.If, StringComparison.Ordinal))
             {
-                if (!IsEnabled(argument.Value, variables))
+                if (!DirectiveIfCondition.IsEnabled(
+                    DirectiveNames.Stream.Name,
+                    argument.Value,
+                    variables,
+                    defaultValue: true))
                 {
                     usage = default;
                     return false;
@@ -70,17 +74,6 @@ internal readonly record struct StreamUsage(int InitialCount, string? Label)
 
         usage = new StreamUsage(initialCount, label);
         return true;
-    }
-
-    private static bool IsEnabled(IValueNode value, IVariableValueCollection variables)
-    {
-        if (value is VariableNode variable)
-        {
-            return !variables.TryGetValue<BooleanValueNode>(variable.Name.Value, out var variableValue)
-                || variableValue.Value;
-        }
-
-        return value is not BooleanValueNode { Value: false };
     }
 
     private static int GetInitialCount(IValueNode value, IVariableValueCollection variables)
