@@ -5,45 +5,64 @@ namespace HotChocolate.Execution.Processing;
 internal static class DirectiveIfCondition
 {
     /// <summary>
-    /// Evaluates the variable used for the <c>if</c> argument of a conditional directive.
-    /// A variable that was not provided yields <paramref name="defaultValue"/>, a variable
-    /// that is explicitly <c>null</c> raises an error.
+    /// Evaluates the <c>if</c> argument value of a conditional directive.
+    /// A <c>null</c> value or a variable that was not provided yields <paramref name="defaultValue"/>,
+    /// an explicit <c>null</c> variable or a value that is not a Boolean raises an error.
     /// </summary>
     public static bool IsEnabled(
         string directiveName,
-        string variableName,
+        IValueNode? value,
         IVariableValueCollection variableValues,
         bool defaultValue)
-    {
-        return variableValues.TryGetValue<IValueNode>(variableName, out var value)
-            ? ToBoolean(directiveName, variableName, value)
-            : defaultValue;
-    }
+        => Evaluate(directiveName, value, variableValues, hasDefault: true, defaultValue);
 
     /// <summary>
-    /// Evaluates the variable used for the <c>if</c> argument of a conditional directive.
-    /// A variable that was not provided or that is explicitly <c>null</c> raises an error.
+    /// Evaluates the <c>if</c> argument value of a conditional directive.
+    /// A <c>null</c> value, a variable that was not provided, an explicit <c>null</c> variable
+    /// or a value that is not a Boolean raises an error.
     /// </summary>
     public static bool IsEnabled(
         string directiveName,
-        string variableName,
+        IValueNode? value,
         IVariableValueCollection variableValues)
+        => Evaluate(directiveName, value, variableValues, hasDefault: false, defaultValue: false);
+
+    private static bool Evaluate(
+        string directiveName,
+        IValueNode? value,
+        IVariableValueCollection variableValues,
+        bool hasDefault,
+        bool defaultValue)
     {
-        if (!variableValues.TryGetValue<IValueNode>(variableName, out var value))
+        switch (value)
         {
-            throw ThrowHelper.DirectiveIfVariableNotProvided(directiveName, variableName);
+            case null:
+                return hasDefault
+                    ? defaultValue
+                    : throw ThrowHelper.DirectiveIfValueMissing(directiveName);
+
+            case BooleanValueNode boolean:
+                return boolean.Value;
+
+            case VariableNode variable:
+                var variableName = variable.Name.Value;
+
+                if (variableValues.TryGetValue<IValueNode>(variableName, out var variableValue))
+                {
+                    return variableValue switch
+                    {
+                        BooleanValueNode flag => flag.Value,
+                        NullValueNode => throw ThrowHelper.DirectiveIfVariableIsNull(directiveName, variableName),
+                        _ => throw ThrowHelper.DirectiveIfVariableInvalidValue(directiveName, variableName)
+                    };
+                }
+
+                return hasDefault
+                    ? defaultValue
+                    : throw ThrowHelper.DirectiveIfVariableNotProvided(directiveName, variableName);
+
+            default:
+                throw ThrowHelper.DirectiveIfValueInvalid(directiveName);
         }
-
-        return ToBoolean(directiveName, variableName, value);
-    }
-
-    private static bool ToBoolean(string directiveName, string variableName, IValueNode value)
-    {
-        return value switch
-        {
-            BooleanValueNode boolean => boolean.Value,
-            NullValueNode => throw ThrowHelper.DirectiveIfVariableIsNull(directiveName, variableName),
-            _ => throw ThrowHelper.DirectiveIfVariableInvalidValue(directiveName, variableName)
-        };
     }
 }

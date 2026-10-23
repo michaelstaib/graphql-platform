@@ -116,19 +116,9 @@ internal static class StreamPageDataRequirementAnalyzer
     }
 
     internal static bool IsStreamEnabled(DirectiveNode directive, IVariableValueCollection variables)
-    {
-        var value = directive.GetArgumentValue(DirectiveNames.Stream.Arguments.If);
-
-        return value switch
-        {
-            null => true,
-            BooleanValueNode literal => literal.Value,
-            VariableNode variable => DirectiveIfCondition.IsEnabled(
-                DirectiveNames.Stream.Name,
-                variable.Name.Value,
-                variables,
-                defaultValue: true),
-            _ => true
-        };
-    }
+        => DirectiveIfCondition.IsEnabled(
+            DirectiveNames.Stream.Name,
+            directive.GetArgumentValue(DirectiveNames.Stream.Arguments.If),
+            variables,
+            defaultValue: true);
 }

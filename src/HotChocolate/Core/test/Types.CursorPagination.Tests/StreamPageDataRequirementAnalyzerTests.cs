@@ -70,6 +70,22 @@ public class StreamPageDataRequirementAnalyzerTests
             exception.Errors[0].Message);
     }
 
+    [Fact]
+    public void IsStreamEnabled_Should_Throw_When_IfIsNotABoolean()
+    {
+        // arrange
+        var node = Utf8GraphQLParser.Syntax.ParseField("nodes @stream(if: \"yes\")").Directives[0];
+
+        // act
+        var exception = Assert.Throws<GraphQLException>(
+            () => StreamPageDataRequirementAnalyzer.IsStreamEnabled(node, new TestVariables()));
+
+        // assert
+        Assert.Equal(
+            "The `if` argument of the `@stream` directive must be a Boolean.",
+            exception.Errors[0].Message);
+    }
+
     private sealed class TestVariables(IValueNode? value = null) : IVariableValueCollection
     {
         public bool IsEmpty => value is null;
