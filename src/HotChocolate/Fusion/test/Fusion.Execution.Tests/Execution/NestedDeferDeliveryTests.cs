@@ -1,6 +1,6 @@
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Authorization;
-using HotChocolate.Fusion.Authorization.InMemory;
+using HotChocolate.Fusion.Policies;
+using HotChocolate.Fusion.Policies.InMemory;
 
 namespace HotChocolate.Fusion.Execution;
 
