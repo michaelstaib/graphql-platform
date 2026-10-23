@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Policies.Audit;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Policies.Audit;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Language.Utilities;

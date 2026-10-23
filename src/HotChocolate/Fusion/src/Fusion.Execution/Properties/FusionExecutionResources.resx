@@ -217,6 +217,6 @@
     <value>The audit scope is already committed and cannot be changed or committed again.</value>
   </data>
   <data name="OperationPolicy_EvaluationFaulted" xml:space="preserve">
-    <value>The authorization of the request faulted without the request being canceled.</value>
+    <value>The policy evaluation of the request faulted without the request being canceled.</value>
   </data>
 </root>
