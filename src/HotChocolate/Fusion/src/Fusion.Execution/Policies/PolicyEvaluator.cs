@@ -303,8 +303,8 @@ internal sealed class PolicyEvaluator
     /// <param name="plan">
     /// The plan of the operation.
     /// </param>
-    /// <param name="authorization">
-    /// The authorization requirements of the operation.
+    /// <param name="policies">
+    /// The policy requirements of the operation.
     /// </param>
     /// <param name="variables">
     /// The coerced variable values of the variable set.
@@ -315,13 +315,13 @@ internal sealed class PolicyEvaluator
     public void RecordDenied(
         IAuditScope scope,
         OperationPlan plan,
-        OperationPolicies authorization,
+        OperationPolicies policies,
         IVariableValueCollection variables,
         string reason)
     {
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
         ArgumentException.ThrowIfNullOrEmpty(reason);
 
@@ -330,7 +330,7 @@ internal sealed class PolicyEvaluator
             return;
         }
 
-        foreach (var descriptor in GetOccurrences(plan, authorization.Descriptors, variables))
+        foreach (var descriptor in GetOccurrences(plan, policies.Descriptors, variables))
         {
             var entry = new PolicyEvaluationEntry(
                 descriptor,

@@ -11,7 +11,7 @@ using HotChocolate.Types;
 namespace HotChocolate.Fusion.Policies;
 
 /// <summary>
-/// The authorization state of one protected subscription, which decides per event with the
+/// The policy state of one protected subscription, which decides per event with the
 /// policies that reevaluate and ends the stream when the token of the principal expires.
 /// </summary>
 internal sealed class SubscriptionPolicies
@@ -24,7 +24,7 @@ internal sealed class SubscriptionPolicies
     private readonly AuditScopeInfo _info;
     private readonly bool _recordsAudit;
     private readonly OperationPlan _plan;
-    private readonly OperationPolicies _authorization;
+    private readonly OperationPolicies _policies;
     private readonly IVariableValueCollection _variables;
     private readonly IInputType _booleanType;
     private readonly TimeProvider _timeProvider;
@@ -45,8 +45,8 @@ internal sealed class SubscriptionPolicies
     /// <param name="plan">
     /// The plan of the subscription.
     /// </param>
-    /// <param name="authorization">
-    /// The authorization requirements of the subscription.
+    /// <param name="policies">
+    /// The policy requirements of the subscription.
     /// </param>
     /// <param name="variables">
     /// The coerced variable values of the subscription before the synthetic variables were added.
@@ -70,7 +70,7 @@ internal sealed class SubscriptionPolicies
         PolicyEvaluator evaluator,
         IAuditScope scope,
         OperationPlan plan,
-        OperationPolicies authorization,
+        OperationPolicies policies,
         IVariableValueCollection variables,
         VariableValueCollection current,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
@@ -80,7 +80,7 @@ internal sealed class SubscriptionPolicies
         ArgumentNullException.ThrowIfNull(evaluator);
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(deniedDescriptors);
@@ -92,7 +92,7 @@ internal sealed class SubscriptionPolicies
         _info = scope.Info;
         _recordsAudit = scope.IsRecording;
         _plan = plan;
-        _authorization = authorization;
+        _policies = policies;
         _variables = variables;
         _current = current;
         _startDenied = deniedDescriptors;
@@ -104,7 +104,7 @@ internal sealed class SubscriptionPolicies
     /// <summary>
     /// Gets a value that indicates whether the subscription asks policies again for every event.
     /// </summary>
-    public bool ReevaluatesPerEvent => _authorization.HasReevaluatedPolicies;
+    public bool ReevaluatesPerEvent => _policies.HasReevaluatedPolicies;
 
     /// <summary>
     /// Gets the decisions that apply to the next event.
@@ -156,7 +156,7 @@ internal sealed class SubscriptionPolicies
                 context,
                 user,
                 _plan,
-                _authorization,
+                _policies,
                 _variables,
                 scope,
                 _info.VariableSetIndex,
@@ -199,7 +199,7 @@ internal sealed class SubscriptionPolicies
         _currentDecisions = evaluation.Decisions;
         _current = PolicyVariableValues.Create(
             _variables,
-            _authorization.Variables,
+            _policies.Variables,
             evaluation.Decisions,
             _booleanType);
 
@@ -276,7 +276,7 @@ internal sealed class SubscriptionPolicies
         {
             var scope = _trail.BeginRequest(_info, OperationPolicyMiddleware.GetUser(context));
 
-            _evaluator.RecordDenied(scope, _plan, _authorization, _variables, ExpiredReason);
+            _evaluator.RecordDenied(scope, _plan, _policies, _variables, ExpiredReason);
             await scope.CommitAsync(cancellationToken);
         }
         catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))

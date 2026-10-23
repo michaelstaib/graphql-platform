@@ -11,7 +11,7 @@ namespace HotChocolate.Fusion.Policies;
 internal sealed class ExpiringEventStream(
     IAsyncEnumerable<EventMessageResult> events,
     IExecutionResult result,
-    SubscriptionPolicies authorization,
+    SubscriptionPolicies policies,
     RequestContext context,
     DateTimeOffset expiry,
     Action<Exception> reportFailure,
@@ -22,7 +22,7 @@ internal sealed class ExpiringEventStream(
         => new Enumerator(
             events,
             result,
-            authorization,
+            policies,
             context,
             expiry,
             reportFailure,
@@ -32,7 +32,7 @@ internal sealed class ExpiringEventStream(
     private sealed class Enumerator : IAsyncEnumerator<EventMessageResult>
     {
         private readonly IExecutionResult _result;
-        private readonly SubscriptionPolicies _authorization;
+        private readonly SubscriptionPolicies _policies;
         private readonly RequestContext _context;
         private readonly Action<Exception> _reportFailure;
         private readonly TimeProvider _timeProvider;
@@ -46,7 +46,7 @@ internal sealed class ExpiringEventStream(
         public Enumerator(
             IAsyncEnumerable<EventMessageResult> events,
             IExecutionResult result,
-            SubscriptionPolicies authorization,
+            SubscriptionPolicies policies,
             RequestContext context,
             DateTimeOffset expiry,
             Action<Exception> reportFailure,
@@ -54,7 +54,7 @@ internal sealed class ExpiringEventStream(
             CancellationToken cancellationToken)
         {
             _result = result;
-            _authorization = authorization;
+            _policies = policies;
             _context = context;
             _reportFailure = reportFailure;
             _timeProvider = timeProvider;
@@ -89,7 +89,7 @@ internal sealed class ExpiringEventStream(
                 _result.ContextData = _result.ContextData.SetItem(
                     ExecutionContextData.HttpStatusCode,
                     HttpStatusCode.Unauthorized);
-                await _authorization.RecordExpiryAsync(_context, _reportFailure, _callerToken);
+                await _policies.RecordExpiryAsync(_context, _reportFailure, _callerToken);
             }
 
             return hasNext;
@@ -120,7 +120,7 @@ internal sealed class ExpiringEventStream(
         {
             try
             {
-                var current = _authorization.GetCurrentExpiry(_context);
+                var current = _policies.GetCurrentExpiry(_context);
 
                 if (current is { } renewed && renewed > _timeProvider.GetUtcNow())
                 {
