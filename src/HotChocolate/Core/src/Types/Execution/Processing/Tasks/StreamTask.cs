@@ -235,7 +235,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
                 await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
 
-                var result = context.BuildResult();
+                var result = context.BuildStreamItemsResult();
 
                 if (listResult.IsNullOrInvalidated || result.Data is { IsValueNull: true })
                 {

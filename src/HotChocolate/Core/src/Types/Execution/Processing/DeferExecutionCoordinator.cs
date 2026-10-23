@@ -548,7 +548,7 @@ internal sealed partial class DeferExecutionCoordinator
 
         stream.DeliveredItems++;
 
-        if (itemsBranch.HasStreamItems && itemsResult.Data is { } items)
+        if (itemsBranch.HasStreamItems && itemsResult.Data is { Value: OperationResultItemCollection items })
         {
             incrementalBuilder.Add(new IncrementalListResult(streamBranchId, itemsResult.Errors, items));
         }

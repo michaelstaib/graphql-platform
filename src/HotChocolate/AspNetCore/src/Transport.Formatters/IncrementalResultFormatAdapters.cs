@@ -695,7 +695,7 @@ internal static class IncrementalRfc1ResultFormatAdapter
 
             case LegacyIncrementalEntryKind.Items:
                 writer.WritePropertyName(ResultFieldNames.Items);
-                entry.Items!.Value.Formatter.WriteDataTo(writer);
+                entry.Items!.WriteDataTo(writer);
                 break;
         }
 
@@ -733,7 +733,7 @@ internal static class IncrementalRfc1ResultFormatAdapter
         string? Label,
         OperationResultData? Data,
         ReadOnlyMemorySegment? RawData,
-        OperationResultData? Items,
+        OperationResultItemCollection? Items,
         IReadOnlyList<IError>? Errors)
     {
         public static LegacyIncrementalEntry ForData(
@@ -747,7 +747,7 @@ internal static class IncrementalRfc1ResultFormatAdapter
         public static LegacyIncrementalEntry ForItems(
             Path path,
             string? label,
-            OperationResultData items,
+            OperationResultItemCollection items,
             IReadOnlyList<IError>? errors)
             => new(LegacyIncrementalEntryKind.Items, path, label, null, null, items, errors);
     }

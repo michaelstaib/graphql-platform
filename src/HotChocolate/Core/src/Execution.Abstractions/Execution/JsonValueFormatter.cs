@@ -369,7 +369,7 @@ public static class JsonValueFormatter
         else if (item is IncrementalListResult listResult)
         {
             writer.WritePropertyName(Items);
-            listResult.Items.Formatter.WriteDataTo(writer);
+            listResult.Items.WriteDataTo(writer);
         }
         else
         {
