@@ -43,6 +43,6 @@ false
 
 ```json
 [
-  "System.InvalidOperationException: The authorization of the request faulted without the request being canceled."
+  "System.InvalidOperationException: The policy evaluation of the request faulted without the request being canceled."
 ]
 ```

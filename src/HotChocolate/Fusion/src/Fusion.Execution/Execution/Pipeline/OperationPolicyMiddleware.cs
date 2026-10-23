@@ -79,7 +79,7 @@ internal sealed class OperationPolicyMiddleware
             && SubscriptionPolicies.GetExpiry(user) is { } expiry
             && expiry <= _timeProvider.GetUtcNow())
         {
-            await RefuseExpiredAsync(context, trail, user, plan, authorization, variableSets);
+            await RefuseExpiredAsync(context, trail, user, plan, policies, variableSets);
             return;
         }
 
@@ -217,7 +217,7 @@ internal sealed class OperationPolicyMiddleware
         IAuditTrail trail,
         ClaimsPrincipal user,
         OperationPlan plan,
-        OperationPolicies authorization,
+        OperationPolicies policies,
         ImmutableArray<IVariableValueCollection> variableSets)
     {
         for (var i = 0; i < variableSets.Length; i++)
@@ -229,7 +229,7 @@ internal sealed class OperationPolicyMiddleware
             _evaluator.RecordDenied(
                 scope,
                 plan,
-                authorization,
+                policies,
                 variableSets[i],
                 PolicyEvaluator.UnauthenticatedReason);
             await scope.CommitAsync(context.RequestAborted);
