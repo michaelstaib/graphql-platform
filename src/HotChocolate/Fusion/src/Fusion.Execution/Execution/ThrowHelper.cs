@@ -24,6 +24,11 @@ internal static class ThrowHelper
     public static InvalidOperationException OperationPolicyRequiresBooleanType()
         => new(FusionExecutionResources.OperationPolicy_BooleanTypeMissing);
 
+    public static InvalidOperationException VariableAlreadyExists(string variableName)
+        => new(string.Format(
+            FusionExecutionResources.VariableValueCollection_VariableAlreadyExists,
+            variableName));
+
     public static InvalidOperationException AuthorizationOptionsAreReadOnly()
         => new(FusionExecutionResources.FusionAuthorizationOptions_ReadOnly);
 

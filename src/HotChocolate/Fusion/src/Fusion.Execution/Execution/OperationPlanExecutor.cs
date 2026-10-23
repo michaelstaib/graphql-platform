@@ -6,6 +6,7 @@ using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Results;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
 using HotChocolate.Types;
@@ -18,6 +19,7 @@ internal static partial class OperationPlanExecutor
     public static async Task<IExecutionResult> ExecuteAsync(
         RequestContext requestContext,
         IVariableValueCollection variables,
+        PolicyDecisions? policyDecisions,
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
@@ -30,7 +32,7 @@ internal static partial class OperationPlanExecutor
 
         try
         {
-            context.Initialize(requestContext, variables, operationPlan, executionCts);
+            context.Initialize(requestContext, variables, policyDecisions, operationPlan, executionCts);
 
             context.Begin();
 
@@ -68,6 +70,7 @@ internal static partial class OperationPlanExecutor
     public static async Task<IExecutionResult> ExecuteWithDeferAsync(
         RequestContext requestContext,
         IVariableValueCollection variables,
+        PolicyDecisions? policyDecisions,
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
@@ -78,7 +81,7 @@ internal static partial class OperationPlanExecutor
         try
         {
             rootContext = requestContext.Schema.Services.GetRequiredService<OperationPlanContextPool>().Rent();
-            rootContext.Initialize(requestContext, variables, operationPlan, executionCts);
+            rootContext.Initialize(requestContext, variables, policyDecisions, operationPlan, executionCts);
 
             rootContext.Begin();
 
@@ -155,6 +158,7 @@ internal static partial class OperationPlanExecutor
                 () => CreateIncrementalStream(
                     requestContext,
                     variables,
+                    policyDecisions,
                     operationPlan,
                     initialResult,
                     activeDeliveryGroups,
@@ -184,6 +188,7 @@ internal static partial class OperationPlanExecutor
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(
         RequestContext requestContext,
         IVariableValueCollection variables,
+        PolicyDecisions? policyDecisions,
         OperationPlan operationPlan,
         OperationResult initialResult,
         bool[] activeDeliveryGroups,
@@ -249,6 +254,7 @@ internal static partial class OperationPlanExecutor
                 BeginIncrementalPlan(
                     requestContext,
                     variables,
+                    policyDecisions,
                     incrementalPlan,
                     rootContext.GetResultStoreForChildDefer(),
                     channel.Writer,
@@ -331,6 +337,7 @@ internal static partial class OperationPlanExecutor
                     BeginIncrementalPlan(
                         requestContext,
                         variables,
+                        policyDecisions,
                         candidate,
                         parentStore,
                         channel.Writer,
@@ -470,6 +477,7 @@ internal static partial class OperationPlanExecutor
     private static void BeginIncrementalPlan(
         RequestContext requestContext,
         IVariableValueCollection variables,
+        PolicyDecisions? policyDecisions,
         IncrementalPlan incrementalPlan,
         FetchResultStore parentResultStore,
         ChannelWriter<IncrementalPlanResult> completion,
@@ -490,7 +498,7 @@ internal static partial class OperationPlanExecutor
             // Reuse the single request arena instead of minting a per-plan arena: the request
             // executor has already detached it from the request context, so it is supplied
             // explicitly here.
-            context.Initialize(requestContext, variables, incrementalPlan, executionCts, requestArena);
+            context.Initialize(requestContext, variables, policyDecisions, incrementalPlan, executionCts, requestArena);
 
             // Copy parent-scope requirements into the child context.
             CollectIncrementalPlanRequirements(parentResultStore, incrementalPlan, context);
@@ -1071,7 +1079,12 @@ internal static partial class OperationPlanExecutor
         try
         {
             context = requestContext.Schema.Services.GetRequiredService<OperationPlanContextPool>().Rent();
-            context.Initialize(requestContext, requestContext.VariableValues[0], operationPlan, executionCts);
+            context.Initialize(
+                requestContext,
+                requestContext.VariableValues[0],
+                requestContext.GetPolicyDecisions(0),
+                operationPlan,
+                executionCts);
 
             var subscriptionResult = root switch
             {

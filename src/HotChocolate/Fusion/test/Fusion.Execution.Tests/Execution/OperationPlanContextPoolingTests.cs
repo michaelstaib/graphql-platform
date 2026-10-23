@@ -322,6 +322,7 @@ public sealed class OperationPlanContextPoolingTests : FusionTestBase
             => Context.Initialize(
                 requestContext,
                 variables ?? VariableValueCollection.Empty,
+                null,
                 plan,
                 cancellationTokenSource,
                 memory);

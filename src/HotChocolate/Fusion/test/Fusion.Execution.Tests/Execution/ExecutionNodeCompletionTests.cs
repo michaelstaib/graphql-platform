@@ -376,6 +376,7 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
             context.Initialize(
                 requestContext,
                 VariableValueCollection.Empty,
+                null,
                 plan,
                 cts,
                 new MemoryArena());

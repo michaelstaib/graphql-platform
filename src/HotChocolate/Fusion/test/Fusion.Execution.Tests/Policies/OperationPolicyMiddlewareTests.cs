@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -505,6 +507,112 @@ public class OperationPolicyMiddlewareTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task InvokeAsync_Should_NotShareDecisions_When_OperationWithoutVariablesRunsTwice()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            new InMemoryPolicyRecorder(),
+            policies => policies.Evaluate(
+                "finance",
+                (context, _) => context.User.HasClaim("role", "finance")));
+        var denied = Authenticated();
+        var allowed = Authenticated(new Claim("role", "finance"));
+
+        // act
+        await using var deniedResult = await executor.ExecuteAsync(
+            CreateRequest("{ product { id margin } }", denied).Build(),
+            TestContext.Current.CancellationToken);
+        await using var allowedResult = await executor.ExecuteAsync(
+            CreateRequest("{ product { id margin } }", allowed).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        deniedResult.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "product": {
+                  "id": "1",
+                  "margin": null
+                }
+              }
+            }
+            """);
+        allowedResult.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "product": {
+                  "id": "1",
+                  "margin": 3
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Should_CopyVariables_When_VariableCollectionIsCustom()
+    {
+        // arrange
+        var client = new AuthorizationTestClient(Data);
+        var executor = await CreateExecutorAsync(
+            Schema,
+            client,
+            new InMemoryPolicyRecorder(),
+            policies => policies.Evaluate(
+                "owner",
+                (_, entry) => entry.Arguments["id"] is StringValueNode { Value: "1" }),
+            builder => builder.UseRequest(
+                next => context =>
+                {
+                    var wrapped = new IVariableValueCollection[context.VariableValues.Length];
+
+                    for (var i = 0; i < wrapped.Length; i++)
+                    {
+                        wrapped[i] = new ReadOnlyVariableValues(context.VariableValues[i]);
+                    }
+
+                    context.VariableValues = [.. wrapped];
+                    return next(context);
+                },
+                key: "CustomVariables",
+                before: "FusionOperationPolicyMiddleware"));
+        var request = CreateRequest("query($id: ID!) { productById(id: $id) { id } }", Authenticated())
+            .SetVariableValues("""[{"id":"1"},{"id":"2"}]""")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResultBatch().Results.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "productById": {
+                      "id": "1"
+                    }
+                  }
+                }
+                """,
+                """
+                {
+                  "data": {
+                    "productById": null
+                  }
+                }
+                """
+            ]);
+    }
+
+    [Fact]
     public async Task InvokeAsync_Should_PassResolvedArguments_When_VariableIsNestedInAnInputObject()
     {
         // arrange
@@ -859,5 +967,22 @@ public class OperationPolicyMiddlewareTests : AuthorizationExecutionTestBase
                 """
             ]);
         Assert.Single(recorder.Records);
+    }
+
+    private sealed class ReadOnlyVariableValues(IVariableValueCollection inner) : IVariableValueCollection
+    {
+        public bool IsEmpty => inner.IsEmpty;
+
+        public T GetValue<T>(string name) where T : IValueNode
+            => inner.GetValue<T>(name);
+
+        public bool TryGetValue<T>(string name, [NotNullWhen(true)] out T? value) where T : IValueNode
+            => inner.TryGetValue(name, out value);
+
+        public IEnumerator<VariableValue> GetEnumerator()
+            => inner.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => GetEnumerator();
     }
 }

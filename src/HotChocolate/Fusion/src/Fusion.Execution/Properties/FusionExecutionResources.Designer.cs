@@ -405,6 +405,12 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
+        internal static string VariableValueCollection_VariableAlreadyExists {
+            get {
+                return ResourceManager.GetString("VariableValueCollection_VariableAlreadyExists", resourceCulture);
+            }
+        }
+
         internal static string DeliveryGroup_InvalidIfVariable {
             get {
                 return ResourceManager.GetString("DeliveryGroup_InvalidIfVariable", resourceCulture);

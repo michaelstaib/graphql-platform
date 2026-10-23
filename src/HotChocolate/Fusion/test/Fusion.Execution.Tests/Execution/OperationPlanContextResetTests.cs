@@ -304,6 +304,7 @@ public sealed class OperationPlanContextResetTests : FusionTestBase
             context.Initialize(
                 requestContext,
                 VariableValueCollection.Empty,
+                null,
                 plan,
                 cancellationTokenSource,
                 memory);

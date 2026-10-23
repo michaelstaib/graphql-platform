@@ -45,7 +45,6 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private bool _collectTelemetry;
     private bool _usesDynamicSchemaNames;
     private bool _usesBatchNodes;
-    private PolicyDecisions? _policyDecisions;
 #pragma warning disable IDE0370 // Remove unnecessary suppression
     private ISourceSchemaClientScope _clientScope = default!;
 #pragma warning restore IDE0370 // Remove unnecessary suppression
@@ -75,6 +74,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 #pragma warning disable IDE0370 // Remove unnecessary suppression
     public IVariableValueCollection Variables { get; private set; } = default!;
 #pragma warning restore IDE0370 // Remove unnecessary suppression
+
+    /// <summary>
+    /// Gets the policy decisions of the variable set being executed, or <c>null</c> if the
+    /// operation is not protected or every selection is allowed.
+    /// </summary>
+    internal PolicyDecisions? PolicyDecisions { get; private set; }
 
     /// <summary>
     /// Gets the schema definition associated with this execution.
@@ -785,7 +790,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     {
         _resultStore.FinalizePocketedErrors();
 
-        if (_policyDecisions is { RequiresFinalization: true } policyDecisions)
+        if (PolicyDecisions is { RequiresFinalization: true } policyDecisions)
         {
             _resultStore.FinalizeDeniedSelections(policyDecisions);
         }

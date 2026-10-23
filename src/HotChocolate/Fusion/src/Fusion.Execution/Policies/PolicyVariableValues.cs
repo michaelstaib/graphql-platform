@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Execution;
 using HotChocolate.Language;
 using HotChocolate.Types;
 
@@ -11,10 +12,10 @@ namespace HotChocolate.Fusion.Policies;
 internal static class PolicyVariableValues
 {
     /// <summary>
-    /// Adds a value for every variable to the values of the variable set.
+    /// Adds a value for every variable to the variable value collection of the variable set.
     /// </summary>
     /// <param name="values">
-    /// The variable values of the variable set.
+    /// The variable value collection of the variable set.
     /// </param>
     /// <param name="variables">
     /// The synthetic variables of the operation and its incremental plans.
@@ -26,7 +27,7 @@ internal static class PolicyVariableValues
     /// The schema's Boolean type.
     /// </param>
     public static void AddTo(
-        Dictionary<string, VariableValue> values,
+        VariableValueCollection values,
         ImmutableArray<PolicyVariable> variables,
         PolicyDecisions? decisions,
         IInputType booleanType)
@@ -40,10 +41,12 @@ internal static class PolicyVariableValues
         {
             var value = Evaluate(variable, decisions, evaluated);
 
-            values[variable.Name] = new VariableValue(
+            values.Add(
                 variable.Name,
-                booleanType,
-                value ? BooleanValueNode.True : BooleanValueNode.False);
+                new VariableValue(
+                    variable.Name,
+                    booleanType,
+                    value ? BooleanValueNode.True : BooleanValueNode.False));
         }
     }
 

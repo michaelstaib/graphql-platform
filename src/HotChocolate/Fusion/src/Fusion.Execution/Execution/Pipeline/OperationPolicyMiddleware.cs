@@ -60,7 +60,8 @@ internal sealed class OperationPolicyMiddleware
         }
 
         var user = GetUser(context);
-        var updatedVariableSets = new IVariableValueCollection[variableSets.Length];
+        PolicyDecisions?[]? decisionSets = null;
+        IVariableValueCollection[]? updatedVariableSets = null;
 
         for (var i = 0; i < variableSets.Length; i++)
         {
@@ -89,10 +90,37 @@ internal sealed class OperationPolicyMiddleware
                 return;
             }
 
-            updatedVariableSets[i] = CreateVariableValues(variableSets[i], policies.Variables, decisions);
+            if (decisions is not null)
+            {
+                decisionSets ??= new PolicyDecisions?[variableSets.Length];
+                decisionSets[i] = decisions;
+            }
+
+            if (policies.Variables.IsEmpty)
+            {
+                continue;
+            }
+
+            if (variableSets[i] is VariableValueCollection values)
+            {
+                PolicyVariableValues.AddTo(values, policies.Variables, decisions, _booleanType);
+            }
+            else
+            {
+                updatedVariableSets ??= [.. variableSets];
+                updatedVariableSets[i] = CreateVariableValues(variableSets[i], policies.Variables, decisions);
+            }
         }
 
-        context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
+        if (updatedVariableSets is not null)
+        {
+            context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
+        }
+
+        if (decisionSets is not null)
+        {
+            context.SetPolicyDecisions(ImmutableCollectionsMarshal.AsImmutableArray(decisionSets));
+        }
 
         await next(context);
     }
@@ -109,21 +137,28 @@ internal sealed class OperationPolicyMiddleware
         context.Result = result;
     }
 
-    private IVariableValueCollection CreateVariableValues(
+    private VariableValueCollection CreateVariableValues(
         IVariableValueCollection variableValues,
         ImmutableArray<PolicyVariable> variables,
         PolicyDecisions? decisions)
     {
-        var values = new Dictionary<string, VariableValue>();
+        var count = 0;
+
+        foreach (var _ in variableValues)
+        {
+            count++;
+        }
+
+        var values = new Dictionary<string, VariableValue>(count + variables.Length);
 
         foreach (var value in variableValues)
         {
             values[value.Name] = value;
         }
 
-        PolicyVariableValues.AddTo(values, variables, decisions, _booleanType);
-
-        return new VariableValueCollection(values, decisions);
+        var collection = new VariableValueCollection(values);
+        PolicyVariableValues.AddTo(collection, variables, decisions, _booleanType);
+        return collection;
     }
 
     private static ClaimsPrincipal GetUser(RequestContext context)

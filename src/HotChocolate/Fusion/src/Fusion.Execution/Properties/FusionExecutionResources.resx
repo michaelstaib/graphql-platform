@@ -198,6 +198,9 @@
   <data name="OperationPolicy_BooleanTypeMissing" xml:space="preserve">
     <value>The schema does not define the Boolean type that the policy variables require.</value>
   </data>
+  <data name="VariableValueCollection_VariableAlreadyExists" xml:space="preserve">
+    <value>The variable {0} already exists in the variable value collection.</value>
+  </data>
   <data name="DeliveryGroup_InvalidIfVariable" xml:space="preserve">
     <value>The variable {0} has an invalid value.</value>
   </data>
