@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using GreenDonut;
 using GreenDonut.Data;
 using HotChocolate.Execution.Configuration;
@@ -1331,6 +1332,122 @@ public class StreamTests
               "hasNext": false
             }
 
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_ReportOverallItemIndex_When_ItemFailsAfterInitialCountOfTwo()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ items(count: 5) @stream(initialCount: 2) { id flaky } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var paths = await ReadErrorPathsAsync(Assert.IsType<ResponseStream>(result));
+        paths.MatchInlineSnapshot(
+            """
+            [
+              "[\"items\",2,\"flaky\"]"
+            ]
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_ContinueIndexNumbering_When_EveryBatchHasOneItem()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ gatedItems(count: 4) @stream(initialCount: 1) { id flaky } }",
+            TestContext.Current.CancellationToken);
+
+        var paths = new List<string>();
+
+        await foreach (var payload in Assert.IsType<ResponseStream>(result)
+            .ReadResultsAsync()
+            .WithCancellation(TestContext.Current.CancellationToken))
+        {
+            await using var cleanup = payload;
+            paths.AddRange(GetErrorPaths(payload.ToJson()));
+            state.ReleaseNextItem();
+        }
+
+        // assert
+        paths.MatchInlineSnapshot(
+            """
+            [
+              "[\"gatedItems\",2,\"flaky\"]"
+            ]
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_AnnounceNestedDeferWithOverallItemIndex_When_EveryBatchHasOneItem()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+        state.ReleaseName(1);
+        state.ReleaseName(2);
+        state.ReleaseName(3);
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+            executor,
+            "{ gatedItems(count: 3) @stream(initialCount: 1) { id ... @defer { gatedName } } }",
+            state.ReleaseNextItem,
+            state.ReleaseNextItem,
+            state.ReleaseNextItem);
+
+        // assert
+        GetPendingPaths(payloads).MatchInlineSnapshot(
+            """
+            [
+              "[\"gatedItems\",0]",
+              "[\"gatedItems\",1]",
+              "[\"gatedItems\",2]",
+              "[\"gatedItems\"]"
+            ]
+            """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_AnnounceNestedStreamWithOverallItemIndex_When_StreamedItemStreamsItsChildren()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+        state.ReleaseNextItem();
+        state.ReleaseNextItem();
+        state.ReleaseNextItem();
+
+        // act
+        var payloads = await ReadPayloadsAsync(
+            executor,
+            "{ gatedItems(count: 3) @stream(initialCount: 1) { id gatedChildren @stream(initialCount: 1) { id } } }",
+            () => state.ReleaseChildren(2),
+            () => state.ReleaseChildren(3),
+            () => state.ReleaseChildren(1),
+            () => state.ReleaseChildrenEnd(1),
+            () => state.ReleaseChildrenEnd(2),
+            () => state.ReleaseChildrenEnd(3));
+
+        // assert
+        GetPendingPaths(payloads).MatchInlineSnapshot(
+            """
+            [
+              "[\"gatedItems\",0,\"gatedChildren\"]",
+              "[\"gatedItems\",1,\"gatedChildren\"]",
+              "[\"gatedItems\",2,\"gatedChildren\"]",
+              "[\"gatedItems\"]"
+            ]
             """);
     }
 
@@ -3363,6 +3480,58 @@ public class StreamTests
                     o.EnableDefer = true;
                     o.EnableStream = true;
                 });
+
+    private static async Task<List<string>> ReadErrorPathsAsync(ResponseStream stream)
+    {
+        var paths = new List<string>();
+
+        await foreach (var payload in stream
+            .ReadResultsAsync()
+            .WithCancellation(TestContext.Current.CancellationToken))
+        {
+            await using var cleanup = payload;
+            paths.AddRange(GetErrorPaths(payload.ToJson()));
+        }
+
+        return paths;
+    }
+
+    private static IEnumerable<string> GetErrorPaths(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        var paths = new List<string>();
+
+        if (document.RootElement.TryGetProperty("incremental", out var incremental))
+        {
+            foreach (var entry in incremental.EnumerateArray())
+            {
+                if (entry.TryGetProperty("errors", out var errors))
+                {
+                    paths.AddRange(errors.EnumerateArray().Select(e => JsonSerializer.Serialize(e.GetProperty("path"))));
+                }
+            }
+        }
+
+        return paths;
+    }
+
+    private static List<string> GetPendingPaths(IEnumerable<string> payloads)
+    {
+        var paths = new List<string>();
+
+        foreach (var payload in payloads)
+        {
+            using var document = JsonDocument.Parse(payload);
+
+            if (document.RootElement.TryGetProperty("pending", out var pending))
+            {
+                paths.AddRange(pending.EnumerateArray().Select(e => JsonSerializer.Serialize(e.GetProperty("path"))));
+            }
+        }
+
+        paths.Sort(StringComparer.Ordinal);
+        return paths;
+    }
 
     // Runs one step after each payload that was read, which lets a test hold back the producers of
     // later payloads until the earlier payloads were observed.

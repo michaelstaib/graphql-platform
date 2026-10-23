@@ -19,11 +19,16 @@ public sealed class IncrementalListResult : IIncrementalResult
     /// <param name="items">
     /// The list items to append to the streamed list field.
     /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="items"/> is <c>null</c>.
+    /// </exception>
     public IncrementalListResult(
         int id,
         ImmutableList<IError>? errors,
-        OperationResultData items)
+        OperationResultItemCollection items)
     {
+        ArgumentNullException.ThrowIfNull(items);
+
         Id = id;
         Errors = errors ?? [];
         Items = items;
@@ -38,5 +43,5 @@ public sealed class IncrementalListResult : IIncrementalResult
     /// <summary>
     /// Gets the list items to append to the streamed list field.
     /// </summary>
-    public OperationResultData Items { get; }
+    public OperationResultItemCollection Items { get; }
 }
