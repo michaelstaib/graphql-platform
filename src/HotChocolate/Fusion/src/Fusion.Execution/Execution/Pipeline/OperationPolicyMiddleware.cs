@@ -157,15 +157,6 @@ internal sealed class OperationPolicyMiddleware
 
             if (isSubscription)
             {
-                var variableValues = PolicyVariableValues.Create(
-                    variableSets[i],
-                    policies.Variables,
-                    decisions,
-                    _booleanType);
-
-                updatedVariableSets ??= [.. variableSets];
-                updatedVariableSets[i] = variableValues;
-
                 TrackSubscription(
                     context,
                     user,
@@ -173,10 +164,7 @@ internal sealed class OperationPolicyMiddleware
                     policies,
                     scope,
                     variableSets[i],
-                    variableValues,
-                    decisions,
                     evaluation.DeniedDescriptors);
-                continue;
             }
 
             if (policies.Variables.IsEmpty)
@@ -184,7 +172,7 @@ internal sealed class OperationPolicyMiddleware
                 continue;
             }
 
-            if (variableSets[i] is VariableValueCollection values)
+            if (!isSubscription && variableSets[i] is VariableValueCollection values)
             {
                 PolicyVariableValues.AddTo(values, policies.Variables, decisions, _booleanType);
             }
@@ -249,8 +237,6 @@ internal sealed class OperationPolicyMiddleware
         OperationPolicies policies,
         IAuditScope scope,
         IVariableValueCollection variables,
-        VariableValueCollection variableValues,
-        PolicyDecisions? decisions,
         FrozenSet<PolicyDescriptor> deniedDescriptors)
     {
         if (!policies.HasReevaluatedPolicies && SubscriptionPolicies.GetExpiry(user) is null)
@@ -265,8 +251,6 @@ internal sealed class OperationPolicyMiddleware
                 plan,
                 policies,
                 variables,
-                variableValues,
-                decisions,
                 deniedDescriptors,
                 _booleanType,
                 _timeProvider));
