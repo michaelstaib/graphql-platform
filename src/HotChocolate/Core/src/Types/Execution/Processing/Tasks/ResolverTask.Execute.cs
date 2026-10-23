@@ -171,7 +171,7 @@ internal sealed partial class ResolverTask
         if (_selection.IsStreamable
             && _operationContext.Operation.HasIncrementalParts
             && StreamUsage.TryCreate(_selection, _context.Variables, out var streamUsage)
-            && postProcessor.TryCreateStream(result, out var stream))
+            && postProcessor.ToStreamResultAsync(result, cancellationToken) is { } stream)
         {
             if (streamUsage.InitialCount < 0)
             {
