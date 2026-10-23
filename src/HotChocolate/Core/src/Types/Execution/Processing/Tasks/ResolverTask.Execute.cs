@@ -124,9 +124,9 @@ internal sealed partial class ResolverTask
         {
             scope.Release(_groupSlot);
         }
-        else if (_taskBuffer.Count == 0)
+        else if (_taskBuffer.Count == 0 || Status is ExecutionTaskStatus.Faulted)
         {
-            // without child tasks nothing below this selection can ever start, so its members are skipped.
+            // without registered child tasks nothing below this selection can ever start, so its members are skipped.
             scope.ReleaseDescendants(_selection);
         }
     }

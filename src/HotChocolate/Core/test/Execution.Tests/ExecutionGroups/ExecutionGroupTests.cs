@@ -829,6 +829,81 @@ public class ExecutionGroupTests
     }
 
     [Fact]
+    public async Task Execute_Should_ReleaseLaterMembers_When_ValueCompletionThrowsAfterChildTasksWereCreated()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(descriptor =>
+            {
+                descriptor.Name("Query");
+                descriptor
+                    .Field("conn")
+                    .Type<ObjectType<FaultingConnection>>()
+                    .Resolve(_ => new FaultingConnection())
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                        new ExecutionGroupEntry("nodes", 1, isStreamable: false));
+            })
+            .AddObjectType<FaultingConnection>(descriptor =>
+            {
+                descriptor.Name("FaultingConnection");
+                descriptor
+                    .Field("nodes")
+                    .Type<ListType<StringType>>()
+                    .Resolve(ctx => script.RunAsync(ctx, new[] { "n" }));
+                descriptor
+                    .Field("pageInfo")
+                    .Type<ObjectType<FaultingPageInfo>>()
+                    .Resolve(ctx => script.Resolve(ctx, new FaultingPageInfo()));
+            })
+            .AddObjectType<FaultingPageInfo>(descriptor =>
+            {
+                descriptor.Name("FaultingPageInfo");
+                descriptor
+                    .Field("hasNextPage")
+                    .Type<BooleanType>()
+                    .Resolve(ctx => script.RunAsync(ctx, true));
+                descriptor.Field(p => p.Boom);
+            })
+            .AddErrorFilter(
+                error => error.Exception is InvalidOperationException
+                    ? throw new InvalidOperationException("The error filter failed.")
+                    : error)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("conn.pageInfo.hasNextPage");
+        script.Release("conn.nodes");
+
+        // act
+        var result = await executor.ExecuteAsync("{ conn { nodes pageInfo { hasNextPage boom } } }", cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "start conn.nodes",
+            "end conn.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "conn": {
+                  "nodes": [
+                    "n"
+                  ],
+                  "pageInfo": {
+                    "hasNextPage": null,
+                    "boom": null
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_SequenceMembersPerConcreteResult_When_GroupRootIsAnInterface()
     {
         // arrange
@@ -1051,6 +1126,13 @@ public class ExecutionGroupTests
 
         incremental.Sort(StringComparer.Ordinal);
         return [.. initial, .. incremental];
+    }
+
+    internal sealed class FaultingConnection;
+
+    internal sealed class FaultingPageInfo
+    {
+        public string? Boom => throw new InvalidOperationException("boom");
     }
 
     internal sealed class PureConnection(ExecutionScript script)
