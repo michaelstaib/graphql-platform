@@ -34,6 +34,22 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("edges", 2, isStreamable: false));
 
                 descriptor
+                    .Field("pureInfo")
+                    .Type("PureInfoConnection")
+                    .Resolve(_ => new PureInfoConnection(script, hasPageInfo: true))
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                        new ExecutionGroupEntry("nodes", 1, isStreamable: true));
+
+                descriptor
+                    .Field("pureNoInfo")
+                    .Type("PureInfoConnection")
+                    .Resolve(_ => new PureInfoConnection(script, hasPageInfo: false))
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                        new ExecutionGroupEntry("nodes", 1, isStreamable: true));
+
+                descriptor
                     .Field("strict")
                     .Type("StrictConnection")
                     .Resolve(_ => new StrictConnection())
@@ -114,6 +130,12 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("nodes", 0, isStreamable: true),
                         new ExecutionGroupEntry("edges", 1, isStreamable: false));
             })
+            .AddObjectType<PureInfoConnection>(descriptor =>
+            {
+                descriptor.Name("PureInfoConnection");
+                descriptor.Field("nodes").Type("[Item!]!").Resolve(ctx => script.RunAsync(ctx, Items()));
+                descriptor.Field(c => c.PageInfo);
+            })
             .AddObjectType<StrictConnection>(descriptor =>
             {
                 descriptor.Name("StrictConnection");
@@ -158,6 +180,11 @@ internal static class ExecutionGroupTestSchema
     internal sealed record Wrapper(Connection Connection);
 
     internal sealed class StrictConnection;
+
+    internal sealed class PureInfoConnection(ExecutionScript script, bool hasPageInfo)
+    {
+        public PageInfo? PageInfo => hasPageInfo ? new PageInfo(script) : null;
+    }
 
     internal sealed class PageA;
 

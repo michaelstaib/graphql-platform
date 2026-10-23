@@ -321,6 +321,8 @@ internal static class ResolverTaskFactory
     {
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
+        var groupScope = selection.IsExecutionGroupParticipant ? context.GroupScope : null;
+        var taskCount = groupScope is null ? 0 : context.Tasks.Count;
         var executedSuccessfully = false;
         object? resolverResult = null;
 
@@ -370,6 +372,12 @@ internal static class ResolverTaskFactory
         catch (Exception ex)
         {
             operationContext.ReportError(ex, resolverContext, fieldValue.Path);
+        }
+
+        if (groupScope is not null && context.Tasks.Count == taskCount)
+        {
+            // without child tasks nothing below this selection can ever start, so its members are skipped.
+            groupScope.ReleaseDescendants(selection);
         }
 
         if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true })

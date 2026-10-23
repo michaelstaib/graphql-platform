@@ -61,6 +61,29 @@ public class ExecutionGroupPlanTests
         ]);
     }
 
+    [Fact]
+    public async Task Create_Should_KeepPureAncestorsPure_When_OnlyMembersMustRunAsTasks()
+    {
+        // arrange
+        var (operation, rootSet, _) = await ExecutionGroupTestOperation.CompileAsync(
+            "{ pureInfo { nodes { name } pageInfo { hasNextPage probe } } }");
+        var pageInfo = rootSet.Selections.ToArray().Single(s => s.Field.Name is "pageInfo");
+
+        // act
+        var strategies = rootSet.Selections.ToArray()
+            .Concat(operation.GetSelectionSet(pageInfo).Selections.ToArray())
+            .Select(s => $"{s.DeclaringType.Name}.{s.Field.Name} {s.Strategy}");
+
+        // assert
+        strategies.MatchInlineSnapshots(
+        [
+            "PureInfoConnection.nodes Default",
+            "PureInfoConnection.pageInfo Pure",
+            "PageInfo.hasNextPage Default",
+            "PageInfo.probe Default"
+        ]);
+    }
+
     private static async Task<ExecutionGroupPlan> CreatePlanAsync(string query)
     {
         var (_, _, plan) = await ExecutionGroupTestOperation.CompileAsync(query);

@@ -96,7 +96,7 @@ internal sealed class ExecutionGroupPlan
 
         foreach (var (_, builder) in builders)
         {
-            builder.Selection.MarkAsExecutionGroupParticipant();
+            builder.Selection.MarkAsExecutionGroupParticipant(isMember: builder.SlotIndex >= 0);
             nodes.Add(
                 builder.Selection.Id,
                 new ExecutionGroupNode(builder.SlotIndex, [.. builder.Descendants]));

@@ -175,6 +175,17 @@ internal sealed class ExecutionGroupScope
     /// <summary>
     /// Skips all members that are only reachable through the specified selection.
     /// </summary>
+    public void ReleaseDescendants(Selection selection)
+    {
+        if (_plan.TryGetNode(selection.Id, out var node))
+        {
+            ReleaseDescendants(node);
+        }
+    }
+
+    /// <summary>
+    /// Skips all members that are only reachable through the specified node.
+    /// </summary>
     public void ReleaseDescendants(ExecutionGroupNode node)
     {
         foreach (var slot in node.DescendantSlotIndexes)

@@ -1086,13 +1086,14 @@ nextItem:
     }
 
     /// <summary>
-    /// Marks this selection as taking part in an execution group; participants run as resolver tasks.
+    /// Marks this selection as taking part in an execution group. Members run as resolver tasks,
+    /// all other participants keep their execution strategy.
     /// </summary>
-    internal void MarkAsExecutionGroupParticipant()
+    internal void MarkAsExecutionGroupParticipant(bool isMember)
     {
         _flags |= Flags.ExecutionGroupParticipant;
 
-        if (Strategy is SelectionExecutionStrategy.Pure)
+        if (isMember && Strategy is SelectionExecutionStrategy.Pure)
         {
             Strategy = SelectionExecutionStrategy.Default;
         }

@@ -124,10 +124,10 @@ internal sealed partial class ResolverTask
         {
             scope.Release(_groupSlot);
         }
-        else if (_taskBuffer.Count == 0 && scope.Plan.TryGetNode(_selection.Id, out var node))
+        else if (_taskBuffer.Count == 0)
         {
             // without child tasks nothing below this selection can ever start, so its members are skipped.
-            scope.ReleaseDescendants(node);
+            scope.ReleaseDescendants(_selection);
         }
     }
 

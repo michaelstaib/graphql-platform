@@ -673,6 +673,162 @@ public class ExecutionGroupTests
     }
 
     [Fact]
+    public async Task Execute_Should_SequenceMembers_When_AncestorOfAMemberIsPure()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("pureInfo.nodes");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ pureInfo { nodes { name } pageInfo { hasNextPage probe } } }",
+            cts.Token);
+
+        await script.Started("pureInfo.pageInfo.probe");
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("pureInfo.pageInfo.hasNextPage");
+        var result = await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start pureInfo.pageInfo.hasNextPage"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start pureInfo.pageInfo.hasNextPage",
+            "end pureInfo.pageInfo.hasNextPage",
+            "start pureInfo.nodes",
+            "end pureInfo.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "pureInfo": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    }
+                  ],
+                  "pageInfo": {
+                    "hasNextPage": true,
+                    "probe": "probe"
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReleaseMembersBelowPureSelection_When_PureSelectionResolvesToNull()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("pureNoInfo.nodes");
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ pureNoInfo { nodes { name } pageInfo { hasNextPage } } }",
+            cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "start pureNoInfo.nodes",
+            "end pureNoInfo.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "pureNoInfo": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    }
+                  ],
+                  "pageInfo": null
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_KeepMemberTurn_When_PureAncestorIsNulledAfterChildTasksWereCreated()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("pureInfo.nodes");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ pureInfo { nodes { name } pageInfo { hasNextPage bad } } }",
+            cts.Token);
+
+        await script.Started("pureInfo.pageInfo.hasNextPage");
+        await script.Started("bad");
+
+        // the pure child has nulled pageInfo, give a wrongly released member the chance to start
+        await Task.Delay(TimeSpan.FromMilliseconds(250), cts.Token);
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("pureInfo.pageInfo.hasNextPage");
+        var result = await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start pureInfo.pageInfo.hasNextPage"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start pureInfo.pageInfo.hasNextPage",
+            "end pureInfo.pageInfo.hasNextPage",
+            "start pureInfo.nodes",
+            "end pureInfo.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "pureInfo",
+                    "pageInfo",
+                    "bad"
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ],
+              "data": {
+                "pureInfo": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    }
+                  ],
+                  "pageInfo": null
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_SequenceMembersPerConcreteResult_When_GroupRootIsAnInterface()
     {
         // arrange
