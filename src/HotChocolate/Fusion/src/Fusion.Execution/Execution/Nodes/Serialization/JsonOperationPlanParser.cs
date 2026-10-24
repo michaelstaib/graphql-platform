@@ -96,7 +96,7 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
             nodes,
             deliveryGroups,
             incrementalPlans,
-            policies,
+            policies ?? PolicyPlan.Empty,
             searchSpace,
             expandedNodes);
     }
