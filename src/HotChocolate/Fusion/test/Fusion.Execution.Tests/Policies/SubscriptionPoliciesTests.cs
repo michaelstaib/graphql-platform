@@ -202,7 +202,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
         var executor = await CreateSubscriptionExecutorAsync(
             client,
             policy,
-            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+            builder => builder.ModifyPolicyOptions(options => options.DenyHandling = DenyHandling.Error));
         await using var result = await executor.ExecuteAsync(
             CreateRequest(Subscription, Authenticated()).Build(),
             TestContext.Current.CancellationToken);
@@ -292,7 +292,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
             client,
             policy,
             builder => builder
-                .ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error)
+                .ModifyPolicyOptions(options => options.DenyHandling = DenyHandling.Error)
                 .UseRequest(
                     next => context =>
                     {
@@ -345,7 +345,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
             NonNullSchema,
             client,
             [policy],
-            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+            builder => builder.ModifyPolicyOptions(options => options.DenyHandling = DenyHandling.Error));
         await using var result = await executor.ExecuteAsync(
             CreateRequest(Subscription, Authenticated()).Build(),
             TestContext.Current.CancellationToken);
@@ -514,7 +514,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
         var executor = await CreateSubscriptionExecutorAsync(
             client,
             policy,
-            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+            builder => builder.ModifyPolicyOptions(options => options.DenyHandling = DenyHandling.Error));
         await using var result = await executor.ExecuteAsync(
             CreateRequest(Subscription, Authenticated()).Build(),
             TestContext.Current.CancellationToken);
@@ -589,7 +589,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
         var executor = await CreateSubscriptionExecutorAsync(
             client,
             policy,
-            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+            builder => builder.ModifyPolicyOptions(options => options.DenyHandling = DenyHandling.Error));
         await using var result = await executor.ExecuteAsync(
             CreateRequest(Subscription, Authenticated()).Build(),
             TestContext.Current.CancellationToken);
@@ -667,7 +667,7 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
             TwoPolicySchema,
             client,
             [live, flip],
-            builder => builder.ModifyAuthorizationOptions(options => options.DenyHandling = DenyHandling.Error));
+            builder => builder.ModifyPolicyOptions(options => options.DenyHandling = DenyHandling.Error));
         await using var result = await executor.ExecuteAsync(
             CreateRequest(subscription, Authenticated()).Build(),
             TestContext.Current.CancellationToken);

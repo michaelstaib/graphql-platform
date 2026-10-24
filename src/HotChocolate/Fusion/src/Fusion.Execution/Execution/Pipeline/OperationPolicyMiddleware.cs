@@ -20,7 +20,7 @@ internal sealed class OperationPolicyMiddleware
 
     private readonly PolicyEvaluator _evaluator;
     private readonly IAuditProvider _auditProvider;
-    private readonly FusionAuthorizationOptions _options;
+    private readonly FusionPolicyOptions _options;
     private readonly AuthenticationSchemeResolver _schemeResolver;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly IInputType _booleanType;
@@ -29,7 +29,7 @@ internal sealed class OperationPolicyMiddleware
     private OperationPolicyMiddleware(
         PolicyEvaluator evaluator,
         IAuditProvider auditProvider,
-        FusionAuthorizationOptions options,
+        FusionPolicyOptions options,
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
         IInputType booleanType,
@@ -258,7 +258,7 @@ internal sealed class OperationPolicyMiddleware
 
     private async ValueTask RejectAsync(RequestContext context, SelectionDenial denial)
     {
-        var challenge = denial.Kind is AuthorizationDenialKind.Unauthenticated
+        var challenge = denial.Kind is PolicyDenialKind.Unauthenticated
             ? await _schemeResolver.GetChallengeAsync(context.RequestAborted)
             : null;
 
@@ -279,7 +279,7 @@ internal sealed class OperationPolicyMiddleware
             (fc, next) =>
             {
                 var schema = fc.SchemaServices.GetRequiredService<FusionSchemaDefinition>();
-                var options = fc.SchemaServices.GetRequiredService<FusionAuthorizationOptions>();
+                var options = fc.SchemaServices.GetRequiredService<FusionPolicyOptions>();
                 var schemeResolver = fc.SchemaServices.GetRequiredService<AuthenticationSchemeResolver>();
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
                 var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();

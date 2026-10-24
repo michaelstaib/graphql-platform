@@ -57,7 +57,7 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
                         services.AddSingleton<IPolicyProvider>(live);
                         services.AddSingleton<IPolicyProvider>(flip);
                     });
-                builder.ModifyAuthorizationOptions(o => o.DenyHandling = denyHandling);
+                builder.ModifyPolicyOptions(o => o.DenyHandling = denyHandling);
                 configure(builder);
             },
             includeOperationPlan: false);
