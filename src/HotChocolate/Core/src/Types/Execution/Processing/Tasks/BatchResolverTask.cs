@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.ObjectPool;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Internal;
@@ -130,7 +131,20 @@ internal sealed class BatchResolverTask : IResolverTask
                 var success = await TryExecuteAsync(contexts, cancellationToken).ConfigureAwait(false);
                 CompleteValues(success, contexts, cancellationToken);
 
-                ExecutionGroupScope.RegisterChildTasks(_operationContext.Scheduler, _taskBuffer);
+                switch (_taskBuffer.Count)
+                {
+                    case 0:
+                        break;
+
+                    case 1:
+                        _operationContext.Scheduler.Register(_taskBuffer[0]);
+                        break;
+
+                    default:
+                        _operationContext.Scheduler.Register(
+                            CollectionsMarshal.AsSpan(_taskBuffer));
+                        break;
+                }
             }
 
             Status = _completionStatus;
@@ -339,8 +353,7 @@ internal sealed class BatchResolverTask : IResolverTask
                             _operationContext,
                             context,
                             _taskBuffer,
-                            context.BranchId,
-                            groupScope: null);
+                            context.BranchId);
 
                     Complete(completionContext, context.Selection, resultValue, result);
                 }

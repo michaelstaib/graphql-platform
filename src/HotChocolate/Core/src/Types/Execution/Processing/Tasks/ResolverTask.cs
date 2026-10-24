@@ -4,8 +4,7 @@ using Microsoft.Extensions.ObjectPool;
 
 namespace HotChocolate.Execution.Processing.Tasks;
 
-internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool)
-    : IResolverTask, IExecutionGroupTask
+internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool) : IResolverTask
 {
     private readonly MiddlewareContext _context = new();
     private readonly List<IExecutionTask> _taskBuffer = [];
@@ -50,7 +49,7 @@ internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool)
     /// <summary>
     /// Gets the slot of this task in its execution group scope, or <c>-1</c> if the task only leads to members.
     /// </summary>
-    public int GroupSlot => _groupSlot;
+    internal int GroupSlot => _groupSlot;
 
     /// <summary>
     /// Gets a value indicating whether this task is a member that waits for its turn in an execution group scope.

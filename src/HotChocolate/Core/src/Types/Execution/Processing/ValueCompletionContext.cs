@@ -6,6 +6,15 @@ internal readonly ref struct ValueCompletionContext
         OperationContext operationContext,
         MiddlewareContext resolverContext,
         List<IExecutionTask> tasks,
+        int parentBranchId)
+        : this(operationContext, resolverContext, tasks, parentBranchId, groupScope: null)
+    {
+    }
+
+    public ValueCompletionContext(
+        OperationContext operationContext,
+        MiddlewareContext resolverContext,
+        List<IExecutionTask> tasks,
         int parentBranchId,
         ExecutionGroupScope? groupScope)
     {

@@ -402,7 +402,7 @@ internal static class ResolverTaskFactory
         if (groupScope is not null && context.Tasks.Count == taskCount)
         {
             // without child tasks nothing below this selection can ever start, so its members are skipped.
-            groupScope.ReleaseDescendants(selection);
+            groupScope.ReleaseSlotsBelow(selection);
         }
     }
 

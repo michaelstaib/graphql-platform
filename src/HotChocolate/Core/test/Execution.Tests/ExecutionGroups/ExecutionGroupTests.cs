@@ -914,6 +914,63 @@ public class ExecutionGroupTests
     }
 
     [Fact]
+    public async Task Execute_Should_RunQueuedMemberOnce_When_FaultedAncestorReleasesAnEarlierSlotAheadOfItsTurn()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await CreateFaultingExecutorAsync(
+            script,
+            builder => builder.AddErrorFilter(
+                error => error.Exception is InvalidOperationException
+                    ? throw new InvalidOperationException("The error filter failed.")
+                    : error));
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("ordered.edges");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ ordered { nodes edges pageInfo { hasNextPage boom } } }",
+            cts.Token);
+
+        await script.Started("ordered.nodes");
+
+        // the faulted ancestor has released the slot of hasNextPage, give the queued member the chance to start early
+        await Task.Delay(TimeSpan.FromMilliseconds(250), cts.Token);
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("ordered.nodes");
+        var result = await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start ordered.nodes"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start ordered.nodes",
+            "end ordered.nodes",
+            "start ordered.edges",
+            "end ordered.edges"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "ordered": {
+                  "nodes": [
+                    "n"
+                  ],
+                  "edges": [
+                    "e"
+                  ],
+                  "pageInfo": {
+                    "hasNextPage": null,
+                    "boom": null
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_RunLaterMembers_When_PureChildThrowsAfterChildTasksWereCreated()
     {
         // arrange
@@ -1251,10 +1308,22 @@ public class ExecutionGroupTests
                     .ExecutionGroup(
                         new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
                         new ExecutionGroupEntry("nodes", 1, isStreamable: false));
+                descriptor
+                    .Field("ordered")
+                    .Type<ObjectType<FaultingConnection>>()
+                    .Resolve(_ => new FaultingConnection())
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("nodes", 0, isStreamable: false),
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 1, isStreamable: false),
+                        new ExecutionGroupEntry("edges", 2, isStreamable: false));
             })
             .AddObjectType<FaultingConnection>(descriptor =>
             {
                 descriptor.Name("FaultingConnection");
+                descriptor
+                    .Field("edges")
+                    .Type<ListType<StringType>>()
+                    .Resolve(ctx => script.RunAsync(ctx, new[] { "e" }));
                 descriptor
                     .Field("nodes")
                     .Type<ListType<StringType>>()

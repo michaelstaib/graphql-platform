@@ -13,7 +13,7 @@ public class ExecutionGroupScopeTests
         var plan = await CreatePlanAsync(Query);
 
         // act
-        var scope = ExecutionGroupScope.Open(plan, new ConditionFlags(ulong.MaxValue, null));
+        var scope = ExecutionGroupScope.Open(CreateScheduler(), plan, new ConditionFlags(ulong.MaxValue, null));
 
         // assert
         Assert.Equal(0, scope!.Position);
@@ -27,7 +27,7 @@ public class ExecutionGroupScopeTests
             "query ($skip: Boolean!) { connection { nodes @skip(if: $skip) { name } edges } }");
 
         // act
-        var scope = ExecutionGroupScope.Open(plan, default);
+        var scope = ExecutionGroupScope.Open(CreateScheduler(), plan, default);
 
         // assert
         Assert.Null(scope);
@@ -49,7 +49,7 @@ public class ExecutionGroupScopeTests
             """);
 
         // act
-        var scope = ExecutionGroupScope.Open(plan, default);
+        var scope = ExecutionGroupScope.Open(CreateScheduler(), plan, default);
 
         // assert
         Assert.Equal(1, scope!.Position);
@@ -71,7 +71,7 @@ public class ExecutionGroupScopeTests
             """);
 
         // act
-        var scope = ExecutionGroupScope.Open(plan, default);
+        var scope = ExecutionGroupScope.Open(CreateScheduler(), plan, default);
 
         // assert
         Assert.Equal(1, scope!.Position);
@@ -130,65 +130,17 @@ public class ExecutionGroupScopeTests
     }
 
     [Fact]
-    public async Task Release_Should_DispatchStoredTask_When_ItsSlotIsReleasedBeforeItsTurn()
-    {
-        // arrange
-        var scope = await OpenAsync(Query);
-        var task = new RecordingTask(slot: 2);
-        scope.Submit(task);
-        var callsAfterSubmit = task.Calls.ToArray();
-
-        // act
-        scope.Release(2);
-
-        // assert
-        callsAfterSubmit.MatchInlineSnapshots(["Reserve"]);
-        task.Calls.MatchInlineSnapshots(["Reserve", "RegisterReserved"]);
-    }
-
-    [Fact]
-    public async Task Release_Should_DispatchStoredTaskOnce_When_ItsSlotBecomesTheCurrentPosition()
-    {
-        // arrange
-        var scope = await OpenAsync(Query);
-        var task = new RecordingTask(slot: 1);
-        scope.Submit(task);
-
-        // act
-        scope.Release(1);
-        scope.Release(0);
-
-        // assert
-        task.Calls.MatchInlineSnapshots(["Reserve", "RegisterReserved"]);
-    }
-
-    [Fact]
-    public async Task Submit_Should_RegisterTaskDirectly_When_ItIsTheTurnOfItsSlot()
-    {
-        // arrange
-        var scope = await OpenAsync(Query);
-        var task = new RecordingTask(slot: 0);
-
-        // act
-        scope.Submit(task);
-
-        // assert
-        task.Calls.MatchInlineSnapshots(["Register"]);
-    }
-
-    [Fact]
-    public async Task ReleaseDescendants_Should_SkipMembersBelowTheSelection_When_NoChildTaskWasCreated()
+    public async Task ReleaseSlotsBelow_Should_SkipMembersBelowTheSelection_When_NoChildTaskWasCreated()
     {
         // arrange
         var (_, rootSet, plan) = await ExecutionGroupTestOperation.CompileAsync(Query);
-        var scope = ExecutionGroupScope.Open(plan, new ConditionFlags(ulong.MaxValue, null))!;
+        var scope = ExecutionGroupScope.Open(CreateScheduler(), plan, new ConditionFlags(ulong.MaxValue, null))!;
         var pageInfo = rootSet.Selections.ToArray().Single(s => s.Field.Name is "pageInfo");
-        plan.TryGetNode(pageInfo.Id, out var node);
         scope.Release(0);
         scope.Release(1);
 
         // act
-        scope.ReleaseDescendants(node!);
+        scope.ReleaseSlotsBelow(pageInfo);
 
         // assert
         Assert.Equal(3, scope.Position);
@@ -248,25 +200,14 @@ public class ExecutionGroupScopeTests
     private static async Task<ExecutionGroupScope> OpenAsync(string query)
     {
         var plan = await CreatePlanAsync(query);
-        return ExecutionGroupScope.Open(plan, new ConditionFlags(ulong.MaxValue, null))!;
+        return ExecutionGroupScope.Open(CreateScheduler(), plan, new ConditionFlags(ulong.MaxValue, null))!;
     }
+
+    private static WorkScheduler CreateScheduler() => new(null!);
 
     private static async Task<ExecutionGroupPlan> CreatePlanAsync(string query)
     {
         var (_, _, plan) = await ExecutionGroupTestOperation.CompileAsync(query);
         return plan;
-    }
-
-    private sealed class RecordingTask(int slot) : IExecutionGroupTask
-    {
-        public List<string> Calls { get; } = [];
-
-        public int GroupSlot => slot;
-
-        public void Register() => Calls.Add(nameof(Register));
-
-        public void Reserve() => Calls.Add(nameof(Reserve));
-
-        public void RegisterReserved() => Calls.Add(nameof(RegisterReserved));
     }
 }

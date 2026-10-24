@@ -51,14 +51,7 @@ internal sealed class DeferTask : ExecutionTask
             }
 
             // we register our deferred tasks for execution ...
-            if (deferContext.Scheduler.HasExecutionGroups)
-            {
-                ExecutionGroupScope.Register(deferContext.Scheduler, bufferedTasks.AsSpan(0, i));
-            }
-            else
-            {
-                deferContext.Scheduler.Register(bufferedTasks.AsSpan(0, i));
-            }
+            deferContext.Scheduler.Register(bufferedTasks.AsSpan(0, i));
         }
         finally
         {

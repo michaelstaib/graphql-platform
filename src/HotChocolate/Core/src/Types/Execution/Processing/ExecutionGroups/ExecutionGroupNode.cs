@@ -5,12 +5,12 @@ namespace HotChocolate.Execution.Processing;
 /// <summary>
 /// The position of a selection in a resolved execution group.
 /// </summary>
-internal sealed class ExecutionGroupNode
+internal readonly struct ExecutionGroupNode
 {
-    internal ExecutionGroupNode(int slotIndex, ImmutableArray<int> descendantSlotIndexes)
+    internal ExecutionGroupNode(int slotIndex, ImmutableArray<int> slotsBelow)
     {
         SlotIndex = slotIndex;
-        DescendantSlotIndexes = descendantSlotIndexes;
+        SlotsBelow = slotsBelow;
     }
 
     /// <summary>
@@ -19,7 +19,7 @@ internal sealed class ExecutionGroupNode
     public int SlotIndex { get; }
 
     /// <summary>
-    /// Gets the indexes of the slots that are only reachable through this selection.
+    /// Gets the indexes of the slots below this selection that are released when it resolves to null or fails.
     /// </summary>
-    public ImmutableArray<int> DescendantSlotIndexes { get; }
+    public ImmutableArray<int> SlotsBelow { get; }
 }

@@ -1,5 +1,6 @@
 using HotChocolate.Execution.Internal;
 using HotChocolate.Types;
+using System.Runtime.InteropServices;
 
 namespace HotChocolate.Execution.Processing.Tasks;
 
@@ -14,7 +15,20 @@ internal sealed partial class ResolverTask
                 var success = await TryExecuteAsync(cancellationToken).ConfigureAwait(false);
                 CompleteValue(success, cancellationToken);
 
-                ExecutionGroupScope.RegisterChildTasks(_operationContext.Scheduler, _taskBuffer);
+                switch (_taskBuffer.Count)
+                {
+                    case 0:
+                        break;
+
+                    case 1:
+                        _operationContext.Scheduler.Register(_taskBuffer[0]);
+                        break;
+
+                    default:
+                        _operationContext.Scheduler.Register(
+                            CollectionsMarshal.AsSpan(_taskBuffer));
+                        break;
+                }
 
                 if (_groupScope is not null)
                 {
@@ -134,7 +148,7 @@ internal sealed partial class ResolverTask
         else if (!childTasksRegistered)
         {
             // without registered child tasks nothing below this selection can ever start, so its members are skipped.
-            scope.ReleaseDescendants(_selection);
+            scope.ReleaseSlotsBelow(_selection);
         }
     }
 

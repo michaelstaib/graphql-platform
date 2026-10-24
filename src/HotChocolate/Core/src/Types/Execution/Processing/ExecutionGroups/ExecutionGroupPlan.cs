@@ -1,6 +1,5 @@
 using System.Collections.Frozen;
 using System.Collections.Immutable;
-using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Types;
 
 namespace HotChocolate.Execution.Processing;
@@ -28,7 +27,7 @@ internal sealed class ExecutionGroupPlan
     /// <summary>
     /// Gets the node of the selection with the specified id.
     /// </summary>
-    public bool TryGetNode(int selectionId, [NotNullWhen(true)] out ExecutionGroupNode? node)
+    public bool TryGetNode(int selectionId, out ExecutionGroupNode node)
         => _nodes.TryGetValue(selectionId, out node);
 
     /// <summary>
@@ -75,10 +74,11 @@ internal sealed class ExecutionGroupPlan
 
             foreach (var ancestor in candidate.Ancestors)
             {
-                GetBuilder(builders, ancestor).Descendants.Add(i);
+                GetBuilder(builders, ancestor).SlotsBelow.Add(i);
             }
         }
 
+        // schema validation rejects serial and batch members, this only guards plans that bypass it.
         foreach (var (_, builder) in builders)
         {
             if (builder.Selection.Strategy is SelectionExecutionStrategy.Batch)
@@ -99,7 +99,7 @@ internal sealed class ExecutionGroupPlan
             builder.Selection.MarkAsExecutionGroupParticipant(isMember: builder.SlotIndex >= 0);
             nodes.Add(
                 builder.Selection.Id,
-                new ExecutionGroupNode(builder.SlotIndex, [.. builder.Descendants]));
+                new ExecutionGroupNode(builder.SlotIndex, [.. builder.SlotsBelow]));
         }
 
         return new ExecutionGroupPlan(slots.MoveToImmutable(), nodes.ToFrozenDictionary());
@@ -159,6 +159,6 @@ internal sealed class ExecutionGroupPlan
 
         public int SlotIndex { get; set; } = -1;
 
-        public List<int> Descendants { get; } = [];
+        public List<int> SlotsBelow { get; } = [];
     }
 }

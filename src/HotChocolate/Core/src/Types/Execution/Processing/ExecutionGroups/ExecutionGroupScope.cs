@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.InteropServices;
 using HotChocolate.Execution.Processing.Tasks;
 using Microsoft.Extensions.ObjectPool;
 
@@ -7,7 +6,7 @@ namespace HotChocolate.Execution.Processing;
 
 /// <summary>
 /// The queue of an execution group for one result of the group root field. Only the task of the member
-/// whose turn it is gets registered with the work scheduler.
+/// whose turn it is is handed to the work scheduler.
 /// </summary>
 internal sealed class ExecutionGroupScope
 {
@@ -15,7 +14,8 @@ internal sealed class ExecutionGroupScope
         new DefaultObjectPool<ExecutionGroupScope>(new ScopePolicy(), 1024);
 
     private ulong[] _released = new ulong[1];
-    private IExecutionGroupTask?[] _tasks = new IExecutionGroupTask?[4];
+    private ResolverTask?[] _tasks = new ResolverTask?[4];
+    private WorkScheduler _scheduler = null!;
     private ExecutionGroupPlan _plan = null!;
     private int _slotCount;
     private int _wordCount;
@@ -55,8 +55,12 @@ internal sealed class ExecutionGroupScope
     /// Opens a scope whose queue contains the members that are included by the request, or returns
     /// <c>null</c> if fewer than two members are included and there is nothing to sequence.
     /// </summary>
-    public static ExecutionGroupScope? Open(ExecutionGroupPlan plan, ConditionFlags includeFlags)
+    public static ExecutionGroupScope? Open(
+        WorkScheduler scheduler,
+        ExecutionGroupPlan plan,
+        ConditionFlags includeFlags)
     {
+        ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(plan);
 
         if (plan.Slots.Length < 2)
@@ -66,7 +70,7 @@ internal sealed class ExecutionGroupScope
 
         var scope = s_pool.Get();
 
-        if (scope.Initialize(plan, includeFlags) < 2)
+        if (scope.Initialize(scheduler, plan, includeFlags) < 2)
         {
             scope.Return();
             return null;
@@ -76,82 +80,19 @@ internal sealed class ExecutionGroupScope
     }
 
     /// <summary>
-    /// Registers the tasks that a resolver task created during value completion with the scheduler.
+    /// Gets a value indicating whether the specified slot may run, because it is its turn or it was released.
     /// </summary>
-    public static void RegisterChildTasks(WorkScheduler scheduler, List<IExecutionTask> tasks)
-    {
-        if (tasks.Count == 0)
-        {
-            return;
-        }
-
-        if (scheduler.HasExecutionGroups)
-        {
-            Register(scheduler, CollectionsMarshal.AsSpan(tasks));
-            return;
-        }
-
-        if (tasks.Count == 1)
-        {
-            scheduler.Register(tasks[0]);
-            return;
-        }
-
-        scheduler.Register(CollectionsMarshal.AsSpan(tasks));
-    }
+    public bool CanRun(int slot) => IsReleased(slot) || Position == slot;
 
     /// <summary>
-    /// Registers the tasks with the scheduler. The tasks of group members are queued until their turn.
+    /// Holds the task of a member until its slot may run.
     /// </summary>
-    public static void Register(WorkScheduler scheduler, ReadOnlySpan<IExecutionTask> tasks)
-    {
-        var hasMembers = false;
-
-        foreach (var task in tasks)
-        {
-            if (task is ResolverTask { IsExecutionGroupMember: true })
-            {
-                hasMembers = true;
-                break;
-            }
-        }
-
-        if (!hasMembers)
-        {
-            scheduler.Register(tasks);
-            return;
-        }
-
-        for (var i = tasks.Length - 1; i >= 0; i--)
-        {
-            if (tasks[i] is ResolverTask { IsExecutionGroupMember: true } member)
-            {
-                member.GroupScope!.Submit(member);
-            }
-            else
-            {
-                scheduler.Register(tasks[i]);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Queues the task of a member until all members in front of it have ended their turn.
-    /// </summary>
-    public void Submit(IExecutionGroupTask task)
+    public void Enqueue(ResolverTask task)
     {
         var slot = task.GroupSlot;
-
-        if (IsReleased(slot) || Position == slot)
-        {
-            task.Register();
-            return;
-        }
-
-        task.Reserve();
         Interlocked.Exchange(ref _tasks[slot], task);
 
-        if (IsReleased(slot) || Position == slot)
+        if (CanRun(slot))
         {
             Dispatch(slot);
         }
@@ -173,24 +114,16 @@ internal sealed class ExecutionGroupScope
     }
 
     /// <summary>
-    /// Skips all members that are only reachable through the specified selection.
+    /// Skips the members below the specified selection.
     /// </summary>
-    public void ReleaseDescendants(Selection selection)
+    public void ReleaseSlotsBelow(Selection selection)
     {
         if (_plan.TryGetNode(selection.Id, out var node))
         {
-            ReleaseDescendants(node);
-        }
-    }
-
-    /// <summary>
-    /// Skips all members that are only reachable through the specified node.
-    /// </summary>
-    public void ReleaseDescendants(ExecutionGroupNode node)
-    {
-        foreach (var slot in node.DescendantSlotIndexes)
-        {
-            Release(slot);
+            foreach (var slot in node.SlotsBelow)
+            {
+                Release(slot);
+            }
         }
     }
 
@@ -216,6 +149,7 @@ internal sealed class ExecutionGroupScope
     public void Return()
     {
         Array.Clear(_tasks, 0, _slotCount);
+        _scheduler = null!;
         _plan = null!;
         _slotCount = 0;
         _wordCount = 0;
@@ -223,7 +157,7 @@ internal sealed class ExecutionGroupScope
         s_pool.Return(this);
     }
 
-    private int Initialize(ExecutionGroupPlan plan, ConditionFlags includeFlags)
+    private int Initialize(WorkScheduler scheduler, ExecutionGroupPlan plan, ConditionFlags includeFlags)
     {
         var slots = plan.Slots;
         var slotCount = slots.Length;
@@ -236,7 +170,7 @@ internal sealed class ExecutionGroupScope
 
         if (_tasks.Length < slotCount)
         {
-            _tasks = new IExecutionGroupTask?[slotCount];
+            _tasks = new ResolverTask?[slotCount];
         }
 
         Array.Clear(_released, 0, wordCount);
@@ -262,6 +196,7 @@ internal sealed class ExecutionGroupScope
             _released[wordCount - 1] |= ulong.MaxValue << tail;
         }
 
+        _scheduler = scheduler;
         _plan = plan;
         _slotCount = slotCount;
         _wordCount = wordCount;
@@ -278,7 +213,10 @@ internal sealed class ExecutionGroupScope
             return;
         }
 
-        Interlocked.Exchange(ref _tasks[slot], null)?.RegisterReserved();
+        if (Interlocked.Exchange(ref _tasks[slot], null) is { } task)
+        {
+            _scheduler.RegisterReserved(task);
+        }
     }
 
     private sealed class ScopePolicy : PooledObjectPolicy<ExecutionGroupScope>

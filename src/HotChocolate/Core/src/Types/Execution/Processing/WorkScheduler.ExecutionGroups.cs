@@ -8,11 +8,6 @@ internal sealed partial class WorkScheduler
     private volatile bool _hasExecutionGroups;
 
     /// <summary>
-    /// Gets a value indicating whether an execution group scope was opened during this execution.
-    /// </summary>
-    public bool HasExecutionGroups => _hasExecutionGroups;
-
-    /// <summary>
     /// Opens an execution group scope that stays valid until the scheduler is cleared, or returns
     /// <c>null</c> if the group has nothing to sequence.
     /// </summary>
@@ -20,7 +15,7 @@ internal sealed partial class WorkScheduler
     {
         AssertNotPooled();
 
-        var scope = ExecutionGroupScope.Open(plan, includeFlags);
+        var scope = ExecutionGroupScope.Open(this, plan, includeFlags);
 
         if (scope is null)
         {
@@ -72,6 +67,48 @@ internal sealed partial class WorkScheduler
         }
 
         _signal.Set();
+    }
+
+    private void RegisterMember(ResolverTask member)
+    {
+        var scope = member.GroupScope!;
+
+        if (scope.CanRun(member.GroupSlot))
+        {
+            RegisterCore(member);
+            return;
+        }
+
+        Reserve(member);
+        scope.Enqueue(member);
+    }
+
+    private static bool ContainsMember(ReadOnlySpan<IExecutionTask> tasks)
+    {
+        foreach (var task in tasks)
+        {
+            if (task is ResolverTask { IsExecutionGroupMember: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void RegisterWithMembers(ReadOnlySpan<IExecutionTask> tasks)
+    {
+        for (var i = tasks.Length - 1; i >= 0; i--)
+        {
+            if (tasks[i] is ResolverTask { IsExecutionGroupMember: true } member)
+            {
+                RegisterMember(member);
+            }
+            else
+            {
+                RegisterCore(tasks[i]);
+            }
+        }
     }
 
     private void ReleaseExecutionGroupScopes()
