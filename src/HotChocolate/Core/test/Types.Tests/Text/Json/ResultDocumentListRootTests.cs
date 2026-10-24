@@ -10,7 +10,11 @@ public class ResultDocumentListRootTests
     {
         // arrange
         var operation = StreamBatchDocumentFactory.CreateOperation();
-        using var document = StreamBatchDocumentFactory.Create(operation, startIndex: 5, itemCount: 3, characterCount: 0);
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 3,
+            characterCount: 0);
 
         // act
         var paths = document.Data.GetProperty("films").EnumerateArray().Select(t => t.Path.Print());
@@ -24,7 +28,11 @@ public class ResultDocumentListRootTests
     {
         // arrange
         var operation = StreamBatchDocumentFactory.CreateOperation();
-        using var document = StreamBatchDocumentFactory.Create(operation, startIndex: 5, itemCount: 2, characterCount: 2);
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 2,
+            characterCount: 2);
 
         // act
         var paths = document.Data.GetProperty("films").EnumerateArray()
@@ -69,7 +77,11 @@ public class ResultDocumentListRootTests
     {
         // arrange
         var operation = StreamBatchDocumentFactory.CreateOperation();
-        using var document = StreamBatchDocumentFactory.Create(operation, startIndex: 0, itemCount: 2, characterCount: 1);
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 0,
+            itemCount: 2,
+            characterCount: 1);
 
         // act
         var paths = document.Data.GetProperty("films").EnumerateArray()
@@ -91,7 +103,11 @@ public class ResultDocumentListRootTests
     {
         // arrange
         var operation = StreamBatchDocumentFactory.CreateOperation();
-        using var document = StreamBatchDocumentFactory.Create(operation, startIndex: 5, itemCount: 1, characterCount: 1);
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 1,
+            characterCount: 1);
         var list = document.Data.GetProperty("films");
         var item = list[0];
         var characters = item.GetProperty("characters");
@@ -108,7 +124,11 @@ public class ResultDocumentListRootTests
     {
         // arrange
         var operation = StreamBatchDocumentFactory.CreateOperation();
-        using var document = StreamBatchDocumentFactory.Create(operation, startIndex: 5, itemCount: 1, characterCount: 1);
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 1,
+            characterCount: 1);
         var list = document.Data.GetProperty("films");
         var item = list[0];
         var characters = item.GetProperty("characters");

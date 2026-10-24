@@ -107,7 +107,7 @@ public class ResultDocumentItemCollectionTests
         var operation = StreamBatchDocumentFactory.CreateOperation();
         var document = StreamBatchDocumentFactory.Create(operation, startIndex: 5, itemCount: 3, characterCount: 0);
         var items = new ResultDocumentItemCollection(document);
-        var result = new OperationResult(new OperationResultData(items, false, items, items));
+        var result = new OperationResult(new OperationResultData(items, isValueNull: false, items, items));
 
         // act
         await result.DisposeAsync();

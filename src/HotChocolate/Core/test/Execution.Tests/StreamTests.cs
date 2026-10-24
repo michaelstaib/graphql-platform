@@ -9,6 +9,7 @@ using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Options;
 using HotChocolate.Execution.Processing;
 using HotChocolate.Execution.Processing.Tasks;
+using HotChocolate.Text.Json;
 using HotChocolate.Types;
 using HotChocolate.Types.Pagination;
 using Microsoft.Extensions.DependencyInjection;
@@ -1449,6 +1450,221 @@ public class StreamTests
               "[\"gatedItems\"]"
             ]
             """);
+    }
+
+    [Fact]
+    public async Task Stream_Should_ContinueIndexNumbering_When_SeveralBatchesHoldMoreThanOneItem()
+    {
+        // arrange
+        // item 2 holds the first batch while the source fills the buffer, so the next batches hold two items each.
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state, maxStreamBatchSize: 2);
+
+        for (var id = 1; id <= 6; id++)
+        {
+            if (id != 2)
+            {
+                state.ReleaseName(id);
+            }
+        }
+
+        // act
+        var payloads = await ReadPayloadsWithStepsAsync(
+            executor,
+            "{ gatedItems(count: 6) @stream(initialCount: 1) { id gatedName flakyFromThree } }",
+            [
+                async () =>
+                {
+                    state.ReleaseNextItem();
+                    await state.WaitForNameStartedAsync(2);
+
+                    for (var i = 0; i < 4; i++)
+                    {
+                        state.ReleaseNextItem();
+                    }
+
+                    await WaitUntilAsync(() => state.Produced >= 6);
+                    state.ReleaseName(2);
+                },
+                () => Task.CompletedTask,
+                () => Task.CompletedTask,
+                () =>
+                {
+                    state.ReleaseNextItem();
+                    return Task.CompletedTask;
+                }
+            ]);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "gatedItems": [
+                  {
+                    "id": 1,
+                    "gatedName": "item-1",
+                    "flakyFromThree": "ok-1"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "2",
+                  "path": [
+                    "gatedItems"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "items": [
+                    {
+                      "id": 2,
+                      "gatedName": "item-2",
+                      "flakyFromThree": "ok-2"
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "flaky item 3",
+                      "path": [
+                        "gatedItems",
+                        2,
+                        "flakyFromThree"
+                      ]
+                    },
+                    {
+                      "message": "flaky item 4",
+                      "path": [
+                        "gatedItems",
+                        3,
+                        "flakyFromThree"
+                      ]
+                    }
+                  ],
+                  "items": [
+                    {
+                      "id": 3,
+                      "gatedName": "item-3",
+                      "flakyFromThree": null
+                    },
+                    {
+                      "id": 4,
+                      "gatedName": "item-4",
+                      "flakyFromThree": null
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "2",
+                  "errors": [
+                    {
+                      "message": "flaky item 5",
+                      "path": [
+                        "gatedItems",
+                        4,
+                        "flakyFromThree"
+                      ]
+                    },
+                    {
+                      "message": "flaky item 6",
+                      "path": [
+                        "gatedItems",
+                        5,
+                        "flakyFromThree"
+                      ]
+                    }
+                  ],
+                  "items": [
+                    {
+                      "id": 5,
+                      "gatedName": "item-5",
+                      "flakyFromThree": null
+                    },
+                    {
+                      "id": 6,
+                      "gatedName": "item-6",
+                      "flakyFromThree": null
+                    }
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "2"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Stream_Should_ReleaseTheBatch_When_BatchIsDisposedAfterRequestWasAborted()
+    {
+        // arrange
+        var state = new StreamState();
+        var executor = await CreateExecutorAsync(state);
+        using var requestAborted = new CancellationTokenSource();
+        var result = await executor.ExecuteAsync(
+            "{ gatedItems(count: 3) @stream(initialCount: 1) { id } }",
+            requestAborted.Token);
+        var stream = (ResponseStream)result;
+        state.ReleaseNextItem();
+
+        await using var enumerator = stream
+            .ReadResultsAsync()
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await MoveNextOrThrowAsync(enumerator);
+        await enumerator.Current.DisposeAsync();
+        await MoveNextOrThrowAsync(enumerator);
+
+        var batch = enumerator.Current;
+        var held = batch.Incremental.OfType<IncrementalListResult>().Single().Items.Single();
+        var element = (ResultElement)held.Element;
+        var propertyCountWhileHeld = element.GetPropertyCount();
+
+        // act
+        await requestAborted.CancelAsync();
+        await state.EnumeratorDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await batch.DisposeAsync();
+        await stream.DisposeAsync();
+
+        // assert
+        Assert.Equal(1, held.Index);
+        Assert.Equal(1, propertyCountWhileHeld);
+        Assert.Throws<ObjectDisposedException>(() => element.GetPropertyCount());
     }
 
     [Fact]
@@ -3481,6 +3697,14 @@ public class StreamTests
                     o.EnableStream = true;
                 });
 
+    private static async Task MoveNextOrThrowAsync(IAsyncEnumerator<OperationResult> enumerator)
+    {
+        if (!await enumerator.MoveNextAsync())
+        {
+            throw new InvalidOperationException("The response stream ended before the expected payload.");
+        }
+    }
+
     private static async Task<List<string>> ReadErrorPathsAsync(ResponseStream stream)
     {
         var paths = new List<string>();
@@ -3507,7 +3731,8 @@ public class StreamTests
             {
                 if (entry.TryGetProperty("errors", out var errors))
                 {
-                    paths.AddRange(errors.EnumerateArray().Select(e => JsonSerializer.Serialize(e.GetProperty("path"))));
+                    paths.AddRange(
+                        errors.EnumerateArray().Select(e => JsonSerializer.Serialize(e.GetProperty("path"))));
                 }
             }
         }
@@ -3785,6 +4010,15 @@ public class StreamTests
             CancellationToken cancellationToken)
             => id == 1 ? "initial" : await loader.LoadRequiredAsync(id, cancellationToken);
 
+        public async Task<string?> GetFlakyFromThreeAsync()
+        {
+            await Task.Yield();
+
+            return id >= 3
+                ? throw new GraphQLException($"flaky item {id}")
+                : $"ok-{id}";
+        }
+
         public async Task<string?> GetFlakyAsync()
         {
             await Task.Yield();
@@ -3972,11 +4206,13 @@ public class StreamTests
         {
             try
             {
+                state.ItemProduced();
                 yield return new Item(1);
 
                 for (var i = 2; i <= count; i++)
                 {
                     await state.WaitForNextItemAsync(cancellationToken);
+                    state.ItemProduced();
                     yield return new Item(i);
                 }
 
