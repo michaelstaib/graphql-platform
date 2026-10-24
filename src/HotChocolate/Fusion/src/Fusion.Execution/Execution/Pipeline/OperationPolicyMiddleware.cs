@@ -205,7 +205,7 @@ internal sealed class OperationPolicyMiddleware
         IAuditTrail trail,
         ClaimsPrincipal user,
         OperationPlan plan,
-        OperationPolicies policies,
+        PolicyPlan policies,
         ImmutableArray<IVariableValueCollection> variableSets)
     {
         for (var i = 0; i < variableSets.Length; i++)
@@ -234,7 +234,7 @@ internal sealed class OperationPolicyMiddleware
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
-        OperationPolicies policies,
+        PolicyPlan policies,
         IAuditScope scope,
         IVariableValueCollection variables,
         FrozenSet<PolicyDescriptor> deniedDescriptors)
