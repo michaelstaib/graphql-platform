@@ -37,21 +37,7 @@ internal sealed partial class WorkScheduler
     }
 
     /// <summary>
-    /// Counts a task that is registered later with its branch and path, so that neither completes before it.
-    /// </summary>
-    public void Reserve(ResolverTask task)
-    {
-        AssertNotPooled();
-
-        lock (_sync)
-        {
-            RegisterBranchTaskUnsafe(task.BranchId);
-            IncrementPathCountUnsafe(task.Selection.FieldSelectionPath);
-        }
-    }
-
-    /// <summary>
-    /// Registers a task that was counted with <see cref="Reserve"/>.
+    /// Registers a task of an execution group member that was held back by its scope.
     /// </summary>
     public void RegisterReserved(ResolverTask task)
     {
@@ -67,6 +53,17 @@ internal sealed partial class WorkScheduler
         }
 
         _signal.Set();
+    }
+
+    private void Reserve(ResolverTask task)
+    {
+        AssertNotPooled();
+
+        lock (_sync)
+        {
+            RegisterBranchTaskUnsafe(task.BranchId);
+            IncrementPathCountUnsafe(task.Selection.FieldSelectionPath);
+        }
     }
 
     private void RegisterMember(ResolverTask member)
