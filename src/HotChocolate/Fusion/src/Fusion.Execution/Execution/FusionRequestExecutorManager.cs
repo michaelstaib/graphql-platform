@@ -163,7 +163,7 @@ internal sealed class FusionRequestExecutorManager
 
         var executor = await CreateRequestExecutorAsync(schemaName, configuration).ConfigureAwait(false);
 
-        await ValidateAuthorizationAsync(executor, cancellationToken).ConfigureAwait(false);
+        await ValidatePoliciesAsync(executor, cancellationToken).ConfigureAwait(false);
         await WarmupExecutorAsync(executor, true, cancellationToken).ConfigureAwait(false);
 
         return new RequestExecutorRegistration(
@@ -191,7 +191,7 @@ internal sealed class FusionRequestExecutorManager
         var requestOptions = CreateRequestOptions(setup);
         var plannerOptions = CreatePlannerOptions(setup, options);
         var costOptions = CreateCostOptions(setup);
-        var authorizationOptions = CreateAuthorizationOptions(setup);
+        var policyOptions = CreatePolicyOptions(setup);
         var parserOptions = CreateParserOptions(setup);
         var features = CreateSchemaFeatures(
             setup,
@@ -206,7 +206,7 @@ internal sealed class FusionRequestExecutorManager
             requestOptions,
             plannerOptions,
             costOptions,
-            authorizationOptions);
+            policyOptions);
 
         try
         {
@@ -228,15 +228,15 @@ internal sealed class FusionRequestExecutorManager
         }
     }
 
-    private static ValueTask ValidateAuthorizationAsync(
+    private static ValueTask ValidatePoliciesAsync(
         FusionRequestExecutor executor,
         CancellationToken cancellationToken)
     {
         var services = executor.Schema.Services;
 
-        return AuthorizationStartupValidator.ValidateAsync(
+        return PolicyStartupValidator.ValidateAsync(
             executor.Schema.Features.Get<FusionAuthorizationUsage>(),
-            services.GetRequiredService<FusionAuthorizationOptions>(),
+            services.GetRequiredService<FusionPolicyOptions>(),
             services.GetRequiredService<AuthenticationSchemeResolver>(),
             services.GetRequiredService<IPolicyResolver>(),
             cancellationToken);
@@ -339,18 +339,18 @@ internal sealed class FusionRequestExecutorManager
         return costOptions;
     }
 
-    private static FusionAuthorizationOptions CreateAuthorizationOptions(FusionGatewaySetup setup)
+    private static FusionPolicyOptions CreatePolicyOptions(FusionGatewaySetup setup)
     {
-        var authorizationOptions = new FusionAuthorizationOptions();
+        var policyOptions = new FusionPolicyOptions();
 
-        foreach (var configure in setup.AuthorizationOptionsModifiers)
+        foreach (var configure in setup.PolicyOptionsModifiers)
         {
-            configure.Invoke(authorizationOptions);
+            configure.Invoke(policyOptions);
         }
 
-        authorizationOptions.MakeReadOnly();
+        policyOptions.MakeReadOnly();
 
-        return authorizationOptions;
+        return policyOptions;
     }
 
     private static ParserOptions CreateParserOptions(FusionGatewaySetup setup)
@@ -438,7 +438,7 @@ internal sealed class FusionRequestExecutorManager
         FusionRequestOptions requestOptions,
         OperationPlannerOptions plannerOptions,
         FusionCostOptions costOptions,
-        FusionAuthorizationOptions authorizationOptions)
+        FusionPolicyOptions policyOptions)
     {
         var schemaServices = new ServiceCollection();
 
@@ -449,7 +449,7 @@ internal sealed class FusionRequestExecutorManager
             options,
             requestOptions,
             costOptions,
-            authorizationOptions);
+            policyOptions);
         AddOperationPlanner(schemaServices, plannerOptions);
         AddParserServices(schemaServices);
         AddDocumentValidator(setup, schemaServices, options);
@@ -470,7 +470,7 @@ internal sealed class FusionRequestExecutorManager
         FusionOptions options,
         FusionRequestOptions requestOptions,
         FusionCostOptions costOptions,
-        FusionAuthorizationOptions authorizationOptions)
+        FusionPolicyOptions policyOptions)
     {
         services.AddSingleton<IRootServiceProviderAccessor>(
             new RootServiceProviderAccessor(_applicationServices));
@@ -497,22 +497,22 @@ internal sealed class FusionRequestExecutorManager
         services.AddSingleton(requestOptions);
         services.AddSingleton(requestOptions.PersistedOperations);
         services.AddSingleton(costOptions);
-        services.AddSingleton(authorizationOptions);
+        services.AddSingleton(policyOptions);
         services.AddSingleton(
             static sp => new AuthenticationSchemeResolver(
-                sp.GetRequiredService<FusionAuthorizationOptions>(),
+                sp.GetRequiredService<FusionPolicyOptions>(),
                 sp.GetService<IAuthenticationSchemeLookup>()));
         services.TryAddSingleton<IAuditProvider>(NoOpAuditProvider.Instance);
         services.TryAddSingleton<IPolicyResolver>(
             static sp =>
             {
-                var authorization = sp.GetRequiredService<FusionAuthorizationOptions>();
+                var policyOptions = sp.GetRequiredService<FusionPolicyOptions>();
 
                 return new PolicyResolver(
                     new BuiltInPolicyProvider(
                         new RequiresScopesPolicy(
-                            authorization.ScopeClaimName,
-                            authorization.ScopeClaimFormat)),
+                            policyOptions.ScopeClaimName,
+                            policyOptions.ScopeClaimFormat)),
                     sp.GetServices<IPolicyProvider>());
             });
         services.AddSingleton(
@@ -826,7 +826,7 @@ internal sealed class FusionRequestExecutorManager
                         .CreateRequestExecutorAsync(Executor.Schema.Name, configuration)
                         .ConfigureAwait(false);
 
-                    await ValidateAuthorizationAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
+                    await ValidatePoliciesAsync(nextExecutor, _cancellationToken).ConfigureAwait(false);
                     await WarmupExecutorAsync(nextExecutor, false, _cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex)
