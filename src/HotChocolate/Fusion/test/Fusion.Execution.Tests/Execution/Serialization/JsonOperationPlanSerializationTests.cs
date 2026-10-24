@@ -7,10 +7,14 @@ using HotChocolate.Buffers;
 using HotChocolate.Fusion.Execution.ApolloFederation;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Logging;
 using HotChocolate.Fusion.Options;
 using HotChocolate.Fusion.Planning;
+using HotChocolate.Fusion.Policies;
+using HotChocolate.Fusion.Policies.InMemory;
 using HotChocolate.Fusion.Types;
+using HotChocolate.Language;
 using Microsoft.Extensions.ObjectPool;
 
 namespace HotChocolate.Fusion.Execution.Serialization;
@@ -51,7 +55,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -62,6 +66,530 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             Assert.Equal(original.Operation.Value.ToArray(), parsed.Operation.Value.ToArray());
             Assert.Equal(original.Operation.Hash, parsed.Operation.Hash);
         }
+    }
+
+    private const string PolicyDirectives =
+        """
+        directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
+
+        directive @requiresScopes(scopes: [[String!]!]!)
+            on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
+
+        directive @policy(policies: [[String!]!]!)
+            on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
+        """;
+
+    [Fact]
+    public void Parse_Should_RoundTripPolicyPlan_When_ProtectedFieldsAreDeferred()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(
+            $$"""
+            # name: a
+            type Query {
+              me: String @authenticated
+              user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              name: String
+              secret: String @requiresScopes(scopes: [["read"], ["admin", "write"]])
+            }
+
+            {{PolicyDirectives}}
+            """,
+            $$"""
+            # name: b
+            type Query {
+              userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              email: String! @authenticated
+              budget: Int @policy(policies: [["finance"]])
+              nickname: String
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var originalPlan = PlanWithPooledFields(
+            compositeSchema,
+            "{ me user(id: 1) { name secret ... @defer { email budget nickname } } }",
+            TestPolicyResolver.Create());
+        var (originalJson, parsedPlan) = RoundTrip(compositeSchema, originalPlan);
+
+        // act
+        var parsedJson = new JsonOperationPlanFormatter(s_indentedOptions).Format(parsedPlan);
+
+        // assert
+        Assert.Equal(originalJson, parsedJson);
+        parsedJson.MatchInlineSnapshot(
+            """
+            {
+              "version": "1.3.0",
+              "id": "35602e7d776375f80697893b466a3d29a07d391ae2619f3abdd2c004a32883ae",
+              "operation": {
+                "kind": "Query",
+                "document": "{\n  me\n  user(id: 1) {\n    name\n    secret\n    id @fusion__requirement\n  }\n}",
+                "id": "123456789101112",
+                "hash": "123456789101112",
+                "shortHash": "123456789101112"
+              },
+              "searchSpace": 1,
+              "expandedNodes": 1,
+              "nodes": [
+                {
+                  "id": 1,
+                  "type": "Operation",
+                  "schema": "a",
+                  "operation": {
+                    "name": "Op_123456789101112_1",
+                    "kind": "Query",
+                    "document": "query Op_123456789101112_1(\n  $__fusion_policy_3: Boolean!\n  $__fusion_policy_4: Boolean!\n) {\n  me @skip(if: $__fusion_policy_3)\n  user(id: 1) {\n    name\n    secret @skip(if: $__fusion_policy_4)\n    id\n  }\n}",
+                    "hash": "e372a143df45bc144d72c3153cbcff37d89b6e4af390944bf0baddaf7b5b5383",
+                    "shortHash": "e372a143",
+                    "xxHash": 851900850043565951
+                  },
+                  "resultSelectionSet": "{ me user }",
+                  "forwardedVariables": [
+                    "__fusion_policy_3",
+                    "__fusion_policy_4"
+                  ]
+                }
+              ],
+              "deliveryGroups": [
+                {
+                  "id": 0,
+                  "path": "$.user"
+                }
+              ],
+              "incrementalPlans": [
+                {
+                  "deliveryGroupIds": [
+                    0
+                  ],
+                  "parentNodeId": 1,
+                  "requirements": [
+                    {
+                      "name": "__fusion_1_id",
+                      "type": "ID!",
+                      "path": "$.user",
+                      "selectionMap": "id"
+                    }
+                  ],
+                  "operation": {
+                    "kind": "Query",
+                    "document": "{\n  user(id: 1) {\n    email\n    budget\n    nickname\n    id @fusion__requirement\n  }\n}",
+                    "id": "123456789101112#defer_0",
+                    "hash": "123456789101112#defer_0",
+                    "shortHash": "123456789101112"
+                  },
+                  "nodes": [
+                    {
+                      "id": 1,
+                      "type": "Operation",
+                      "schema": "b",
+                      "operation": {
+                        "name": "Op_defer_1",
+                        "kind": "Query",
+                        "document": "query Op_defer_1(\n  $__fusion_policy_1: Boolean!\n  $__fusion_policy_2: Boolean!\n  $__fusion_1_id: ID!\n) {\n  userById(id: $__fusion_1_id) {\n    email @skip(if: $__fusion_policy_1)\n    budget @skip(if: $__fusion_policy_2)\n    nickname\n  }\n}",
+                        "hash": "362cd3f95b863e4fcd6ffdc40d05a118cfbf8133651bba7445cf1cf7d259db56",
+                        "shortHash": "362cd3f9",
+                        "xxHash": 353076163188696563
+                      },
+                      "lookupTypeName": "User",
+                      "resultSelectionSet": "{ email budget nickname }",
+                      "source": "$.userById",
+                      "target": "$.user",
+                      "requirements": [
+                        {
+                          "name": "__fusion_1_id",
+                          "type": "ID!",
+                          "path": "$.user",
+                          "selectionMap": "id"
+                        }
+                      ],
+                      "forwardedVariables": [
+                        "__fusion_policy_1",
+                        "__fusion_policy_2"
+                      ],
+                      "dependencies": [
+                        {
+                          "parentNodeId": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "policies": {
+                "descriptors": [
+                  {
+                    "directiveName": "authenticated",
+                    "selection": {
+                      "path": "$.me"
+                    }
+                  },
+                  {
+                    "directiveName": "requiresScopes",
+                    "scopes": [
+                      [
+                        "read"
+                      ],
+                      [
+                        "admin",
+                        "write"
+                      ]
+                    ],
+                    "selection": {
+                      "path": "$.user.secret"
+                    }
+                  },
+                  {
+                    "directiveName": "authenticated",
+                    "selection": {
+                      "incrementalPlan": 0,
+                      "path": "$.user.email"
+                    }
+                  },
+                  {
+                    "directiveName": "policy",
+                    "policyName": "finance",
+                    "selection": {
+                      "incrementalPlan": 0,
+                      "path": "$.user.budget"
+                    }
+                  }
+                ],
+                "variables": [
+                  {
+                    "name": "__fusion_policy_3",
+                    "selections": [
+                      {
+                        "path": "$.me"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "__fusion_policy_4",
+                    "selections": [
+                      {
+                        "path": "$.user.secret"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "__fusion_policy_1",
+                    "selections": [
+                      {
+                        "incrementalPlan": 0,
+                        "path": "$.user.email"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "__fusion_policy_2",
+                    "selections": [
+                      {
+                        "incrementalPlan": 0,
+                        "path": "$.user.budget"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Parse_Should_ResolveProtectedSelection_When_SelectionIdsDifferBetweenPlannedAndParsedOperation()
+    {
+        // arrange
+        // the planned and the parsed operation assign different ids to the protected selection
+        var compositeSchema = ComposeSchema(
+            $$"""
+            type Query {
+              a: A
+              b: B
+            }
+
+            type A {
+              id: ID!
+              c: C
+            }
+
+            type C {
+              k: String
+            }
+
+            type B {
+              id: ID!
+              d: D
+            }
+
+            type D {
+              m: String @authenticated
+              z: String
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var originalPlan = PlanWithPooledFields(
+            compositeSchema,
+            "{ a { c { k } } b { d { m z } } }",
+            TestPolicyResolver.Create());
+        var (_, parsedPlan) = RoundTrip(compositeSchema, originalPlan);
+
+        // act
+        var descriptor = Assert.Single(parsedPlan.Policies!.Descriptors);
+
+        // assert
+        var selection = Assert.IsType<Selection>(descriptor.Selection);
+        Assert.Equal("m", selection.ResponseName);
+        Assert.Same(parsedPlan.Operation, selection.DeclaringSelectionSet.DeclaringOperation);
+        Assert.Equal("D", selection.DeclaringSelectionSet.Type.Name);
+    }
+
+    [Fact]
+    public void Parse_Should_RoundTripPolicyPlan_When_ProtectedFieldsAreSelectedThroughAbstractTypes()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(
+            $$"""
+            type Query {
+              node(id: ID!): Node @lookup
+              authorById(id: ID!): Author @lookup
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Discussion implements Node {
+              id: ID!
+              title: String! @authenticated
+            }
+
+            type Author implements Node {
+              id: ID!
+              name: String! @requiresScopes(scopes: [["read"]])
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var originalPlan = PlanWithPooledFields(
+            compositeSchema,
+            """
+            {
+              node(id: "abc") {
+                id
+                ... on Discussion { title }
+                ... on Author { name }
+              }
+            }
+            """,
+            TestPolicyResolver.Create());
+        var (originalJson, parsedPlan) = RoundTrip(compositeSchema, originalPlan);
+
+        // act
+        var parsedJson = new JsonOperationPlanFormatter(s_indentedOptions).Format(parsedPlan);
+
+        // assert
+        Assert.Equal(originalJson, parsedJson);
+        parsedJson.MatchInlineSnapshot(
+            """
+            {
+              "version": "1.3.0",
+              "id": "b669ff18d2509cd8a576df53de3166ceb3c9494886ddb6fb34bece51a9df72ac",
+              "operation": {
+                "kind": "Query",
+                "document": "{\n  node(id: \"abc\") {\n    __typename @fusion__requirement\n    id\n    ... on Discussion {\n      title\n    }\n    ... on Author {\n      name\n    }\n  }\n}",
+                "id": "123456789101112",
+                "hash": "123456789101112",
+                "shortHash": "123456789101112"
+              },
+              "searchSpace": 1,
+              "expandedNodes": 1,
+              "nodes": [
+                {
+                  "id": 1,
+                  "type": "Node",
+                  "idValue": "\"abc\"",
+                  "responseName": "node",
+                  "branches": {
+                    "Author": 4,
+                    "Discussion": 3
+                  },
+                  "fallback": 2
+                },
+                {
+                  "id": 2,
+                  "type": "Operation",
+                  "operation": {
+                    "name": "Op_123456789101112_2",
+                    "kind": "Query",
+                    "document": "query Op_123456789101112_2 {\n  node(id: \"abc\") {\n    __typename\n    id\n  }\n}",
+                    "hash": "e15845444643ab252ea5d42bbe6377fda04d518a0ba5a9aff535901e7e8785e8",
+                    "shortHash": "e1584544",
+                    "xxHash": 5620523061615283492
+                  },
+                  "resultSelectionSet": "{ node }",
+                  "dependencies": [
+                    1
+                  ]
+                },
+                {
+                  "id": 3,
+                  "type": "Operation",
+                  "schema": "a",
+                  "operation": {
+                    "name": "Op_123456789101112_3",
+                    "kind": "Query",
+                    "document": "query Op_123456789101112_3($__fusion_policy_1: Boolean!) {\n  node(id: \"abc\") {\n    __typename\n    ... on Discussion {\n      __typename\n      id\n      title @skip(if: $__fusion_policy_1)\n    }\n  }\n}",
+                    "hash": "100f270ed1b597f4de316506f9e70e2506ca4112f10c8945eea2490ce1cb4f2c",
+                    "shortHash": "100f270e",
+                    "xxHash": 9301161964944396669
+                  },
+                  "lookupTypeName": "Discussion",
+                  "resultSelectionSet": "{ node { __typename ... on Discussion { __typename id title } } }",
+                  "forwardedVariables": [
+                    "__fusion_policy_1"
+                  ],
+                  "dependencies": [
+                    1
+                  ]
+                },
+                {
+                  "id": 4,
+                  "type": "Operation",
+                  "schema": "a",
+                  "operation": {
+                    "name": "Op_123456789101112_4",
+                    "kind": "Query",
+                    "document": "query Op_123456789101112_4($__fusion_policy_2: Boolean!) {\n  node: authorById(id: \"abc\") {\n    __typename\n    id\n    name @skip(if: $__fusion_policy_2)\n  }\n}",
+                    "hash": "9f1bcfef7574aff5e25d5f51705e325fa48e859c1fa3a579f0b4e4559e0b0b38",
+                    "shortHash": "9f1bcfef",
+                    "xxHash": 9174007783574593967
+                  },
+                  "lookupTypeName": "Author",
+                  "resultSelectionSet": "{ node { __typename id name } }",
+                  "forwardedVariables": [
+                    "__fusion_policy_2"
+                  ],
+                  "dependencies": [
+                    1
+                  ]
+                }
+              ],
+              "policies": {
+                "descriptors": [
+                  {
+                    "directiveName": "requiresScopes",
+                    "scopes": [
+                      [
+                        "read"
+                      ]
+                    ],
+                    "selection": {
+                      "path": "$.node<Author>.name"
+                    }
+                  },
+                  {
+                    "directiveName": "authenticated",
+                    "selection": {
+                      "path": "$.node<Discussion>.title"
+                    }
+                  }
+                ],
+                "variables": [
+                  {
+                    "name": "__fusion_policy_1",
+                    "selections": [
+                      {
+                        "path": "$.node<Discussion>.title"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "__fusion_policy_2",
+                    "selections": [
+                      {
+                        "path": "$.node<Author>.name"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Parse_Should_ResolvePoliciesThroughResolver_When_PolicyNamesAreParsed()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(
+            $$"""
+            type Query {
+              product: Product
+            }
+
+            type Product {
+              id: ID!
+              margin: Int @policy(policies: [["finance"]])
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var knownResolver = CreatePolicyResolver(policies => policies.Allow("finance"));
+        var originalPlan = PlanWithPooledFields(compositeSchema, "{ product { margin } }", knownResolver);
+        var json = new JsonOperationPlanFormatter(s_indentedOptions).Format(originalPlan);
+
+        // act
+        var knownPlan = CreateParser(compositeSchema, knownResolver).Parse(Encoding.UTF8.GetBytes(json));
+        var unknownPlan = CreateParser(compositeSchema, TestPolicyResolver.Create())
+            .Parse(Encoding.UTF8.GetBytes(json));
+
+        // assert
+        Assert.IsType<InMemoryPolicy>(Assert.Single(knownPlan.Policies!.Descriptors).Policy);
+        Assert.IsType<UnresolvedPolicy>(Assert.Single(unknownPlan.Policies!.Descriptors).Policy);
+        Assert.True(unknownPlan.Policies!.HasUnresolvedPolicies);
+    }
+
+    [Fact]
+    public void Parse_Should_ReturnNoPolicyPlan_When_PlanJsonHasNoPolicies()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(
+            $$"""
+            type Query {
+              product: Product
+            }
+
+            type Product {
+              id: ID!
+              margin: Int @policy(policies: [["finance"]])
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var originalPlan = PlanWithPooledFields(
+            compositeSchema,
+            "{ product { margin } }",
+            TestPolicyResolver.Create());
+        var json = JsonNode.Parse(new JsonOperationPlanFormatter().Format(originalPlan))!.AsObject();
+        json.Remove("policies");
+
+        // act
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create())
+            .Parse(Encoding.UTF8.GetBytes(json.ToJsonString()));
+
+        // assert
+        Assert.NotNull(originalPlan.Policies);
+        Assert.Null(parsedPlan.Policies);
     }
 
     // Source schema A owns the union and the nested lookups, source schema B the Asset entity
@@ -163,7 +691,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -237,7 +765,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -394,7 +922,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(planSource);
@@ -436,7 +964,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(planSource);
@@ -488,7 +1016,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(planSource);
@@ -538,7 +1066,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(planSource);
@@ -609,7 +1137,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -649,7 +1177,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -736,7 +1264,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -957,7 +1485,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(Encoding.UTF8.GetBytes(planSource));
@@ -1122,7 +1650,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             schema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -1246,7 +1774,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             schema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
@@ -1314,7 +1842,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         // act
         var parsedPlan = parser.Parse(standalonePlanSource);
@@ -1458,7 +1986,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
 
         return parser.Parse(Encoding.UTF8.GetBytes(planSource.ToJsonString()));
     }
@@ -1612,6 +2140,53 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             """;
 
         return ComposeApolloSchema(sourceSchemaA, sourceSchemaB);
+    }
+
+    private static readonly JsonWriterOptions s_indentedOptions = new()
+    {
+        Indented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    // The shared test planner leaks fields between compilations through its field map pool.
+    private static OperationPlan PlanWithPooledFields(
+        FusionSchemaDefinition schema,
+        string operationText,
+        IPolicyResolver policyResolver)
+    {
+        var document = Utf8GraphQLParser.Parse(operationText);
+        var rewritten = new DocumentRewriter(schema).RewriteDocument(document, operationName: null);
+        var operation = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
+        var compiler = new OperationCompiler(schema, new DefaultObjectPoolProvider().CreateFieldMapPool());
+        var planner = new OperationPlanner(schema, compiler, OperationPlannerOptions.Default, policyResolver);
+        const string id = "123456789101112";
+        return planner.CreatePlan(id, id, id, operation, TestContext.Current.CancellationToken);
+    }
+
+    private static (string Json, OperationPlan ParsedPlan) RoundTrip(
+        FusionSchemaDefinition schema,
+        OperationPlan plan)
+    {
+        var json = new JsonOperationPlanFormatter(s_indentedOptions).Format(plan);
+        var parsedPlan = CreateParser(schema, TestPolicyResolver.Create()).Parse(Encoding.UTF8.GetBytes(json));
+        return (json, parsedPlan);
+    }
+
+    private static JsonOperationPlanParser CreateParser(
+        FusionSchemaDefinition schema,
+        IPolicyResolver policyResolver)
+        => new(
+            new OperationCompiler(schema, new DefaultObjectPoolProvider().CreateFieldMapPool()),
+            policyResolver);
+
+    private static IPolicyResolver CreatePolicyResolver(Action<InMemoryPolicyBuilder> configure)
+    {
+        var builder = new InMemoryPolicyBuilder();
+        configure(builder);
+
+        return new PolicyResolver(
+            new BuiltInPolicyProvider(),
+            [builder.Build(new InMemoryPolicyRecorder())]);
     }
 
     private static FusionSchemaDefinition ComposeApolloSchema(
