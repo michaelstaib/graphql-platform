@@ -21,7 +21,6 @@ internal sealed class SubscriptionPolicies
     private readonly AuditScopeInfo _info;
     private readonly bool _recordsAudit;
     private readonly OperationPlan _plan;
-    private readonly PolicyPlan _policies;
     private readonly IVariableValueCollection _variables;
     private readonly TimeProvider _timeProvider;
 
@@ -37,9 +36,6 @@ internal sealed class SubscriptionPolicies
     /// <param name="plan">
     /// The plan of the subscription.
     /// </param>
-    /// <param name="policies">
-    /// The policy requirements of the subscription.
-    /// </param>
     /// <param name="variables">
     /// The coerced variable values of the subscription without the synthetic variables.
     /// </param>
@@ -50,14 +46,12 @@ internal sealed class SubscriptionPolicies
         PolicyEvaluator evaluator,
         IAuditScope scope,
         OperationPlan plan,
-        PolicyPlan policies,
         IVariableValueCollection variables,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(evaluator);
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
@@ -66,7 +60,6 @@ internal sealed class SubscriptionPolicies
         _info = scope.Info;
         _recordsAudit = scope.IsRecording;
         _plan = plan;
-        _policies = policies;
         _variables = variables;
         _timeProvider = timeProvider;
     }
@@ -158,7 +151,7 @@ internal sealed class SubscriptionPolicies
         {
             var scope = _trail.BeginRequest(_info, OperationPolicyMiddleware.GetUser(context));
 
-            _evaluator.RecordDenied(scope, _plan, _policies, _variables, ExpiredReason);
+            _evaluator.RecordDenied(scope, _plan, _variables, ExpiredReason);
             await scope.CommitAsync(cancellationToken);
         }
         catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
