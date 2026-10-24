@@ -50,6 +50,14 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("nodes", 1, isStreamable: true));
 
                 descriptor
+                    .Field("pureCancelled")
+                    .Type("PureCancelledConnection")
+                    .Resolve(_ => new PureCancelledConnection())
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                        new ExecutionGroupEntry("nodes", 1, isStreamable: true));
+
+                descriptor
                     .Field("strict")
                     .Type("StrictConnection")
                     .Resolve(_ => new StrictConnection())
@@ -136,6 +144,12 @@ internal static class ExecutionGroupTestSchema
                 descriptor.Field("nodes").Type("[Item!]!").Resolve(ctx => script.RunAsync(ctx, Items()));
                 descriptor.Field(c => c.PageInfo);
             })
+            .AddObjectType<PureCancelledConnection>(descriptor =>
+            {
+                descriptor.Name("PureCancelledConnection");
+                descriptor.Field("nodes").Type("[Item!]!").Resolve(ctx => script.RunAsync(ctx, Items()));
+                descriptor.Field(c => c.PageInfo).Type("PageInfo");
+            })
             .AddObjectType<StrictConnection>(descriptor =>
             {
                 descriptor.Name("StrictConnection");
@@ -184,6 +198,11 @@ internal static class ExecutionGroupTestSchema
     internal sealed class PureInfoConnection(ExecutionScript script, bool hasPageInfo)
     {
         public PageInfo? PageInfo => hasPageInfo ? new PageInfo(script) : null;
+    }
+
+    internal sealed class PureCancelledConnection
+    {
+        public PageInfo? PageInfo => throw new OperationCanceledException();
     }
 
     internal sealed class PageA;

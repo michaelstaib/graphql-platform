@@ -764,6 +764,46 @@ public class ExecutionGroupTests
     }
 
     [Fact]
+    public async Task Execute_Should_ReleaseMembersBelowPureSelection_When_PureSelectionThrowsOperationCanceled()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("pureCancelled.nodes");
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ pureCancelled { nodes { name } pageInfo { hasNextPage } } }",
+            cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "start pureCancelled.nodes",
+            "end pureCancelled.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "pureCancelled": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    }
+                  ],
+                  "pageInfo": null
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_KeepMemberTurn_When_PureAncestorIsNulledAfterChildTasksWereCreated()
     {
         // arrange

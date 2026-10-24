@@ -347,6 +347,7 @@ internal static class ResolverTaskFactory
         {
             // If we run into this exception the request was aborted.
             // In this case we do nothing and just return.
+            ReleaseWhenNoChildTasks(context, groupScope, selection, taskCount);
             return;
         }
         catch (Exception ex)
@@ -367,6 +368,7 @@ internal static class ResolverTaskFactory
         {
             // If we run into this exception the request was aborted.
             // In this case we do nothing and just return.
+            ReleaseWhenNoChildTasks(context, groupScope, selection, taskCount);
             return;
         }
         catch (Exception ex)
@@ -374,11 +376,7 @@ internal static class ResolverTaskFactory
             operationContext.ReportError(ex, resolverContext, fieldValue.Path);
         }
 
-        if (groupScope is not null && context.Tasks.Count == taskCount)
-        {
-            // without child tasks nothing below this selection can ever start, so its members are skipped.
-            groupScope.ReleaseDescendants(selection);
-        }
+        ReleaseWhenNoChildTasks(context, groupScope, selection, taskCount);
 
         if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true })
         {
@@ -392,6 +390,19 @@ internal static class ResolverTaskFactory
             }
 
             operationContext.Result.AddNonNullViolation(fieldValue.Path);
+        }
+    }
+
+    private static void ReleaseWhenNoChildTasks(
+        ValueCompletionContext context,
+        ExecutionGroupScope? groupScope,
+        Selection selection,
+        int taskCount)
+    {
+        if (groupScope is not null && context.Tasks.Count == taskCount)
+        {
+            // without child tasks nothing below this selection can ever start, so its members are skipped.
+            groupScope.ReleaseDescendants(selection);
         }
     }
 
