@@ -410,5 +410,17 @@ namespace HotChocolate.Fusion.Properties {
                 return ResourceManager.GetString("DeliveryGroup_InvalidIfVariable", resourceCulture);
             }
         }
+
+        internal static string AuditScope_AlreadyCommitted {
+            get {
+                return ResourceManager.GetString("AuditScope_AlreadyCommitted", resourceCulture);
+            }
+        }
+
+        internal static string OperationPolicy_EvaluationFaulted {
+            get {
+                return ResourceManager.GetString("OperationPolicy_EvaluationFaulted", resourceCulture);
+            }
+        }
     }
 }
