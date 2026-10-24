@@ -128,6 +128,10 @@ public abstract class ExecutionTask : IExecutionTask
     protected void Reset()
     {
         _task = null;
+#pragma warning disable CS0618
+        Next = null;
+        Previous = null;
+#pragma warning restore CS0618
         State = null;
         IsSerial = false;
         IsRegistered = false;
