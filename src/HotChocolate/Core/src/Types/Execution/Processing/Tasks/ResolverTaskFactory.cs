@@ -101,6 +101,7 @@ internal static class ResolverTaskFactory
                                     Path.Root,
                                     parent,
                                     scopedContext,
+                                    groupScope: null,
                                     branchId,
                                     deferUsage));
                         }
@@ -212,6 +213,7 @@ internal static class ResolverTaskFactory
                                     currentPath,
                                     parent,
                                     context.ResolverContext.ScopedContextData,
+                                    context.GroupScope,
                                     branchId,
                                     deferUsage));
                         }
@@ -239,12 +241,11 @@ internal static class ResolverTaskFactory
                 else
                 {
                     context.Tasks.Add(
-                        operationContext.CreateResolverTask(
+                        CreateChildTask(
+                            context,
                             parent,
                             selection,
                             field.Value,
-                            context.ResolverContext.ScopedContextData,
-                            context.ParentBranchId,
                             parentDeferUsage));
                 }
             }
@@ -276,15 +277,39 @@ internal static class ResolverTaskFactory
                 else
                 {
                     context.Tasks.Add(
-                        operationContext.CreateResolverTask(
+                        CreateChildTask(
+                            context,
                             parent,
                             selection,
                             field.Value,
-                            context.ResolverContext.ScopedContextData,
-                            context.ParentBranchId));
+                            deferUsage: null));
                 }
             }
         }
+    }
+
+    private static ResolverTask CreateChildTask(
+        ValueCompletionContext context,
+        object parent,
+        Selection selection,
+        ResultElement resultValue,
+        DeferUsage? deferUsage)
+    {
+        var task =
+            context.OperationContext.CreateResolverTask(
+                parent,
+                selection,
+                resultValue,
+                context.ResolverContext.ScopedContextData,
+                context.ParentBranchId,
+                deferUsage);
+
+        if (selection.IsExecutionGroupParticipant)
+        {
+            task.JoinExecutionGroup(context.GroupScope);
+        }
+
+        return task;
     }
 
     private static void ResolveAndCompleteInline(
@@ -296,6 +321,8 @@ internal static class ResolverTaskFactory
     {
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
+        var groupScope = selection.IsExecutionGroupParticipant ? context.GroupScope : null;
+        var taskCount = groupScope is null ? 0 : context.Tasks.Count;
         var executedSuccessfully = false;
         object? resolverResult = null;
 
@@ -320,6 +347,7 @@ internal static class ResolverTaskFactory
         {
             // If we run into this exception the request was aborted.
             // In this case we do nothing and just return.
+            ReleaseWhenNoChildTasks(context, groupScope, selection, taskCount);
             return;
         }
         catch (Exception ex)
@@ -340,12 +368,15 @@ internal static class ResolverTaskFactory
         {
             // If we run into this exception the request was aborted.
             // In this case we do nothing and just return.
+            ReleaseWhenNoChildTasks(context, groupScope, selection, taskCount);
             return;
         }
         catch (Exception ex)
         {
             operationContext.ReportError(ex, resolverContext, fieldValue.Path);
         }
+
+        ReleaseWhenNoChildTasks(context, groupScope, selection, taskCount);
 
         if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true })
         {
@@ -359,6 +390,19 @@ internal static class ResolverTaskFactory
             }
 
             operationContext.Result.AddNonNullViolation(fieldValue.Path);
+        }
+    }
+
+    private static void ReleaseWhenNoChildTasks(
+        ValueCompletionContext context,
+        ExecutionGroupScope? groupScope,
+        Selection selection,
+        int taskCount)
+    {
+        if (groupScope is not null && context.Tasks.Count == taskCount)
+        {
+            // without child tasks nothing below this selection can ever start, so its members are skipped.
+            groupScope.ReleaseSlotsBelow(selection);
         }
     }
 
