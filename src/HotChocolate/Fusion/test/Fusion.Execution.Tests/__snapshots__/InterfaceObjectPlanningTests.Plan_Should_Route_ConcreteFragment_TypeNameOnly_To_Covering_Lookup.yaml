@@ -3,10 +3,10 @@ operation:
       {
         trendingMedia {
           __typename @fusion__requirement
-          id @fusion__requirement
           ... on Book {
             __typename
           }
+          id @fusion__requirement
         }
       }
     hash: 123456789101112

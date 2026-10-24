@@ -402,8 +402,86 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip: Boolean!) {
               productById(id: 1) {
-                description
                 id @skip(if: $skip)
+                description
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepRequestOrder_When_SameConditionalIsSeparatedByOtherSelections()
+    {
+        // arrange
+        var sourceText = FileResource.Open("schema1.graphql");
+        var schemaDefinition = ComposeSchema(sourceText);
+
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            query($skip: Boolean!) {
+              productById(id: 1) {
+                id @skip(if: $skip)
+                name
+                description @skip(if: $skip)
+              }
+            }
+            """);
+
+        // act
+        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewritten = rewriter.RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            query($skip: Boolean!) {
+              productById(id: 1) {
+                id @skip(if: $skip)
+                name
+                description @skip(if: $skip)
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_GroupAdjacentSelections_When_TheyShareAConditional()
+    {
+        // arrange
+        var sourceText = FileResource.Open("schema1.graphql");
+        var schemaDefinition = ComposeSchema(sourceText);
+
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            query($skip: Boolean!) {
+              productById(id: 1) {
+                name
+                id @skip(if: $skip)
+                description @skip(if: $skip)
+                dimension {
+                  width
+                }
+              }
+            }
+            """);
+
+        // act
+        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewritten = rewriter.RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            query($skip: Boolean!) {
+              productById(id: 1) {
+                name
+                ... @skip(if: $skip) {
+                  id
+                  description
+                }
+                dimension {
+                  width
+                }
               }
             }
             """);
@@ -672,8 +750,8 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
-                description
                 name @skip(if: $skip)
+                description
               }
             }
             """);
@@ -747,8 +825,8 @@ public class DocumentRewriterTests : FusionTestBase
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
                 dimension {
-                  width
                   height @skip(if: $skip)
+                  width
                 }
               }
             }
@@ -829,8 +907,8 @@ public class DocumentRewriterTests : FusionTestBase
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
                 dimension {
-                  width
                   height @skip(if: $skip)
+                  width
                 }
               }
             }
@@ -1052,8 +1130,8 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
-                description
                 name @skip(if: $skip)
+                description
               }
             }
             """);
@@ -1091,8 +1169,8 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
-                name
                 description @skip(if: $skip)
+                name
               }
             }
             """);
@@ -1639,7 +1717,6 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip1: Boolean!, $skip2: Boolean!) {
               votables {
-                voteCount
                 ... on Product @skip(if: $skip1) {
                   voteCount
                 }
@@ -1647,6 +1724,7 @@ public class DocumentRewriterTests : FusionTestBase
                   voteCount
                   viewerCanVote
                 }
+                voteCount
               }
             }
             """);
@@ -1960,13 +2038,13 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
+                name @skip(if: $skip)
                 dimension {
                   ... @skip(if: $skip) {
                     width
                     height
                   }
                 }
-                name @skip(if: $skip)
               }
             }
             """);
@@ -2043,8 +2121,8 @@ public class DocumentRewriterTests : FusionTestBase
             """
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
-                secondaryName: name
                 primaryName: name @skip(if: $skip)
+                secondaryName: name
               }
             }
             """);
@@ -2123,10 +2201,10 @@ public class DocumentRewriterTests : FusionTestBase
             query($skip: Boolean!) {
               productBySlug(slug: "a") {
                 name
+                description @skip(if: $skip)
                 dimension {
                   width
                 }
-                description @skip(if: $skip)
               }
             }
             """);
@@ -2224,14 +2302,14 @@ public class DocumentRewriterTests : FusionTestBase
             query($skip1: Boolean!, $skip2: Boolean!) {
               productBySlug(slug: "a") {
                 name
+                tags @skip(if: $skip1)
                 dimension {
-                  depth
                   ... @skip(if: $skip1) {
                     width
                     height @skip(if: $skip2)
                   }
+                  depth
                 }
-                tags @skip(if: $skip1)
               }
             }
             """);
@@ -2283,10 +2361,10 @@ public class DocumentRewriterTests : FusionTestBase
             query($skip: Boolean!) {
               votables {
                 ... @skip(if: $skip) {
-                  viewerCanVote
                   ... on Product {
                     voteCount
                   }
+                  viewerCanVote
                 }
               }
             }

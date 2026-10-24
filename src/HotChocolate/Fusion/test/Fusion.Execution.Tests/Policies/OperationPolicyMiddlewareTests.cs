@@ -723,10 +723,10 @@ public class OperationPolicyMiddlewareTests : AuthorizationExecutionTestBase
     [InlineData(false, 1, """
         {
           "data": {
+            "guarded": "g",
             "product": {
               "id": "1"
-            },
-            "guarded": "g"
+            }
           }
         }
         """)]
