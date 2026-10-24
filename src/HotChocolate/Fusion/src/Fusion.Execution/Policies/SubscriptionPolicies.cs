@@ -24,7 +24,7 @@ internal sealed class SubscriptionPolicies
     private readonly AuditScopeInfo _info;
     private readonly bool _recordsAudit;
     private readonly OperationPlan _plan;
-    private readonly OperationPolicies _policies;
+    private readonly PolicyPlan _policies;
     private readonly IVariableValueCollection _variables;
     private readonly IInputType _booleanType;
     private readonly TimeProvider _timeProvider;
@@ -62,7 +62,7 @@ internal sealed class SubscriptionPolicies
         PolicyEvaluator evaluator,
         IAuditScope scope,
         OperationPlan plan,
-        OperationPolicies policies,
+        PolicyPlan policies,
         IVariableValueCollection variables,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
         IInputType booleanType,

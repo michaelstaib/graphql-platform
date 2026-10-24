@@ -315,7 +315,7 @@ internal sealed class PolicyEvaluator
     public void RecordDenied(
         IAuditScope scope,
         OperationPlan plan,
-        OperationPolicies policies,
+        PolicyPlan policies,
         IVariableValueCollection variables,
         string reason)
     {
