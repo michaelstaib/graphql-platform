@@ -48,7 +48,7 @@ internal sealed class PolicyEvaluator
     /// The plan of the operation.
     /// </param>
     /// <param name="policies">
-    /// The policy requirements of the operation and its incremental plans.
+    /// The policy plan of the operation plan.
     /// </param>
     /// <param name="variables">
     /// The coerced variable values of the variable set.
@@ -63,7 +63,7 @@ internal sealed class PolicyEvaluator
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
-        OperationPolicies policies,
+        PolicyPlan policies,
         IVariableValueCollection variables,
         int requestIndex,
         CancellationToken cancellationToken)

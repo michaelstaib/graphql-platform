@@ -23,6 +23,7 @@ public sealed record OperationPlan : IOperationPlan
         ImmutableArray<ExecutionNode> allNodes,
         ImmutableArray<DeliveryGroup> deliveryGroups,
         ImmutableArray<IncrementalPlan> incrementalPlans,
+        PolicyPlan? policies,
         int searchSpace,
         int expandedNodes)
     {
@@ -41,7 +42,7 @@ public sealed record OperationPlan : IOperationPlan
         MaxNodeId = _nodesById.Length > 0 ? _nodesById.Length - 1 : 0;
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
-        Policies = CreatePolicies(operation, incrementalPlans);
+        Policies = policies;
     }
 
     /// <summary>
@@ -115,7 +116,7 @@ public sealed record OperationPlan : IOperationPlan
     /// Gets the policy requirements of the operation and its incremental plans,
     /// or <c>null</c> if nothing is protected.
     /// </summary>
-    internal OperationPolicies? Policies { get; }
+    public PolicyPlan? Policies { get; }
 
     /// <summary>
     /// Retrieves the execution node associated with a plan node identifier.
@@ -176,6 +177,9 @@ public sealed record OperationPlan : IOperationPlan
     /// Each plan carries its delivery group set on
     /// <see cref="IncrementalPlan.DeliveryGroups"/>.
     /// </param>
+    /// <param name="policies">
+    /// The policy requirements of the operation and its incremental plans, or <c>null</c> if nothing is protected.
+    /// </param>
     /// <param name="searchSpace">A number specifying how many possible plans were considered during planning.</param>
     /// <param name="expandedNodes">The number of expanded nodes during planner search.</param>
     /// <returns>A new <see cref="OperationPlan"/> instance.</returns>
@@ -189,6 +193,7 @@ public sealed record OperationPlan : IOperationPlan
         ImmutableArray<ExecutionNode> allNodes,
         ImmutableArray<DeliveryGroup> deliveryGroups,
         ImmutableArray<IncrementalPlan> incrementalPlans,
+        PolicyPlan? policies,
         int searchSpace,
         int expandedNodes)
     {
@@ -198,7 +203,7 @@ public sealed record OperationPlan : IOperationPlan
         ArgumentOutOfRangeException.ThrowIfLessThan(allNodes.Length, 0);
 
         return new OperationPlan(
-            id, operation, rootNodes, allNodes, deliveryGroups, incrementalPlans, searchSpace, expandedNodes);
+            id, operation, rootNodes, allNodes, deliveryGroups, incrementalPlans, policies, searchSpace, expandedNodes);
     }
 
     /// <summary>
@@ -217,6 +222,9 @@ public sealed record OperationPlan : IOperationPlan
     /// Each plan carries its delivery group set on
     /// <see cref="IncrementalPlan.DeliveryGroups"/>.
     /// </param>
+    /// <param name="policies">
+    /// The policy requirements of the operation and its incremental plans, or <c>null</c> if nothing is protected.
+    /// </param>
     /// <param name="searchSpace">A number specifying how many possible plans were considered during planning.</param>
     /// <param name="expandedNodes">The number of expanded nodes during planner search.</param>
     /// <returns>A new <see cref="OperationPlan"/> instance with a content-based identifier.</returns>
@@ -228,6 +236,7 @@ public sealed record OperationPlan : IOperationPlan
         ImmutableArray<ExecutionNode> allNodes,
         ImmutableArray<DeliveryGroup> deliveryGroups,
         ImmutableArray<IncrementalPlan> incrementalPlans,
+        PolicyPlan? policies,
         int searchSpace,
         int expandedNodes)
     {
@@ -258,53 +267,9 @@ public sealed record OperationPlan : IOperationPlan
             allNodes,
             deliveryGroups,
             incrementalPlans,
+            policies,
             searchSpace,
             expandedNodes);
-    }
-
-    private static OperationPolicies? CreatePolicies(
-        Operation operation,
-        ImmutableArray<IncrementalPlan> incrementalPlans)
-    {
-        var root = operation.Policies;
-        var hasIncrementalPolicies = false;
-
-        if (!incrementalPlans.IsDefaultOrEmpty)
-        {
-            foreach (var incrementalPlan in incrementalPlans)
-            {
-                if (incrementalPlan.Operation.Policies is not null)
-                {
-                    hasIncrementalPolicies = true;
-                    break;
-                }
-            }
-        }
-
-        if (!hasIncrementalPolicies)
-        {
-            return root;
-        }
-
-        var descriptors = ImmutableArray.CreateBuilder<PolicyDescriptor>();
-        var variables = ImmutableArray.CreateBuilder<PolicyVariable>();
-
-        if (root is not null)
-        {
-            descriptors.AddRange(root.Descriptors);
-            variables.AddRange(root.Variables);
-        }
-
-        foreach (var incrementalPlan in incrementalPlans)
-        {
-            if (incrementalPlan.Operation.Policies is { } policies)
-            {
-                descriptors.AddRange(policies.Descriptors);
-                variables.AddRange(policies.Variables);
-            }
-        }
-
-        return new OperationPolicies(descriptors.ToImmutable(), variables.ToImmutable());
     }
 
     private static ExecutionNode?[] CreateNodeLookup(

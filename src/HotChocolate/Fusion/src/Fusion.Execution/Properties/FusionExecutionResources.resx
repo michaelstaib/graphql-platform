@@ -153,9 +153,6 @@
   <data name="PolicyResolver_PolicyNotResolved" xml:space="preserve">
     <value>No policy provider knows the policy '{0}' of the directive '@{1}'.</value>
   </data>
-  <data name="Operation_PoliciesAlreadySet" xml:space="preserve">
-    <value>The policies of the operation were already set and cannot be set again.</value>
-  </data>
   <data name="FusionAuthorizationOptions_ReadOnly" xml:space="preserve">
     <value>The authorization options are read-only.</value>
   </data>

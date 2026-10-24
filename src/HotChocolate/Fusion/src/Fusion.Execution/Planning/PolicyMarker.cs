@@ -106,10 +106,14 @@ internal sealed class PolicyMarker
     }
 
     /// <summary>
-    /// Creates the policy description of the operation.
+    /// Gets the descriptor of every directive occurrence of every protected selection of the operation.
     /// </summary>
-    public OperationPolicies CreatePolicies()
-        => new(_descriptors, [.. _variables]);
+    public ImmutableArray<PolicyDescriptor> Descriptors => _descriptors;
+
+    /// <summary>
+    /// Gets the synthetic variables that were allocated for the operation, in allocation order.
+    /// </summary>
+    public ImmutableArray<PolicyVariable> GetVariables() => [.. _variables];
 
     /// <summary>
     /// Marks the operation steps and returns the updated steps.

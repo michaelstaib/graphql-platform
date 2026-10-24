@@ -48,7 +48,7 @@ internal sealed class OperationPolicyMiddleware
     private async ValueTask InvokeProtectedAsync(
         RequestContext context,
         OperationPlan plan,
-        OperationPolicies policies,
+        PolicyPlan policies,
         RequestDelegate next)
     {
         var variableSets = context.VariableValues;

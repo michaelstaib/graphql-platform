@@ -855,7 +855,7 @@ public class PolicyPlanningTests : FusionTestBase
         var plan = PlanOperation(schema, "{ report }");
 
         // assert
-        plan.Operation.Policies!.Descriptors
+        plan.Policies!.Descriptors
             .Select(static d => new
             {
                 d.DirectiveName,
@@ -927,7 +927,7 @@ public class PolicyPlanningTests : FusionTestBase
         var plan = PlanOperation(schema, "{ first second }", resolver);
 
         // assert
-        var descriptors = plan.Operation.Policies!.Descriptors;
+        var descriptors = plan.Policies!.Descriptors;
         Assert.Equal(2, descriptors.Length);
         Assert.Same(descriptors[0].Policy, descriptors[1].Policy);
         Assert.IsType<InMemoryPolicy>(descriptors[0].Policy);
@@ -946,7 +946,7 @@ public class PolicyPlanningTests : FusionTestBase
             {{Directives}}
             """);
         var plan = PlanOperation(schema, "{ field }");
-        var descriptor = Assert.Single(plan.Operation.Policies!.Descriptors);
+        var descriptor = Assert.Single(plan.Policies!.Descriptors);
         var context = CreateContext(
             Authenticated(),
             new PolicyEvaluationEntry(descriptor, new Dictionary<string, object?>()));
@@ -997,7 +997,7 @@ public class PolicyPlanningTests : FusionTestBase
         var plan = PlanOperation(schema, "{ product { id } }");
 
         // assert
-        Assert.Null(plan.Operation.Policies);
+        Assert.Null(plan.Policies);
         MatchNodes(
             plan,
             """
@@ -1012,23 +1012,6 @@ public class PolicyPlanningTests : FusionTestBase
                     }
                   }
             """);
-    }
-
-    [Fact]
-    public void SetPolicies_Should_Throw_When_PlannerAlreadySetPolicies()
-    {
-        // arrange
-        var schema = ComposeSchema(ProductSchema);
-        var plan = PlanOperation(schema, "{ product { id } }");
-
-        // act
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => plan.Operation.SetPolicies(null));
-
-        // assert
-        Assert.Equal(
-            "The policies of the operation were already set and cannot be set again.",
-            exception.Message);
     }
 
     [Fact]
@@ -1113,7 +1096,7 @@ public class PolicyPlanningTests : FusionTestBase
         var plan = planner.CreatePlan("1", "1", "1", operation, TestContext.Current.CancellationToken);
 
         // assert
-        var descriptor = Assert.Single(plan.Operation.Policies!.Descriptors);
+        var descriptor = Assert.Single(plan.Policies!.Descriptors);
         Assert.IsType<InMemoryPolicy>(descriptor.Policy);
     }
 
@@ -1129,7 +1112,7 @@ public class PolicyPlanningTests : FusionTestBase
 
     private static object Describe(OperationPlan plan)
     {
-        var policies = plan.Operation.Policies!;
+        var policies = plan.Policies!;
 
         return new
         {

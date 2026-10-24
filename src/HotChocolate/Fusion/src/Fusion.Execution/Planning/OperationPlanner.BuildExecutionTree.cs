@@ -43,7 +43,7 @@ public sealed partial class OperationPlanner
 
             var nodes = ImmutableArray.Create<ExecutionNode>(introspectionNode);
 
-            return OperationPlan.Create(operation, nodes, nodes, [], [], searchSpace, expandedNodes);
+            return OperationPlan.Create(operation, nodes, nodes, [], [], null, searchSpace, expandedNodes);
         }
 
         var ctx = new ExecutionPlanBuildContext(nextNodeId);
@@ -56,7 +56,10 @@ public sealed partial class OperationPlanner
         var hasVariables = operationDefinition.VariableDefinitions.Count > 0
             || marker is { HasVariables: true };
 
-        operation.SetPolicies(marker?.CreatePolicies());
+        if (policyContext is not null && marker is not null)
+        {
+            policyContext.AddRoot(marker);
+        }
 
         IndexDependencies(planSteps, ctx);
         BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);
@@ -96,6 +99,7 @@ public sealed partial class OperationPlanner
             allNodes,
             deliveryGroups,
             incrementalPlans,
+            policyContext?.CreatePlan(),
             searchSpace,
             expandedNodes);
 

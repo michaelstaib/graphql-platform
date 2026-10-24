@@ -4,7 +4,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using HotChocolate.Execution;
 using HotChocolate.Features;
-using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Types;
@@ -25,7 +24,6 @@ public sealed class Operation : IOperation
     private readonly IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> _deliveryGroupByFragment;
     private readonly OperationFeatureCollection _features;
     private readonly bool _hasIncrementalParts;
-    private bool _policiesSet;
     private object[] _elementsById;
     private int _lastId;
 
@@ -129,32 +127,6 @@ public sealed class Operation : IOperation
     public IFeatureCollection Features => _features;
 
     public bool HasIncrementalParts => _hasIncrementalParts;
-
-    /// <summary>
-    /// Gets the policy requirements of the operation, or <c>null</c> if no selection of
-    /// the operation is protected.
-    /// </summary>
-    public OperationPolicies? Policies { get; private set; }
-
-    /// <summary>
-    /// Sets the policy requirements of the operation. It can be called only once.
-    /// </summary>
-    /// <param name="policies">
-    /// The policy requirements, or <c>null</c> if no selection of the operation is protected.
-    /// </param>
-    /// <exception cref="InvalidOperationException">
-    /// The policies were already set.
-    /// </exception>
-    internal void SetPolicies(OperationPolicies? policies)
-    {
-        if (_policiesSet)
-        {
-            throw ThrowHelper.OperationPoliciesAlreadySet();
-        }
-
-        _policiesSet = true;
-        Policies = policies;
-    }
 
     /// <summary>
     /// Gets a value indicating whether this operation has more than 64 include

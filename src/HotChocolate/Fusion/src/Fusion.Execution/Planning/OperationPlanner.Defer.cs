@@ -162,7 +162,10 @@ public sealed partial class OperationPlanner
                 finalSteps.NextId(),
                 marker);
 
-            deferredOperation.SetPolicies(marker?.CreatePolicies());
+            if (policyContext is not null && marker is not null)
+            {
+                policyContext.AddIncremental(marker);
+            }
 
             var planScopeRequirements = descriptor.Requirements.Count == 0
                 ? ImmutableArray<OperationRequirement>.Empty

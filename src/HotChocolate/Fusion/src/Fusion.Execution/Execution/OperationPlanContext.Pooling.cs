@@ -57,9 +57,7 @@ public sealed partial class OperationPlanContext
         Variables = variables;
         OperationPlan = operationPlan;
 
-        PolicyDecisions = operationPlan.Operation.Policies is null
-            ? null
-            : policyDecisions;
+        PolicyDecisions = policyDecisions;
 
         switch (operationPlan)
         {

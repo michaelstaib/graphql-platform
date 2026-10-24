@@ -3,12 +3,12 @@ using System.Collections.Immutable;
 namespace HotChocolate.Fusion.Policies;
 
 /// <summary>
-/// The policy requirements of the selections of an operation and the synthetic variables
-/// that skip denied selections in source schema requests.
+/// The policy requirements of the protected selections of an operation plan and the synthetic
+/// variables that skip denied selections in source schema requests.
 /// </summary>
-public sealed class OperationPolicies
+public sealed class PolicyPlan
 {
-    internal OperationPolicies(
+    internal PolicyPlan(
         ImmutableArray<PolicyDescriptor> descriptors,
         ImmutableArray<PolicyVariable> variables)
     {

@@ -315,12 +315,6 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string Operation_PoliciesAlreadySet {
-            get {
-                return ResourceManager.GetString("Operation_PoliciesAlreadySet", resourceCulture);
-            }
-        }
-
         internal static string FusionAuthorizationOptions_ReadOnly {
             get {
                 return ResourceManager.GetString("FusionAuthorizationOptions_ReadOnly", resourceCulture);

@@ -67,9 +67,6 @@ internal static class ThrowHelper
             policyName ?? string.Empty,
             directiveName));
 
-    public static InvalidOperationException OperationPoliciesAlreadySet()
-        => new(FusionExecutionResources.Operation_PoliciesAlreadySet);
-
     public static InvalidOperationException MissingBooleanVariable(string variableName)
         => new(string.Format(
             FusionExecutionResources.ExecutionNode_MissingBooleanVariable,

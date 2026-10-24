@@ -1,12 +1,14 @@
 using System.Collections.Frozen;
+using System.Collections.Immutable;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Planning;
 
 /// <summary>
-/// The policy state that is shared by all operations of one plan: the pinned policies
-/// and the allocation of the synthetic variable names.
+/// The policy state that is shared by all operations of one plan: the pinned policies,
+/// the allocation of the synthetic variable names and the descriptors and variables that
+/// the markers of the root operation and the deferred operations produce.
 /// </summary>
 internal sealed class PolicyPlanContext
 {
@@ -15,6 +17,8 @@ internal sealed class PolicyPlanContext
     private readonly IPolicyResolver _resolver;
     private readonly HashSet<string> _reservedNames = new(StringComparer.Ordinal);
     private readonly Dictionary<(string DirectiveName, string? PolicyName), IPolicy> _policies = [];
+    private readonly List<PolicyMarker> _incrementalMarkers = [];
+    private PolicyMarker? _rootMarker;
     private int _lastVariableId;
 
     public PolicyPlanContext(
@@ -63,5 +67,54 @@ internal sealed class PolicyPlanContext
         while (_reservedNames.Contains(name));
 
         return name;
+    }
+
+    /// <summary>
+    /// Registers the marker of the root operation.
+    /// </summary>
+    public void AddRoot(PolicyMarker marker)
+    {
+        ArgumentNullException.ThrowIfNull(marker);
+
+        _rootMarker = marker;
+    }
+
+    /// <summary>
+    /// Registers the marker of a deferred operation. Markers contribute to the plan in registration order.
+    /// </summary>
+    public void AddIncremental(PolicyMarker marker)
+    {
+        ArgumentNullException.ThrowIfNull(marker);
+
+        _incrementalMarkers.Add(marker);
+    }
+
+    /// <summary>
+    /// Creates the policy plan from the registered markers, root first, or returns <c>null</c>
+    /// if no marker was registered.
+    /// </summary>
+    public PolicyPlan? CreatePlan()
+    {
+        if (_rootMarker is null && _incrementalMarkers.Count == 0)
+        {
+            return null;
+        }
+
+        var descriptors = ImmutableArray.CreateBuilder<PolicyDescriptor>();
+        var variables = ImmutableArray.CreateBuilder<PolicyVariable>();
+
+        if (_rootMarker is not null)
+        {
+            descriptors.AddRange(_rootMarker.Descriptors);
+            variables.AddRange(_rootMarker.GetVariables());
+        }
+
+        foreach (var marker in _incrementalMarkers)
+        {
+            descriptors.AddRange(marker.Descriptors);
+            variables.AddRange(marker.GetVariables());
+        }
+
+        return new PolicyPlan(descriptors.ToImmutable(), variables.ToImmutable());
     }
 }

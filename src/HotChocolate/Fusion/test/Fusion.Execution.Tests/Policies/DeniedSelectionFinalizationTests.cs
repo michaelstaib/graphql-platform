@@ -746,6 +746,133 @@ public class DeniedSelectionFinalizationTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
+    public async Task Complete_Should_NullDeniedFieldOfTheDeferredPayload_When_RootSelectionsAreUnprotected()
+    {
+        // arrange
+        var executor = await CreateErrorExecutorAsync(policies => policies.Unanswered("finance"));
+        var request = CreateRequest("{ product { id ... @defer { margin } } }", Authenticated())
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "product": {
+                  "id": "1"
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "product"
+                  ]
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "0",
+                  "data": {
+                    "margin": null
+                  },
+                  "errors": [
+                    {
+                      "message": "The current user is not authorized to access this resource.",
+                      "path": [
+                        "product",
+                        "margin"
+                      ],
+                      "extensions": {
+                        "code": "AUTH_NOT_AUTHORIZED"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
+    public async Task Complete_Should_LeaveTheDeferredPayloadUnchanged_When_OnlyTheRootSelectionIsDenied()
+    {
+        // arrange
+        var executor = await CreateErrorExecutorAsync();
+        var request = CreateRequest("{ product { name } ... @defer { items { id } } }")
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The current user is not authenticated.",
+                  "path": [
+                    "product",
+                    "name"
+                  ],
+                  "extensions": {
+                    "code": "AUTH_NOT_AUTHENTICATED"
+                  }
+                }
+              ],
+              "data": {
+                "product": {
+                  "name": null
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": []
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "0",
+                  "data": {
+                    "items": [
+                      {
+                        "id": "1"
+                      },
+                      {
+                        "id": "2"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+
+            """);
+    }
+
+    [Fact]
     public async Task Complete_Should_DenyTheSelection_When_PolicyLeavesTheEntryUnanswered()
     {
         // arrange
