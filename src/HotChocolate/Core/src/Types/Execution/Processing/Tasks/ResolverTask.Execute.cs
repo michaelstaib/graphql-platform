@@ -15,6 +15,11 @@ internal sealed partial class ResolverTask
                 CompleteValue(success, cancellationToken);
 
                 ExecutionGroupScope.RegisterChildTasks(_operationContext.Scheduler, _taskBuffer);
+
+                if (_groupScope is not null)
+                {
+                    _childTasksRegistered = _taskBuffer.Count > 0;
+                }
             }
 
             Status = _completionStatus;
@@ -119,12 +124,14 @@ internal sealed partial class ResolverTask
     private void EndGroupTurn()
     {
         var scope = _groupScope!;
+        var childTasksRegistered = _childTasksRegistered;
+        _childTasksRegistered = false;
 
         if (_groupSlot >= 0)
         {
             scope.Release(_groupSlot);
         }
-        else if (_taskBuffer.Count == 0 || Status is ExecutionTaskStatus.Faulted)
+        else if (!childTasksRegistered)
         {
             // without registered child tasks nothing below this selection can ever start, so its members are skipped.
             scope.ReleaseDescendants(_selection);

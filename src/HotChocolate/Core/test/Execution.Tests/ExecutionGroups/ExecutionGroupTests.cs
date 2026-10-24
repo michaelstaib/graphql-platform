@@ -1,4 +1,7 @@
 using System.Text.Json.Nodes;
+using HotChocolate.Execution.Configuration;
+using HotChocolate.Execution.Instrumentation;
+using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -869,49 +872,16 @@ public class ExecutionGroupTests
     }
 
     [Fact]
-    public async Task Execute_Should_ReleaseLaterMembers_When_ValueCompletionThrowsAfterChildTasksWereCreated()
+    public async Task Execute_Should_ReleaseLaterMembers_When_ErrorFilterThrowsAfterChildTasksWereCreated()
     {
         // arrange
         var script = new ExecutionScript();
-        var executor = await new ServiceCollection()
-            .AddGraphQL()
-            .AddQueryType(descriptor =>
-            {
-                descriptor.Name("Query");
-                descriptor
-                    .Field("conn")
-                    .Type<ObjectType<FaultingConnection>>()
-                    .Resolve(_ => new FaultingConnection())
-                    .ExecutionGroup(
-                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
-                        new ExecutionGroupEntry("nodes", 1, isStreamable: false));
-            })
-            .AddObjectType<FaultingConnection>(descriptor =>
-            {
-                descriptor.Name("FaultingConnection");
-                descriptor
-                    .Field("nodes")
-                    .Type<ListType<StringType>>()
-                    .Resolve(ctx => script.RunAsync(ctx, new[] { "n" }));
-                descriptor
-                    .Field("pageInfo")
-                    .Type<ObjectType<FaultingPageInfo>>()
-                    .Resolve(ctx => script.Resolve(ctx, new FaultingPageInfo()));
-            })
-            .AddObjectType<FaultingPageInfo>(descriptor =>
-            {
-                descriptor.Name("FaultingPageInfo");
-                descriptor
-                    .Field("hasNextPage")
-                    .Type<BooleanType>()
-                    .Resolve(ctx => script.RunAsync(ctx, true));
-                descriptor.Field(p => p.Boom);
-            })
-            .AddErrorFilter(
+        var executor = await CreateFaultingExecutorAsync(
+            script,
+            builder => builder.AddErrorFilter(
                 error => error.Exception is InvalidOperationException
                     ? throw new InvalidOperationException("The error filter failed.")
-                    : error)
-            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+                    : error));
         using var cts = new CancellationTokenSource(s_timeout);
         script.Release("conn.pageInfo.hasNextPage");
         script.Release("conn.nodes");
@@ -936,6 +906,103 @@ public class ExecutionGroupTests
                   "pageInfo": {
                     "hasNextPage": null,
                     "boom": null
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_RunLaterMembers_When_PureChildThrowsAfterChildTasksWereCreated()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await CreateFaultingExecutorAsync(script, _ => { });
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("conn.pageInfo.hasNextPage");
+        script.Release("conn.nodes");
+
+        // act
+        var result = await executor.ExecuteAsync("{ conn { nodes pageInfo { hasNextPage boom } } }", cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "start conn.pageInfo.hasNextPage",
+            "end conn.pageInfo.hasNextPage",
+            "start conn.nodes",
+            "end conn.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Unexpected Execution Error",
+                  "path": [
+                    "conn",
+                    "pageInfo",
+                    "boom"
+                  ]
+                }
+              ],
+              "data": {
+                "conn": {
+                  "nodes": [
+                    "n"
+                  ],
+                  "pageInfo": {
+                    "hasNextPage": true,
+                    "boom": null
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_KeepMemberTurn_When_FieldScopeThrowsAfterChildTasksWereCreated()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await CreateFaultingExecutorAsync(
+            script,
+            builder => builder.AddDiagnosticEventListener(_ => new ThrowingScopeListener("pageInfo")));
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("conn.nodes");
+
+        // act
+        var execution = executor.ExecuteAsync("{ conn { nodes pageInfo { hasNextPage } } }", cts.Token);
+
+        await script.Started("conn.pageInfo.hasNextPage");
+
+        // the task of pageInfo has faulted, give a wrongly released member the chance to start
+        await Task.Delay(TimeSpan.FromMilliseconds(250), cts.Token);
+        var eventsWhileFirstMemberRuns = script.Events;
+        script.Release("conn.pageInfo.hasNextPage");
+        var result = await execution;
+
+        // assert
+        eventsWhileFirstMemberRuns.MatchInlineSnapshots(["start conn.pageInfo.hasNextPage"]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "start conn.pageInfo.hasNextPage",
+            "end conn.pageInfo.hasNextPage",
+            "start conn.nodes",
+            "end conn.nodes"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "conn": {
+                  "nodes": [
+                    "n"
+                  ],
+                  "pageInfo": {
+                    "hasNextPage": true
                   }
                 }
               }
@@ -1168,6 +1235,50 @@ public class ExecutionGroupTests
         return [.. initial, .. incremental];
     }
 
+    private static ValueTask<IRequestExecutor> CreateFaultingExecutorAsync(
+        ExecutionScript script,
+        Action<IRequestExecutorBuilder> configure)
+    {
+        var builder = new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(descriptor =>
+            {
+                descriptor.Name("Query");
+                descriptor
+                    .Field("conn")
+                    .Type<ObjectType<FaultingConnection>>()
+                    .Resolve(_ => new FaultingConnection())
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+                        new ExecutionGroupEntry("nodes", 1, isStreamable: false));
+            })
+            .AddObjectType<FaultingConnection>(descriptor =>
+            {
+                descriptor.Name("FaultingConnection");
+                descriptor
+                    .Field("nodes")
+                    .Type<ListType<StringType>>()
+                    .Resolve(ctx => script.RunAsync(ctx, new[] { "n" }));
+                descriptor
+                    .Field("pageInfo")
+                    .Type<ObjectType<FaultingPageInfo>>()
+                    .Resolve(ctx => script.Resolve(ctx, new FaultingPageInfo()));
+            })
+            .AddObjectType<FaultingPageInfo>(descriptor =>
+            {
+                descriptor.Name("FaultingPageInfo");
+                descriptor
+                    .Field("hasNextPage")
+                    .Type<BooleanType>()
+                    .Resolve(ctx => script.RunAsync(ctx, true));
+                descriptor.Field(p => p.Boom);
+            });
+
+        configure(builder);
+
+        return builder.BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+    }
+
     internal sealed class FaultingConnection;
 
     internal sealed class FaultingPageInfo
@@ -1184,6 +1295,19 @@ public class ExecutionGroupTests
                 script.Log("pure pureCount");
                 return true;
             }
+        }
+    }
+
+    private sealed class ThrowingScopeListener(string fieldName) : ExecutionDiagnosticEventListener
+    {
+        public override bool EnableResolveFieldValue => true;
+
+        public override IDisposable ResolveFieldValue(IMiddlewareContext context)
+            => context.Selection.Field.Name == fieldName ? new ThrowingScope() : EmptyScope;
+
+        private sealed class ThrowingScope : IDisposable
+        {
+            public void Dispose() => throw new InvalidOperationException("The scope failed.");
         }
     }
 }

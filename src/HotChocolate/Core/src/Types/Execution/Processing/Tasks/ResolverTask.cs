@@ -16,6 +16,7 @@ internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool)
     private ExecutionTaskStatus _completionStatus = ExecutionTaskStatus.Completed;
     private ExecutionGroupScope? _groupScope;
     private int _groupSlot = -1;
+    private bool _childTasksRegistered;
 
     /// <summary>
     /// Gets or sets the internal execution id.
