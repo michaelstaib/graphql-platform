@@ -1,3 +1,4 @@
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,7 +8,13 @@ namespace HotChocolate.Execution.ExecutionGroups;
 internal static class ExecutionGroupTestSchema
 {
     public static ValueTask<IRequestExecutor> CreateAsync(ExecutionScript script)
-        => new ServiceCollection()
+        => CreateAsync(script, _ => { });
+
+    public static ValueTask<IRequestExecutor> CreateAsync(
+        ExecutionScript script,
+        Action<IRequestExecutorBuilder> configure)
+    {
+        var builder = new ServiceCollection()
             .AddGraphQL()
             .AddQueryType(descriptor =>
             {
@@ -182,8 +189,11 @@ internal static class ExecutionGroupTestSchema
             {
                 options.EnableDefer = true;
                 options.EnableStream = true;
-            })
-            .BuildRequestExecutorAsync();
+            });
+
+        configure(builder);
+        return builder.BuildRequestExecutorAsync();
+    }
 
     private static Item[] Items() => [new Item("a"), new Item("b")];
 
