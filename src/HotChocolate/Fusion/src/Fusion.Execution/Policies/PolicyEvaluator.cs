@@ -70,9 +70,6 @@ internal sealed class PolicyEvaluator
     /// <param name="plan">
     /// The plan of the operation.
     /// </param>
-    /// <param name="policies">
-    /// The policy plan of the operation plan.
-    /// </param>
     /// <param name="variables">
     /// The coerced variable values of the variable set.
     /// </param>
@@ -94,7 +91,6 @@ internal sealed class PolicyEvaluator
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
-        PolicyPlan policies,
         IVariableValueCollection variables,
         IAuditScope scope,
         int requestIndex,
@@ -104,12 +100,11 @@ internal sealed class PolicyEvaluator
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
         ArgumentNullException.ThrowIfNull(scope);
 
         var isAuthenticated = user.Identity?.IsAuthenticated is true;
-        var occurrences = GetOccurrences(plan, policies.Descriptors, variables);
+        var occurrences = GetOccurrences(plan, plan.Policies.Descriptors, variables);
         var deniedDescriptors = new HashSet<PolicyDescriptor>();
         var groups = new List<PolicyGroup>();
         var groupsByPolicy = new Dictionary<IPolicy, PolicyGroup>();
@@ -157,7 +152,7 @@ internal sealed class PolicyEvaluator
                 // unresolved policy, which fails the request as a configuration error.
                 if (!isAuthenticated
                     && descriptor.DirectiveName != DirectiveNames.Authenticated.Name
-                    && !(policies.HasUnresolvedPolicies && descriptor.Policy is UnresolvedPolicy))
+                    && !(plan.Policies.HasUnresolvedPolicies && descriptor.Policy is UnresolvedPolicy))
                 {
                     deniedDescriptors.Add(descriptor);
 
@@ -303,9 +298,6 @@ internal sealed class PolicyEvaluator
     /// <param name="plan">
     /// The plan of the operation.
     /// </param>
-    /// <param name="policies">
-    /// The policy requirements of the operation.
-    /// </param>
     /// <param name="variables">
     /// The coerced variable values of the variable set.
     /// </param>
@@ -315,13 +307,11 @@ internal sealed class PolicyEvaluator
     public void RecordDenied(
         IAuditScope scope,
         OperationPlan plan,
-        PolicyPlan policies,
         IVariableValueCollection variables,
         string reason)
     {
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
         ArgumentException.ThrowIfNullOrEmpty(reason);
 
@@ -330,7 +320,7 @@ internal sealed class PolicyEvaluator
             return;
         }
 
-        foreach (var descriptor in GetOccurrences(plan, policies.Descriptors, variables))
+        foreach (var descriptor in GetOccurrences(plan, plan.Policies.Descriptors, variables))
         {
             var entry = new PolicyEvaluationEntry(
                 descriptor,

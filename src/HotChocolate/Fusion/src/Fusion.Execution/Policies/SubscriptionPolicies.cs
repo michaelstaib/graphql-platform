@@ -24,7 +24,6 @@ internal sealed class SubscriptionPolicies
     private readonly AuditScopeInfo _info;
     private readonly bool _recordsAudit;
     private readonly OperationPlan _plan;
-    private readonly PolicyPlan _policies;
     private readonly IVariableValueCollection _variables;
     private readonly IInputType _booleanType;
     private readonly TimeProvider _timeProvider;
@@ -43,9 +42,6 @@ internal sealed class SubscriptionPolicies
     /// <param name="plan">
     /// The plan of the subscription.
     /// </param>
-    /// <param name="policies">
-    /// The policy requirements of the subscription.
-    /// </param>
     /// <param name="variables">
     /// The coerced variable values of the subscription without the synthetic variables.
     /// </param>
@@ -62,7 +58,6 @@ internal sealed class SubscriptionPolicies
         PolicyEvaluator evaluator,
         IAuditScope scope,
         OperationPlan plan,
-        PolicyPlan policies,
         IVariableValueCollection variables,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
         IInputType booleanType,
@@ -71,7 +66,6 @@ internal sealed class SubscriptionPolicies
         ArgumentNullException.ThrowIfNull(evaluator);
         ArgumentNullException.ThrowIfNull(scope);
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
         ArgumentNullException.ThrowIfNull(deniedDescriptors);
         ArgumentNullException.ThrowIfNull(booleanType);
@@ -82,7 +76,6 @@ internal sealed class SubscriptionPolicies
         _info = scope.Info;
         _recordsAudit = scope.IsRecording;
         _plan = plan;
-        _policies = policies;
         _variables = variables;
         _startDenied = deniedDescriptors;
         _deniedDescriptors = deniedDescriptors;
@@ -93,7 +86,7 @@ internal sealed class SubscriptionPolicies
     /// <summary>
     /// Gets a value that indicates whether the subscription asks policies again for every event.
     /// </summary>
-    public bool ReevaluatesPerEvent => _policies.HasReevaluatedPolicies;
+    public bool ReevaluatesPerEvent => _plan.Policies.HasReevaluatedPolicies;
 
     /// <summary>
     /// Gets the time at which the token of the principal expires, or <c>null</c> if the principal
@@ -141,7 +134,6 @@ internal sealed class SubscriptionPolicies
                 requestContext,
                 user,
                 _plan,
-                _policies,
                 _variables,
                 scope,
                 _info.VariableSetIndex,
@@ -185,7 +177,7 @@ internal sealed class SubscriptionPolicies
         context.SetVariables(
             PolicyVariableValues.Create(
                 _variables,
-                _policies.Variables,
+                _plan.Policies.Variables,
                 evaluation.Decisions,
                 _booleanType),
             evaluation.Decisions);
@@ -261,7 +253,7 @@ internal sealed class SubscriptionPolicies
         {
             var scope = _trail.BeginRequest(_info, OperationPolicyMiddleware.GetUser(context));
 
-            _evaluator.RecordDenied(scope, _plan, _policies, _variables, ExpiredReason);
+            _evaluator.RecordDenied(scope, _plan, _variables, ExpiredReason);
             await scope.CommitAsync(cancellationToken);
         }
         catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
