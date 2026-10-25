@@ -1653,7 +1653,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         FormatRepresentationShape(parsedNode.Lookup.RepresentationShape)
             .ToJsonString(new JsonSerializerOptions { WriteIndented = true })
             .MatchInlineSnapshot(
-                """
+            """
             [
               {
                 "name": "id",
