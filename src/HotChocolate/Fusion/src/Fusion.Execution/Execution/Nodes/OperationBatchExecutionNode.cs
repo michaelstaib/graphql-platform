@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Immutable;
+using System.Runtime.InteropServices;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Language;
 
@@ -155,7 +156,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
         var diagnosticEvents = context.DiagnosticEvents;
         var schemaName = SchemaName;
 
-        var requestBuilder = ImmutableArray.CreateBuilder<SourceSchemaClientRequest>(_operations.Length);
+        var requestBuffer = context.GetBatchRequestBuffer(this, _operations.Length);
         var operationByIndex = ArrayPool<OperationDefinition>.Shared.Rent(_operations.Length);
         var variablesByIndex = ArrayPool<ImmutableArray<VariableValues>>.Shared.Rent(_operations.Length);
         var receivedResults = ArrayPool<bool>.Shared.Rent(_operations.Length);
@@ -166,7 +167,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
             operationCount = BuildRequests(
                 context,
                 schemaName,
-                requestBuilder,
+                requestBuffer,
                 operationByIndex,
                 variablesByIndex,
                 out var hasReusedEntities);
@@ -177,7 +178,10 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
                 return hasReusedEntities ? ExecutionStatus.Success : ExecutionStatus.Skipped;
             }
 
-            var requests = requestBuilder.DrainToImmutable();
+            // The buffer is handed out as is only when it holds exactly the requests of this batch.
+            var requests = operationCount == requestBuffer.Length
+                ? ImmutableCollectionsMarshal.AsImmutableArray(requestBuffer)
+                : ImmutableArray.Create(requestBuffer, 0, operationCount);
 
             // Obtain a transport client for the source schema and stream the batch
             // response. As each individual result arrives, we queue its merge for
@@ -305,6 +309,8 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
         }
         finally
         {
+            // The buffer stays with the pooled context, so it must not keep request data alive.
+            Array.Clear(requestBuffer);
             operationByIndex.AsSpan(0, operationCount).Clear();
             variablesByIndex.AsSpan(0, operationCount).Clear();
             ArrayPool<OperationDefinition>.Shared.Return(operationByIndex);
@@ -316,7 +322,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
     private int BuildRequests(
         OperationPlanContext context,
         string schemaName,
-        ImmutableArray<SourceSchemaClientRequest>.Builder requestBuilder,
+        SourceSchemaClientRequest[] requestBuffer,
         OperationDefinition[] operationByIndex,
         ImmutableArray<VariableValues>[] variablesByIndex,
         out bool hasReusedEntities)
@@ -360,7 +366,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
 
             context.TrackVariableValueSets(this, variables);
 
-            requestBuilder.Add(new SourceSchemaClientRequest
+            requestBuffer[operationCount] = new SourceSchemaClientRequest
             {
                 Node = this,
                 SchemaName = schemaName,
@@ -371,7 +377,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
                 OperationDocument = operation.Document,
                 LookupTypeName = operation.LookupTypeName,
                 ForwardedVariables = operation.GetForwardedVariablesArray()
-            });
+            };
 
             operationByIndex[operationCount] = operation;
             variablesByIndex[operationCount] = variables;

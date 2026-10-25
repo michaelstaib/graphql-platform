@@ -24,6 +24,7 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
     private static ReadOnlySpan<byte> RequestIndex => "requestIndex"u8;
 
     private readonly GraphQLHttpClient _client;
+    private readonly DefaultGraphQLHttpClient? _directClient;
     private readonly HttpSourceSchemaClientConfiguration _configuration;
     private readonly ErrorHandlingMode? _onError;
     private readonly bool _supportsVariableBatching;
@@ -52,6 +53,7 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
         ArgumentNullException.ThrowIfNull(configuration);
 
         _client = client;
+        _directClient = client as DefaultGraphQLHttpClient;
         _configuration = configuration;
         _onError = configuration.OnError;
         _annotateOperationKind = annotateOperationKind;
@@ -112,15 +114,9 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
 
             try
             {
-                var httpRequest = CreateHttpRequest(context, request, ref buffer);
-                SourceSchemaCallbackHelper.ConfigureCallbacks(
-                    httpRequest,
-                    context,
-                    request.Node,
-                    _configuration);
-
-                httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-                context.TrackTransport(request.Node, httpRequest.Uri, httpResponse.RawContentType);
+                var response = SendRequestAsync(context, request, ref buffer, cancellationToken);
+                httpResponse = await response.ConfigureAwait(false);
+                context.TrackTransport(request.Node, _configuration.BaseAddress, httpResponse.RawContentType);
 
                 var results = ReadAsResultStreamAsync(
                     context,
@@ -191,6 +187,33 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
             return ExecuteBatchAsSingleRequestsAsync(context, requests, cancellationToken);
         }
 
+        IAsyncEnumerable<SourceSchemaBatchResult> results;
+
+        if (_directClient is not null && !ContainsFileUploadRequest(requests))
+        {
+            // The batch body is written straight from the requests when the batch is sent.
+            results = ExecuteBatchStreamAsync(context, requests, httpRequest: null, buffer: null, cancellationToken);
+        }
+        else
+        {
+            results = CreateBatchStream(context, requests, cancellationToken);
+        }
+
+        return _configuration.OnSourceSchemaResult is null
+            ? results
+            : WithBatchCallback(
+                results,
+                context,
+                requests,
+                _configuration.OnSourceSchemaResult,
+                cancellationToken);
+    }
+
+    private IAsyncEnumerable<SourceSchemaBatchResult> CreateBatchStream(
+        OperationPlanContext context,
+        ImmutableArray<SourceSchemaClientRequest> requests,
+        CancellationToken cancellationToken)
+    {
         var requiresFileUpload = requests[0].RequiresFileUpload;
         ChunkedArrayWriter? buffer = null;
 
@@ -203,16 +226,7 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
                 ref buffer);
             SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, requests[0].Node, _configuration);
 
-            var results = ExecuteBatchStreamAsync(context, requests, httpRequest, buffer, cancellationToken);
-
-            return _configuration.OnSourceSchemaResult is null
-                ? results
-                : WithBatchCallback(
-                    results,
-                    context,
-                    requests,
-                    _configuration.OnSourceSchemaResult,
-                    cancellationToken);
+            return ExecuteBatchStreamAsync(context, requests, httpRequest, buffer, cancellationToken);
         }
         catch
         {
@@ -237,11 +251,9 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
 
         try
         {
-            var httpRequest = CreateHttpRequest(context, request, ref buffer);
-            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration);
-
-            httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-            context.TrackTransport(request.Node, httpRequest.Uri, httpResponse.RawContentType);
+            var response = SendRequestAsync(context, request, ref buffer, cancellationToken);
+            httpResponse = await response.ConfigureAwait(false);
+            context.TrackTransport(request.Node, _configuration.BaseAddress, httpResponse.RawContentType);
 
             // The read timeout bounds the wait for the next bytes of the event stream, keep-alives included.
             var documents = httpResponse.ReadAsResultStreamAsync(
@@ -329,10 +341,21 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
         }
     }
 
+    /// <summary>
+    /// Sends a batch and streams the result of every request back.
+    /// </summary>
+    /// <param name="context">The current operation plan execution context.</param>
+    /// <param name="requests">The requests of the batch.</param>
+    /// <param name="httpRequest">
+    /// The prepared HTTP request, or <see langword="null"/> to write the batch body straight from
+    /// <paramref name="requests"/>, which requires a <see cref="DefaultGraphQLHttpClient"/>.
+    /// </param>
+    /// <param name="buffer">The buffer that holds request data until the stream completes.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     internal async IAsyncEnumerable<SourceSchemaBatchResult> ExecuteBatchStreamAsync(
         OperationPlanContext context,
         ImmutableArray<SourceSchemaClientRequest> requests,
-        GraphQLHttpRequest httpRequest,
+        GraphQLHttpRequest? httpRequest,
         ChunkedArrayWriter? buffer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -344,8 +367,12 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
 
         try
         {
-            httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-            context.TrackTransport(requests[0].Node, httpRequest.Uri, httpResponse.RawContentType);
+            httpResponse = await SendBatchRequestAsync(context, requests, httpRequest, cancellationToken)
+                .ConfigureAwait(false);
+            context.TrackTransport(
+                requests[0].Node,
+                httpRequest is null ? _configuration.BaseAddress : httpRequest.Uri,
+                httpResponse.RawContentType);
 
             await foreach (var result in httpResponse.ReadAsResultStreamAsync(arenaSource).WithCancellation(cancellationToken))
             {
@@ -475,6 +502,104 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
             onSourceSchemaResult(context, requests[batchResult.RequestIndex].Node, batchResult.Result);
             yield return batchResult;
         }
+    }
+
+    /// <summary>
+    /// Sends a single request. The JSON body is written straight from the request when the client is a
+    /// <see cref="DefaultGraphQLHttpClient"/> and the request uploads no files.
+    /// </summary>
+    private Task<GraphQLHttpResponse> SendRequestAsync(
+        OperationPlanContext context,
+        in SourceSchemaClientRequest request,
+        ref ChunkedArrayWriter? buffer,
+        CancellationToken cancellationToken)
+    {
+        if (_directClient is { } directClient && !request.RequiresFileUpload)
+        {
+            return SendDirectRequestAsync(directClient, context, request, cancellationToken);
+        }
+
+        var httpRequest = CreateHttpRequest(context, request, ref buffer);
+        SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration);
+        return _client.SendAsync(httpRequest, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends a single request without file uploads as a single operation, a variable batch, or an
+    /// operation batch with one entry per variable set, matching <see cref="CreateHttpRequest"/>.
+    /// </summary>
+    private Task<GraphQLHttpResponse> SendDirectRequestAsync(
+        DefaultGraphQLHttpClient client,
+        OperationPlanContext context,
+        in SourceSchemaClientRequest request,
+        CancellationToken cancellationToken)
+    {
+        var query = request.OperationSourceText.Value;
+        var variables = request.Variables;
+        var operationKind = GetOperationKindHint(request.OperationType);
+        var state = SourceSchemaCallbackHelper.CreateState(context, request.Node, _configuration);
+
+        switch (variables.Length)
+        {
+            case 0:
+            case 1:
+                var acceptHeaderValue = request.OperationType is OperationType.Subscription
+                    ? _configuration.SubscriptionAcceptHeaderValue
+                    : _configuration.DefaultAcceptHeaderValue;
+                var variableValues = variables.Length == 0 ? JsonSegment.Empty : variables[0].Values;
+
+                return client.SendJsonAsync(
+                    new SingleOperationRequestBody(query, _onError, variableValues),
+                    _configuration.BaseAddress,
+                    acceptHeaderValue,
+                    operationKind,
+                    state,
+                    cancellationToken);
+
+            default:
+                if (_supportsVariableBatching)
+                {
+                    return client.SendJsonAsync(
+                        new VariableBatchRequestBody(query, _onError, variables),
+                        _configuration.BaseAddress,
+                        _configuration.BatchingAcceptHeaderValue,
+                        operationKind,
+                        state,
+                        cancellationToken);
+                }
+
+                return client.SendJsonAsync(
+                    new VariableSetBatchRequestBody(query, _onError, variables),
+                    _configuration.BaseAddress,
+                    _configuration.BatchingAcceptHeaderValue,
+                    operationKind,
+                    state,
+                    cancellationToken);
+        }
+    }
+
+    private Task<GraphQLHttpResponse> SendBatchRequestAsync(
+        OperationPlanContext context,
+        ImmutableArray<SourceSchemaClientRequest> requests,
+        GraphQLHttpRequest? httpRequest,
+        CancellationToken cancellationToken)
+    {
+        if (httpRequest is not null)
+        {
+            return _client.SendAsync(httpRequest, cancellationToken);
+        }
+
+        Debug.Assert(_directClient is not null, "A batch without a prepared request requires the default client.");
+
+        ref readonly var request = ref requests.ItemRef(0);
+
+        return _directClient.SendJsonAsync(
+            new OperationBatchRequestBody(requests, _onError, _supportsVariableBatching),
+            _configuration.BaseAddress,
+            _configuration.BatchingAcceptHeaderValue,
+            GetOperationKindHint(request.OperationType),
+            SourceSchemaCallbackHelper.CreateState(context, request.Node, _configuration),
+            cancellationToken);
     }
 
     /// <summary>
@@ -914,6 +1039,19 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
         _disposed = true;
 
         return ValueTask.CompletedTask;
+    }
+
+    private static bool ContainsFileUploadRequest(ImmutableArray<SourceSchemaClientRequest> requests)
+    {
+        for (var i = 0; i < requests.Length; i++)
+        {
+            if (requests.ItemRef(i).RequiresFileUpload)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool ContainsSubscriptionRequest(
