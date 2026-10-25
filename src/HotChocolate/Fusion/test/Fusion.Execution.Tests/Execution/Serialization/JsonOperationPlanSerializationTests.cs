@@ -305,10 +305,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
     }
 
     [Fact]
-    public void Parse_Should_ResolveProtectedSelection_When_SelectionIdsDifferBetweenPlannedAndParsedOperation()
+    public void Parse_Should_ResolveProtectedSelection_When_DocumentOrderCompilationAssignsItsIdToAnotherSelection()
     {
         // arrange
-        // the planned and the parsed operation assign different ids to the protected selection
+        // document-order compilation gives the planned id of the protected selection to another selection
         var compositeSchema = ComposeSchema(
             $$"""
             type Query {
@@ -359,6 +359,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         new
         {
             PlannedId = originalSelection.Id,
+            ParsedId = selection.Id,
             DocumentOrderIdOfAck = GetSelection(documentOrderOperation, "a", "c", "k").Id,
             DocumentOrderIdOfBdm = GetSelection(documentOrderOperation, "b", "d", "m").Id,
             Parsed = selection.ResponseName,
@@ -367,6 +368,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             """
             {
               "PlannedId": 7,
+              "ParsedId": 7,
               "DocumentOrderIdOfAck": 7,
               "DocumentOrderIdOfBdm": 11,
               "Parsed": "m",
@@ -449,6 +451,61 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
               }
             ]
             """);
+    }
+
+    [Fact]
+    public void Parse_Should_Throw_When_PolicyVariableOperandIsNotDefinedBeforeIt()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(
+            $$"""
+            # name: a
+            type Query {
+              products: [Product]
+            }
+
+            type Product @key(fields: "id") {
+              id: ID!
+            }
+
+            {{PolicyDirectives}}
+            """,
+            $$"""
+            # name: b
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+              id: ID!
+              price: Int @authenticated
+              note: String @requiresScopes(scopes: [["read"]])
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var originalPlan = PlanWithPooledFields(
+            compositeSchema,
+            "{ products { price note } }",
+            TestPolicyResolver.Create());
+        var json = new JsonOperationPlanFormatter(s_indentedOptions).Format(originalPlan);
+        var document = JsonNode.Parse(json)!;
+        var variables = document["policies"]!["variables"]!.AsArray();
+        var combined = variables[2]!;
+        variables.RemoveAt(2);
+        variables.Insert(0, combined);
+        var reorderedJson = document.ToJsonString();
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => CreateParser(compositeSchema, TestPolicyResolver.Create())
+                .Parse(Encoding.UTF8.GetBytes(reorderedJson)));
+
+        // assert
+        Assert.Equal(
+            "The policy variable '__fusion_policy_3' combines the variable '__fusion_policy_1', "
+            + "which is not defined before it.",
+            exception.Message);
     }
 
     [Fact]
