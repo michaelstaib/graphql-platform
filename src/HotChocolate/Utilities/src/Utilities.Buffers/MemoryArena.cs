@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using static HotChocolate.Buffers.MemoryArenaEventSource;
 
 namespace HotChocolate.Buffers;
@@ -114,6 +115,81 @@ internal sealed class MemoryArena : IMemoryArena, IDisposable
                 $"The size must be between 0 and {JsonMemory.BufferSize}.");
         }
 
+        return RentCore(size, size);
+    }
+
+    /// <summary>
+    /// Rents a slab of at least <paramref name="minSize"/> and at most <paramref name="maxSize"/> bytes
+    /// that takes what remains of the current page, up to <paramref name="maxSize"/> bytes, when at
+    /// least <paramref name="minSize"/> bytes remain.
+    /// </summary>
+    /// <param name="minSize">The smallest number of bytes to rent.</param>
+    /// <param name="maxSize">The largest number of bytes to rent. Must not exceed the page size.</param>
+    /// <returns>A segment of between <paramref name="minSize"/> and <paramref name="maxSize"/> bytes.</returns>
+    internal MemorySegment RentUpTo(int minSize, int maxSize)
+    {
+        Debug.Assert(minSize >= 0, "The minimum size must not be negative.");
+        Debug.Assert(minSize <= maxSize, "The minimum size must not exceed the maximum size.");
+        Debug.Assert(maxSize <= JsonMemory.BufferSize, "The maximum size must not exceed the page size.");
+
+        return RentCore(minSize, maxSize);
+    }
+
+    /// <summary>
+    /// Shortens <paramref name="segment"/> to its first <paramref name="length"/> bytes and hands the
+    /// rest back to the arena when <paramref name="segment"/> is still the most recent rental.
+    /// </summary>
+    /// <param name="segment">A segment rented from this arena.</param>
+    /// <param name="length">The number of leading bytes of <paramref name="segment"/> to keep.</param>
+    /// <returns>
+    /// <c>true</c> when the trailing bytes were handed back; <c>false</c> when another rental follows
+    /// <paramref name="segment"/> or the arena no longer accepts rentals, in which case the whole
+    /// segment stays rented.
+    /// </returns>
+    internal bool TryTrim(MemorySegment segment, int length)
+    {
+        Debug.Assert(length >= 0 && length <= segment.Length, "The length must lie within the segment.");
+
+        if (Volatile.Read(ref _phase) != Open)
+        {
+            return false;
+        }
+
+        var state = Volatile.Read(ref _state);
+        var pageIndex = (int)(state >> 32);
+        var offset = (int)state;
+
+        if (pageIndex < 0 || offset != segment.Offset + segment.Length)
+        {
+            return false;
+        }
+
+        // The cursor sits at the end of the segment on the segment's own page only while nothing
+        // rented after the segment is still held, so the compare-exchange cannot cut into a later slab.
+        var pages = Volatile.Read(ref _pages);
+
+        if (pageIndex >= pages.Length || !ReferenceEquals(pages[pageIndex], segment.Buffer))
+        {
+            return false;
+        }
+
+        var next = ((long)pageIndex << 32) | (uint)(segment.Offset + length);
+
+        if (Interlocked.CompareExchange(ref _state, next, state) != state)
+        {
+            return false;
+        }
+
+        if (IsTracingEnabled)
+        {
+            Interlocked.Add(ref _rentBytes, length - segment.Length);
+        }
+
+        return true;
+    }
+
+    private MemorySegment RentCore(int minSize, int maxSize)
+    {
         var phase = Volatile.Read(ref _phase);
 
 #if NET8_0_OR_GREATER
@@ -136,10 +212,12 @@ internal sealed class MemoryArena : IMemoryArena, IDisposable
             var state = Volatile.Read(ref _state);
             var pageIndex = (int)(state >> 32);
             var offset = (int)state;
+            var available = JsonMemory.BufferSize - offset;
 
-            if (pageIndex >= 0 && offset + size <= JsonMemory.BufferSize)
+            if (pageIndex >= 0 && available >= minSize)
             {
                 // fast path: claim [offset, offset + size) by advancing the cursor atomically.
+                var size = available < maxSize ? available : maxSize;
                 var next = ((long)pageIndex << 32) | (uint)(offset + size);
 
                 if (Interlocked.CompareExchange(ref _state, next, state) == state)
