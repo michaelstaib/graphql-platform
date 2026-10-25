@@ -121,14 +121,16 @@ public class JsonLinesReaderTests
         Assert.Equal(["a", "b"], result);
     }
 
-    [Fact]
-    public async Task GetAsyncEnumerator_Should_LeaveArenaUnused_When_BodyIsEmpty()
+    [Theory]
+    [InlineData("")]
+    [InlineData("\n \r\n\t")]
+    public async Task GetAsyncEnumerator_Should_LeaveArenaUnused_When_BodyHasNoRecords(string body)
     {
         // arrange
         var arena = new MemoryArena();
 
         // act
-        var result = await ReadValuesAsync(string.Empty, int.MaxValue, new FixedMemoryArenaSource(arena));
+        var result = await ReadValuesAsync(body, int.MaxValue, new FixedMemoryArenaSource(arena));
 
         // assert
         Assert.Empty(result);
@@ -170,13 +172,15 @@ public class JsonLinesReaderTests
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(64)]
+    [InlineData(300)]
     [InlineData(1024)]
     [InlineData(4096)]
     [InlineData(int.MaxValue)]
     public async Task GetAsyncEnumerator_Should_UseRecordBytesOfArena_When_ParsingInPlace(int maxBytesPerRead)
     {
         // arrange
-        // every record is shorter than a read, so each one is parsed in place.
         var body = CreateBody(recordCount: 40, maxValueLength: 900);
         var inPlaceArena = new MemoryArena();
         var copyArena = new MemoryArena();
@@ -191,33 +195,14 @@ public class JsonLinesReaderTests
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(64)]
-    [InlineData(300)]
-    public async Task GetAsyncEnumerator_Should_NotStrandArenaBytes_When_RecordsSpanReads(int maxBytesPerRead)
-    {
-        // arrange
-        var body = CreateBody(recordCount: 40, maxValueLength: 900);
-        var inPlaceArena = new MemoryArena();
-        var copyArena = new MemoryArena();
-
-        // act
-        await ReadValuesAsync(body, maxBytesPerRead, new FixedMemoryArenaSource(inPlaceArena));
-        await ReadValuesAsync(body, maxBytesPerRead, new SharedArenaSource(copyArena));
-
-        // assert
-        var copyBytes = GetUsedBytes(copyArena);
-        Assert.InRange(GetUsedBytes(inPlaceArena), copyBytes, copyBytes + 40);
-    }
-
-    [Theory]
     [InlineData(1024)]
     [InlineData(4096)]
-    public async Task GetAsyncEnumerator_Should_KeepReadingIntoChunk_When_ConcurrentRentalPreventsTrim(
+    [InlineData(int.MaxValue)]
+    public async Task GetAsyncEnumerator_Should_UseRecordBytesOfArena_When_ArenaIsRentedDuringReads(
         int maxBytesPerRead)
     {
         // arrange
-        // the stream rents from the arena on every read, so no read chunk can be trimmed.
+        // the stream rents from the arena on every read, like a concurrent fetch of the same request.
         var values = CreateValues(recordCount: 40, maxValueLength: 900);
         var body = CreateBody(values);
         var copyArena = new MemoryArena();
@@ -231,18 +216,16 @@ public class JsonLinesReaderTests
         var result = await ReadValuesAsync(stream, new FixedMemoryArenaSource(arena));
 
         // assert
-        // the unused room of a chunk that cannot be trimmed takes the next reads, so at most the room
-        // of two read chunks is left unused.
-        var usedBytes = GetUsedBytes(copyArena) + stream.RentedBytes;
+        // a record parsed in place keeps its line terminator, which is one byte per record.
         Assert.Equal(values, result);
-        Assert.InRange(GetUsedBytes(arena), usedBytes, usedBytes + (2 * 16 * 1024));
+        Assert.Equal(GetUsedBytes(copyArena) + 40 + stream.RentedBytes, GetUsedBytes(arena));
     }
 
     [Theory]
     [InlineData(1024)]
     [InlineData(4096)]
     [InlineData(int.MaxValue)]
-    public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_ReadChunksCrossArenaPages(
+    public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_RecordsFillSeveralArenaPages(
         int maxBytesPerRead)
     {
         // arrange
@@ -259,7 +242,7 @@ public class JsonLinesReaderTests
     }
 
     [Fact]
-    public async Task GetAsyncEnumerator_Should_HandBackReadChunk_When_ReadFails()
+    public async Task GetAsyncEnumerator_Should_RentOnlyRecordBytes_When_ReadFails()
     {
         // arrange
         var body = Encoding.UTF8.GetBytes(CreateRecord("a") + "\n");
@@ -283,6 +266,42 @@ public class JsonLinesReaderTests
         await Assert.ThrowsAsync<IOException>(Act);
         Assert.Equal(["a"], values);
         Assert.Equal(GetUsedBytes(expectedArena), GetUsedBytes(arena));
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_NotIssueZeroByteReads_When_SourceIsFixed()
+    {
+        // arrange
+        var record = CreateRecord("a") + "\n";
+        var body = Encoding.UTF8.GetBytes(record + record + record);
+        var stream = new CountingStream(new DripStream(new MemoryStream(body), record.Length));
+
+        // act
+        var result = await ReadValuesAsync(stream, new FixedMemoryArenaSource(new MemoryArena()));
+
+        // assert
+        // three reads return a record each and the fourth read returns the end of the stream.
+        Assert.Equal(["a", "a", "a"], result);
+        Assert.Equal(0, stream.ZeroByteReads);
+        Assert.Equal(4, stream.NonEmptyReads);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_WaitWithZeroByteRead_When_SourceIsPerDocument()
+    {
+        // arrange
+        var record = CreateRecord("a") + "\n";
+        var body = Encoding.UTF8.GetBytes(record + record + record);
+        var stream = new CountingStream(new DripStream(new MemoryStream(body), record.Length));
+
+        // act
+        var result = await ReadValuesAsync(stream, new PerDocumentArenaSource());
+
+        // assert
+        // every read starts without a partial record, so a zero-byte read precedes each of them.
+        Assert.Equal(["a", "a", "a"], result);
+        Assert.Equal(4, stream.ZeroByteReads);
+        Assert.Equal(4, stream.NonEmptyReads);
     }
 
     [Theory]
@@ -432,6 +451,54 @@ public class JsonLinesReaderTests
             => inner.ReadAsync(buffer[..Math.Min(buffer.Length, maxBytesPerRead)], cancellationToken);
 
         public override void Flush() => inner.Flush();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        public int ZeroByteReads { get; private set; }
+
+        public int NonEmptyReads { get; private set; }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (buffer.IsEmpty)
+            {
+                ZeroByteReads++;
+            }
+            else
+            {
+                NonEmptyReads++;
+            }
+
+            return inner.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override void Flush()
+        {
+        }
 
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 

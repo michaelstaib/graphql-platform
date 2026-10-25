@@ -22,14 +22,9 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
     : IAsyncEnumerable<SourceResultDocument>
 {
     // A record of at most this many bytes is parsed as a single span, a longer record is filled into
-    // the geometric data chunk schedule. An in-place read chunk holds at most this many bytes.
+    // the geometric data chunk schedule. The complete records of one read are copied into a single
+    // arena chunk when they span at most this many bytes.
     private const int MaxSingleSpanRecordLength = 16 * 1024;
-
-    // The minimum number of bytes an in-place read chunk has room for after the carried partial record.
-    private const int MinInPlaceReadLength = 1024;
-
-    // The longest partial record that is carried into the next in-place read chunk.
-    private const int MaxInPlaceCarryLength = 4 * 1024;
 
     private const int ScratchBufferLength = 16 * 1024;
 
@@ -41,21 +36,14 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
             ? responseStream
             : new ReadTimeoutStream(responseStream, readTimeout);
 
-        // Records are parsed in place from read chunks of the document arena only when all documents of
-        // the stream share that arena. Otherwise, each record is copied into the arena of its document.
+        // When all documents of the stream share one arena, the complete records of a read are copied
+        // into one arena chunk and parsed in place. Otherwise, each record is copied into the arena of
+        // its document.
         var sharesArena = arenaSource is IFixedMemoryArenaSource;
 
         // The scratch buffer starts with the pending bytes of the partial record carried between reads.
         byte[]? scratch = null;
         var pending = 0;
-        var carryInPlace = true;
-
-        // A read chunk that could not be trimmed stays rented, and the room after its partial record,
-        // which spans [heldStart, heldFilled), takes the next read.
-        MemoryArena? heldArena = null;
-        var held = default(MemorySegment);
-        var heldStart = 0;
-        var heldFilled = 0;
 
         try
         {
@@ -63,132 +51,19 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var arena = sharesArena && carryInPlace ? arenaSource.GetNextArena() as MemoryArena : null;
-                var useHeld = arena is not null
-                    && ReferenceEquals(arena, heldArena)
-                    && held.Length - heldFilled >= MinInPlaceReadLength;
-                heldArena = null;
-
-                if (!useHeld && pending > MaxInPlaceCarryLength)
-                {
-                    arena = null;
-                }
-
-                if (pending == 0 && scratch is not null)
+                // A per-document stream holds no scratch buffer while it waits for data, and a scratch
+                // buffer grown for a long record is given back once that record is complete.
+                if (pending == 0
+                    && scratch is not null
+                    && (!sharesArena || scratch.Length > ScratchBufferLength))
                 {
                     ArrayPool<byte>.Shared.Return(scratch);
                     scratch = null;
                 }
 
-                if (arena is not null)
+                if (pending == 0 && !sharesArena)
                 {
-                    MemorySegment chunk;
-                    int start;
-                    int filled;
-
-                    if (useHeld)
-                    {
-                        chunk = held;
-                        start = heldStart;
-                        filled = heldFilled;
-                    }
-                    else
-                    {
-                        // Waits for data before renting the read chunk.
-                        await stream.ReadAsync(Memory<byte>.Empty, cancellationToken).ConfigureAwait(false);
-                        chunk = arena.RentUpTo(pending + MinInPlaceReadLength, MaxSingleSpanRecordLength);
-                        start = 0;
-                        filled = pending;
-                        scratch.AsSpan(0, pending).CopyTo(chunk.Span);
-                    }
-
-                    int bytesRead;
-
-                    try
-                    {
-                        bytesRead = await stream
-                            .ReadAsync(chunk.Memory[filled..], cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        arena.TryTrim(chunk, start);
-                        throw;
-                    }
-
-                    if (bytesRead == 0)
-                    {
-                        // The pending bytes are the final record, which has no line terminator.
-                        if (IsWhitespaceOnly(chunk.Span[start..filled]))
-                        {
-                            arena.TryTrim(chunk, start);
-                            yield break;
-                        }
-
-                        arena.TryTrim(chunk, filled);
-                        var finalDocument = ParseRecord(
-                            arenaSource.GetNextArena(),
-                            arena,
-                            chunk,
-                            start,
-                            filled - start);
-                        yield return finalDocument;
-                        yield break;
-                    }
-
-                    var readStart = filled;
-                    filled += bytesRead;
-                    var lastNewline = chunk.Span[readStart..filled].LastIndexOf((byte)'\n');
-                    var completeEnd = lastNewline < 0 ? start : readStart + lastNewline + 1;
-                    pending = filled - completeEnd;
-
-                    // The partial record is copied out before the chunk is trimmed to the complete records,
-                    // and before any of them rents parser memory.
-                    if (pending > 0)
-                    {
-                        scratch ??= ArrayPool<byte>.Shared.Rent(ScratchBufferLength);
-                        chunk.Span[completeEnd..filled].CopyTo(scratch);
-                    }
-
-                    if (!arena.TryTrim(chunk, completeEnd) && chunk.Length - filled >= MinInPlaceReadLength)
-                    {
-                        heldArena = arena;
-                        held = chunk;
-                        heldStart = completeEnd;
-                        heldFilled = filled;
-                    }
-                    else if (lastNewline < 0)
-                    {
-                        // No record is complete yet, so the record spans reads and continues in the scratch buffer.
-                        carryInPlace = false;
-                    }
-
-                    var lineStart = start;
-
-                    while (lineStart < completeEnd)
-                    {
-                        var lineEnd = lineStart + chunk.Span[lineStart..completeEnd].IndexOf((byte)'\n');
-
-                        if (!IsWhitespaceOnly(chunk.Span[lineStart..lineEnd]))
-                        {
-                            var document = ParseRecord(
-                                arenaSource.GetNextArena(),
-                                arena,
-                                chunk,
-                                lineStart,
-                                lineEnd - lineStart);
-                            yield return document;
-                        }
-
-                        lineStart = lineEnd + 1;
-                    }
-
-                    continue;
-                }
-
-                if (pending == 0)
-                {
-                    // A zero-byte read waits for data before the scratch buffer is rented.
+                    // A per-document stream waits for data with a zero-byte read before it rents the scratch buffer.
                     await stream.ReadAsync(Memory<byte>.Empty, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -202,11 +77,11 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                     scratch = grown;
                 }
 
-                var scratchBytesRead = await stream
+                var bytesRead = await stream
                     .ReadAsync(scratch.AsMemory(pending), cancellationToken)
                     .ConfigureAwait(false);
 
-                if (scratchBytesRead == 0)
+                if (bytesRead == 0)
                 {
                     // The pending bytes are the final record, which has no line terminator.
                     if (!IsWhitespaceOnly(scratch.AsSpan(0, pending)))
@@ -218,20 +93,58 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                     yield break;
                 }
 
-                var length = pending + scratchBytesRead;
+                var length = pending + bytesRead;
+                var lastNewline = scratch.AsSpan(pending, bytesRead).LastIndexOf((byte)'\n');
+
+                if (lastNewline < 0)
+                {
+                    // No record is complete yet, so the record continues in the scratch buffer.
+                    pending = length;
+                    continue;
+                }
+
+                var completeEnd = pending + lastNewline + 1;
+
+                if (sharesArena && completeEnd <= MaxSingleSpanRecordLength)
+                {
+                    var blockStart = SkipBlankLines(scratch.AsSpan(0, completeEnd));
+                    var arena = arenaSource.GetNextArena();
+                    var block = default(MemorySegment);
+
+                    if (blockStart < completeEnd)
+                    {
+                        block = arena.Rent(completeEnd - blockStart);
+                        scratch.AsSpan(blockStart, completeEnd - blockStart).CopyTo(block.Span);
+                    }
+
+                    pending = length - completeEnd;
+                    scratch.AsSpan(completeEnd, pending).CopyTo(scratch);
+
+                    var lineStart = 0;
+
+                    while (lineStart < block.Length)
+                    {
+                        var lineEnd = lineStart + block.Span[lineStart..].IndexOf((byte)'\n');
+
+                        if (!IsWhitespaceOnly(block.Span[lineStart..lineEnd]))
+                        {
+                            var document = ParseInPlace(arena, block, lineStart, lineEnd - lineStart);
+                            yield return document;
+                        }
+
+                        lineStart = lineEnd + 1;
+                    }
+
+                    continue;
+                }
+
                 var recordStart = 0;
                 var searchStart = pending;
 
-                while (true)
+                while (recordStart < completeEnd)
                 {
-                    var newline = scratch.AsSpan(searchStart, length - searchStart).IndexOf((byte)'\n');
-
-                    if (newline < 0)
-                    {
-                        break;
-                    }
-
-                    var recordEnd = searchStart + newline;
+                    var recordEnd = searchStart
+                        + scratch.AsSpan(searchStart, completeEnd - searchStart).IndexOf((byte)'\n');
 
                     if (!IsWhitespaceOnly(scratch.AsSpan(recordStart, recordEnd - recordStart)))
                     {
@@ -245,13 +158,8 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                     searchStart = recordStart;
                 }
 
-                pending = length - recordStart;
-
-                if (recordStart > 0)
-                {
-                    scratch.AsSpan(recordStart, pending).CopyTo(scratch);
-                    carryInPlace = true;
-                }
+                pending = length - completeEnd;
+                scratch.AsSpan(completeEnd, pending).CopyTo(scratch);
             }
         }
         finally
@@ -263,24 +171,13 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
         }
     }
 
-    private static SourceResultDocument ParseRecord(
-        IMemoryArena documentArena,
-        MemoryArena chunkArena,
-        MemorySegment chunk,
-        int start,
-        int length)
+    private static SourceResultDocument ParseInPlace(IMemoryArena arena, MemorySegment block, int start, int length)
     {
-        // A record is parsed in place only when its document is backed by the arena of the read chunk.
-        if (!ReferenceEquals(documentArena, chunkArena))
-        {
-            return CopyAndParse(documentArena, chunk.Span.Slice(start, length));
-        }
-
-        var segments = documentArena.RentSegmentTable(1);
-        segments[0] = new MemorySegment(chunk.Buffer, chunk.Offset + start, length);
+        var segments = arena.RentSegmentTable(1);
+        segments[0] = new MemorySegment(block.Buffer, block.Offset + start, length);
 
         return SourceResultDocument.ParseFilled(
-            documentArena,
+            arena,
             segments,
             usedChunks: 1,
             lastLength: length);
@@ -349,6 +246,29 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
             chunks,
             usedChunks: chunkIndex + 1,
             lastLength: currentChunkPosition);
+    }
+
+    // Returns the start of the first line that is not whitespace-only, or the length of the span when
+    // every line is whitespace-only.
+    private static int SkipBlankLines(ReadOnlySpan<byte> span)
+    {
+        var lineStart = 0;
+
+        for (var i = 0; i < span.Length; i++)
+        {
+            var b = span[i];
+
+            if (b == (byte)'\n')
+            {
+                lineStart = i + 1;
+            }
+            else if (b != (byte)' ' && b != (byte)'\t' && b != (byte)'\r')
+            {
+                return lineStart;
+            }
+        }
+
+        return span.Length;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
