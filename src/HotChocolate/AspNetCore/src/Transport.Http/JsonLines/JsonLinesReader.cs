@@ -94,8 +94,7 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                     }
                     else
                     {
-                        // A zero-byte read waits for data, so the chunk is read into and trimmed right
-                        // after it is rented.
+                        // Waits for data before renting the read chunk.
                         await stream.ReadAsync(Memory<byte>.Empty, cancellationToken).ConfigureAwait(false);
                         chunk = arena.RentUpTo(pending + MinInPlaceReadLength, MaxSingleSpanRecordLength);
                         start = 0;
@@ -292,8 +291,7 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
         var length = record.Length;
 
         // A record whose length fits within MaxSingleSpanRecordLength is copied into a single
-        // exact-length arena chunk and parsed as one span. The threshold is capped at 16 KB because
-        // a large exact-length rent that does not fit the current page strands the remaining page tail.
+        // exact-length arena chunk and parsed as one span.
         if (length > 0 && length <= MaxSingleSpanRecordLength)
         {
             var buffer = arena.Rent(length);

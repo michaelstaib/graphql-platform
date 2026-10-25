@@ -164,8 +164,6 @@ internal sealed class MemoryArena : IMemoryArena, IDisposable
             return false;
         }
 
-        // The cursor sits at the end of the segment on the segment's own page only while nothing
-        // rented after the segment is still held, so the compare-exchange cannot cut into a later slab.
         var pages = Volatile.Read(ref _pages);
 
         if (pageIndex >= pages.Length || !ReferenceEquals(pages[pageIndex], segment.Buffer))
