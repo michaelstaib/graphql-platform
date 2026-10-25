@@ -198,13 +198,6 @@ public sealed class Selection : ISelection, IFeatureProvider
     internal bool IsExecutionGroupRoot => (_flags & Flags.ExecutionGroupRoot) == Flags.ExecutionGroupRoot;
 
     /// <summary>
-    /// Gets a value indicating whether this selection is a member of, or on the path to a member of,
-    /// the execution group of an ancestor selection.
-    /// </summary>
-    internal bool IsExecutionGroupParticipant
-        => (_flags & Flags.ExecutionGroupParticipant) == Flags.ExecutionGroupParticipant;
-
-    /// <summary>
     /// Gets a value indicating whether this selection has child selections.
     /// </summary>
     public bool HasSelections => !IsLeaf;
@@ -1086,20 +1079,6 @@ nextItem:
     }
 
     /// <summary>
-    /// Marks this selection as taking part in an execution group. Members run as resolver tasks,
-    /// all other participants keep their execution strategy.
-    /// </summary>
-    internal void MarkAsExecutionGroupParticipant(bool isMember)
-    {
-        _flags |= Flags.ExecutionGroupParticipant;
-
-        if (isMember && Strategy is SelectionExecutionStrategy.Pure)
-        {
-            Strategy = SelectionExecutionStrategy.Default;
-        }
-    }
-
-    /// <summary>
     /// Completes the selection without sealing it.
     /// </summary>
     internal void Complete(SelectionSet selectionSet)
@@ -1167,7 +1146,6 @@ nextItem:
         ProjectionRequirement = 32,
         RequiresWideIncludeFlags = 64,
         RequiresWideDeferFlags = 128,
-        ExecutionGroupRoot = 256,
-        ExecutionGroupParticipant = 512
+        ExecutionGroupRoot = 256
     }
 }

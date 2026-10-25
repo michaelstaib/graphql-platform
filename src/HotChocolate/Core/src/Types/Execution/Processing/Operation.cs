@@ -394,36 +394,6 @@ public sealed class Operation : IOperation
         return new ConditionFlags(word0, overflow);
     }
 
-    /// <summary>
-    /// Gets the execution group of the specified group root selection resolved against
-    /// the selection set of its result.
-    /// </summary>
-    internal ExecutionGroupPlan GetExecutionGroupPlan(Selection root, SelectionSet rootSelectionSet)
-    {
-        ArgumentNullException.ThrowIfNull(root);
-        ArgumentNullException.ThrowIfNull(rootSelectionSet);
-
-        var plan = rootSelectionSet.ExecutionGroupPlan;
-
-        if (plan is not null)
-        {
-            return plan;
-        }
-
-        lock (_sync)
-        {
-            plan = rootSelectionSet.ExecutionGroupPlan;
-
-            if (plan is null)
-            {
-                plan = ExecutionGroupPlan.Create(this, rootSelectionSet, root.Field.ExecutionGroup!);
-                rootSelectionSet.ExecutionGroupPlan = plan;
-            }
-        }
-
-        return plan;
-    }
-
     internal Selection GetSelectionById(int id)
         => Unsafe.As<Selection>(Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_elementsById), id));
 

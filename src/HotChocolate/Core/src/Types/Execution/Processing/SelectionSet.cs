@@ -18,7 +18,7 @@ public sealed class SelectionSet : ISelectionSet
     private readonly SelectionLookup _utf8ResponseNameLookup;
     private Flags _flags;
     private Operation? _declaringOperation;
-    private volatile ExecutionGroupPlan? _executionGroupPlan;
+    private ExecutionGroupPlan? _executionGroupPlan;
 
     internal SelectionSet(
         int id,
@@ -248,15 +248,12 @@ public sealed class SelectionSet : ISelectionSet
     }
 
     /// <summary>
-    /// Gets or sets the resolved execution group when the selection set belongs to the result of a group root field.
+    /// Gets the execution group resolved against this selection set, or <c>null</c> if the selection set
+    /// does not belong to the result of a group root field.
     /// </summary>
-    internal ExecutionGroupPlan? ExecutionGroupPlan
-    {
-        get => _executionGroupPlan;
-        set => _executionGroupPlan = value;
-    }
+    internal ExecutionGroupPlan? ExecutionGroupPlan => _executionGroupPlan;
 
-    internal void Complete(Operation declaringOperation)
+    internal void Complete(Operation declaringOperation, ExecutionGroup? executionGroup)
     {
         if ((_flags & Flags.Sealed) == Flags.Sealed)
         {
@@ -268,6 +265,11 @@ public sealed class SelectionSet : ISelectionSet
         foreach (var selection in _selections)
         {
             selection.Complete(this);
+        }
+
+        if (executionGroup is not null)
+        {
+            _executionGroupPlan = ExecutionGroupPlan.Create(declaringOperation, this, executionGroup);
         }
 
         _flags |= Flags.Sealed;

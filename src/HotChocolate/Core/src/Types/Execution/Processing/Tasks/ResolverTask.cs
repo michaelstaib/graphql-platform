@@ -72,7 +72,7 @@ internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool) 
         {
             SelectionExecutionStrategy.Default => ExecutionTaskKind.Parallel,
             SelectionExecutionStrategy.Serial => ExecutionTaskKind.Serial,
-            SelectionExecutionStrategy.Pure => ExecutionTaskKind.Pure,
+            SelectionExecutionStrategy.Pure => IsGroupMember ? ExecutionTaskKind.Parallel : ExecutionTaskKind.Pure,
             SelectionExecutionStrategy.Batch => ExecutionTaskKind.Parallel,
             _ => throw new NotSupportedException()
         };

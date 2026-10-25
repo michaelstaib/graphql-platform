@@ -42,10 +42,7 @@ internal sealed class DeferTask : ExecutionTask
                         _executionBranchId,
                         _deferUsage);
 
-                if (selection.IsExecutionGroupParticipant)
-                {
-                    task.JoinExecutionGroup(_groupScope);
-                }
+                task.JoinExecutionGroup(_groupScope);
 
                 bufferedTasks[i++] = task;
             }

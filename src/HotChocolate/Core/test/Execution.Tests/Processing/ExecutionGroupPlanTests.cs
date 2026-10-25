@@ -38,17 +38,17 @@ public class ExecutionGroupPlanTests
     }
 
     [Fact]
-    public async Task Create_Should_MarkSelectionsOnTheWayToMembers_When_PathPassesThroughFields()
+    public async Task Create_Should_ResolveNodesOfSelectionsOnTheWayToMembers_When_PathPassesThroughFields()
     {
         // arrange
-        var (operation, rootSet, _) = await ExecutionGroupTestOperation.CompileAsync(
+        var (operation, rootSet, plan) = await ExecutionGroupTestOperation.CompileAsync(
             "{ connection { nodes { name } pageInfo { hasNextPage probe } probe } }");
         var pageInfo = rootSet.Selections.ToArray().Single(s => s.Field.Name is "pageInfo");
 
         // act
         var participants = rootSet.Selections.ToArray()
             .Concat(operation.GetSelectionSet(pageInfo).Selections.ToArray())
-            .Select(s => $"{s.DeclaringType.Name}.{s.Field.Name} {s.IsExecutionGroupParticipant}");
+            .Select(s => $"{s.DeclaringType.Name}.{s.Field.Name} {plan.TryGetNode(s.Id, out _)}");
 
         // assert
         participants.MatchInlineSnapshots(
@@ -65,24 +65,46 @@ public class ExecutionGroupPlanTests
     public async Task Create_Should_KeepPureAncestorsPure_When_OnlyMembersMustRunAsTasks()
     {
         // arrange
-        var (operation, rootSet, _) = await ExecutionGroupTestOperation.CompileAsync(
+        var (operation, rootSet, plan) = await ExecutionGroupTestOperation.CompileAsync(
             "{ pureInfo { nodes { name } pageInfo { hasNextPage probe } } }");
         var pageInfo = rootSet.Selections.ToArray().Single(s => s.Field.Name is "pageInfo");
 
         // act
         var strategies = rootSet.Selections.ToArray()
             .Concat(operation.GetSelectionSet(pageInfo).Selections.ToArray())
-            .Select(s => $"{s.DeclaringType.Name}.{s.Field.Name} {s.Strategy}");
+            .Select(s => $"{s.DeclaringType.Name}.{s.Field.Name} {s.Strategy} {IsMember(plan, s)}");
 
         // assert
         strategies.MatchInlineSnapshots(
         [
-            "PureInfoConnection.nodes Default",
-            "PureInfoConnection.pageInfo Pure",
-            "PageInfo.hasNextPage Default",
-            "PageInfo.probe Default"
+            "PureInfoConnection.nodes Default True",
+            "PureInfoConnection.pageInfo Pure False",
+            "PageInfo.hasNextPage Default True",
+            "PageInfo.probe Default False"
         ]);
     }
+
+    [Fact]
+    public async Task Create_Should_CompileNestedSelectionSetsWithConsistentIds_When_NestedSetsGrowTheElementArray()
+    {
+        // arrange
+        var aliases = string.Join(" ", Enumerable.Range(0, 150).Select(i => $"a{i}: hasNextPage"));
+        var (operation, rootSet, plan) = await ExecutionGroupTestOperation.CompileAsync(
+            $"{{ connection {{ nodes {{ name }} pageInfo {{ {aliases} }} }} }}");
+        var pageInfo = rootSet.Selections.ToArray().Single(s => s.Field.Name is "pageInfo");
+
+        // act
+        var nestedSet = operation.GetSelectionSet(pageInfo);
+        var selections = rootSet.Selections.ToArray().Concat(nestedSet.Selections.ToArray()).ToArray();
+
+        // assert
+        Assert.All(selections, s => Assert.Same(s, operation.GetSelectionById(s.Id)));
+        Assert.Same(nestedSet, operation.GetSelectionSetById(nestedSet.Id));
+        Assert.Equal(150, plan.Slots.Count(s => ReferenceEquals(s.Selection.DeclaringSelectionSet, nestedSet)));
+    }
+
+    private static bool IsMember(ExecutionGroupPlan plan, Selection selection)
+        => plan.TryGetNode(selection.Id, out var node) && node.SlotIndex >= 0;
 
     private static async Task<ExecutionGroupPlan> CreatePlanAsync(string query)
     {

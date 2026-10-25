@@ -31,7 +31,7 @@ internal static partial class ValueCompletion
 
             if (selection.IsExecutionGroupRoot)
             {
-                var plan = operationContext.Operation.GetExecutionGroupPlan(selection, selectionSet);
+                var plan = selectionSet.ExecutionGroupPlan!;
                 var scope = operationContext.Scheduler.OpenExecutionGroupScope(
                     plan,
                     operationContext.IncludeConditionFlags);

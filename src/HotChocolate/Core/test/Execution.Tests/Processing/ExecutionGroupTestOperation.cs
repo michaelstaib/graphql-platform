@@ -13,6 +13,6 @@ internal static class ExecutionGroupTestOperation
         var operation = OperationCompiler.Compile("opid", Utf8GraphQLParser.Parse(query), schema);
         var root = operation.RootSelectionSet.Selections[0];
         var selectionSet = operation.GetSelectionSet(root);
-        return (operation, selectionSet, operation.GetExecutionGroupPlan(root, selectionSet));
+        return (operation, selectionSet, selectionSet.ExecutionGroupPlan!);
     }
 }

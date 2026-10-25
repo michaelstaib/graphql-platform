@@ -219,7 +219,7 @@ internal static class ResolverTaskFactory
                         }
                     }
                 }
-                else if (selection.Strategy is SelectionExecutionStrategy.Pure)
+                else if (IsInline(context, selection))
                 {
                     ResolveAndCompleteInline(
                         context,
@@ -256,7 +256,7 @@ internal static class ResolverTaskFactory
             {
                 var selection = field.AssertSelection();
 
-                if (selection.Strategy is SelectionExecutionStrategy.Pure)
+                if (IsInline(context, selection))
                 {
                     ResolveAndCompleteInline(
                         context,
@@ -288,6 +288,10 @@ internal static class ResolverTaskFactory
         }
     }
 
+    private static bool IsInline(ValueCompletionContext context, Selection selection)
+        => selection.Strategy is SelectionExecutionStrategy.Pure
+            && (context.GroupScope is null || !context.GroupScope.IsMember(selection));
+
     private static ResolverTask CreateChildTask(
         ValueCompletionContext context,
         object parent,
@@ -304,10 +308,7 @@ internal static class ResolverTaskFactory
                 context.ParentBranchId,
                 deferUsage);
 
-        if (selection.IsExecutionGroupParticipant)
-        {
-            task.JoinExecutionGroup(context.GroupScope);
-        }
+        task.JoinExecutionGroup(context.GroupScope);
 
         return task;
     }
@@ -321,7 +322,7 @@ internal static class ResolverTaskFactory
     {
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
-        var groupScope = selection.IsExecutionGroupParticipant ? context.GroupScope : null;
+        var groupScope = context.GroupScope;
         var taskCount = groupScope is null ? 0 : context.Tasks.Count;
         var executedSuccessfully = false;
         object? resolverResult = null;

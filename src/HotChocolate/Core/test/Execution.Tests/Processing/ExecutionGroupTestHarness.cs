@@ -19,7 +19,7 @@ internal sealed class ExecutionGroupTestHarness
         var operation = operationContext.Operation;
         var root = operation.RootSelectionSet.Selections[0];
         RootSet = operation.GetSelectionSet(root);
-        Plan = operation.GetExecutionGroupPlan(root, RootSet);
+        Plan = RootSet.ExecutionGroupPlan!;
     }
 
     public OperationContext OperationContext { get; }

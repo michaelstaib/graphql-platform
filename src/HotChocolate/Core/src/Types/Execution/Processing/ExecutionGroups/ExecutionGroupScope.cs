@@ -114,6 +114,12 @@ internal sealed class ExecutionGroupScope
     }
 
     /// <summary>
+    /// Gets a value indicating whether the specified selection is a member of the group of this scope.
+    /// </summary>
+    public bool IsMember(Selection selection)
+        => _plan.TryGetNode(selection.Id, out var node) && node.SlotIndex >= 0;
+
+    /// <summary>
     /// Skips the members below the specified selection.
     /// </summary>
     public void ReleaseSlotsBelow(Selection selection)
