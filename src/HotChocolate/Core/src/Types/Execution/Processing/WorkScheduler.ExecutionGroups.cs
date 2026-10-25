@@ -84,7 +84,7 @@ internal sealed partial class WorkScheduler
     {
         foreach (var task in tasks)
         {
-            if (task is ResolverTask { IsExecutionGroupMember: true })
+            if (task is ResolverTask { IsGroupMember: true })
             {
                 return true;
             }
@@ -97,7 +97,7 @@ internal sealed partial class WorkScheduler
     {
         for (var i = tasks.Length - 1; i >= 0; i--)
         {
-            if (tasks[i] is ResolverTask { IsExecutionGroupMember: true } member)
+            if (tasks[i] is ResolverTask { IsGroupMember: true } member)
             {
                 RegisterMember(member);
             }

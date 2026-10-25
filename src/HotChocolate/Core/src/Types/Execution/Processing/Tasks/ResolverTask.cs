@@ -52,9 +52,9 @@ internal sealed partial class ResolverTask(ObjectPool<ResolverTask> objectPool) 
     internal int GroupSlot => _groupSlot;
 
     /// <summary>
-    /// Gets a value indicating whether this task is a member that waits for its turn in an execution group scope.
+    /// Gets a value indicating whether this task is a member of an execution group.
     /// </summary>
-    internal bool IsExecutionGroupMember => _groupScope is not null && _groupSlot >= 0;
+    internal bool IsGroupMember => _groupScope is not null && _groupSlot >= 0;
 
     /// <summary>
     /// Gets access to the diagnostic events.

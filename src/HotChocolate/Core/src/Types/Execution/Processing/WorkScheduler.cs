@@ -37,7 +37,7 @@ internal sealed partial class WorkScheduler
     {
         AssertNotPooled();
 
-        if (_hasExecutionGroups && task is Tasks.ResolverTask { IsExecutionGroupMember: true } member)
+        if (_hasExecutionGroups && task is Tasks.ResolverTask { IsGroupMember: true } member)
         {
             RegisterMember(member);
             return;
