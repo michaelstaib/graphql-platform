@@ -342,15 +342,113 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             "{ a { c { k } } b { d { m z } } }",
             TestPolicyResolver.Create());
         var (_, parsedPlan) = RoundTrip(compositeSchema, originalPlan);
+        var originalSelection = Assert.IsType<Selection>(
+            Assert.Single(originalPlan.Policies!.Descriptors).Selection);
+
+        // an operation that compiles the selection sets in document order assigns other ids
+        var documentOrderOperation = new OperationCompiler(
+                compositeSchema,
+                new DefaultObjectPoolProvider().CreateFieldMapPool())
+            .Compile("id", "hash", "short", originalPlan.Operation.Definition);
 
         // act
-        var descriptor = Assert.Single(parsedPlan.Policies!.Descriptors);
+        var selection = Assert.IsType<Selection>(Assert.Single(parsedPlan.Policies!.Descriptors).Selection);
 
         // assert
-        var selection = Assert.IsType<Selection>(descriptor.Selection);
-        Assert.Equal("m", selection.ResponseName);
         Assert.Same(parsedPlan.Operation, selection.DeclaringSelectionSet.DeclaringOperation);
-        Assert.Equal("D", selection.DeclaringSelectionSet.Type.Name);
+        new
+        {
+            PlannedId = originalSelection.Id,
+            DocumentOrderIdOfAck = GetSelection(documentOrderOperation, "a", "c", "k").Id,
+            DocumentOrderIdOfBdm = GetSelection(documentOrderOperation, "b", "d", "m").Id,
+            Parsed = selection.ResponseName,
+            ParsedDeclaringType = selection.DeclaringSelectionSet.Type.Name
+        }.MatchInlineSnapshot(
+            """
+            {
+              "PlannedId": 7,
+              "DocumentOrderIdOfAck": 7,
+              "DocumentOrderIdOfBdm": 11,
+              "Parsed": "m",
+              "ParsedDeclaringType": "D"
+            }
+            """);
+    }
+
+    [Fact]
+    public void Parse_Should_RoundTripPolicyVariableOperands_When_RootSelectionsHaveDifferentVariables()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(
+            $$"""
+            # name: a
+            type Query {
+              products: [Product]
+            }
+
+            type Product @key(fields: "id") {
+              id: ID!
+            }
+
+            {{PolicyDirectives}}
+            """,
+            $$"""
+            # name: b
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+              id: ID!
+              price: Int @authenticated
+              note: String @requiresScopes(scopes: [["read"]])
+            }
+
+            {{PolicyDirectives}}
+            """);
+        var originalPlan = PlanWithPooledFields(
+            compositeSchema,
+            "{ products { price note } }",
+            TestPolicyResolver.Create());
+        var (originalJson, parsedPlan) = RoundTrip(compositeSchema, originalPlan);
+
+        // act
+        var parsedJson = new JsonOperationPlanFormatter(s_indentedOptions).Format(parsedPlan);
+
+        // assert
+        Assert.Equal(originalJson, parsedJson);
+        var variables = parsedPlan.Policies!.Variables;
+        Assert.Equal(variables.Take(2), variables[2].Operands);
+        var variablesJson = JsonNode.Parse(parsedJson)!["policies"]!["variables"]!
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        variablesJson.MatchInlineSnapshot(
+            """
+            [
+              {
+                "name": "__fusion_policy_1",
+                "selections": [
+                  {
+                    "path": "$.products.price"
+                  }
+                ]
+              },
+              {
+                "name": "__fusion_policy_2",
+                "selections": [
+                  {
+                    "path": "$.products.note"
+                  }
+                ]
+              },
+              {
+                "name": "__fusion_policy_3",
+                "operands": [
+                  "__fusion_policy_1",
+                  "__fusion_policy_2"
+                ]
+              }
+            ]
+            """);
     }
 
     [Fact]
@@ -1498,7 +1596,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         FormatRepresentationShape(parsedNode.Lookup.RepresentationShape)
             .ToJsonString(new JsonSerializerOptions { WriteIndented = true })
             .MatchInlineSnapshot(
-            """
+                """
             [
               {
                 "name": "id",
@@ -2161,6 +2259,24 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         var planner = new OperationPlanner(schema, compiler, OperationPlannerOptions.Default, policyResolver);
         const string id = "123456789101112";
         return planner.CreatePlan(id, id, id, operation, TestContext.Current.CancellationToken);
+    }
+
+    private static Selection GetSelection(Operation operation, params string[] responseNames)
+    {
+        var selectionSet = operation.RootSelectionSet;
+        var selection = default(Selection);
+
+        foreach (var responseName in responseNames)
+        {
+            if (selectionSet is null || !selectionSet.TryGetSelection(responseName, out selection))
+            {
+                throw new InvalidOperationException($"Selection {responseName} not found.");
+            }
+
+            selectionSet = selection.GetSelectionSet();
+        }
+
+        return selection!;
     }
 
     private static (string Json, OperationPlan ParsedPlan) RoundTrip(
