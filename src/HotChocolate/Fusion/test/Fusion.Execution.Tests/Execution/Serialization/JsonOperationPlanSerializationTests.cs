@@ -129,10 +129,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             """
             {
               "version": "1.3.0",
-              "id": "35602e7d776375f80697893b466a3d29a07d391ae2619f3abdd2c004a32883ae",
+              "id": "3d4ae8bf9805fddd74ade860c3c6ed54b3421658fcd4e005ee243af2842ae9a9",
               "operation": {
                 "kind": "Query",
-                "document": "{\n  me\n  user(id: 1) {\n    name\n    secret\n    id @fusion__requirement\n  }\n}",
+                "document": "{ me user(id: 1) { name secret id @fusion__requirement } }",
                 "id": "123456789101112",
                 "hash": "123456789101112",
                 "shortHash": "123456789101112"
@@ -147,10 +147,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                   "operation": {
                     "name": "Op_123456789101112_1",
                     "kind": "Query",
-                    "document": "query Op_123456789101112_1(\n  $__fusion_policy_3: Boolean!\n  $__fusion_policy_4: Boolean!\n) {\n  me @skip(if: $__fusion_policy_3)\n  user(id: 1) {\n    name\n    secret @skip(if: $__fusion_policy_4)\n    id\n  }\n}",
-                    "hash": "e372a143df45bc144d72c3153cbcff37d89b6e4af390944bf0baddaf7b5b5383",
-                    "shortHash": "e372a143",
-                    "xxHash": 851900850043565951
+                    "document": "query Op_123456789101112_1($__fusion_policy_3: Boolean!, $__fusion_policy_4: Boolean!) { me @skip(if: $__fusion_policy_3) user(id: 1) { name secret @skip(if: $__fusion_policy_4) id } }",
+                    "hash": "28bc7fb556ec6b9c333666aa18147b93ebec07045a3dbfc7cc680d881c659480",
+                    "shortHash": "28bc7fb5",
+                    "xxHash": 4965678863524489945
                   },
                   "resultSelectionSet": "{ me user }",
                   "forwardedVariables": [
@@ -181,7 +181,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                   ],
                   "operation": {
                     "kind": "Query",
-                    "document": "{\n  user(id: 1) {\n    email\n    budget\n    nickname\n    id @fusion__requirement\n  }\n}",
+                    "document": "{ user(id: 1) { email budget nickname id @fusion__requirement } }",
                     "id": "123456789101112#defer_0",
                     "hash": "123456789101112#defer_0",
                     "shortHash": "123456789101112"
@@ -194,10 +194,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                       "operation": {
                         "name": "Op_defer_1",
                         "kind": "Query",
-                        "document": "query Op_defer_1(\n  $__fusion_policy_1: Boolean!\n  $__fusion_policy_2: Boolean!\n  $__fusion_1_id: ID!\n) {\n  userById(id: $__fusion_1_id) {\n    email @skip(if: $__fusion_policy_1)\n    budget @skip(if: $__fusion_policy_2)\n    nickname\n  }\n}",
-                        "hash": "362cd3f95b863e4fcd6ffdc40d05a118cfbf8133651bba7445cf1cf7d259db56",
-                        "shortHash": "362cd3f9",
-                        "xxHash": 353076163188696563
+                        "document": "query Op_defer_1($__fusion_policy_1: Boolean!, $__fusion_policy_2: Boolean!, $__fusion_1_id: ID!) { userById(id: $__fusion_1_id) { email @skip(if: $__fusion_policy_1) budget @skip(if: $__fusion_policy_2) nickname } }",
+                        "hash": "729ffbe7d33e5f56d69e931732f144c0b5f9b54b9bd37688453b91c68814bda1",
+                        "shortHash": "729ffbe7",
+                        "xxHash": 15130587353675677491
                       },
                       "lookupTypeName": "User",
                       "resultSelectionSet": "{ email budget nickname }",
@@ -558,10 +558,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             """
             {
               "version": "1.3.0",
-              "id": "b669ff18d2509cd8a576df53de3166ceb3c9494886ddb6fb34bece51a9df72ac",
+              "id": "ddeb9a07a1ce2925db3f619131745ad7f71a87d88becc06033d7958550dee877",
               "operation": {
                 "kind": "Query",
-                "document": "{\n  node(id: \"abc\") {\n    __typename @fusion__requirement\n    id\n    ... on Discussion {\n      title\n    }\n    ... on Author {\n      name\n    }\n  }\n}",
+                "document": "{ node(id: \"abc\") { __typename @fusion__requirement id ... on Discussion { title } ... on Author { name } } }",
                 "id": "123456789101112",
                 "hash": "123456789101112",
                 "shortHash": "123456789101112"
@@ -586,10 +586,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                   "operation": {
                     "name": "Op_123456789101112_2",
                     "kind": "Query",
-                    "document": "query Op_123456789101112_2 {\n  node(id: \"abc\") {\n    __typename\n    id\n  }\n}",
-                    "hash": "e15845444643ab252ea5d42bbe6377fda04d518a0ba5a9aff535901e7e8785e8",
-                    "shortHash": "e1584544",
-                    "xxHash": 5620523061615283492
+                    "document": "query Op_123456789101112_2 { node(id: \"abc\") { __typename id } }",
+                    "hash": "27f70b45d55118c12968c57c2daf2e7e0804ec56d63ac91b8d34cac24f0a5576",
+                    "shortHash": "27f70b45",
+                    "xxHash": 13931885275327754576
                   },
                   "resultSelectionSet": "{ node }",
                   "dependencies": [
@@ -603,10 +603,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                   "operation": {
                     "name": "Op_123456789101112_3",
                     "kind": "Query",
-                    "document": "query Op_123456789101112_3($__fusion_policy_1: Boolean!) {\n  node(id: \"abc\") {\n    __typename\n    ... on Discussion {\n      __typename\n      id\n      title @skip(if: $__fusion_policy_1)\n    }\n  }\n}",
-                    "hash": "100f270ed1b597f4de316506f9e70e2506ca4112f10c8945eea2490ce1cb4f2c",
-                    "shortHash": "100f270e",
-                    "xxHash": 9301161964944396669
+                    "document": "query Op_123456789101112_3($__fusion_policy_1: Boolean!) { node(id: \"abc\") { __typename ... on Discussion { __typename id title @skip(if: $__fusion_policy_1) } } }",
+                    "hash": "72b367b855782010f5253100568f1fb25bb26f02a6d3cd2e72bc3a953edf2266",
+                    "shortHash": "72b367b8",
+                    "xxHash": 17955393752029729173
                   },
                   "lookupTypeName": "Discussion",
                   "resultSelectionSet": "{ node { __typename ... on Discussion { __typename id title } } }",
@@ -624,10 +624,10 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                   "operation": {
                     "name": "Op_123456789101112_4",
                     "kind": "Query",
-                    "document": "query Op_123456789101112_4($__fusion_policy_2: Boolean!) {\n  node: authorById(id: \"abc\") {\n    __typename\n    id\n    name @skip(if: $__fusion_policy_2)\n  }\n}",
-                    "hash": "9f1bcfef7574aff5e25d5f51705e325fa48e859c1fa3a579f0b4e4559e0b0b38",
-                    "shortHash": "9f1bcfef",
-                    "xxHash": 9174007783574593967
+                    "document": "query Op_123456789101112_4($__fusion_policy_2: Boolean!) { node: authorById(id: \"abc\") { __typename id name @skip(if: $__fusion_policy_2) } }",
+                    "hash": "a225185a064e3b83d9693ffa72bcb786c3638b91c867ffb7f06020fa7853b542",
+                    "shortHash": "a225185a",
+                    "xxHash": 14427187784509197674
                   },
                   "lookupTypeName": "Author",
                   "resultSelectionSet": "{ node { __typename id name } }",
@@ -1534,7 +1534,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             compositeSchema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
@@ -1861,7 +1861,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             schema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
                 new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
+        var parser = new JsonOperationPlanParser(compiler, TestPolicyResolver.Create());
         var parsedPlan = parser.Parse(buffer.WrittenMemory);
 
         // assert
