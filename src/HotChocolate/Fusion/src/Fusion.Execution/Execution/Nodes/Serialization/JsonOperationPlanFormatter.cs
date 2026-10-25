@@ -323,8 +323,13 @@ public sealed class JsonOperationPlanFormatter(JsonWriterOptions? options = null
             jsonWriter.WriteEndArray();
         }
 
+        if (descriptor.Selection is not Selection selection)
+        {
+            throw ThrowHelper.PolicyPlanSelectionNotInPlan();
+        }
+
         jsonWriter.WritePropertyName("selection");
-        WriteSelectionReference(jsonWriter, plan, (Selection)descriptor.Selection);
+        WriteSelectionReference(jsonWriter, plan, selection);
 
         jsonWriter.WriteEndObject();
     }
