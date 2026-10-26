@@ -279,7 +279,6 @@ public sealed class RootBatchResolverTests
             {
                 d.Name("Query");
                 d.Field("plain").Type<StringType>().Resolve("plain");
-                d.Field("task").Type<StringType>().Resolve(async _ => { await Task.Yield(); return "task"; });
                 d.Field("foo").Type<ObjectType<Foo>>().Resolve(new Foo());
                 d.Field("batchField").Type<StringType>().ResolveBatch(ResolveBatch);
                 d.Field("batchFoo").Type<ObjectType<Foo>>().ResolveBatch(ResolveFooBatch);
