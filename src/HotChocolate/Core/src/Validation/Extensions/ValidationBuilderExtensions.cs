@@ -301,6 +301,19 @@ public static class HotChocolateValidationBuilderExtensions
     }
 
     /// <summary>
+    /// The @defer and @stream directives can not be used to defer or stream data in
+    /// subscription operations. If these directives appear in a subscription operation
+    /// they must be disabled using an if argument.
+    ///
+    /// https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-In-Valid-Operations
+    /// </summary>
+    public static DocumentValidatorBuilder AddSubscriptionDeferStreamRules(
+        this DocumentValidatorBuilder builder)
+    {
+        return builder.AddVisitor<SubscriptionDeferStreamVisitor>();
+    }
+
+    /// <summary>
     /// Adds a validation rule that restricts the depth of a GraphQL request.
     /// </summary>
     /// <param name="builder">
@@ -408,6 +421,7 @@ public static class HotChocolateValidationBuilderExtensions
             .AddIntrospectionDepthRule()
             .AddDocumentRules()
             .AddOperationRules()
+            .AddSubscriptionDeferStreamRules()
             .AddFieldRules()
             .AddArgumentRules()
             .AddFragmentRules()

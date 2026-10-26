@@ -333,6 +333,12 @@ namespace HotChocolate.Validation.Properties {
             }
         }
         
+        internal static string ErrorHelper_DeferAndStreamNotDisableableInSubscription {
+            get {
+                return ResourceManager.GetString("ErrorHelper_DeferAndStreamNotDisableableInSubscription", resourceCulture);
+            }
+        }
+        
         internal static string ErrorHelper_OperationNotSupported {
             get {
                 return ResourceManager.GetString("ErrorHelper_OperationNotSupported", resourceCulture);
