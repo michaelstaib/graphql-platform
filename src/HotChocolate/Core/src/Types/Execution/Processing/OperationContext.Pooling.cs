@@ -90,6 +90,17 @@ internal sealed partial class OperationContext
         Result.RegisterForCleanup(action);
     }
 
+    /// <summary>
+    /// Replaces the request aborted token of this context and of its work scheduler.
+    /// It must be called before any work is enqueued.
+    /// </summary>
+    internal void OverrideRequestAborted(CancellationToken requestAborted)
+    {
+        AssertInitialized();
+        _requestAborted = requestAborted;
+        _currentWorkScheduler.OverrideCancellation(requestAborted);
+    }
+
     public bool IsSharedScheduler => !ReferenceEquals(_workScheduler, _currentWorkScheduler);
 
     public void Initialize(

@@ -26,8 +26,12 @@ internal sealed class QueryExecutor
         OperationContext operationContext,
         IImmutableDictionary<string, object?> scopedContext)
     {
-        var requestCleanup = new RequestCleanup();
+        var requestAborted = operationContext.RequestAborted;
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
+        var operationAborted = cancellation.Token;
+        var requestCleanup = new RequestCleanup(cancellation);
         operationContext.RequestCleanup = requestCleanup;
+        operationContext.OverrideRequestAborted(operationAborted);
 
         EnqueueRootResolverTasks(
             operationContext,
@@ -76,22 +80,41 @@ internal sealed class QueryExecutor
 
         var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult);
 
-        // the payloads are disposed while the stream is still being read, so the request cleanup
-        // is released when the stream itself is disposed.
-        stream.RegisterForCleanup(requestCleanup.ExecuteAsync);
+        // the request resources are shared between the response stream and the running execution,
+        // whichever releases last runs the cleanup.
+        requestCleanup.Hold();
+        _ = ReleaseWhenSettledAsync(execution, requestCleanup);
+        operationContext.Features.Set(requestCleanup);
+
+        // the payloads are disposed while the stream is still being read, so the stream
+        // releases its hold when the stream itself is disposed.
+        stream.RegisterForCleanup(requestCleanup.AbandonAsync);
 
         return stream;
 
         async IAsyncEnumerable<OperationResult> CreateStream()
         {
-            var requestAborted = operationContext.RequestAborted;
+            var isRead = false;
 
-            await foreach (var result in coordinator.ReadResultsAsync(requestAborted))
+            try
             {
-                yield return result;
+                await foreach (var result in coordinator.ReadResultsAsync(operationAborted))
+                {
+                    yield return result;
+                }
+
+                isRead = !requestAborted.IsCancellationRequested && !operationAborted.IsCancellationRequested;
+            }
+            finally
+            {
+                if (!isRead)
+                {
+                    // the consumer stopped before the last payload, so the outstanding work is abandoned.
+                    requestCleanup.Cancel();
+                }
             }
 
-            if (!requestAborted.IsCancellationRequested)
+            if (isRead)
             {
                 // The stream was read to completion, so every deferred branch has been delivered and
                 // the scheduler has fully settled: no resolver or batch task can write into the arena
@@ -99,6 +122,27 @@ internal sealed class QueryExecutor
                 await execution.ConfigureAwait(false);
                 memory.Seal();
             }
+        }
+    }
+
+    private static async Task ReleaseWhenSettledAsync(Task execution, RequestCleanup requestCleanup)
+    {
+        try
+        {
+            await execution.ConfigureAwait(false);
+        }
+        catch
+        {
+            // an aborted execution has no consumer left that could observe its failure.
+        }
+
+        try
+        {
+            await requestCleanup.SettleAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // when the execution settles last, the cleanup failure has no consumer to report to.
         }
     }
 

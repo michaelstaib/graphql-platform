@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
 using HotChocolate.Features;
+using HotChocolate.Execution.Processing;
 using HotChocolate.Fetching;
 using Microsoft.Extensions.ObjectPool;
 
@@ -137,12 +138,29 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                     "The request pipeline is expected to produce an execution result.");
             }
 
+            // the response stream of an incremental operation shares the request resources with the
+            // still running execution, so their release is routed through the request cleanup.
+            var requestCleanup = context.Result.Kind is ExecutionResultKind.DeferredResult
+                ? context.Features.Get<RequestCleanup>()
+                : null;
+
             // transfer ownership of the request memory to the result so it is disposed when the
             // result is disposed. On the error path the arena stays attached and the pool reset
             // disposes it.
             if (context.TryDetachMemory() is { } memory)
             {
-                context.Result.RegisterForCleanup(memory);
+                if (requestCleanup is null)
+                {
+                    context.Result.RegisterForCleanup(memory);
+                }
+                else
+                {
+                    requestCleanup.Register(() =>
+                    {
+                        memory.Dispose();
+                        return ValueTask.CompletedTask;
+                    });
+                }
             }
 
             if (scope is null)
@@ -151,7 +169,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
                 if (context.Result.IsStreamResult())
                 {
-                    context.Result.RegisterForCleanup(() => _contextPool.Return(localContext));
+                    RegisterPoolReturn(localContext, requestCleanup);
                     context = null;
                 }
 
@@ -161,8 +179,22 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
             if (context.Result.IsStreamResult())
             {
                 var localContext = context;
-                context.Result.RegisterForCleanup(scope);
-                context.Result.RegisterForCleanup(() => _contextPool.Return(localContext));
+
+                if (requestCleanup is null)
+                {
+                    context.Result.RegisterForCleanup(scope);
+                }
+                else
+                {
+                    var localScope = scope;
+                    requestCleanup.Register(() =>
+                    {
+                        localScope.Dispose();
+                        return ValueTask.CompletedTask;
+                    });
+                }
+
+                RegisterPoolReturn(localContext, requestCleanup);
                 scope = null;
                 context = null;
                 return localContext.Result;
@@ -189,6 +221,21 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 scope?.Dispose();
             }
         }
+    }
+
+    private void RegisterPoolReturn(PooledRequestContext context, RequestCleanup? requestCleanup)
+    {
+        if (requestCleanup is null)
+        {
+            context.Result!.RegisterForCleanup(() => _contextPool.Return(context));
+            return;
+        }
+
+        requestCleanup.Register(() =>
+        {
+            _contextPool.Return(context);
+            return ValueTask.CompletedTask;
+        });
     }
 
     /// <summary>

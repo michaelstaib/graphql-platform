@@ -233,7 +233,8 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
                     tasksRegistered = true;
                 }
 
-                await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
+                await context.Scheduler.WaitForSettlementAsync(itemsBranchId).ConfigureAwait(false);
+                _cancellationToken.ThrowIfCancellationRequested();
 
                 var result = context.BuildStreamItemsResult();
 

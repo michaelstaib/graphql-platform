@@ -298,7 +298,26 @@ internal sealed class OperationExecutionMiddleware
 
             if (result.IsStreamResult())
             {
-                result.RegisterForCleanup(operationContextOwner);
+                var requestCleanup = result.Kind is ExecutionResultKind.DeferredResult
+                    ? operationContext.RequestCleanup
+                    : null;
+
+                if (requestCleanup is not null)
+                {
+                    // the response stream shares the operation context with the still running execution,
+                    // so it is returned once both have released the request cleanup.
+                    var owner = operationContextOwner;
+                    requestCleanup.Register(() =>
+                    {
+                        owner.Dispose();
+                        return ValueTask.CompletedTask;
+                    });
+                }
+                else
+                {
+                    result.RegisterForCleanup(operationContextOwner);
+                }
+
                 operationContextOwner = null;
             }
 

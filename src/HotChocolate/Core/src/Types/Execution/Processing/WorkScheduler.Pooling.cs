@@ -50,6 +50,12 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _isInitialized = true;
     }
 
+    public void OverrideCancellation(CancellationToken cancellationToken)
+    {
+        AssertNotPooled();
+        _ct = cancellationToken;
+    }
+
     public void Clear()
     {
         _work.Clear();
