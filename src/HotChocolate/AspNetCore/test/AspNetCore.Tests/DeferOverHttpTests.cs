@@ -1520,6 +1520,64 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             """);
     }
 
+    [Fact]
+    public async Task Defer_List_Item_Nested_Defers_Multipart_Legacy_Format_Complete_In_Mixed_Order()
+    {
+        // arrange
+        var gates = new ItemGates(3);
+
+        // act
+        var content = await ExecuteGatedDeferListAsync(
+            gates,
+            [1, 2, 0],
+            """
+            {
+                products {
+                    nodes {
+                        ... @defer {
+                            ...ProductFragment
+                            ... @defer {
+                                ...ProductFragment
+                                ... @defer {
+                                    ...ProductFragment
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            fragment ProductFragment on GatedProduct {
+                id
+                description
+            }
+            """);
+
+        // assert
+        content.MatchInlineSnapshot(
+            """
+
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"data":{"products":{"nodes":[{},{},{}]}},"hasNext":true}
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"incremental":[{"data":{"id":1,"description":"Description 1"},"path":["products","nodes",1]}],"hasNext":true}
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"incremental":[{"data":{"id":2,"description":"Description 2"},"path":["products","nodes",2]}],"hasNext":true}
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"incremental":[{"data":{"id":0,"description":"Description 0"},"path":["products","nodes",0]}],"hasNext":false}
+            -----
+
+            """);
+    }
+
     private async Task<string> ExecuteGatedDeferListAsync(
         ItemGates gates,
         int[] releaseOrder,
