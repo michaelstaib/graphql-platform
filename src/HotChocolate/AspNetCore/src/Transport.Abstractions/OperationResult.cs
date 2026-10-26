@@ -36,22 +36,65 @@ public sealed class OperationResult : IDisposable
     /// <param name="variableIndex">
     /// The variable index of this result. This is only set if the result is part of a variable batch operation.
     /// </param>
-    /// <param name="incremental">
-    /// A <see cref="JsonElement"/> object representing the incremental entries of this result.
-    /// </param>
-    /// <param name="hasNext">
-    /// Indicates whether more results follow this result. This is only set if the result is part of an
-    /// incremental delivery response.
-    /// </param>
     public OperationResult(
         IDisposable? memoryOwner = null,
         JsonElement data = default,
         JsonElement errors = default,
         JsonElement extensions = default,
         int? requestIndex = null,
-        int? variableIndex = null,
-        JsonElement incremental = default,
-        bool? hasNext = null)
+        int? variableIndex = null)
+        : this(
+            memoryOwner,
+            data,
+            errors,
+            extensions,
+            requestIndex,
+            variableIndex,
+            incremental: default,
+            hasNext: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="OperationResult"/> class for a result
+    /// of an incremental delivery response.
+    /// </summary>
+    /// <param name="memoryOwner">
+    /// The memory owner of the JSON elements.
+    /// </param>
+    /// <param name="data">
+    /// A <see cref="JsonElement"/> object representing the data returned by the operation.
+    /// </param>
+    /// <param name="errors">
+    /// A <see cref="JsonElement"/> object representing any errors that occurred during
+    /// the operation.
+    /// </param>
+    /// <param name="extensions">
+    /// A <see cref="JsonElement"/> object representing any extensions returned by the
+    /// operation.
+    /// </param>
+    /// <param name="requestIndex">
+    /// The request index of this result. This is only set if the result is part of a batched operation.
+    /// </param>
+    /// <param name="variableIndex">
+    /// The variable index of this result. This is only set if the result is part of a variable batch operation.
+    /// </param>
+    /// <param name="incremental">
+    /// A <see cref="JsonElement"/> object representing the incremental entries of this result.
+    /// </param>
+    /// <param name="hasNext">
+    /// Indicates whether more results follow this result, or <see langword="null"/> if the result
+    /// does not carry the information.
+    /// </param>
+    public OperationResult(
+        IDisposable? memoryOwner,
+        JsonElement data,
+        JsonElement errors,
+        JsonElement extensions,
+        int? requestIndex,
+        int? variableIndex,
+        JsonElement incremental,
+        bool? hasNext)
     {
         _memoryOwner = memoryOwner;
         Data = data;
