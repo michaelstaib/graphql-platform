@@ -349,6 +349,7 @@ internal sealed class BatchResolverTask : IResolverTask
             var resultValue = context.ResultValue;
             var result = context.Result;
             var entryContext = _entries[i].OperationContext;
+            var taskBufferStart = _taskBuffer.Count;
 
             try
             {
@@ -395,7 +396,7 @@ internal sealed class BatchResolverTask : IResolverTask
 
                 _completionStatus = ExecutionTaskStatus.Faulted;
                 entryContext.Result.AddNonNullViolation(context.Path);
-                _taskBuffer.Clear();
+                _taskBuffer.RemoveRange(taskBufferStart, _taskBuffer.Count - taskBufferStart);
             }
         }
     }
