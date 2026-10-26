@@ -258,6 +258,15 @@ RESTART:
             return;
         }
 
+        if (_pendingBatches.Count > 0
+            && _work.IsEmpty
+            && _serial.IsEmpty
+            && !_work.HasBlockingTasks
+            && !_serial.HasRunningTasks)
+        {
+            DispatchIdlePendingBatchesUnsafe();
+        }
+
         if (!isWaitingForTaskCompletion)
         {
             isWaitingForTaskCompletion = _work is { HasRunningTasks: true, IsEmpty: true }
