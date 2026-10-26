@@ -7,6 +7,7 @@ namespace HotChocolate.Execution;
 
 public sealed class RootBatchResolverTests
 {
+    private const string FailingEntryQuery = "{ items { id child { name label } } }";
     private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan s_quietPeriod = TimeSpan.FromMilliseconds(250);
 
@@ -315,6 +316,54 @@ public sealed class RootBatchResolverTests
         ]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepTheChildDataOfTheOtherEntries_When_TheFirstBatchEntryViolatesNonNull()
+    {
+        // arrange
+        var executor = await CreateFailingEntryExecutorAsync(failingId: 1);
+
+        // act
+        var json = await ExecuteAsync(executor, FailingEntryQuery);
+
+        // assert
+        json.MatchInlineSnapshot(
+            """
+            {"errors":[{"message":"Entry failed.","path":["items",0,"child"]}],"data":{"items":[null,{"id":2,"child":{"name":"child-2","label":"label-2"}},{"id":3,"child":{"name":"child-3","label":"label-3"}}]}}
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepTheChildDataOfTheOtherEntries_When_AMiddleBatchEntryViolatesNonNull()
+    {
+        // arrange
+        var executor = await CreateFailingEntryExecutorAsync(failingId: 2);
+
+        // act
+        var json = await ExecuteAsync(executor, FailingEntryQuery);
+
+        // assert
+        json.MatchInlineSnapshot(
+            """
+            {"errors":[{"message":"Entry failed.","path":["items",1,"child"]}],"data":{"items":[{"id":1,"child":{"name":"child-1","label":"label-1"}},null,{"id":3,"child":{"name":"child-3","label":"label-3"}}]}}
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepTheChildDataOfTheOtherEntries_When_TheLastBatchEntryViolatesNonNull()
+    {
+        // arrange
+        var executor = await CreateFailingEntryExecutorAsync(failingId: 3);
+
+        // act
+        var json = await ExecuteAsync(executor, FailingEntryQuery);
+
+        // assert
+        json.MatchInlineSnapshot(
+            """
+            {"errors":[{"message":"Entry failed.","path":["items",2,"child"]}],"data":{"items":[{"id":1,"child":{"name":"child-1","label":"label-1"}},{"id":2,"child":{"name":"child-2","label":"label-2"}},null]}}
+            """);
+    }
+
     private static Task<string> ExecuteAsync(IRequestExecutor executor, string query)
     {
         // the scheduler loop must not be able to block the test thread, so the request runs off it.
@@ -421,6 +470,46 @@ public sealed class RootBatchResolverTests
             .ModifyOptions(o => o.EnableDefer = true)
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
+    private static ValueTask<IRequestExecutor> CreateFailingEntryExecutorAsync(int failingId)
+        => new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(d =>
+            {
+                d.Name("Query");
+                d.Field("items")
+                    .Type<ListType<ObjectType<Item>>>()
+                    .Resolve(_ => new[] { new Item(1), new Item(2), new Item(3) });
+            })
+            .AddObjectType<Item>(d =>
+            {
+                d.Name("Item");
+                d.Field(t => t.Id);
+                d.Field("child")
+                    .Type<NonNullType<ObjectType<ItemChild>>>()
+                    .ResolveBatch(contexts =>
+                    {
+                        var results = new ResolverResult[contexts.Count];
+
+                        for (var i = 0; i < contexts.Count; i++)
+                        {
+                            var id = ((Item)contexts[i].Parent<object>()).Id;
+
+                            results[i] = id == failingId
+                                ? ResolverResult.Fail(ErrorBuilder.New().SetMessage("Entry failed.").Build())
+                                : ResolverResult.Ok(new ItemChild(id));
+                        }
+
+                        return new ValueTask<IReadOnlyList<ResolverResult>>(results);
+                    });
+            })
+            .AddObjectType<ItemChild>(d =>
+            {
+                d.Name("ItemChild");
+                d.Field("name").Type<NonNullType<StringType>>().Resolve(ctx => $"child-{ctx.Parent<ItemChild>().Id}");
+                d.Field("label").Type<StringType>().Resolve(ctx => $"label-{ctx.Parent<ItemChild>().Id}");
+            })
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
     private static ValueTask<IRequestExecutor> CreateExecutorAsync()
         => new ServiceCollection()
             .AddGraphQL()
@@ -470,6 +559,10 @@ public sealed class RootBatchResolverTests
     {
         public string Name => "foo";
     }
+
+    public sealed record Item(int Id);
+
+    public sealed record ItemChild(int Id);
 
     public sealed class CleanupProbe
     {
