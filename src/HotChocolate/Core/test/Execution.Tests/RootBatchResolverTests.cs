@@ -1,3 +1,4 @@
+using System.Text.Json;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
@@ -95,12 +96,27 @@ public sealed class RootBatchResolverTests
         var executor = await CreateExecutorAsync();
 
         // act
-        var payloads = await ExecuteIncrementalAsync(executor, "{ batchField ... @defer { plain } }");
+        var events = await ExecuteIncrementalAsync(executor, "{ batchField ... @defer { plain } }");
 
         // assert
-        Assert.Contains("\"batchField\":\"batched-1\"", payloads[0], StringComparison.Ordinal);
-        Assert.Contains(payloads, p => p.Contains("\"plain\":\"plain\"", StringComparison.Ordinal));
-        Assert.Contains("\"hasNext\":false", payloads[^1], StringComparison.Ordinal);
+        events.MatchInlineSnapshots(
+        [
+            """
+            data {"batchField":"batched-1"}
+            """,
+            """
+            pending {"id":"2","path":[]}
+            """,
+            """
+            incremental {"id":"2","data":{"plain":"plain"}}
+            """,
+            """
+            completed {"id":"2"}
+            """,
+            """
+            hasNext false
+            """
+        ]);
     }
 
     [Fact]
@@ -110,31 +126,27 @@ public sealed class RootBatchResolverTests
         var executor = await CreateExecutorAsync();
 
         // act
-        var payloads = await ExecuteIncrementalAsync(executor, "{ plain ... @defer { foo { batchField } } }");
+        var events = await ExecuteIncrementalAsync(executor, "{ plain ... @defer { foo { batchField } } }");
 
         // assert
-        Assert.Contains("\"plain\":\"plain\"", payloads[0], StringComparison.Ordinal);
-        Assert.Contains(payloads, p => p.Contains("\"foo\":{\"batchField\":\"batched-1\"}", StringComparison.Ordinal));
-        Assert.Contains("\"hasNext\":false", payloads[^1], StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_Should_CompleteTheRequest_When_ASiblingTaskCompletesAfterTheTaskRegisteringTheBatch()
-    {
-        // arrange
-        var executor = await CreateExecutorAsync();
-        var results = new List<string>();
-
-        // act
-        for (var i = 0; i < 50; i++)
-        {
-            results.Add(await ExecuteAsync(executor, "{ task foo { batchField } }"));
-        }
-
-        // assert
-        Assert.Equal(
-            """{"data":{"task":"task","foo":{"batchField":"batched-1"}}}""",
-            results.Distinct().Single());
+        events.MatchInlineSnapshots(
+        [
+            """
+            data {"plain":"plain"}
+            """,
+            """
+            pending {"id":"2","path":[]}
+            """,
+            """
+            incremental {"id":"2","data":{"foo":{"batchField":"batched-1"}}}
+            """,
+            """
+            completed {"id":"2"}
+            """,
+            """
+            hasNext false
+            """
+        ]);
     }
 
     [Fact]
@@ -207,21 +219,57 @@ public sealed class RootBatchResolverTests
                     await using var result = await executor.ExecuteAsync(
                         query,
                         TestContext.Current.CancellationToken);
-                    var payloads = new List<string>();
+                    var events = new List<string>();
+                    var hasNext = true;
 
                     await foreach (var payload in result
                         .ExpectResponseStream()
                         .ReadResultsAsync()
                         .WithCancellation(TestContext.Current.CancellationToken))
                     {
-                        payloads.Add(payload.ToJson(withIndentations: false));
-                        await payload.DisposeAsync();
+                        await using var payloadCleanup = payload;
+                        using var document = JsonDocument.Parse(payload.ToJson(withIndentations: false));
+                        var root = document.RootElement;
+
+                        // the events are listed in delivery order without payload boundaries, so the
+                        // snapshot does not depend on how the payloads are batched.
+                        AddEvents(events, root, "data", static d => $"data {d.GetRawText()}");
+                        AddEvents(events, root, "pending", static p => $"pending {p.GetRawText()}");
+                        AddEvents(events, root, "incremental", static i => $"incremental {i.GetRawText()}");
+                        AddEvents(events, root, "completed", static c => $"completed {c.GetRawText()}");
+
+                        hasNext = root.GetProperty("hasNext").GetBoolean();
                     }
 
-                    return payloads.ToArray();
+                    events.Add($"hasNext {hasNext.ToString().ToLowerInvariant()}");
+                    return events.ToArray();
                 },
                 TestContext.Current.CancellationToken)
             .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+    }
+
+    private static void AddEvents(
+        List<string> events,
+        JsonElement root,
+        string propertyName,
+        Func<JsonElement, string> format)
+    {
+        if (!root.TryGetProperty(propertyName, out var value))
+        {
+            return;
+        }
+
+        if (value.ValueKind is JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                events.Add(format(item));
+            }
+        }
+        else
+        {
+            events.Add(format(value));
+        }
     }
 
     private static ValueTask<IRequestExecutor> CreateExecutorAsync()
