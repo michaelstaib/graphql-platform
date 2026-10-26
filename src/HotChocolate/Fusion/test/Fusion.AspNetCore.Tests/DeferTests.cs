@@ -2784,6 +2784,79 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
+    [Fact]
+    public async Task Defer_Should_NotAnnounceNestedGroup_When_ParentGroupFails()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayWithFailingEmailAsync();
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    name
+                    ... @defer(label: "outer") {
+                        email
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        // The failed outer group completes with the error and the inner group is never announced.
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotAnnounceNestedGroups_When_SharedPlanOfSiblingGroupsFails()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayWithFailingEmailAsync();
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    name
+                    ... @defer(label: "contact") {
+                        email
+                    }
+                    ... @defer(label: "location") {
+                        email
+                        ... @defer(label: "locationPhone") {
+                            phone
+                        }
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        // Both sibling groups share the failed plan and complete with the error. Neither nested group is announced.
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
     private async Task<Gateway> CreateUserGatewayAsync()
     {
         var server1 = CreateSourceSchema(
@@ -2813,6 +2886,70 @@ public class DeferTests : FusionTestBase
                 phone: String!
             }
             """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private async Task<Gateway> CreateUserGatewayWithFailingEmailAsync()
+    {
+        // The key lookup of the deferred plan is held back until the failing email response has been returned.
+        // This fixes the order in which the nodes of the deferred plan complete.
+        var emailReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        HttpMessageInvoker? invokerA = null;
+        HttpMessageInvoker? invokerB = null;
+
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            mockHttpResponse: async request =>
+            {
+                var body = await request.Content!.ReadAsStringAsync();
+
+                if (body.Contains("Op_defer", StringComparison.Ordinal))
+                {
+                    await emailReturned.Task;
+                    await Task.Delay(TimeSpan.FromMilliseconds(250));
+                }
+
+                return await invokerA!.SendAsync(request, CancellationToken.None);
+            });
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String! @error
+                address: String!
+                phone: String!
+            }
+            """,
+            mockHttpResponse: async request =>
+            {
+                var response = await invokerB!.SendAsync(request, CancellationToken.None);
+                emailReturned.TrySetResult();
+                return response;
+            });
+
+        invokerA = new HttpMessageInvoker(server1.CreateHandler());
+        invokerB = new HttpMessageInvoker(server2.CreateHandler());
 
         return await CreateCompositeSchemaAsync(
         [

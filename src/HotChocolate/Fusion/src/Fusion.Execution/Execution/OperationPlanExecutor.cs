@@ -274,6 +274,10 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
+            // Delivery groups of incremental plans that failed. Nested incremental plans below
+            // these groups are never started or announced.
+            HashSet<int>? failedDeliveryGroupIds = null;
+
             // Yield results as they complete.
             while (pendingIncrementalPlanCount > 0 && !cancellationToken.IsCancellationRequested)
             {
@@ -286,6 +290,81 @@ internal static partial class OperationPlanExecutor
                 if (incrementalPlanContext is not null)
                 {
                     incrementalPlanContexts[incrementalPlan] = incrementalPlanContext;
+                }
+
+                // Use the deepest delivery group path for this incremental
+                // plan. Ties are broken by the delivery group this payload
+                // completes, then by the smallest DeliveryGroup.Id.
+                var bestDeliveryGroup = PickBestDeliveryGroup(
+                    incrementalPlan,
+                    activeDeliveryGroupIds,
+                    pendingCountByDeliveryGroup);
+
+                // Build the result for this incremental plan and update
+                // delivery group completion state.
+                var completed = ImmutableList.CreateBuilder<CompletedResult>();
+                OperationResult payload;
+
+                if (error is not null)
+                {
+                    var errorObj = ErrorBuilder.New()
+                        .SetMessage(error.Message)
+                        .Build();
+                    payload = OperationResult.FromError(errorObj);
+                    MarkDeliveryGroupsFailed(incrementalPlan, ref failedDeliveryGroupIds);
+                    CompleteDeliveryGroupsForIncrementalPlan(
+                        incrementalPlan,
+                        activeDeliveryGroupIds,
+                        pendingCountByDeliveryGroup,
+                        completed,
+                        errors: [errorObj]);
+                }
+                else if (result is not null)
+                {
+                    payload = result;
+
+                    // Use the selected delivery group's path to produce the
+                    // incremental result data for this plan.
+                    if (result.Data.HasValue
+                        && !result.Data.Value.IsValueNull
+                        && TryCreateIncrementalResults(
+                            result.Data.Value,
+                            bestDeliveryGroup,
+                            deliveryPaths[bestDeliveryGroup.Id].PendingFieldCount,
+                            result.Errors.Count > 0 ? result.Errors : null,
+                            out var incrementalResults))
+                    {
+                        payload.Incremental = incrementalResults;
+                    }
+
+                    var failed = result.Errors.Count > 0 && payload.Incremental.Count == 0;
+                    if (failed)
+                    {
+                        MarkDeliveryGroupsFailed(incrementalPlan, ref failedDeliveryGroupIds);
+                    }
+
+                    CompleteDeliveryGroupsForIncrementalPlan(
+                        incrementalPlan,
+                        activeDeliveryGroupIds,
+                        pendingCountByDeliveryGroup,
+                        completed,
+                        errors: failed ? result.Errors : null);
+                }
+                else
+                {
+                    // Incremental plan with no execution result: all fields may
+                    // have been conditional and excluded. Report a successful
+                    // completion with no data.
+                    var placeholder = ErrorBuilder.New()
+                        .SetMessage("placeholder")
+                        .Build();
+                    payload = OperationResult.FromError(placeholder);
+                    CompleteDeliveryGroupsForIncrementalPlan(
+                        incrementalPlan,
+                        activeDeliveryGroupIds,
+                        pendingCountByDeliveryGroup,
+                        completed,
+                        errors: null);
                 }
 
                 // Start nested incremental plans whose parent delivery group
@@ -306,6 +385,11 @@ internal static partial class OperationPlanExecutor
 
                     var candidateParent = candidate.DeliveryGroups[0].Parent;
                     if (candidateParent is null)
+                    {
+                        continue;
+                    }
+
+                    if (failedDeliveryGroupIds?.Contains(candidateParent.Id) is true)
                     {
                         continue;
                     }
@@ -358,76 +442,6 @@ internal static partial class OperationPlanExecutor
                             deliveryPaths[deliveryGroup.Id].PendingPath,
                             deliveryGroup.Label));
                     }
-                }
-
-                // Use the deepest delivery group path for this incremental
-                // plan. Ties are broken by the delivery group this payload
-                // completes, then by the smallest DeliveryGroup.Id.
-                var bestDeliveryGroup = PickBestDeliveryGroup(
-                    incrementalPlan,
-                    activeDeliveryGroupIds,
-                    pendingCountByDeliveryGroup);
-
-                // Build the result for this incremental plan and update
-                // delivery group completion state.
-                var completed = ImmutableList.CreateBuilder<CompletedResult>();
-                OperationResult payload;
-
-                if (error is not null)
-                {
-                    var errorObj = ErrorBuilder.New()
-                        .SetMessage(error.Message)
-                        .Build();
-                    payload = OperationResult.FromError(errorObj);
-                    CompleteDeliveryGroupsForIncrementalPlan(
-                        incrementalPlan,
-                        activeDeliveryGroupIds,
-                        pendingCountByDeliveryGroup,
-                        completed,
-                        errors: [errorObj]);
-                }
-                else if (result is not null)
-                {
-                    payload = result;
-
-                    // Use the selected delivery group's path to produce the
-                    // incremental result data for this plan.
-                    if (result.Data.HasValue
-                        && !result.Data.Value.IsValueNull
-                        && TryCreateIncrementalResults(
-                            result.Data.Value,
-                            bestDeliveryGroup,
-                            deliveryPaths[bestDeliveryGroup.Id].PendingFieldCount,
-                            result.Errors.Count > 0 ? result.Errors : null,
-                            out var incrementalResults))
-                    {
-                        payload.Incremental = incrementalResults;
-                    }
-
-                    CompleteDeliveryGroupsForIncrementalPlan(
-                        incrementalPlan,
-                        activeDeliveryGroupIds,
-                        pendingCountByDeliveryGroup,
-                        completed,
-                        errors: result.Errors.Count > 0 && payload.Incremental.Count == 0
-                            ? result.Errors
-                            : null);
-                }
-                else
-                {
-                    // Incremental plan with no execution result: all fields may
-                    // have been conditional and excluded. Report a successful
-                    // completion with no data.
-                    var placeholder = ErrorBuilder.New()
-                        .SetMessage("placeholder")
-                        .Build();
-                    payload = OperationResult.FromError(placeholder);
-                    CompleteDeliveryGroupsForIncrementalPlan(
-                        incrementalPlan,
-                        activeDeliveryGroupIds,
-                        pendingCountByDeliveryGroup,
-                        completed,
-                        errors: null);
                 }
 
                 // Set Completed before clearing top-level errors.
@@ -743,6 +757,18 @@ internal static partial class OperationPlanExecutor
         => activeDeliveryGroupIds.Contains(deliveryGroup.Id)
             && pendingCountByDeliveryGroup.TryGetValue(deliveryGroup.Id, out var count)
             && count <= 1;
+
+    private static void MarkDeliveryGroupsFailed(
+        IncrementalPlan incrementalPlan,
+        ref HashSet<int>? failedDeliveryGroupIds)
+    {
+        failedDeliveryGroupIds ??= [];
+
+        foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
+        {
+            failedDeliveryGroupIds.Add(deliveryGroup.Id);
+        }
+    }
 
     private static void CompleteDeliveryGroupsForIncrementalPlan(
         IncrementalPlan incrementalPlan,

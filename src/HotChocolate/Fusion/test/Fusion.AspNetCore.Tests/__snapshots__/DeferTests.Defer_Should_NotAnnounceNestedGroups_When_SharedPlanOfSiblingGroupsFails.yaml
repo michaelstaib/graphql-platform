@@ -1,0 +1,289 @@
+title: Defer_Should_NotAnnounceNestedGroups_When_SharedPlanOfSiblingGroupsFails
+request:
+  document: |
+    {
+      user(id: "1") {
+        id
+        name
+        ... @defer(label: "contact") {
+          email
+        }
+        ... @defer(label: "location") {
+          email
+          ... @defer(label: "locationPhone") {
+            phone
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 2,
+    "initial": {
+      "data": {
+        "user": {
+          "id": "VXNlcjox",
+          "name": "User: VXNlcjox"
+        }
+      }
+    },
+    "pending": [
+      {
+        "id": "0",
+        "path": [
+          "user"
+        ],
+        "label": "contact"
+      },
+      {
+        "id": "1",
+        "path": [
+          "user"
+        ],
+        "label": "location"
+      }
+    ],
+    "completed": [
+      {
+        "id": "0",
+        "errors": [
+          {
+            "message": "Unexpected Execution Error",
+            "path": [
+              "user"
+            ]
+          },
+          {
+            "message": "Unexpected Execution Error",
+            "path": [
+              "user",
+              "email"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "1",
+        "errors": [
+          {
+            "message": "Unexpected Execution Error",
+            "path": [
+              "user"
+            ]
+          },
+          {
+            "message": "Unexpected Execution Error",
+            "path": [
+              "user",
+              "email"
+            ]
+          }
+        ]
+      }
+    ],
+    "final": {
+      "data": {
+        "user": {
+          "id": "VXNlcjox",
+          "name": "User: VXNlcjox"
+        }
+      }
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user(id: ID!): User @lookup
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_1ce2a8df_1 {
+              user(id: "1") {
+                id
+                name
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "id": "VXNlcjox",
+                    "name": "User: VXNlcjox"
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_2 {
+              user(id: "1") {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "id": "VXNlcjox"
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        email: String! @error
+        address: String!
+        phone: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                email
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "VXNlcjox"
+            }
+        response:
+          results:
+            - |
+              {
+                "errors": [
+                  {
+                    "message": "Unexpected Execution Error",
+                    "path": [
+                      "userById",
+                      "email"
+                    ]
+                  }
+                ],
+                "data": {
+                  "userById": null
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        {
+          user(id: "1") {
+            id
+            id @fusion__requirement
+            name
+          }
+        }
+      hash: 26d24abb22bf48fe3444b0b4c54135fd
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_1ce2a8df_1 {
+          user(id: "1") {
+            id
+            name
+          }
+        }
+  deliveryGroups:
+    - id: 0
+      path: $.user
+      label: contact
+    - id: 1
+      path: $.user
+      label: location
+    - id: 2
+      path: $.user
+      label: locationPhone
+      parentId: 1
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+        - 1
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                email
+              }
+            }
+          source: $.userById
+          target: $.user
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1
+        - id: 2
+          type: Operation
+          schema: A
+          operation: |
+            query Op_defer_2 {
+              user(id: "1") {
+                id
+              }
+            }
+    - deliveryGroupIds:
+        - 2
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                phone
+              }
+            }
+          source: $.userById
+          target: $.user
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 2
