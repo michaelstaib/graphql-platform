@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Tracing;
 using System.Text.Json;
+using HotChocolate.Execution.Instrumentation;
+using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.ObjectPool;
@@ -52,6 +54,7 @@ public class IncrementalEarlyDisposeTests
         // arrange
         var probe = new Probe();
         var executor = await CreateExecutorAsync(probe);
+        using var listener = new ArenaListener(probe);
         var result = await executor.ExecuteAsync(
             "{ items { id ... @defer { stubborn } } }",
             TestContext.Current.CancellationToken);
@@ -77,10 +80,12 @@ public class IncrementalEarlyDisposeTests
 
         // assert
         Assert.Empty(eventsAfterDispose);
+        Assert.Empty(probe.Errors);
         probe.Events.ToArray().MatchInlineSnapshots(
         [
             "resolver 1 returned",
             "resolver 2 returned",
+            "ArenaAbandoned",
             "request scope disposed",
             "request context returned"
         ]);
@@ -118,6 +123,7 @@ public class IncrementalEarlyDisposeTests
 
         // assert
         Assert.Equal(3, payloads.Count);
+        Assert.Empty(probe.Errors);
         probe.Events.ToArray().MatchInlineSnapshots(
         [
             "request scope disposed",
@@ -160,12 +166,116 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task DisposeAsync_Should_ReleaseRequestResourcesAfterSource_When_StreamSourceIgnoresCancellation()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        var result = await executor.ExecuteAsync(
+            "{ stubbornNumbers @stream(initialCount: 0) }",
+            TestContext.Current.CancellationToken);
+        var stream = Assert.IsType<ResponseStream>(result);
+        var eventsAfterDispose = new List<string>();
+
+        // act
+        await using (stream)
+        {
+            await using var enumerator = stream.ReadResultsAsync()
+                .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+            await ReadPayloadAsync(enumerator, []);
+            await probe.Started("stubborn").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        }
+
+        await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+        eventsAfterDispose.AddRange(probe.Events);
+        probe.Gate("stubborn").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Empty(eventsAfterDispose);
+        Assert.Empty(probe.Errors);
+        probe.Events.ToArray().MatchInlineSnapshots(
+        [
+            "source returned",
+            "enumerator disposed",
+            "request scope disposed",
+            "request context returned"
+        ]);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_Should_ReportCleanupFailures_When_TheExecutionSettlesAfterTheStreamWasDisposed()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        var result = await executor.ExecuteAsync(
+            "{ items { id ... @defer { failingCleanup } } }",
+            TestContext.Current.CancellationToken);
+        var stream = Assert.IsType<ResponseStream>(result);
+
+        // act
+        await using (var enumerator = stream.ReadResultsAsync()
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken))
+        {
+            await ReadPayloadAsync(enumerator, []);
+            await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        }
+
+        await stream.DisposeAsync();
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Errors.ToArray().MatchInlineSnapshots(
+        [
+            "request error: cleanup failed",
+            "request error: cleanup failed"
+        ]);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_Should_ThrowCleanupFailure_When_TheStreamIsDisposedLast()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        var result = await executor.ExecuteAsync(
+            "{ items { id ... @defer { failingCleanup } } }",
+            TestContext.Current.CancellationToken);
+        var stream = Assert.IsType<ResponseStream>(result);
+
+        // act
+        await using (var enumerator = stream.ReadResultsAsync()
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken))
+        {
+            await ReadPayloadAsync(enumerator, []);
+            probe.Gate("1").TrySetResult();
+            probe.Gate("2").TrySetResult();
+
+            while (await MoveNextAsync(enumerator))
+            {
+                await enumerator.Current.DisposeAsync();
+            }
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => stream.DisposeAsync().AsTask());
+
+        // assert
+        Assert.Equal("cleanup failed", exception.Message);
+        Assert.Empty(probe.Errors);
+    }
+
+    [Fact]
     public async Task ReadResultsAsync_Should_SealArenaAndReturnPages_When_StreamIsReadToCompletion()
     {
         // arrange
         var probe = new Probe();
         var executor = await CreateExecutorAsync(probe);
-        using var listener = new ArenaListener();
+        using var listener = new ArenaListener(probe);
 
         // act
         var result = await executor.ExecuteAsync(
@@ -237,6 +347,7 @@ public class IncrementalEarlyDisposeTests
             .AddScoped<ScopeProbe>()
             .AddGraphQL()
             .AddQueryType<Query>()
+            .AddDiagnosticEventListener(_ => new ErrorListener(probe))
             .ConfigureSchemaServices(
                 services => services.AddSingleton<ObjectPool<PooledRequestContext>>(
                     new TrackingRequestContextPool(probe)))
@@ -255,6 +366,9 @@ public class IncrementalEarlyDisposeTests
 
         public IAsyncEnumerable<int> GetNumbers([Service] Probe probe, [Service] ScopeProbe scopeProbe)
             => new CountingEnumerable(probe);
+
+        public IAsyncEnumerable<int> GetStubbornNumbers([Service] Probe probe, [Service] ScopeProbe scopeProbe)
+            => new StubbornEnumerable(probe);
     }
 
     public sealed class Item(string id)
@@ -290,6 +404,19 @@ public class IncrementalEarlyDisposeTests
             return $"stubborn {id}";
         }
 
+        public async Task<string> GetFailingCleanupAsync(
+            IResolverContext context,
+            [Service] Probe probe,
+            [Service] ScopeProbe scopeProbe)
+        {
+            ((IMiddlewareContext)context).RegisterForCleanup(
+                static () => ValueTask.FromException(new InvalidOperationException("cleanup failed")),
+                CleanAfter.Request);
+            probe.Started(id).TrySetResult();
+            await probe.Gate(id).Task;
+            return $"failing {id}";
+        }
+
         public string GetQuick([Service] ScopeProbe scopeProbe) => $"quick {id}";
     }
 
@@ -297,9 +424,12 @@ public class IncrementalEarlyDisposeTests
     {
         private readonly ConcurrentDictionary<string, TaskCompletionSource> _sources = new();
         private readonly ConcurrentQueue<string> _events = new();
+        private readonly ConcurrentQueue<string> _errors = new();
         private int _producerDisposeCount;
 
         public IReadOnlyCollection<string> Events => _events;
+
+        public IReadOnlyCollection<string> Errors => _errors;
 
         public TaskCompletionSource RequestContextReturned { get; } = Create();
 
@@ -316,6 +446,8 @@ public class IncrementalEarlyDisposeTests
         public TaskCompletionSource Returned(string id) => Get("returned", id);
 
         public void Log(string message) => _events.Enqueue(message);
+
+        public void LogError(string message) => _errors.Enqueue(message);
 
         public void ProducerDisposed()
         {
@@ -393,12 +525,63 @@ public class IncrementalEarlyDisposeTests
         }
     }
 
+    private sealed class StubbornEnumerable(Probe probe) : IAsyncEnumerable<int>
+    {
+        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+            => new StubbornEnumerator(probe);
+    }
+
+    private sealed class StubbornEnumerator(Probe probe) : IAsyncEnumerator<int>
+    {
+        private int _count;
+
+        public int Current { get; private set; }
+
+        public async ValueTask<bool> MoveNextAsync()
+        {
+            if (_count is 0)
+            {
+                _count++;
+                Current = 1;
+                return true;
+            }
+
+            probe.Started("stubborn").TrySetResult();
+            await probe.Gate("stubborn").Task;
+            probe.Log("source returned");
+            return false;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            probe.Log("enumerator disposed");
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ErrorListener(Probe probe) : ExecutionDiagnosticEventListener
+    {
+        public override void ResolverError(IMiddlewareContext context, IError error)
+            => probe.LogError($"resolver error: {error.Message}");
+
+        public override void TaskError(IExecutionTask task, IError error)
+            => probe.LogError($"task error: {error.Message}");
+
+        public override void RequestError(RequestContext context, Exception error)
+            => probe.LogError($"request error: {error.Message}");
+
+        public override void RequestError(RequestContext context, IError error)
+            => probe.LogError($"request error: {error.Message}");
+    }
+
     private sealed class ArenaListener : EventListener
     {
         private static readonly AsyncLocal<bool> s_current = new();
+        private readonly Probe _probe;
 
-        public ArenaListener()
+        public ArenaListener(Probe probe)
         {
+            _probe = probe;
             s_current.Value = true;
         }
 
@@ -417,6 +600,7 @@ public class IncrementalEarlyDisposeTests
             if (s_current.Value && eventData.EventName is "ArenaSealed" or "ArenaAbandoned")
             {
                 Events.Enqueue(eventData.EventName);
+                _probe.Log(eventData.EventName);
             }
         }
     }

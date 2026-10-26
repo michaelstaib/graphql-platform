@@ -306,12 +306,7 @@ internal sealed class OperationExecutionMiddleware
                 {
                     // the response stream shares the operation context with the still running execution,
                     // so it is returned once both have released the request cleanup.
-                    var owner = operationContextOwner;
-                    requestCleanup.Register(() =>
-                    {
-                        owner.Dispose();
-                        return ValueTask.CompletedTask;
-                    });
+                    requestCleanup.Register(operationContextOwner);
                 }
                 else
                 {

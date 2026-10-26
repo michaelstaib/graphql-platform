@@ -25,6 +25,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly IAsyncEnumerator<object?> _enumerator;
     private readonly CancellationTokenSource _cancellation;
     private readonly CancellationToken _cancellationToken;
+    private readonly RequestCleanup? _requestCleanup;
     private readonly int _maxItemsPerPayload;
     private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
@@ -63,6 +64,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         _enumerator = enumerator;
         _cancellation = cancellation;
         _cancellationToken = cancellation.Token;
+        _requestCleanup = parentContext.RequestCleanup;
     }
 
     // the stream task runs in the system branch as it's just an orchestration task.
@@ -84,10 +86,14 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             this);
 
     /// <summary>
-    /// Starts reading the items of the source into the buffer of the stream.
+    /// Starts reading the items of the source into the buffer of the stream. The request resources stay alive
+    /// until the producer has disposed the enumerator of the source.
     /// </summary>
     public void StartProducer()
-        => _ = ProduceAsync();
+    {
+        _requestCleanup?.Hold();
+        _ = ProduceAsync();
+    }
 
     /// <summary>
     /// Stops the stream. The enumerator is disposed by the producer once the source returns control.
@@ -140,6 +146,11 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             finally
             {
                 _cancellation.Dispose();
+            }
+
+            if (_requestCleanup is not null)
+            {
+                await _requestCleanup.ReleaseAsync().ConfigureAwait(false);
             }
         }
     }

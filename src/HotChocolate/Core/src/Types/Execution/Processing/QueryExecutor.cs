@@ -29,7 +29,10 @@ internal sealed class QueryExecutor
         var requestAborted = operationContext.RequestAborted;
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
         var operationAborted = cancellation.Token;
-        var requestCleanup = new RequestCleanup(cancellation);
+        var requestCleanup = new RequestCleanup(
+            cancellation,
+            operationContext.RequestContext,
+            operationContext.DiagnosticEvents);
         operationContext.RequestCleanup = requestCleanup;
         operationContext.OverrideRequestAborted(operationAborted);
 
@@ -78,17 +81,19 @@ internal sealed class QueryExecutor
             requestCleanup.Register(cleanupTask);
         }
 
-        var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult);
-
         // the request resources are shared between the response stream and the running execution,
         // whichever releases last runs the cleanup.
         requestCleanup.Hold();
-        _ = ReleaseWhenSettledAsync(execution, requestCleanup);
-        operationContext.Features.Set(requestCleanup);
+        var settled = ReleaseWhenSettledAsync(execution, requestCleanup);
+
+        var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult)
+        {
+            RequestCleanup = requestCleanup
+        };
 
         // the payloads are disposed while the stream is still being read, so the stream
         // releases its hold when the stream itself is disposed.
-        stream.RegisterForCleanup(requestCleanup.AbandonAsync);
+        stream.RegisterForCleanup(requestCleanup);
 
         return stream;
 
@@ -103,7 +108,7 @@ internal sealed class QueryExecutor
                     yield return result;
                 }
 
-                isRead = !requestAborted.IsCancellationRequested && !operationAborted.IsCancellationRequested;
+                isRead = !operationAborted.IsCancellationRequested;
             }
             finally
             {
@@ -119,6 +124,7 @@ internal sealed class QueryExecutor
                 // The stream was read to completion, so every deferred branch has been delivered and
                 // the scheduler has fully settled: no resolver or batch task can write into the arena
                 // anymore, so we seal it to allow its memory to be returned on dispose.
+                await settled.ConfigureAwait(false);
                 await execution.ConfigureAwait(false);
                 memory.Seal();
             }
@@ -136,14 +142,7 @@ internal sealed class QueryExecutor
             // an aborted execution has no consumer left that could observe its failure.
         }
 
-        try
-        {
-            await requestCleanup.SettleAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            // when the execution settles last, the cleanup failure has no consumer to report to.
-        }
+        await requestCleanup.SettleAsync().ConfigureAwait(false);
     }
 
     private static async Task<IExecutionResult> ExecuteNoIncrementalAsync(
