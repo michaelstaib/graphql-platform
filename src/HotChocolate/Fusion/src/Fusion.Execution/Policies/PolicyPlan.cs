@@ -21,7 +21,6 @@ public sealed class PolicyPlan
         Variables = variables;
         IsEmpty = descriptors.IsDefaultOrEmpty;
         HasUnresolvedPolicies = ContainsUnresolvedPolicy(descriptors);
-        HasReevaluatedPolicies = ContainsReevaluatedPolicy(descriptors);
     }
 
     /// <summary>
@@ -45,30 +44,11 @@ public sealed class PolicyPlan
     /// </summary>
     internal bool HasUnresolvedPolicies { get; }
 
-    /// <summary>
-    /// Gets a value that indicates whether any descriptor refers to a policy that a subscription
-    /// asks again for every event.
-    /// </summary>
-    internal bool HasReevaluatedPolicies { get; }
-
     private static bool ContainsUnresolvedPolicy(ImmutableArray<PolicyDescriptor> descriptors)
     {
         foreach (var descriptor in descriptors)
         {
             if (descriptor.Policy is UnresolvedPolicy)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool ContainsReevaluatedPolicy(ImmutableArray<PolicyDescriptor> descriptors)
-    {
-        foreach (var descriptor in descriptors)
-        {
-            if (descriptor.Policy.ReevaluatesPerEvent)
             {
                 return true;
             }

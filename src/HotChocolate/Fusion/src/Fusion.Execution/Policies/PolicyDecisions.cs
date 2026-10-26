@@ -26,24 +26,17 @@ internal sealed class PolicyDecisions
     /// <param name="isAttributed">
     /// Whether the errors of denied selections name the directive, policy and required scopes.
     /// </param>
-    /// <param name="alwaysFinalize">
-    /// Whether the result is always completed with the denied selections, even when no error
-    /// or non-null selection requires it.
-    /// </param>
     public PolicyDecisions(
         ImmutableArray<SelectionDenial> denials,
         DenyHandling denyHandling,
-        bool isAttributed,
-        bool alwaysFinalize)
+        bool isAttributed)
     {
         Denials = denials;
         _denialsBySelection = denials.ToFrozenDictionary(static d => d.Selection);
         _denyHandling = denyHandling;
         _isAttributed = isAttributed;
 
-        RequiresFinalization = alwaysFinalize
-            || denyHandling is DenyHandling.Error
-            || ContainsNonNullSelection(denials);
+        RequiresFinalization = denyHandling is DenyHandling.Error || ContainsNonNullSelection(denials);
     }
 
     /// <summary>
