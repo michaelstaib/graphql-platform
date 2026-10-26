@@ -121,7 +121,8 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
         FakeTimeProvider time,
         SwitchablePolicy live,
         SwitchablePolicy flip,
-        RecordingAuditProvider audit) : IDisposable
+        RecordingAuditProvider audit)
+        : IDisposable
     {
         public Gateway Gateway { get; } = gateway;
 
