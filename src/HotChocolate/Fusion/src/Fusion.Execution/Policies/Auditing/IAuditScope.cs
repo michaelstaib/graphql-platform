@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace HotChocolate.Fusion.Policies.Audit;
+namespace HotChocolate.Fusion.Policies.Auditing;
 
 /// <summary>
 /// The policy decisions of one variable set, which the gateway commits exactly once before it

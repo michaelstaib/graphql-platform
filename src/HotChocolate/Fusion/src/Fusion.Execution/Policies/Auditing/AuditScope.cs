@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using System.Security.Claims;
 using HotChocolate.Fusion.Execution;
 
-namespace HotChocolate.Fusion.Policies.Audit;
+namespace HotChocolate.Fusion.Policies.Auditing;
 
 /// <summary>
 /// A scope that keeps its entries until it is committed and then hands them over once.
