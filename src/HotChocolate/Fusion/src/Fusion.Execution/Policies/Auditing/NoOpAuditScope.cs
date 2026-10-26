@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace HotChocolate.Fusion.Policies.Audit;
+namespace HotChocolate.Fusion.Policies.Auditing;
 
 internal sealed class NoOpAuditScope : IAuditScope
 {
