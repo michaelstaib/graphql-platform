@@ -64,7 +64,7 @@ internal sealed class DeferTask : ExecutionTask
         {
             // ... and then wait for the scheduler to complete the deferred tasks. An aborted request
             // still waits for them, so the context is not reset while they use it.
-            await deferContext.Scheduler.WaitForSettlementAsync(_executionBranchId);
+            await deferContext.Scheduler.WaitForSettlementAsParkedTaskAsync(_executionBranchId);
             cancellationToken.ThrowIfCancellationRequested();
 
             // once the execution branch has completed we enqueue the completed

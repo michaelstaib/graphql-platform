@@ -7,10 +7,17 @@ internal sealed class WorkQueue
     private readonly Stack<IExecutionTask> _immediateStack = new();
     private readonly Stack<IExecutionTask> _deferredStack = new();
     private int _running;
+    private int _parked;
 
     public bool IsEmpty => _immediateStack.Count == 0 && _deferredStack.Count == 0;
 
     public bool HasRunningTasks => _running > 0;
+
+    public bool HasBlockingTasks => _running > _parked;
+
+    public void Park() => _parked++;
+
+    public void Unpark() => _parked--;
 
     public bool Complete()
     {
@@ -55,5 +62,6 @@ internal sealed class WorkQueue
         _immediateStack.Clear();
         _deferredStack.Clear();
         _running = 0;
+        _parked = 0;
     }
 }
