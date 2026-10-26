@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Options;
 using Microsoft.Extensions.ObjectPool;
+using static HotChocolate.Execution.ErrorHelper;
 using static HotChocolate.Execution.ThrowHelper;
 
 namespace HotChocolate.Execution.Processing;
@@ -41,6 +42,15 @@ internal sealed partial class SubscriptionExecutor(
 
         try
         {
+            if (operation.HasIncrementalParts
+                && SubscriptionIncrementalDirectives.TryFindEnabled(
+                    operation.Definition,
+                    requestContext.VariableValues[0],
+                    out var incrementalDirective))
+            {
+                return DeferAndStreamEnabledInSubscription(incrementalDirective.Name.Value);
+            }
+
             subscription = await Subscription.SubscribeAsync(
                 operationContextPool,
                 queryExecutor,

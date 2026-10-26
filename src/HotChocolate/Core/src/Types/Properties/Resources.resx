@@ -324,6 +324,9 @@
   <data name="ErrorHelper_IncrementalDeliveryNotAcceptable" xml:space="preserve">
     <value>The client does not accept a response content type that supports incremental delivery.</value>
   </data>
+  <data name="ErrorHelper_DeferAndStreamEnabledInSubscription" xml:space="preserve">
+    <value>The @{0} directive cannot be enabled in a subscription operation. Pass false to its `if` argument to disable it.</value>
+  </data>
   <data name="ThrowHelper_ExecutionGroup_BatchSelectionNotSupported" xml:space="preserve">
     <value>The field `{0}` uses a batch resolver and cannot take part in an execution group.</value>
   </data>
