@@ -2361,7 +2361,7 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Should_SendOneSubgraphRequestPerGroupSet_When_SiblingsOverlapPartially()
     {
         // arrange
-        using var gateway = await CreateUserGatewayAsync();
+        using var gateway = await CreateUserGatewayWithAddressAfterEmailAsync();
 
         // act
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
@@ -2748,6 +2748,41 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
+    [Fact]
+    public async Task Defer_Should_AnchorSharedData_At_CompletingGroup_When_SecondSiblingCompletesFirst()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayWithAddressAfterEmailAsync();
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "first") {
+                        email
+                        address
+                    }
+                    ... @defer(label: "second") {
+                        email
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        // Both groups share the path, so the shared email is anchored at the group this payload completes.
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
     private async Task<Gateway> CreateUserGatewayAsync()
     {
         var server1 = CreateSourceSchema(
@@ -2777,6 +2812,70 @@ public class DeferTests : FusionTestBase
                 phone: String!
             }
             """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private async Task<Gateway> CreateUserGatewayWithAddressAfterEmailAsync()
+    {
+        // The address response is held back until the email response has been returned. This fixes the
+        // order in which sibling groups complete.
+        var emailReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        HttpMessageInvoker? invoker = null;
+
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """);
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+                phone: String!
+            }
+            """,
+            mockHttpResponse: async request =>
+            {
+                var body = await request.Content!.ReadAsStringAsync();
+                var isAddress = body.Contains("address", StringComparison.Ordinal);
+
+                if (isAddress)
+                {
+                    await emailReturned.Task;
+                    await Task.Delay(TimeSpan.FromMilliseconds(250));
+                }
+
+                var response = await invoker!.SendAsync(request, CancellationToken.None);
+
+                if (body.Contains("email", StringComparison.Ordinal) && !isAddress)
+                {
+                    emailReturned.TrySetResult();
+                }
+
+                return response;
+            });
+
+        invoker = new HttpMessageInvoker(server2.CreateHandler());
 
         return await CreateCompositeSchemaAsync(
         [
