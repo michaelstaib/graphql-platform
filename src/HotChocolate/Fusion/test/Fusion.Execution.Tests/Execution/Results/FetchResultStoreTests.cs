@@ -787,20 +787,17 @@ public sealed class FetchResultStoreTests : FusionTestBase
         "users: [User!]",
         """{"data":{"users":[{"email":null}]}}""",
         """{"data":{"users":[{"id":"1"}]}}""",
-        """{"users":null}""",
-        "users[0].email")]
+        "NonNullItems")]
     [InlineData(
         "users: [User]",
         """{"data":{"users":[{"email":null},{"id":"2","email":"b"}]}}""",
         """{"data":{"users":[{"id":"1"},{"id":"2"}]}}""",
-        """{"users":[null,{"id":"2","email":"b"}]}""",
-        "users[0].email")]
+        "NullableItems")]
     public void AddPartialResults_Should_SkipNulledPositions_When_PropagatedNullPrecedesLaterListResult(
         string usersField,
         string firstPayload,
         string secondPayload,
-        string expectedData,
-        string expectedErrorPath)
+        string caseName)
     {
         // arrange
         var schema = ComposeSchema(
@@ -837,10 +834,10 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // assert
         Assert.True(added);
-        Assert.Equal(expectedData, RenderData(store));
-        Assert.Collection(
-            store.Errors!,
-            error => Assert.Equal(expectedErrorPath, error.Path?.Print()));
+        Snapshot.Create(caseName)
+            .Add(RenderData(store), "Data", MarkdownLanguages.Json)
+            .Add(store.Errors!.Select(error => error.Path?.Print()).ToArray(), "Error Paths")
+            .MatchMarkdownSnapshot();
     }
 
     [Theory]

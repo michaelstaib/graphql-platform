@@ -3066,8 +3066,6 @@ public class DeferTests : FusionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        // Whether the lookup node completes before or after the email error nulls the user, the group completes
-        // with the single error of the email field.
         var payloads = await ReadPayloadsAsync(result);
         payloads.MatchInlineSnapshots(
         [
