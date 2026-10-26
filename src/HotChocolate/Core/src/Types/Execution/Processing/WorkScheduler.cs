@@ -126,15 +126,16 @@ internal sealed partial class WorkScheduler
         switch (task)
         {
             case Tasks.ResolverTask resolverTask:
-                CompleteBranchTask(task.BranchId);
-
-                if (work.Complete())
+                lock (_sync)
                 {
-                    lock (_sync)
+                    CompleteBranchTaskUnsafe(task.BranchId);
+
+                    if (work.Complete())
                     {
                         _completed.Add(resolverTask.Id);
-                        DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
                     }
+
+                    DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
                 }
                 break;
 
@@ -149,8 +150,9 @@ internal sealed partial class WorkScheduler
                     if (work.Complete())
                     {
                         _completed.Add(task.Id);
-                        DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
                     }
+
+                    DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
                 }
                 break;
 
