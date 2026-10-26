@@ -29,6 +29,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly int _maxItemsPerPayload;
     private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
+    private Task? _producer;
     private int _nextItemIndex;
     private int _streamBranchId;
 
@@ -87,12 +88,13 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
     /// <summary>
     /// Starts reading the items of the source into the buffer of the stream. The request resources stay alive
-    /// until the producer has disposed the enumerator of the source.
+    /// until the producer has disposed the enumerator of the source, and the task waits for the producer
+    /// once the source returned.
     /// </summary>
     public void StartProducer()
     {
         _requestCleanup?.Hold();
-        _ = ProduceAsync();
+        _producer = ProduceAsync();
     }
 
     /// <summary>
@@ -112,6 +114,11 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
         finally
         {
+            if (_producer is { } producer && _buffer.Reader.Completion.IsCompleted)
+            {
+                await producer.ConfigureAwait(false);
+            }
+
             await DisposeAsync().ConfigureAwait(false);
         }
     }

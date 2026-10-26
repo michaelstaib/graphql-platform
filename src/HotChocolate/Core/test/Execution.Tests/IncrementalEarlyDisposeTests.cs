@@ -205,6 +205,60 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task DisposeAsync_Should_ThrowCleanupFailureAfterSourceDisposal_When_SourceDisposesAsynchronously()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        var result = await executor.ExecuteAsync(
+            "{ failingNumbers @stream(initialCount: 0) { value } }",
+            TestContext.Current.CancellationToken);
+        var stream = Assert.IsType<ResponseStream>(result);
+        var eventsAtLastPayload = new List<string>();
+        var hasNext = true;
+
+        // act
+        await using (var enumerator = stream.ReadResultsAsync()
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken))
+        {
+            while (hasNext)
+            {
+                Assert.True(await MoveNextAsync(enumerator));
+                hasNext = Summarize(enumerator.Current).EndsWith("hasNext=True", StringComparison.Ordinal);
+                await enumerator.Current.DisposeAsync();
+            }
+
+            await probe.Started("dispose").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            eventsAtLastPayload.AddRange(probe.Events);
+            probe.Gate("dispose").TrySetResult();
+
+            while (await MoveNextAsync(enumerator))
+            {
+                await enumerator.Current.DisposeAsync();
+            }
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => stream.DisposeAsync().AsTask());
+
+        // assert
+        Assert.Equal("cleanup failed", exception.Message);
+        Assert.Empty(probe.Errors);
+        eventsAtLastPayload.MatchInlineSnapshots(
+        [
+            "source returned",
+            "enumerator dispose started"
+        ]);
+        probe.Events.ToArray().MatchInlineSnapshots(
+        [
+            "source returned",
+            "enumerator dispose started",
+            "enumerator disposed",
+            "request scope disposed",
+            "request context returned"
+        ]);
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_ReportCleanupFailures_When_TheExecutionSettlesAfterTheStreamWasDisposed()
     {
         // arrange
@@ -369,6 +423,22 @@ public class IncrementalEarlyDisposeTests
 
         public IAsyncEnumerable<int> GetStubbornNumbers([Service] Probe probe, [Service] ScopeProbe scopeProbe)
             => new StubbornEnumerable(probe);
+
+        public IAsyncEnumerable<Number> GetFailingNumbers(
+            IResolverContext context,
+            [Service] Probe probe,
+            [Service] ScopeProbe scopeProbe)
+        {
+            ((IMiddlewareContext)context).RegisterForCleanup(
+                static () => ValueTask.FromException(new InvalidOperationException("cleanup failed")),
+                CleanAfter.Request);
+            return new SlowDisposeEnumerable(probe);
+        }
+    }
+
+    public sealed class Number(int value)
+    {
+        public int Value => value;
     }
 
     public sealed class Item(string id)
@@ -556,6 +626,40 @@ public class IncrementalEarlyDisposeTests
         {
             probe.Log("enumerator disposed");
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class SlowDisposeEnumerable(Probe probe) : IAsyncEnumerable<Number>
+    {
+        public IAsyncEnumerator<Number> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+            => new SlowDisposeEnumerator(probe);
+    }
+
+    private sealed class SlowDisposeEnumerator(Probe probe) : IAsyncEnumerator<Number>
+    {
+        private int _count;
+
+        public Number Current { get; private set; } = null!;
+
+        public ValueTask<bool> MoveNextAsync()
+        {
+            if (_count < 2)
+            {
+                _count++;
+                Current = new Number(_count);
+                return new ValueTask<bool>(true);
+            }
+
+            probe.Log("source returned");
+            return new ValueTask<bool>(false);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            probe.Log("enumerator dispose started");
+            probe.Started("dispose").TrySetResult();
+            await probe.Gate("dispose").Task;
+            probe.Log("enumerator disposed");
         }
     }
 
