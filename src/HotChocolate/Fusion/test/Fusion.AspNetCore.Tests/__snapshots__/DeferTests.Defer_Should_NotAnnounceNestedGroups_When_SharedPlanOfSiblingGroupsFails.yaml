@@ -7,6 +7,9 @@ request:
         name
         ... @defer(label: "contact") {
           email
+          ... @defer(label: "contactAddress") {
+            address
+          }
         }
         ... @defer(label: "location") {
           email
@@ -37,7 +40,7 @@ stableResponseStream: |
         "label": "contact"
       },
       {
-        "id": "1",
+        "id": "2",
         "path": [
           "user"
         ],
@@ -64,7 +67,7 @@ stableResponseStream: |
         ]
       },
       {
-        "id": "1",
+        "id": "2",
         "errors": [
           {
             "message": "Unexpected Execution Error",
@@ -110,7 +113,7 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query Op_1ce2a8df_1 {
+            query Op_dc965eeb_1 {
               user(id: "1") {
                 id
                 name
@@ -201,7 +204,7 @@ operationPlan:
             name
           }
         }
-      hash: 26d24abb22bf48fe3444b0b4c54135fd
+      hash: a47cce3d27e9317afbd9e942f32a7799
       searchSpace: 1
       expandedNodes: 1
   nodes:
@@ -209,7 +212,7 @@ operationPlan:
       type: Operation
       schema: A
       operation: |
-        query Op_1ce2a8df_1 {
+        query Op_dc965eeb_1 {
           user(id: "1") {
             id
             name
@@ -221,15 +224,19 @@ operationPlan:
       label: contact
     - id: 1
       path: $.user
-      label: location
+      label: contactAddress
+      parentId: 0
     - id: 2
       path: $.user
+      label: location
+    - id: 3
+      path: $.user
       label: locationPhone
-      parentId: 1
+      parentId: 2
   incrementalPlans:
     - deliveryGroupIds:
         - 0
-        - 1
+        - 2
       parentNodeId: 1
       requirements:
         - name: __fusion_1_id
@@ -263,7 +270,32 @@ operationPlan:
               }
             }
     - deliveryGroupIds:
-        - 2
+        - 1
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                address
+              }
+            }
+          source: $.userById
+          target: $.user
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 2
+    - deliveryGroupIds:
+        - 3
       parentNodeId: 1
       requirements:
         - name: __fusion_1_id

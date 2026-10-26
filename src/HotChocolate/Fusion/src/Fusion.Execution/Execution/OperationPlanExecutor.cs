@@ -373,8 +373,9 @@ internal static partial class OperationPlanExecutor
                 }
 
                 // Start nested incremental plans whose parent delivery group
-                // belongs to the just-completed incremental plan, then mark
-                // their delivery groups as pending on the outgoing result.
+                // belongs to the just-completed incremental plan and has now
+                // completed in every incremental plan that contains it, then
+                // mark their delivery groups as pending on the outgoing result.
                 var childPending = ImmutableList.CreateBuilder<PendingResult>();
                 foreach (var candidate in incrementalPlans)
                 {
@@ -409,7 +410,8 @@ internal static partial class OperationPlanExecutor
                         }
                     }
 
-                    if (!parentBelongsToJustCompleted)
+                    if (!parentBelongsToJustCompleted
+                        || pendingCountByDeliveryGroup.ContainsKey(candidateParent.Id))
                     {
                         continue;
                     }
@@ -719,7 +721,8 @@ internal static partial class OperationPlanExecutor
     /// <summary>
     /// Selects the delivery group used to anchor an incremental result.
     /// The group with the deepest path is selected. Ties are broken by the group this result completes,
-    /// then by the smallest <see cref="DeliveryGroup.Id"/>.
+    /// then by the smallest <see cref="DeliveryGroup.Id"/>. Failed groups are skipped, and
+    /// <see langword="null"/> is returned when every active group of the plan has failed.
     /// </summary>
     private static DeliveryGroup? PickBestDeliveryGroup(
         IncrementalPlan incrementalPlan,
