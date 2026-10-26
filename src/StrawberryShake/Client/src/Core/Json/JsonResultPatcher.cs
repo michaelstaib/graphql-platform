@@ -23,12 +23,14 @@ public class JsonResultPatcher : IResultPatcher<JsonDocument>
 
     public Response<JsonDocument> PatchResponse(Response<JsonDocument> response)
     {
-        if (_response?.Body is null || !response.Body!.RootElement.TryGetProperty(Data, out _))
+        if (_response?.Body is null
+            || (!response.Body!.RootElement.TryGetProperty(Data, out _)
+                && !response.Body.RootElement.TryGetProperty(Incremental, out _)))
         {
             throw new NotSupportedException(JsonResultPatcher_NoValidInitialResponse);
         }
 
-        _json ??= JsonObject.Create(_response.Body.RootElement);
+        _json ??= JsonObject.Create(_response.Body.RootElement)!;
 
         if (_extensions is null && _response.Extensions is not null)
         {
@@ -40,65 +42,28 @@ public class JsonResultPatcher : IResultPatcher<JsonDocument>
             _contextData = new(_response.ContextData);
         }
 
-        var current = _json![Data]!;
-
-        if (response.Body is not null
-            && response.Body.RootElement.TryGetProperty(ResultFields.Path, out var pathProp)
-            && response.Body.RootElement.TryGetProperty(Data, out var dataProp))
+        if (response.Body is not null)
         {
-            var path = pathProp.EnumerateArray().ToArray();
+            var root = response.Body.RootElement;
 
-            if (path.Length > 1)
+            if (root.TryGetProperty(ResultFields.Path, out var pathProp)
+                && root.TryGetProperty(Data, out var dataProp))
             {
-                var max = path.Length - 1;
-
-                for (var i = 0; i < max; i++)
-                {
-                    current = path[i].ValueKind switch
-                    {
-                        JsonValueKind.String => current[path[i].GetString()!]!,
-                        JsonValueKind.Number => current[path[i].GetInt32()]!,
-                        _ => throw new NotSupportedException(
-                            JsonResultPatcher_PathSegmentMustBeStringOrInt)
-                    };
-                }
+                ApplyPatch(pathProp, dataProp);
             }
 
-            var last = path[^1];
-
-            if (last.ValueKind is JsonValueKind.String)
+            if (root.TryGetProperty(Incremental, out var incremental)
+                && incremental.ValueKind is JsonValueKind.Array)
             {
-                current = current[last.GetString()!]!;
-                var patchData = JsonObject.Create(dataProp)!;
-
-                foreach ((var key, var value) in patchData.ToArray())
+                foreach (var entry in incremental.EnumerateArray())
                 {
-                    patchData.Remove(key);
-                    current[key] = value;
-                }
-            }
-            else if (last.ValueKind is JsonValueKind.Number)
-            {
-                var index = last.GetInt32();
-                var element = current[index];
-                var patchData = JsonObject.Create(dataProp)!;
-
-                if (element is null)
-                {
-                    current[index] = patchData;
-                }
-                else
-                {
-                    foreach ((var key, var value) in patchData.ToArray())
+                    if (entry.TryGetProperty(ResultFields.Path, out var entryPath)
+                        && entry.TryGetProperty(Data, out var entryData)
+                        && entryData.ValueKind is JsonValueKind.Object)
                     {
-                        patchData.Remove(key);
-                        element[key] = value;
+                        ApplyPatch(entryPath, entryData);
                     }
                 }
-            }
-            else
-            {
-                throw new NotSupportedException(JsonResultPatcher_PathSegmentMustBeStringOrInt);
             }
         }
 
@@ -121,6 +86,66 @@ public class JsonResultPatcher : IResultPatcher<JsonDocument>
             response.HasNext,
             _extensions,
             _contextData);
+    }
+
+    private void ApplyPatch(JsonElement pathProp, JsonElement dataProp)
+    {
+        var current = _json![Data]!;
+
+        var path = pathProp.EnumerateArray().ToArray();
+
+        if (path.Length > 1)
+        {
+            var max = path.Length - 1;
+
+            for (var i = 0; i < max; i++)
+            {
+                current = path[i].ValueKind switch
+                {
+                    JsonValueKind.String => current[path[i].GetString()!]!,
+                    JsonValueKind.Number => current[path[i].GetInt32()]!,
+                    _ => throw new NotSupportedException(
+                        JsonResultPatcher_PathSegmentMustBeStringOrInt)
+                };
+            }
+        }
+
+        var last = path[^1];
+
+        if (last.ValueKind is JsonValueKind.String)
+        {
+            current = current[last.GetString()!]!;
+            var patchData = JsonObject.Create(dataProp)!;
+
+            foreach ((var key, var value) in patchData.ToArray())
+            {
+                patchData.Remove(key);
+                current[key] = value;
+            }
+        }
+        else if (last.ValueKind is JsonValueKind.Number)
+        {
+            var index = last.GetInt32();
+            var element = current[index];
+            var patchData = JsonObject.Create(dataProp)!;
+
+            if (element is null)
+            {
+                current[index] = patchData;
+            }
+            else
+            {
+                foreach ((var key, var value) in patchData.ToArray())
+                {
+                    patchData.Remove(key);
+                    element[key] = value;
+                }
+            }
+        }
+        else
+        {
+            throw new NotSupportedException(JsonResultPatcher_PathSegmentMustBeStringOrInt);
+        }
     }
 
     private static Dictionary<string, object?>? MergeExtensions(
