@@ -172,7 +172,8 @@ public sealed class OperationResult : IDisposable
             root.TryGetProperty(RequestIndexProp, out var requestIndex) ? requestIndex.GetInt32() : null,
             root.TryGetProperty(VariableIndexProp, out var variableIndex) ? variableIndex.GetInt32() : null,
             root.TryGetProperty(IncrementalProp, out var incremental) ? incremental : default,
-            root.TryGetProperty(HasNextProp, out var hasNext) && hasNext.ValueKind is JsonValueKind.True or JsonValueKind.False
-                ? hasNext.GetBoolean()
-                : null);
+            root.TryGetProperty(HasNextProp, out var hasNext)
+                && hasNext.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? hasNext.GetBoolean()
+                    : null);
 }
