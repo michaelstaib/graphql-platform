@@ -157,16 +157,19 @@ internal sealed partial class FetchResultStore : IDisposable
         int[]? rentedUtf8FieldNameEnds = null;
         var asciiByteCount = ComputeAsciiFieldNameBytes(sourcePath);
 
-        var utf8FieldNames = asciiByteCount == 0
+        var fieldNameBytes = new FieldNameByteBuffer();
+        var fieldNameEndOffsets = new FieldNameEndBuffer();
+
+        Span<byte> utf8FieldNames = asciiByteCount == 0
             ? default
             : asciiByteCount <= JsonConstants.StackallocByteThreshold
-                ? stackalloc byte[JsonConstants.StackallocByteThreshold]
+                ? fieldNameBytes
                 : (rentedUtf8FieldNames = s_bytePool.Rent(asciiByteCount));
 
-        var utf8FieldNameEnds = sourcePath.Length == 0
+        Span<int> utf8FieldNameEnds = sourcePath.Length == 0
             ? default
             : sourcePath.Length <= MaxStackAllocPathSegments
-                ? stackalloc int[MaxStackAllocPathSegments]
+                ? fieldNameEndOffsets
                 : (rentedUtf8FieldNameEnds = s_intPool.Rent(sourcePath.Length));
 
         if (sourcePath.Length > 0)
@@ -301,16 +304,19 @@ internal sealed partial class FetchResultStore : IDisposable
         int[]? rentedUtf8FieldNameEnds = null;
         var asciiByteCount = ComputeAsciiFieldNameBytes(sourcePath);
 
-        var utf8FieldNames = asciiByteCount == 0
+        var fieldNameBytes = new FieldNameByteBuffer();
+        var fieldNameEndOffsets = new FieldNameEndBuffer();
+
+        Span<byte> utf8FieldNames = asciiByteCount == 0
             ? default
             : asciiByteCount <= JsonConstants.StackallocByteThreshold
-                ? stackalloc byte[JsonConstants.StackallocByteThreshold]
+                ? fieldNameBytes
                 : (rentedUtf8FieldNames = s_bytePool.Rent(asciiByteCount));
 
-        var utf8FieldNameEnds = sourcePath.Length == 0
+        Span<int> utf8FieldNameEnds = sourcePath.Length == 0
             ? default
             : sourcePath.Length <= MaxStackAllocPathSegments
-                ? stackalloc int[MaxStackAllocPathSegments]
+                ? fieldNameEndOffsets
                 : (rentedUtf8FieldNameEnds = s_intPool.Rent(sourcePath.Length));
 
         if (sourcePath.Length > 0)
@@ -1286,7 +1292,8 @@ AddErrors_Next:
             return false;
         }
 
-        Span<bool> nonNullKeys = stackalloc bool[MaxRawKeyRequirements];
+        var nonNullKeyFlags = new RawKeyRequirementFlags();
+        Span<bool> nonNullKeys = nonNullKeyFlags;
 
         for (var i = 0; i < requiredData.Length; i++)
         {
@@ -4078,5 +4085,23 @@ AddErrors_Next:
             public int Location;
             public int Length;
         }
+    }
+
+    [InlineArray(JsonConstants.StackallocByteThreshold)]
+    private struct FieldNameByteBuffer
+    {
+        private byte _element0;
+    }
+
+    [InlineArray(MaxStackAllocPathSegments)]
+    private struct FieldNameEndBuffer
+    {
+        private int _element0;
+    }
+
+    [InlineArray(MaxRawKeyRequirements)]
+    private struct RawKeyRequirementFlags
+    {
+        private bool _element0;
     }
 }

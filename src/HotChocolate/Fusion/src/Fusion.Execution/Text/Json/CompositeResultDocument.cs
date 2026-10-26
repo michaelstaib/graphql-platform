@@ -182,8 +182,10 @@ public sealed partial class CompositeResultDocument : IDisposable
             return CompactPath.Root;
         }
 
-        Span<Cursor> chain = stackalloc Cursor[64];
-        Span<DbRow> rows = stackalloc DbRow[64];
+        Unsafe.SkipInit(out CursorChainBuffer chainBuffer);
+        Unsafe.SkipInit(out RowChainBuffer rowBuffer);
+        Span<Cursor> chain = chainBuffer;
+        Span<DbRow> rows = rowBuffer;
         chain[0] = current;
         rows[0] = firstRow;
         var written = 1;
@@ -204,7 +206,8 @@ public sealed partial class CompositeResultDocument : IDisposable
             }
         }
 
-        Span<int> pathBuffer = stackalloc int[32];
+        Unsafe.SkipInit(out PathSegmentBuffer pathSegments);
+        Span<int> pathBuffer = pathSegments;
         var path = new CompactPathBuilder(pathBuffer, pooled ? Volatile.Read(ref _pathPool) : null);
         var parentTokenType = ElementTokenType.StartObject;
 
@@ -813,5 +816,23 @@ public sealed partial class CompositeResultDocument : IDisposable
         }
 
         _metaDb.Dispose();
+    }
+
+    [InlineArray(64)]
+    private struct CursorChainBuffer
+    {
+        private Cursor _element0;
+    }
+
+    [InlineArray(64)]
+    private struct RowChainBuffer
+    {
+        private DbRow _element0;
+    }
+
+    [InlineArray(32)]
+    private struct PathSegmentBuffer
+    {
+        private int _element0;
     }
 }
