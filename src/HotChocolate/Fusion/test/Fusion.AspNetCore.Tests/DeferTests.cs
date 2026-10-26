@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
+using Microsoft.AspNetCore.Builder;
 
 namespace HotChocolate.Fusion;
 
@@ -2822,9 +2823,9 @@ public class DeferTests : FusionTestBase
 
     private async Task<Gateway> CreateUserGatewayWithAddressAfterEmailAsync()
     {
-        // The address response is held back until the email response has been returned. This fixes the
-        // order in which sibling groups complete.
-        var emailReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The address response is held back until the gateway has written the payload that carries the email
+        // data to the client. This fixes the order in which sibling groups complete.
+        var emailDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         HttpMessageInvoker? invoker = null;
 
         var server1 = CreateSourceSchema(
@@ -2857,31 +2858,35 @@ public class DeferTests : FusionTestBase
             mockHttpResponse: async request =>
             {
                 var body = await request.Content!.ReadAsStringAsync();
-                var isAddress = body.Contains("address", StringComparison.Ordinal);
 
-                if (isAddress)
+                if (body.Contains("address", StringComparison.Ordinal))
                 {
-                    await emailReturned.Task;
-                    await Task.Delay(TimeSpan.FromMilliseconds(250));
+                    await emailDelivered.Task.WaitAsync(TimeSpan.FromSeconds(30));
                 }
 
-                var response = await invoker!.SendAsync(request, CancellationToken.None);
-
-                if (body.Contains("email", StringComparison.Ordinal) && !isAddress)
-                {
-                    emailReturned.TrySetResult();
-                }
-
-                return response;
+                return await invoker!.SendAsync(request, CancellationToken.None);
             });
 
         invoker = new HttpMessageInvoker(server2.CreateHandler());
 
         return await CreateCompositeSchemaAsync(
-        [
-            ("A", server1),
-            ("B", server2)
-        ]);
+            [
+                ("A", server1),
+                ("B", server2)
+            ],
+            configureApplication: app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Response.Body = new SignalOnWriteStream(
+                        context.Response.Body,
+                        "\"email\""u8.ToArray(),
+                        emailDelivered);
+                    await next(context);
+                });
+                app.UseRouting();
+                app.UseEndpoints(endpoint => endpoint.MapGraphQL());
+            });
     }
 
     private async Task<Gateway> CreateUserAccountGatewayAsync()
@@ -2954,5 +2959,60 @@ public class DeferTests : FusionTestBase
             gateway.Interactions
                 .OrderBy(t => t.Key, StringComparer.Ordinal)
                 .Select(t => $"{t.Key}: {t.Value.Count}"));
+    }
+
+    private sealed class SignalOnWriteStream(
+        Stream inner,
+        byte[] marker,
+        TaskCompletionSource signal) : Stream
+    {
+        public override bool CanRead => false;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => true;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+            => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            inner.Write(buffer);
+            Notify(buffer);
+        }
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            await inner.WriteAsync(buffer, cancellationToken);
+            Notify(buffer.Span);
+        }
+
+        private void Notify(ReadOnlySpan<byte> buffer)
+        {
+            if (buffer.IndexOf(marker) >= 0)
+            {
+                signal.TrySetResult();
+            }
+        }
     }
 }
