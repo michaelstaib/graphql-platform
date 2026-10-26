@@ -97,6 +97,44 @@ public class HttpConnectionTests : ServerTestBase
         ]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_MarkTrailingHasNextPayloadAsPatch_When_ResponseIsDeferred()
+    {
+        // arrange
+        var handler = new StubHandler(
+            "application/graphql-response+jsonl",
+            """
+            {"data":{"hero":{"name":"R2-D2"}},"hasNext":true}
+            {"incremental":[{"data":{"id":"1"},"path":["hero"]}],"hasNext":true}
+            {"hasNext":false}
+
+            """);
+        var client = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/graphql") };
+        var request = new OperationRequest("Test", new MockDocument("query Test { hero { name } }"));
+        var connection = new HttpConnection(() => client);
+
+        // act
+        var results = new List<string>();
+        await foreach (var response in connection.ExecuteAsync(request))
+        {
+            results.Add($"{response.IsPatch} {response.HasNext} {response.Body!.RootElement}");
+        }
+
+        // assert
+        results.MatchInlineSnapshots(
+        [
+            """
+            False True {"data":{"hero":{"name":"R2-D2"}}}
+            """,
+            """
+            True True {"incremental":[{"data":{"id":"1"},"path":["hero"]}]}
+            """,
+            """
+            True False {}
+            """
+        ]);
+    }
+
     [Fact(Skip = "We are postponing defer integration until spec is more stable.")]
     public async Task MultiPart_Request()
     {

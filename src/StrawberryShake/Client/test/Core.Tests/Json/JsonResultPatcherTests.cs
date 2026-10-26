@@ -81,6 +81,23 @@ public class JsonResultPatcherTests
             """{"data":{"hero":{"name":"R2-D2"}}}""");
     }
 
+    [Fact]
+    public void PatchResponse_Should_KeepMergedData_When_PatchHasOnlyHasNext()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher();
+        patcher.SetResponse(CreateResponse("""{"data":{"hero":{"name":"R2-D2"}}}""", hasNext: true));
+        var patch = CreateResponse("{}", isPatch: true);
+
+        // act
+        var patched = patcher.PatchResponse(patch);
+
+        // assert
+        patched.Body!.RootElement.ToString().MatchInlineSnapshot(
+            """{"data":{"hero":{"name":"R2-D2"}}}""");
+        Assert.False(patched.HasNext);
+    }
+
     private static Response<JsonDocument> CreateResponse(
         string json,
         bool isPatch = false,

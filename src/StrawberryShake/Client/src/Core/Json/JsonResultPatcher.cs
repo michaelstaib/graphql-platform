@@ -23,9 +23,7 @@ public class JsonResultPatcher : IResultPatcher<JsonDocument>
 
     public Response<JsonDocument> PatchResponse(Response<JsonDocument> response)
     {
-        if (_response?.Body is null
-            || (!response.Body!.RootElement.TryGetProperty(Data, out _)
-                && !response.Body.RootElement.TryGetProperty(Incremental, out _)))
+        if (_response?.Body is null)
         {
             throw new NotSupportedException(JsonResultPatcher_NoValidInitialResponse);
         }

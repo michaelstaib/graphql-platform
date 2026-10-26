@@ -72,7 +72,8 @@ internal sealed class ResponseEnumerable : IAsyncEnumerable<Response<JsonDocumen
                     result,
                     parsedResult,
                     transportError,
-                    isPatch: current.Incremental.ValueKind is JsonValueKind.Array,
+                    isPatch: current.Incremental.ValueKind is JsonValueKind.Array
+                        || (current.HasNext is not null && current.Data.ValueKind is JsonValueKind.Undefined),
                     hasNext: current.HasNext ?? false);
                 yield return _createResponse(responseContext);
                 transportError = null;
