@@ -1716,6 +1716,128 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             """);
     }
 
+    [Fact]
+    public async Task Defer_Overlap_Parent_Multipart_Legacy_Format_Keeps_Initial_Payload_Free_Of_Incremental_Entries()
+    {
+        // arrange
+        var gates = new NestedGates();
+
+        // act
+        var content = await ExecuteNestedAsync(
+            "multipart/mixed; incrementalSpec=v0.1",
+            DeferredBeforeInitialQuery,
+            gates);
+
+        // assert
+        content.MatchInlineSnapshot(
+            """
+
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"data":{"slow":"slow","hero":{}},"hasNext":true}
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"incremental":[{"data":{"nestedObject":{"deeperObject":{"foo":"foo"}}},"path":["hero"]},{"data":{"foo":"foo","bar":"bar"},"path":["hero","nestedObject","deeperObject"]}],"hasNext":false}
+            -----
+
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Overlap_Parent_EventStream_Legacy_Format_Keeps_Initial_Payload_Free_Of_Incremental_Entries()
+    {
+        // arrange
+        var gates = new NestedGates();
+
+        // act
+        var content = await ExecuteNestedAsync(
+            "text/event-stream; incrementalSpec=v0.1",
+            DeferredBeforeInitialQuery,
+            gates);
+
+        // assert
+        content.MatchInlineSnapshot(
+            """
+            event: next
+            data: {"data":{"slow":"slow","hero":{}},"hasNext":true}
+
+            event: next
+            data: {"incremental":[{"data":{"nestedObject":{"deeperObject":{"foo":"foo"}}},"path":["hero"]},{"data":{"foo":"foo","bar":"bar"},"path":["hero","nestedObject","deeperObject"]}],"hasNext":false}
+
+            event: complete
+
+
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Overlap_Parent_JsonLines_Legacy_Format_Keeps_Initial_Payload_Free_Of_Incremental_Entries()
+    {
+        // arrange
+        var gates = new NestedGates();
+
+        // act
+        var content = await ExecuteNestedAsync(
+            "application/jsonl; incrementalSpec=v0.1",
+            DeferredBeforeInitialQuery,
+            gates);
+
+        // assert
+        content.MatchInlineSnapshot(
+            """
+            {"data":{"slow":"slow","hero":{}},"hasNext":true}
+            {"incremental":[{"data":{"nestedObject":{"deeperObject":{"foo":"foo"}}},"path":["hero"]},{"data":{"foo":"foo","bar":"bar"},"path":["hero","nestedObject","deeperObject"]}],"hasNext":false}
+
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Multipart_Legacy_Format_Writes_Entries_Of_Initial_Result_With_Next_Payload()
+    {
+        // arrange
+        var gates = new NestedGates();
+
+        // act
+        var content = await ExecuteNestedAsync(
+            "multipart/mixed; incrementalSpec=v0.1",
+            """
+            {
+                slow
+                hero {
+                    ... @defer {
+                        nestedObject {
+                            deeperObject {
+                                foo
+                                ... @defer {
+                                    gatedFoo
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            gates);
+
+        // assert
+        content.MatchInlineSnapshot(
+            """
+
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"data":{"slow":"slow","hero":{}},"hasNext":true}
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"incremental":[{"data":{"nestedObject":{"deeperObject":{"foo":"foo"}}},"path":["hero"]},{"data":{"gatedFoo":"foo"},"path":["hero","nestedObject","deeperObject"]}],"hasNext":false}
+            -----
+
+            """);
+    }
+
     private async Task<string> ExecuteNestedAsync(
         string accept,
         string query,
@@ -1873,6 +1995,26 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
         }
     }
 
+    private const string DeferredBeforeInitialQuery =
+        """
+        {
+            slow
+            hero {
+                ... @defer {
+                    nestedObject {
+                        deeperObject {
+                            foo
+                            ... @defer {
+                                foo
+                                bar
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        """;
+
     private const string DeferredItemFragmentQuery =
         """
         {
@@ -2004,6 +2146,13 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class NestedQuery
     {
+        public async Task<string> GetSlowAsync([Service] NestedGates gates)
+        {
+            await gates.WaitForDeferredAsync();
+            await Task.Delay(250);
+            return "slow";
+        }
+
         public NestedHero GetHero()
             => new();
     }
@@ -2022,8 +2171,14 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class DeeperObject
     {
-        public string GetFoo()
-            => "foo";
+        public string GetFoo([Service] NestedGates gates)
+        {
+            gates.SignalDeferred();
+            return "foo";
+        }
+
+        public string GetBar()
+            => "bar";
 
         public async Task<string?> GetGatedFailAsync([Service] NestedGates gates)
         {
@@ -2051,14 +2206,21 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class NestedGates
     {
+        private readonly TaskCompletionSource _deferred = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource[] _stages =
         [
             new(TaskCreationOptions.RunContinuationsAsynchronously),
             new(TaskCreationOptions.RunContinuationsAsynchronously)
         ];
 
+        public Task WaitForDeferredAsync()
+            => _deferred.Task;
+
         public Task WaitAsync(int stage)
             => _stages[stage].Task;
+
+        public void SignalDeferred()
+            => _deferred.TrySetResult();
 
         public void Release(int stage)
         {
