@@ -25,23 +25,17 @@ internal abstract class AuditScope : IAuditScope
     /// <param name="user">
     /// The principal of the request, which the scope captures as values.
     /// </param>
-    /// <param name="context">
-    /// The provider data of the scope.
-    /// </param>
     protected AuditScope(
         IAuditTrail trail,
         AuditScopeInfo info,
-        ClaimsPrincipal user,
-        ImmutableDictionary<string, string> context)
+        ClaimsPrincipal user)
     {
         ArgumentNullException.ThrowIfNull(trail);
         ArgumentNullException.ThrowIfNull(user);
-        ArgumentNullException.ThrowIfNull(context);
 
         Trail = trail;
         Info = info;
         Subject = AuditSubject.Capture(user);
-        Context = context;
     }
 
     /// <inheritdoc />
@@ -52,9 +46,6 @@ internal abstract class AuditScope : IAuditScope
 
     /// <inheritdoc />
     public AuditSubject Subject { get; }
-
-    /// <inheritdoc />
-    public ImmutableDictionary<string, string> Context { get; }
 
     /// <inheritdoc />
     public bool IsRecording => true;

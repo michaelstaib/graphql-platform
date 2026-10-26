@@ -8,10 +8,9 @@ internal sealed class RecordingAuditScope(
     IAuditTrail trail,
     AuditScopeInfo info,
     ClaimsPrincipal user,
-    ImmutableDictionary<string, string> context,
     Func<int> countSourceSchemaRequests,
     Exception? commitFailure)
-    : AuditScope(trail, info, user, context)
+    : AuditScope(trail, info, user)
 {
     public ImmutableArray<AuditLogEntry> Entries { get; private set; } = [];
 
