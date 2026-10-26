@@ -1674,6 +1674,48 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             """);
     }
 
+    [Fact]
+    public async Task Defer_Multipart_Legacy_Format_Keeps_Error_Locations_On_Deferred_Entries()
+    {
+        // arrange
+        var gates = new NestedGates();
+
+        // act
+        var content = await ExecuteNestedAsync(
+            "multipart/mixed; incrementalSpec=v0.1",
+            """
+            {
+                hero {
+                    ... @defer {
+                        nestedObject {
+                            deeperObject {
+                                foo
+                                fail
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            gates);
+
+        // assert
+        content.MatchInlineSnapshot(
+            """
+
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"data":{"hero":{}},"hasNext":true}
+            ---
+            Content-Type: application/json; charset=utf-8
+
+            {"incremental":[{"errors":[{"message":"deferred failure","locations":[{"line":4,"column":17}],"path":["hero","nestedObject","deeperObject","fail"]}],"data":{"nestedObject":{"deeperObject":{"foo":"foo","fail":null}}},"path":["hero"]}],"hasNext":false}
+            -----
+
+            """);
+    }
+
     private async Task<string> ExecuteNestedAsync(
         string accept,
         string query,
@@ -1980,6 +2022,16 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class DeeperObject
     {
+        public string GetFoo()
+            => "foo";
+
+        public string? GetFail()
+            => throw new GraphQLException(
+                ErrorBuilder.New()
+                    .SetMessage("deferred failure")
+                    .AddLocation(new Location(4, 17))
+                    .Build());
+
         public async Task<string> GetGatedFooAsync([Service] NestedGates gates)
         {
             await gates.WaitAsync(0);
