@@ -165,20 +165,25 @@ internal sealed class BatchResolverTask : IResolverTask
         }
         finally
         {
-            _operationContext.Scheduler.Complete(this);
-
-            for (var i = 0; i < contexts.Length; i++)
+            try
             {
-                var context = Unsafe.As<MiddlewareContext>(contexts[i]);
-                if (context.HasCleanupTasks)
+                for (var i = 0; i < contexts.Length; i++)
                 {
-                    await context.ExecuteCleanupTasksAsync().ConfigureAwait(false);
+                    var context = Unsafe.As<MiddlewareContext>(contexts[i]);
+                    if (context.HasCleanupTasks)
+                    {
+                        await context.ExecuteCleanupTasksAsync().ConfigureAwait(false);
+                    }
                 }
             }
+            finally
+            {
+                _operationContext.Scheduler.Complete(this);
 
-            ReturnResolverTasks();
+                ReturnResolverTasks();
 
-            _objectPool.Return(this);
+                _objectPool.Return(this);
+            }
         }
     }
 
