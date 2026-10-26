@@ -64,7 +64,7 @@ public class JsonResultPatcherTests
     }
 
     [Fact]
-    public void PatchResponse_Should_KeepData_When_IncrementalEntryHasNoData()
+    public void PatchResponse_Should_CarryEntryErrorsWithEntryPath_When_IncrementalEntryHasNoData()
     {
         // arrange
         var patcher = new JsonResultPatcher();
@@ -78,7 +78,27 @@ public class JsonResultPatcherTests
 
         // assert
         patched.Body!.RootElement.ToString().MatchInlineSnapshot(
-            """{"data":{"hero":{"name":"R2-D2"}}}""");
+            """{"data":{"hero":{"name":"R2-D2"}},"errors":[{"message":"failed","path":["hero"]}]}""");
+    }
+
+    [Fact]
+    public void PatchResponse_Should_KeepErrorPathAndAppendToInitialErrors_When_EntryErrorsHavePaths()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher();
+        patcher.SetResponse(CreateResponse(
+            """{"data":{"hero":{}},"errors":[{"message":"a"}]}""",
+            hasNext: true));
+        var patch = CreateResponse(
+            """{"incremental":[{"data":{"id":"1"},"errors":[{"message":"x","path":["hero","id"]}],"path":["hero"]}]}""",
+            isPatch: true);
+
+        // act
+        var patched = patcher.PatchResponse(patch);
+
+        // assert
+        patched.Body!.RootElement.ToString().MatchInlineSnapshot(
+            """{"data":{"hero":{"id":"1"}},"errors":[{"message":"a"},{"message":"x","path":["hero","id"]}]}""");
     }
 
     [Fact]

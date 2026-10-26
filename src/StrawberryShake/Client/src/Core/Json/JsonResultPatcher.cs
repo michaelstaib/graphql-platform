@@ -55,11 +55,19 @@ public class JsonResultPatcher : IResultPatcher<JsonDocument>
             {
                 foreach (var entry in incremental.EnumerateArray())
                 {
-                    if (entry.TryGetProperty(ResultFields.Path, out var entryPath)
+                    var hasPath = entry.TryGetProperty(ResultFields.Path, out var entryPath);
+
+                    if (hasPath
                         && entry.TryGetProperty(Data, out var entryData)
                         && entryData.ValueKind is JsonValueKind.Object)
                     {
                         ApplyPatch(entryPath, entryData);
+                    }
+
+                    if (entry.TryGetProperty(Errors, out var entryErrors)
+                        && entryErrors.ValueKind is JsonValueKind.Array)
+                    {
+                        AddErrors(entryErrors, hasPath ? entryPath : null);
                     }
                 }
             }
@@ -84,6 +92,29 @@ public class JsonResultPatcher : IResultPatcher<JsonDocument>
             response.HasNext,
             _extensions,
             _contextData);
+    }
+
+    private void AddErrors(JsonElement errors, JsonElement? entryPath)
+    {
+        if (_json![Errors] is not JsonArray target)
+        {
+            target = [];
+            _json[Errors] = target;
+        }
+
+        foreach (var error in errors.EnumerateArray())
+        {
+            var node = JsonNode.Parse(error.GetRawText());
+
+            if (node is JsonObject errorObject
+                && entryPath is { ValueKind: JsonValueKind.Array } path
+                && !errorObject.ContainsKey(ResultFields.Path))
+            {
+                errorObject[ResultFields.Path] = JsonNode.Parse(path.GetRawText());
+            }
+
+            target.Add(node);
+        }
     }
 
     private void ApplyPatch(JsonElement pathProp, JsonElement dataProp)
