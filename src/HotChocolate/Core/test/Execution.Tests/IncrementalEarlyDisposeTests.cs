@@ -292,6 +292,41 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task DisposeAsync_Should_ReportCleanupFailure_When_TheStreamProducerReleasesLast()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        var result = await executor.ExecuteAsync(
+            "{ stubbornFailingNumbers @stream(initialCount: 0) { value } }",
+            TestContext.Current.CancellationToken);
+        var stream = Assert.IsType<ResponseStream>(result);
+
+        // act
+        await using (stream)
+        {
+            await using var enumerator = stream.ReadResultsAsync()
+                .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+            await ReadPayloadAsync(enumerator, []);
+            await probe.Started("stubborn").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        }
+
+        probe.Gate("stubborn").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Events.ToArray().MatchInlineSnapshots(
+        [
+            "source returned",
+            "enumerator disposed",
+            "request scope disposed",
+            "request context returned"
+        ]);
+        probe.Errors.ToArray().MatchInlineSnapshots(["request error: cleanup failed"]);
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_ThrowCleanupFailure_When_TheStreamIsDisposedLast()
     {
         // arrange
@@ -423,6 +458,17 @@ public class IncrementalEarlyDisposeTests
 
         public IAsyncEnumerable<int> GetStubbornNumbers([Service] Probe probe, [Service] ScopeProbe scopeProbe)
             => new StubbornEnumerable(probe);
+
+        public IAsyncEnumerable<Number> GetStubbornFailingNumbers(
+            IResolverContext context,
+            [Service] Probe probe,
+            [Service] ScopeProbe scopeProbe)
+        {
+            ((IMiddlewareContext)context).RegisterForCleanup(
+                static () => ValueTask.FromException(new InvalidOperationException("cleanup failed")),
+                CleanAfter.Request);
+            return new StubbornNumberEnumerable(probe);
+        }
 
         public IAsyncEnumerable<Number> GetFailingNumbers(
             IResolverContext context,
@@ -613,6 +659,40 @@ public class IncrementalEarlyDisposeTests
             {
                 _count++;
                 Current = 1;
+                return true;
+            }
+
+            probe.Started("stubborn").TrySetResult();
+            await probe.Gate("stubborn").Task;
+            probe.Log("source returned");
+            return false;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            probe.Log("enumerator disposed");
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class StubbornNumberEnumerable(Probe probe) : IAsyncEnumerable<Number>
+    {
+        public IAsyncEnumerator<Number> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+            => new StubbornNumberEnumerator(probe);
+    }
+
+    private sealed class StubbornNumberEnumerator(Probe probe) : IAsyncEnumerator<Number>
+    {
+        private int _count;
+
+        public Number Current { get; private set; } = null!;
+
+        public async ValueTask<bool> MoveNextAsync()
+        {
+            if (_count is 0)
+            {
+                _count++;
+                Current = new Number(1);
                 return true;
             }
 
