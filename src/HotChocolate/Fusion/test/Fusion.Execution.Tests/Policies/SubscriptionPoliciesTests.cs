@@ -4,7 +4,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
-using HotChocolate.Fusion.Policies.Audit;
+using HotChocolate.Fusion.Policies.Auditing;
 using HotChocolate.Fusion.Policies.InMemory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;

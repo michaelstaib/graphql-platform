@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using System.Security.Claims;
 
-namespace HotChocolate.Fusion.Policies.Audit;
+namespace HotChocolate.Fusion.Policies.Auditing;
 
 /// <summary>
 /// An audit scope that keeps its entries in memory and replays them into a scope of the trail.
