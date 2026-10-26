@@ -111,7 +111,7 @@ internal sealed partial class WorkScheduler
 
     /// <summary>
     /// Dispatches the shallowest pending batch tasks regardless of the active path counts. It is only valid
-    /// while no task is queued or running.
+    /// while no task is queued and no running task can make progress.
     /// </summary>
     private void DispatchIdlePendingBatchesUnsafe()
     {

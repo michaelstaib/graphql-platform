@@ -14,6 +14,10 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
     {
         AssertNotPooled();
 
+        await using var cancellation = _ct.UnsafeRegister(
+            static state => ((AsyncManualResetEvent)state!).Set(),
+            _signal);
+
         try
         {
             await ExecuteInternalAsync(_buffer);
@@ -286,9 +290,14 @@ RESTART:
         }
         else
         {
-            if (!hasWork && _pendingBatches.Count == 0)
+            if (!hasWork)
             {
-                _isCompleted = true;
+                _signal.Reset();
+
+                if (_pendingBatches.Count == 0 || _ct.IsCancellationRequested)
+                {
+                    _isCompleted = true;
+                }
             }
         }
     }

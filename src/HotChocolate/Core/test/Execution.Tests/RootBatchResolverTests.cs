@@ -137,6 +137,55 @@ public sealed class RootBatchResolverTests
             results.Distinct().Single());
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_FailWithCancellation_When_TheRequestIsCancelledWhileTheRootBatchResolverRuns()
+    {
+        // arrange
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(d =>
+            {
+                d.Name("Query");
+                d.Field("waiting")
+                    .Type<StringType>()
+                    .ResolveBatch(async contexts =>
+                    {
+                        started.TrySetResult();
+                        await Task.Delay(Timeout.InfiniteTimeSpan, contexts[0].RequestAborted);
+                        return new ResolverResult[contexts.Count];
+                    });
+            })
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+
+        // act
+        var execution = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    var result = await executor.ExecuteAsync("{ waiting }", cts.Token);
+                    return result.ToJson(withIndentations: false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return "cancelled";
+                }
+            },
+            TestContext.Current.CancellationToken);
+
+        await started.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await cts.CancelAsync();
+        var outcome = await execution.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        outcome.MatchInlineSnapshot(
+            """
+            {"errors":[{"message":"The GraphQL request execution was canceled.","extensions":{"code":"HC0049"}}]}
+            """);
+    }
+
     private static Task<string> ExecuteAsync(IRequestExecutor executor, string query)
     {
         // the scheduler loop must not be able to block the test thread, so the request runs off it.
