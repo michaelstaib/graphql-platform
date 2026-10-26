@@ -185,6 +185,33 @@ public sealed class DeferredBatchResolverTests
         ]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_CompleteEveryRequest_When_DeferredBatchFieldsRunConcurrently()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var requests = Enumerable.Range(0, 16).Select(_ => Task.Run(
+            async () =>
+            {
+                for (var i = 0; i < 100; i++)
+                {
+                    await ExecuteIncrementalAsync(executor, "{ plain ... @defer { batchField } }");
+                    await ExecuteIncrementalAsync(
+                        executor,
+                        "{ streamedItems @stream(initialCount: 0) { id batchField } }");
+                }
+            },
+            TestContext.Current.CancellationToken));
+
+        await Task.WhenAll(requests);
+
+        // assert
+        var events = await ExecuteIncrementalAsync(executor, "{ plain ... @defer { batchField } }");
+        Assert.Equal("hasNext false", events[^1]);
+    }
+
     private static Task<string[]> ExecuteIncrementalAsync(IRequestExecutor executor, string query)
     {
         return Task.Run(
