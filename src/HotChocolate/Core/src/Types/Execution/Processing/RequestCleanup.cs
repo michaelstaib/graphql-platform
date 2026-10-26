@@ -150,17 +150,21 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     /// <summary>
     /// Cancels the work of the operation unless its execution has completed, and releases the hold of the caller.
     /// </summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         try
         {
             Cancel();
         }
-        finally
+        catch
         {
             ReleaseExecutionHold();
-            await ExecuteAsync().ConfigureAwait(false);
+            _ = ReleaseAsync(isBackground: true).AsTask();
+            throw;
         }
+
+        ReleaseExecutionHold();
+        return ExecuteAsync();
     }
 
     /// <summary>
@@ -181,6 +185,11 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
         if (execution.IsCompleted)
         {
+            if (execution.IsFaulted)
+            {
+                _ = execution.Exception;
+            }
+
             // the caller still holds the collector, so this cannot be the last release.
             Interlocked.Decrement(ref _holds);
             return;

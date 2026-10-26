@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using HotChocolate.Execution.Instrumentation;
 
 namespace HotChocolate.Execution.Processing;
@@ -271,6 +272,81 @@ public class RequestCleanupTests
         // assert
         Assert.False(cancellation.IsCancellationRequested);
         log.MatchInlineSnapshots(["action"]);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_Should_ObserveFault_When_ExecutionFaultedBeforeDisposal()
+    {
+        // arrange
+        const string message = "execution faulted before disposal";
+        var unobserved = new ConcurrentQueue<string>();
+
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs args)
+        {
+            foreach (var exception in args.Exception.InnerExceptions)
+            {
+                unobserved.Enqueue(exception.Message);
+            }
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+
+        try
+        {
+            // act
+            await DisposeWithFaultedExecutionAsync(message);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+
+            // assert
+            Assert.Equal(0, unobserved.Count(value => value == message));
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAsync_Should_RunActionsAndRethrow_When_CancellationCallbackThrows()
+    {
+        // arrange
+        var log = new List<string>();
+        var execution = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Token.Register(() => throw new InvalidOperationException("callback failed"));
+        var cleanup = new RequestCleanup(
+            cancellation,
+            CancellationToken.None,
+            new PooledRequestContext(),
+            new RecordingListener());
+        cleanup.Register(Log(log, "action"));
+        cleanup.AttachExecution(execution.Task);
+
+        // act
+        var exception = await Assert.ThrowsAsync<AggregateException>(() => cleanup.DisposeAsync().AsTask());
+        execution.SetResult();
+        await WaitForAsync(() => log.Count is 1);
+
+        // assert
+        Assert.Equal("callback failed", Assert.Single(exception.InnerExceptions).Message);
+        log.MatchInlineSnapshots(["action"]);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task DisposeWithFaultedExecutionAsync(string message)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var cleanup = new RequestCleanup(
+            cancellation,
+            CancellationToken.None,
+            new PooledRequestContext(),
+            new RecordingListener());
+        cleanup.AttachExecution(Task.FromException(new InvalidOperationException(message)));
+
+        await cleanup.DisposeAsync();
     }
 
     private static async Task WaitForAsync(Func<bool> condition)
