@@ -5,6 +5,8 @@ using System.Net.Http.Json;
 #endif
 using HotChocolate.AspNetCore.Formatters;
 using HotChocolate.AspNetCore.Tests.Utilities;
+using HotChocolate.Execution;
+using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Types;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
@@ -1804,7 +1806,7 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             "multipart/mixed; incrementalSpec=v0.1",
             """
             {
-                slow
+                slow(deferredTasks: 1)
                 hero {
                     ... @defer {
                         nestedObject {
@@ -1849,6 +1851,7 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
                 .AddSingleton(gates)
                 .AddGraphQLServer()
                 .AddQueryType<NestedQuery>()
+                .AddDiagnosticEventListener(_ => new DeferredTaskListener(gates))
                 .AddDefaultBatchDispatcher()
                 .AddHttpResponseFormatter()
                 .ModifyOptions(o => o.EnableDefer = true),
@@ -1998,7 +2001,7 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
     private const string DeferredBeforeInitialQuery =
         """
         {
-            slow
+            slow(deferredTasks: 2)
             hero {
                 ... @defer {
                     nestedObject {
@@ -2146,10 +2149,9 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class NestedQuery
     {
-        public async Task<string> GetSlowAsync([Service] NestedGates gates)
+        public async Task<string> GetSlowAsync(int deferredTasks, [Service] NestedGates gates)
         {
-            await gates.WaitForDeferredAsync();
-            await Task.Delay(250);
+            await gates.WaitForDeferredTasksAsync(deferredTasks);
             return "slow";
         }
 
@@ -2171,11 +2173,8 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class DeeperObject
     {
-        public string GetFoo([Service] NestedGates gates)
-        {
-            gates.SignalDeferred();
-            return "foo";
-        }
+        public string GetFoo()
+            => "foo";
 
         public string GetBar()
             => "bar";
@@ -2206,21 +2205,48 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
 
     public sealed class NestedGates
     {
-        private readonly TaskCompletionSource _deferred = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly List<(int Count, TaskCompletionSource Gate)> _deferredWaiters = [];
         private readonly TaskCompletionSource[] _stages =
         [
             new(TaskCreationOptions.RunContinuationsAsynchronously),
             new(TaskCreationOptions.RunContinuationsAsynchronously)
         ];
+        private int _deferredTasks;
 
-        public Task WaitForDeferredAsync()
-            => _deferred.Task;
+        public Task WaitForDeferredTasksAsync(int count)
+        {
+            lock (_deferredWaiters)
+            {
+                if (_deferredTasks >= count)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _deferredWaiters.Add((count, gate));
+                return gate.Task;
+            }
+        }
 
         public Task WaitAsync(int stage)
             => _stages[stage].Task;
 
-        public void SignalDeferred()
-            => _deferred.TrySetResult();
+        public void CompleteDeferredTask()
+        {
+            lock (_deferredWaiters)
+            {
+                _deferredTasks++;
+
+                for (var i = _deferredWaiters.Count - 1; i >= 0; i--)
+                {
+                    if (_deferredWaiters[i].Count <= _deferredTasks)
+                    {
+                        _deferredWaiters[i].Gate.TrySetResult();
+                        _deferredWaiters.RemoveAt(i);
+                    }
+                }
+            }
+        }
 
         public void Release(int stage)
         {
@@ -2228,6 +2254,22 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             {
                 _stages[stage].TrySetResult();
             }
+        }
+    }
+
+    public sealed class DeferredTaskListener(NestedGates gates) : ExecutionDiagnosticEventListener
+    {
+        public override bool EnableResolveFieldValue => true;
+
+        public override IDisposable RunTask(IExecutionTask task)
+            => task is { IsDeferred: true, BranchId: < 0 }
+                ? new DeferredTaskScope(gates)
+                : EmptyScope;
+
+        private sealed class DeferredTaskScope(NestedGates gates) : IDisposable
+        {
+            public void Dispose()
+                => gates.CompleteDeferredTask();
         }
     }
 }
