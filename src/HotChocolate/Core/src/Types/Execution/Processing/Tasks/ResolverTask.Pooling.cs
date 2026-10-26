@@ -55,6 +55,7 @@ internal sealed partial class ResolverTask
         DeferUsage = null;
         _groupScope = null;
         _groupSlot = -1;
+        _childTasksRegistered = false;
         IsRegistered = false;
 #pragma warning disable CS0618
         Next = null;
