@@ -1690,7 +1690,7 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
                         nestedObject {
                             deeperObject {
                                 foo
-                                fail
+                                gatedFail
                             }
                         }
                     }
@@ -1710,7 +1710,7 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
             ---
             Content-Type: application/json; charset=utf-8
 
-            {"incremental":[{"errors":[{"message":"deferred failure","locations":[{"line":4,"column":17}],"path":["hero","nestedObject","deeperObject","fail"]}],"data":{"nestedObject":{"deeperObject":{"foo":"foo","fail":null}}},"path":["hero"]}],"hasNext":false}
+            {"incremental":[{"errors":[{"message":"deferred failure","locations":[{"line":4,"column":17}],"path":["hero","nestedObject","deeperObject","gatedFail"]}],"data":{"nestedObject":{"deeperObject":{"foo":"foo","gatedFail":null}}},"path":["hero"]}],"hasNext":false}
             -----
 
             """);
@@ -2025,12 +2025,16 @@ public class DeferOverHttpTests(TestServerFactory serverFactory) : ServerTestBas
         public string GetFoo()
             => "foo";
 
-        public string? GetFail()
-            => throw new GraphQLException(
+        public async Task<string?> GetGatedFailAsync([Service] NestedGates gates)
+        {
+            await gates.WaitAsync(0);
+
+            throw new GraphQLException(
                 ErrorBuilder.New()
                     .SetMessage("deferred failure")
                     .AddLocation(new Location(4, 17))
                     .Build());
+        }
 
         public async Task<string> GetGatedFooAsync([Service] NestedGates gates)
         {
