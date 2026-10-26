@@ -9,19 +9,17 @@ namespace HotChocolate.Execution.Processing;
 /// </summary>
 internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 {
-#if NET9_0_OR_GREATER
-    private readonly Lock _sync = new();
-#else
-    private readonly object _sync = new();
-#endif
+    private static readonly Node s_drained = new(null!);
+
     private readonly CancellationTokenSource? _cancellation;
+    private readonly CancellationTokenRegistration _registration;
     private readonly RequestContext? _requestContext;
     private readonly ICoreExecutionDiagnosticEvents? _diagnosticEvents;
-    private List<object>? _actions;
+    private Task? _execution;
+    private Node? _head;
     private IDisposable? _last;
     private int _holds = 1;
-    private bool _drained;
-    private bool _settled;
+    private int _executionHeld;
 
     /// <summary>
     /// Initializes a collector without cancellation and without failure reporting.
@@ -31,12 +29,13 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     }
 
     /// <summary>
-    /// Initializes a collector that owns <paramref name="cancellation"/>, which is disposed after
-    /// the cleanup actions ran. Cleanup failures that no response stream can observe are reported
+    /// Initializes a collector that cancels <paramref name="cancellation"/> when <paramref name="requestAborted"/>
+    /// is canceled. Cleanup failures that no response stream can observe are reported
     /// to <paramref name="diagnosticEvents"/> with <paramref name="requestContext"/>.
     /// </summary>
     public RequestCleanup(
         CancellationTokenSource cancellation,
+        CancellationToken requestAborted,
         RequestContext requestContext,
         ICoreExecutionDiagnosticEvents diagnosticEvents)
     {
@@ -47,6 +46,13 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
         _cancellation = cancellation;
         _requestContext = requestContext;
         _diagnosticEvents = diagnosticEvents;
+
+        if (requestAborted.CanBeCanceled)
+        {
+            _registration = requestAborted.UnsafeRegister(
+                static (state, _) => ((CancellationTokenSource)state!).Cancel(),
+                cancellation);
+        }
     }
 
     /// <summary>
@@ -78,63 +84,60 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     /// </param>
     public void RegisterLast(IDisposable disposable)
     {
-        lock (_sync)
+        if (Interlocked.Exchange(ref _last, disposable) is { } previous)
         {
-            if (!_drained)
-            {
-                _last = disposable;
-                return;
-            }
+            Add(previous);
         }
 
-        _ = Task.Run(disposable.Dispose);
+        if (ReferenceEquals(Volatile.Read(ref _head), s_drained)
+            && Interlocked.Exchange(ref _last, null) is { } late)
+        {
+            _ = Task.Run(late.Dispose);
+        }
     }
 
     /// <summary>
     /// Adds a holder that keeps the registered actions from running until it releases the collector.
     /// </summary>
     public void Hold()
+        => Interlocked.Increment(ref _holds);
+
+    /// <summary>
+    /// Adds the hold of <paramref name="execution"/>, which is released when the response stream
+    /// is disposed after the execution completed, or when the execution completes afterwards.
+    /// </summary>
+    public void AttachExecution(Task execution)
     {
-        lock (_sync)
-        {
-            _holds++;
-        }
+        _execution = execution;
+        _executionHeld = 1;
+        Hold();
     }
 
     /// <summary>
-    /// Cancels the work of the operation unless it has settled.
+    /// Stops listening for the cancellation of the request. The collector no longer cancels
+    /// its cancellation source afterwards.
+    /// </summary>
+    public void DetachCancellation()
+        => _registration.Dispose();
+
+    /// <summary>
+    /// Cancels the work of the operation unless its execution has completed.
     /// </summary>
     public void Cancel()
     {
-        CancellationTokenSource? source;
-
-        lock (_sync)
+        if (_cancellation is null || _execution is { IsCompleted: true } || !TryHold())
         {
-            source = _settled ? null : _cancellation;
+            return;
         }
 
         try
         {
-            source?.Cancel();
+            _cancellation.Cancel();
         }
-        catch (ObjectDisposedException)
+        finally
         {
-            // the operation already released its resources.
+            _ = ReleaseAsync(isBackground: true).AsTask();
         }
-    }
-
-    /// <summary>
-    /// Releases the hold of the work that executes the operation, which has run to its end.
-    /// A cleanup failure is reported to the diagnostic events instead of being thrown.
-    /// </summary>
-    public ValueTask SettleAsync()
-    {
-        lock (_sync)
-        {
-            _settled = true;
-        }
-
-        return ReleaseAsync();
     }
 
     /// <summary>
@@ -145,7 +148,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
         => ReleaseAsync(isBackground: true);
 
     /// <summary>
-    /// Cancels the work of the operation unless it has settled, and releases the hold of the caller.
+    /// Cancels the work of the operation unless its execution has completed, and releases the hold of the caller.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -155,6 +158,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
         }
         finally
         {
+            ReleaseExecutionHold();
             await ExecuteAsync().ConfigureAwait(false);
         }
     }
@@ -166,58 +170,106 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     public ValueTask ExecuteAsync()
         => ReleaseAsync(isBackground: false);
 
-    private async ValueTask ReleaseAsync(bool isBackground)
+    private void ReleaseExecutionHold()
     {
-        List<object>? actions;
-
-        lock (_sync)
+        if (Interlocked.Exchange(ref _executionHeld, 0) is 0)
         {
-            if (--_holds > 0)
-            {
-                return;
-            }
-
-            actions = _actions;
-            _actions = null;
-            _drained = true;
-
-            if (_last is { } last)
-            {
-                (actions ??= []).Add(last);
-                _last = null;
-            }
+            return;
         }
 
+        var execution = _execution!;
+
+        if (execution.IsCompleted)
+        {
+            // the caller still holds the collector, so this cannot be the last release.
+            Interlocked.Decrement(ref _holds);
+            return;
+        }
+
+        _ = ReleaseWhenSettledAsync(execution);
+    }
+
+    private async Task ReleaseWhenSettledAsync(Task execution)
+    {
+        try
+        {
+            await execution.ConfigureAwait(false);
+        }
+        catch
+        {
+            // an aborted execution has no consumer left that could observe its failure.
+        }
+
+        await ReleaseAsync(isBackground: true).ConfigureAwait(false);
+    }
+
+    private bool TryHold()
+    {
+        var holds = Volatile.Read(ref _holds);
+
+        while (holds > 0)
+        {
+            var seen = Interlocked.CompareExchange(ref _holds, holds + 1, holds);
+
+            if (seen == holds)
+            {
+                return true;
+            }
+
+            holds = seen;
+        }
+
+        return false;
+    }
+
+    private ValueTask ReleaseAsync(bool isBackground)
+        => Interlocked.Decrement(ref _holds) > 0
+            ? default
+            : DrainAsync(isBackground);
+
+    private async ValueTask DrainAsync(bool isBackground)
+    {
+        _registration.Dispose();
+
+        var node = Reverse(Interlocked.Exchange(ref _head, s_drained));
+        var last = Interlocked.Exchange(ref _last, null);
         var report = isBackground && _diagnosticEvents is not null;
         ExceptionDispatchInfo? exception = null;
 
-        try
+        while (true)
         {
-            if (actions is not null)
+            object action;
+
+            if (node is not null)
             {
-                foreach (var action in actions)
+                action = node.Action;
+                node = node.Next;
+            }
+            else if (last is not null)
+            {
+                action = last;
+                last = null;
+            }
+            else
+            {
+                break;
+            }
+
+            try
+            {
+                await RunAsync(action).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                if (report)
                 {
-                    try
-                    {
-                        await RunAsync(action).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (report)
-                        {
-                            _diagnosticEvents!.RequestError(_requestContext!, ex);
-                        }
-                        else
-                        {
-                            exception ??= ExceptionDispatchInfo.Capture(ex);
-                        }
-                    }
+                    _diagnosticEvents!.RequestError(_requestContext!, ex);
+                }
+                else
+                {
+                    exception ??= ExceptionDispatchInfo.Capture(ex);
                 }
             }
-        }
-        finally
-        {
-            _cancellation?.Dispose();
         }
 
         exception?.Throw();
@@ -225,16 +277,43 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     private void Add(object action)
     {
-        lock (_sync)
+        var node = new Node(action);
+        var head = Volatile.Read(ref _head);
+
+        while (!ReferenceEquals(head, s_drained))
         {
-            if (!_drained)
+            node.Next = head;
+            var seen = Interlocked.CompareExchange(ref _head, node, head);
+
+            if (ReferenceEquals(seen, head))
             {
-                (_actions ??= []).Add(action);
                 return;
             }
+
+            head = seen;
         }
 
         _ = Task.Run(() => RunAsync(action).AsTask());
+    }
+
+    private static Node? Reverse(Node? head)
+    {
+        if (ReferenceEquals(head, s_drained))
+        {
+            return null;
+        }
+
+        Node? ordered = null;
+
+        while (head is not null)
+        {
+            var next = head.Next;
+            head.Next = ordered;
+            ordered = head;
+            head = next;
+        }
+
+        return ordered;
     }
 
     private static ValueTask RunAsync(object action)
@@ -246,5 +325,12 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
         }
 
         return ((Func<ValueTask>)action).Invoke();
+    }
+
+    private sealed class Node(object action)
+    {
+        public object Action { get; } = action;
+
+        public Node? Next { get; set; }
     }
 }
