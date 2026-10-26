@@ -473,7 +473,7 @@ public sealed class DeferredBatchResolverTests
 
     private static async IAsyncEnumerable<Item> StreamItemsAsync()
     {
-        await Task.Yield();
+        await Task.CompletedTask;
         yield return new Item(1);
         yield return new Item(2);
         yield return new Item(3);
