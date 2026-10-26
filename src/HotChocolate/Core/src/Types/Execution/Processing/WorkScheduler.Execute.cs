@@ -40,30 +40,36 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
         => WaitForBranchAsync(executionBranchId, CancellationToken.None);
 
     /// <summary>
-    /// Waits for all tasks in the specified execution branch to complete, also when the request was aborted.
-    /// Serial work can run while the calling task waits.
+    /// Marks the calling running task as waiting, so queued serial work can run while it waits.
     /// </summary>
-    public async ValueTask WaitForSettlementAsParkedTaskAsync(int executionBranchId)
+    public void ParkRunningTask()
+    {
+        AssertNotPooled();
+
+        bool hasSerialWork;
+
+        lock (_sync)
+        {
+            _work.Park();
+            hasSerialWork = !_serial.IsEmpty;
+        }
+
+        if (hasSerialWork)
+        {
+            _signal.Set();
+        }
+    }
+
+    /// <summary>
+    /// Marks the calling running task as no longer waiting, after <see cref="ParkRunningTask"/>.
+    /// </summary>
+    public void UnparkRunningTask()
     {
         AssertNotPooled();
 
         lock (_sync)
         {
-            _work.Park();
-        }
-
-        _signal.Set();
-
-        try
-        {
-            await WaitForBranchAsync(executionBranchId, CancellationToken.None).ConfigureAwait(false);
-        }
-        finally
-        {
-            lock (_sync)
-            {
-                _work.Unpark();
-            }
+            _work.Unpark();
         }
     }
 
