@@ -1,9 +1,13 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using HotChocolate.Fusion.Diagnostics;
+using HotChocolate.Fusion.Execution;
+using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
@@ -2939,9 +2943,11 @@ public class DeferTests : FusionTestBase
 
     private async Task<Gateway> CreateUserGatewayWithFailingEmailAsync(bool holdAddressResponse)
     {
-        // The key lookup of the deferred plan is held back until the failing email response has been returned.
-        // This fixes the order in which the nodes of the deferred plan complete.
-        var emailReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The key lookup response of the deferred plan is held back until the failing email node has handed its
+        // result to the result store, so the email error is always applied first. The address response is held
+        // back until the gateway has written the payload that carries the error to the client.
+        var emailNodeCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var errorDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         HttpMessageInvoker? invokerA = null;
         HttpMessageInvoker? invokerB = null;
 
@@ -2963,8 +2969,7 @@ public class DeferTests : FusionTestBase
 
                 if (body.Contains("Op_defer", StringComparison.Ordinal))
                 {
-                    await emailReturned.Task;
-                    await Task.Delay(TimeSpan.FromMilliseconds(250));
+                    await emailNodeCompleted.Task.WaitAsync(TimeSpan.FromSeconds(30));
                 }
 
                 return await invokerA!.SendAsync(request, CancellationToken.None);
@@ -2992,24 +2997,36 @@ public class DeferTests : FusionTestBase
 
                     if (body.Contains("address", StringComparison.Ordinal))
                     {
-                        await emailReturned.Task;
-                        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+                        await errorDelivered.Task.WaitAsync(TimeSpan.FromSeconds(30));
                     }
                 }
 
-                var response = await invokerB!.SendAsync(request, CancellationToken.None);
-                emailReturned.TrySetResult();
-                return response;
+                return await invokerB!.SendAsync(request, CancellationToken.None);
             });
 
         invokerA = new HttpMessageInvoker(server1.CreateHandler());
         invokerB = new HttpMessageInvoker(server2.CreateHandler());
 
         return await CreateCompositeSchemaAsync(
-        [
-            ("A", server1),
-            ("B", server2)
-        ]);
+            [
+                ("A", server1),
+                ("B", server2)
+            ],
+            configureApplication: app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Response.Body = new SignalOnWriteStream(
+                        context.Response.Body,
+                        "\"errors\""u8.ToArray(),
+                        errorDelivered);
+                    await next(context);
+                });
+                app.UseRouting();
+                app.UseEndpoints(endpoint => endpoint.MapGraphQL());
+            },
+            configureGatewayBuilder: b => b.AddDiagnosticEventListener(
+                _ => new NodeCompletedListener("B", "email", emailNodeCompleted)));
     }
 
     private async Task<Gateway> CreateUserGatewayWithAddressAfterEmailAsync()
@@ -3204,6 +3221,31 @@ public class DeferTests : FusionTestBase
             {
                 signal.TrySetResult();
             }
+        }
+    }
+
+    private sealed class NodeCompletedListener(
+        string expectedSchemaName,
+        string operationText,
+        TaskCompletionSource signal) : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+        {
+            if (schemaName == expectedSchemaName
+                && Encoding.UTF8.GetString(node.Operation.Value.Span).Contains(operationText, StringComparison.Ordinal))
+            {
+                return new SignalOnDispose(signal);
+            }
+
+            return base.ExecuteOperationNode(context, node, schemaName);
+        }
+
+        private sealed class SignalOnDispose(TaskCompletionSource signal) : IDisposable
+        {
+            public void Dispose() => signal.TrySetResult();
         }
     }
 }
