@@ -60,10 +60,12 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _pendingBatches.Clear();
         _signal.Reset();
 
-        if (_hasExecutionGroups)
+        if (Volatile.Read(ref _groupScopes) is not null)
         {
             ReleaseExecutionGroupScopes();
         }
+
+        _hasExecutionGroups = false;
 
         _result = null!;
         _batchDispatcherSession?.Dispose();
