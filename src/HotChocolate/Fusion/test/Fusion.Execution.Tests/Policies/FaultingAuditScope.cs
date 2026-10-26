@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using HotChocolate.Fusion.Policies.Auditing;
 
 namespace HotChocolate.Fusion.Policies;
@@ -16,8 +15,6 @@ internal sealed class FaultingAuditScope(
     public AuditScopeInfo Info => inner.Info;
 
     public AuditSubject Subject => inner.Subject;
-
-    public ImmutableDictionary<string, string> Context => inner.Context;
 
     public bool IsRecording => inner.IsRecording;
 
