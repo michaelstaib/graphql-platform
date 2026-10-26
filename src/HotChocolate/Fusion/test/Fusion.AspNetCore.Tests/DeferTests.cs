@@ -2788,7 +2788,7 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Should_NotAnnounceNestedGroup_When_ParentGroupFails()
     {
         // arrange
-        using var gateway = await CreateUserGatewayWithFailingEmailAsync();
+        using var gateway = await CreateUserGatewayWithFailingEmailAsync(holdAddressResponse: false);
 
         // act
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
@@ -2823,7 +2823,7 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Should_NotAnnounceNestedGroups_When_SharedPlanOfSiblingGroupsFails()
     {
         // arrange
-        using var gateway = await CreateUserGatewayWithFailingEmailAsync();
+        using var gateway = await CreateUserGatewayWithFailingEmailAsync(holdAddressResponse: false);
 
         // act
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
@@ -2854,6 +2854,49 @@ public class DeferTests : FusionTestBase
 
         // assert
         // Both sibling groups share the failed plan and complete with the error. Neither nested group is announced.
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteSharedGroupWithErrors_When_FailingPlanFinishesFirst()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayWithFailingEmailAsync(holdAddressResponse: true);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    name
+                    ... @defer(label: "first") {
+                        email
+                    }
+                    ... @defer(label: "second") {
+                        email
+                        address
+                        ... @defer(label: "nested") {
+                            phone
+                        }
+                    }
+                    ... @defer(label: "third") {
+                        address
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        // The failed plan finishes before the address plan. The shared group completes with the error, the address
+        // is delivered under the third group, and the nested group is never announced.
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
@@ -2894,7 +2937,7 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
-    private async Task<Gateway> CreateUserGatewayWithFailingEmailAsync()
+    private async Task<Gateway> CreateUserGatewayWithFailingEmailAsync(bool holdAddressResponse)
     {
         // The key lookup of the deferred plan is held back until the failing email response has been returned.
         // This fixes the order in which the nodes of the deferred plan complete.
@@ -2943,6 +2986,17 @@ public class DeferTests : FusionTestBase
             """,
             mockHttpResponse: async request =>
             {
+                if (holdAddressResponse)
+                {
+                    var body = await request.Content!.ReadAsStringAsync();
+
+                    if (body.Contains("address", StringComparison.Ordinal))
+                    {
+                        await emailReturned.Task;
+                        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+                    }
+                }
+
                 var response = await invokerB!.SendAsync(request, CancellationToken.None);
                 emailReturned.TrySetResult();
                 return response;
