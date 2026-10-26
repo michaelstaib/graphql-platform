@@ -274,8 +274,7 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
-            // Delivery groups of incremental plans that failed with the errors they complete with.
-            // Nested incremental plans below these groups are never started or announced.
+            // Delivery groups of failed incremental plans and the errors they complete with.
             Dictionary<int, IReadOnlyList<IError>>? failedDeliveryGroups = null;
 
             // Yield results as they complete.

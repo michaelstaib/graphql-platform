@@ -2950,8 +2950,7 @@ public class DeferTests : FusionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        // The address plan completes the third group and the second group stays open. The email plan then fails
-        // and the second group completes with the error, so the nested group is neither announced nor requested.
+        // The second group completes with the email plan errors and the nested group is never announced.
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
         Assert.Equal(0, CountSourceSchemaRequests(gateway, "B", "phone"));
 
@@ -3010,8 +3009,7 @@ public class DeferTests : FusionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        // The address plan completes first. The nested group is announced in the payload of the email plan,
-        // which completes the second group, and not before.
+        // The nested group is announced in the payload that completes the second group.
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
 
         var payloads = await ReadPayloadsAsync(result);
