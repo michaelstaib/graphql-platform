@@ -55,7 +55,7 @@ internal sealed class QueryExecutor
 
             var execution = scheduler.ExecuteAsync1();
 
-            // a failing request may not release the request resources before the execution settled.
+            // track the running execution on the request context.
             operationContext.RequestContext.OutstandingExecution = execution;
             await scheduler.WaitForCompletionAsync(branchId).ConfigureAwait(false);
             var initialResult = operationContext.BuildResult();

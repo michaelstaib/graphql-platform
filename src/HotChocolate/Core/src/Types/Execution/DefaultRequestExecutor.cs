@@ -207,8 +207,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
             {
                 if (context.OutstandingExecution is { IsCompleted: false } execution)
                 {
-                    // the abandoned execution still reads the request context and resolves services
-                    // from the request scope, so both are released once it settled.
+                    // release the request context and the scope once the execution settled.
                     _ = ReleaseWhenSettledAsync(context, scope, execution);
                     scope = null;
                 }

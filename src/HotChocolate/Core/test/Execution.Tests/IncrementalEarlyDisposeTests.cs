@@ -604,6 +604,7 @@ public class IncrementalEarlyDisposeTests
 
         // assert
         Assert.False(isReturnedWhileRunning);
+        probe.Errors.ToArray().MatchInlineSnapshots(["request error: request middleware failed"]);
     }
 
     [Fact]

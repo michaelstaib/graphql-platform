@@ -107,8 +107,7 @@ internal sealed class OperationExecutionMiddleware
                 if (result is ResponseStream { RequestCleanup: RequestCleanup requestCleanup }
                     && context.OutstandingExecution is { IsCompleted: false } execution)
                 {
-                    // the failed request drops the response stream, so the stream is released once the
-                    // execution that still runs against it settled.
+                    // dispose the response stream once the execution settled.
                     context.OutstandingExecution = RunWhenSettledAsync(context, execution, result.DisposeAsync);
 
                     // the abandoned execution is canceled at once, the release above waits for it to settle.
@@ -117,7 +116,6 @@ internal sealed class OperationExecutionMiddleware
                 else if (result is not null
                     && !(context.VariableValues.Length > 1 && operation.HasIncrementalParts))
                 {
-                    // the failed request drops the result, so it is released at once.
                     // a dropped incremental variable batch is not released.
                     await DisposeDroppedResultAsync(context, result).ConfigureAwait(false);
                 }
@@ -349,8 +347,7 @@ internal sealed class OperationExecutionMiddleware
         {
             if (context.OutstandingExecution is { IsCompleted: false } execution)
             {
-                // The execution still runs against the operation context, so we abandon the rented
-                // operation context and release the request cleanup once the execution settled.
+                // abandon the rented operation context and release the request cleanup once the execution settled.
                 operationContextOwner = null;
                 context.OutstandingExecution = RunWhenSettledAsync(
                     context,
