@@ -62,8 +62,6 @@ public class DeferTaskFailureTests
         string query,
         TaskCompletionSource initialDelivered)
     {
-        // the stream is read off the test thread so that a response that never ends fails the
-        // test through the timeout instead of blocking the test run.
         return await Task.Run(
                 async () =>
                 {

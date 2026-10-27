@@ -83,8 +83,7 @@ internal sealed class DeferTask : ExecutionTask
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            // a branch that fails after its work settled still completes with the coordinator,
-            // otherwise the response stream would never end.
+            // a failure after the branch settled completes the branch with an error result.
             var failedResult = new OperationResult(CreateErrors(deferContext, ex));
             await deferContext.DeferExecutionCoordinator.EnqueueResult(failedResult, _executionBranchId);
         }
