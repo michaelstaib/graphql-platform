@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
+using HotChocolate.Execution.Processing;
 using HotChocolate.Features;
 using HotChocolate.Fetching;
 using Microsoft.Extensions.ObjectPool;
@@ -223,15 +224,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
     private async Task ReturnWhenSettledAsync(PooledRequestContext context, Task execution)
     {
-        try
-        {
-            await execution.ConfigureAwait(false);
-        }
-        catch
-        {
-            // an aborted execution has no consumer left that could observe its failure.
-        }
-
+        await RequestCleanup.WaitUntilSettledAsync(execution).ConfigureAwait(false);
         _contextPool.Return(context);
     }
 
