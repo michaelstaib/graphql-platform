@@ -1516,13 +1516,10 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Writes the token type and raw bytes of the key values at <paramref name="keyRowOffsets"/>
-    /// from <paramref name="startCursor"/> into the key buffer at <paramref name="start"/> and
-    /// keeps the bytes before it.
-    /// <paramref name="length"/> is the number of bytes written.
-    /// <paramref name="hasKey"/> is <c>false</c> when a key value is unset, or null for a non-null
-    /// requirement; <paramref name="hasNonNullKeyValue"/> is <c>true</c> when at least one key
-    /// value is neither unset nor null.
+    /// Writes the entity's raw identity key and reports its byte length.
+    /// <paramref name="hasKey"/> is <c>false</c> when a key is unset or null for a non-null
+    /// requirement, and <paramref name="hasNonNullKeyValue"/> is <c>true</c> when at least one
+    /// key is neither unset nor null.
     /// </summary>
     /// <returns>
     /// <c>true</c> if every key value can be compared by its raw bytes; otherwise, <c>false</c>.
