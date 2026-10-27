@@ -1,18 +1,15 @@
-using System.Collections.Frozen;
 using System.Globalization;
 using System.Security.Claims;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Pipeline;
 using HotChocolate.Fusion.Policies.Audit;
-using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Policies;
 
 /// <summary>
-/// The policy state of one protected subscription, which decides per event with the
-/// policies that reevaluate and ends the stream when the token of the principal expires.
+/// The policy state of one protected subscription, which ends the stream when the token of the
+/// principal expires.
 /// </summary>
 internal sealed class SubscriptionPolicies
 {
@@ -26,16 +23,13 @@ internal sealed class SubscriptionPolicies
     private readonly OperationPlan _plan;
     private readonly PolicyPlan _policies;
     private readonly IVariableValueCollection _variables;
-    private readonly IInputType _booleanType;
     private readonly TimeProvider _timeProvider;
-    private readonly FrozenSet<PolicyDescriptor> _startDenied;
-    private FrozenSet<PolicyDescriptor> _deniedDescriptors;
 
     /// <summary>
     /// Initializes a new instance of <see cref="SubscriptionPolicies"/>.
     /// </summary>
     /// <param name="evaluator">
-    /// The evaluator that asks the policies.
+    /// The evaluator that records the denied entries of the expiry.
     /// </param>
     /// <param name="scope">
     /// The audit scope of the decision made when the subscription started.
@@ -49,12 +43,6 @@ internal sealed class SubscriptionPolicies
     /// <param name="variables">
     /// The coerced variable values of the subscription without the synthetic variables.
     /// </param>
-    /// <param name="deniedDescriptors">
-    /// The descriptors denied when the subscription started.
-    /// </param>
-    /// <param name="booleanType">
-    /// The schema's Boolean type.
-    /// </param>
     /// <param name="timeProvider">
     /// The time provider that measures the expiry of the token.
     /// </param>
@@ -64,8 +52,6 @@ internal sealed class SubscriptionPolicies
         OperationPlan plan,
         PolicyPlan policies,
         IVariableValueCollection variables,
-        FrozenSet<PolicyDescriptor> deniedDescriptors,
-        IInputType booleanType,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(evaluator);
@@ -73,8 +59,6 @@ internal sealed class SubscriptionPolicies
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(variables);
-        ArgumentNullException.ThrowIfNull(deniedDescriptors);
-        ArgumentNullException.ThrowIfNull(booleanType);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _evaluator = evaluator;
@@ -84,16 +68,8 @@ internal sealed class SubscriptionPolicies
         _plan = plan;
         _policies = policies;
         _variables = variables;
-        _startDenied = deniedDescriptors;
-        _deniedDescriptors = deniedDescriptors;
-        _booleanType = booleanType;
         _timeProvider = timeProvider;
     }
-
-    /// <summary>
-    /// Gets a value that indicates whether the subscription asks policies again for every event.
-    /// </summary>
-    public bool ReevaluatesPerEvent => _policies.HasReevaluatedPolicies;
 
     /// <summary>
     /// Gets the time at which the token of the principal expires, or <c>null</c> if the principal
@@ -110,85 +86,6 @@ internal sealed class SubscriptionPolicies
             && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
                 ? DateTimeOffset.FromUnixTimeSeconds(seconds)
                 : null;
-    }
-
-    /// <summary>
-    /// Asks the policies that reevaluate again for the current principal. A change of the denied
-    /// descriptors is committed in an audit scope and sets the variable values and the policy
-    /// decisions for the next event on the operation plan context.
-    /// </summary>
-    /// <param name="context">
-    /// The operation plan context of the subscription.
-    /// </param>
-    /// <param name="cancellationToken">
-    /// The token that bounds the evaluation of the event.
-    /// </param>
-    public async ValueTask ReevaluateAsync(
-        OperationPlanContext context,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-
-        var requestContext = context.RequestContext;
-        var user = OperationPolicyMiddleware.GetUser(requestContext);
-        var buffer = _recordsAudit ? new BufferedAuditScope(_trail, _info, user) : null;
-        var scope = buffer ?? (IAuditScope)NoOpAuditScope.Instance;
-        PolicyEvaluation evaluation;
-
-        try
-        {
-            evaluation = await _evaluator.EvaluateAsync(
-                requestContext,
-                user,
-                _plan,
-                _policies,
-                _variables,
-                scope,
-                _info.VariableSetIndex,
-                _startDenied,
-                cancellationToken);
-        }
-        catch (Exception ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
-        {
-            if (buffer is not null)
-            {
-                await _evaluator.CommitFaultedScopeAsync(requestContext, buffer.Replay(), ex);
-            }
-
-            if (ex is OperationCanceledException)
-            {
-                throw ThrowHelper.OperationPolicyFaulted(ex);
-            }
-
-            throw;
-        }
-
-        if (_deniedDescriptors.SetEquals(evaluation.DeniedDescriptors))
-        {
-            return;
-        }
-
-        if (buffer is not null)
-        {
-            try
-            {
-                await buffer.Replay().CommitAsync(cancellationToken);
-            }
-            catch (OperationCanceledException ex) when (PolicyEvaluator.IsFault(ex, cancellationToken))
-            {
-                throw ThrowHelper.OperationPolicyFaulted(ex);
-            }
-        }
-
-        _deniedDescriptors = evaluation.DeniedDescriptors;
-
-        context.SetVariables(
-            PolicyVariableValues.Create(
-                _variables,
-                _policies.Variables,
-                evaluation.Decisions,
-                _booleanType),
-            evaluation.Decisions);
     }
 
     /// <summary>

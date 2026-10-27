@@ -1207,25 +1207,6 @@ internal static partial class OperationPlanExecutor
 
                     context.Begin(eventArgs.StartTimestamp, eventArgs.Activity?.TraceId.ToHexString());
 
-                    if (subscriptionPolicies is { ReevaluatesPerEvent: true })
-                    {
-                        try
-                        {
-                            await subscriptionPolicies.ReevaluateAsync(context, eventToken);
-                        }
-                        catch (Exception ex) when (PolicyEvaluator.IsFault(ex, eventToken))
-                        {
-                            context.DiagnosticEvents.SubscriptionEventError(
-                                context,
-                                subscriptionNode,
-                                schemaName,
-                                subscriptionResult.Id,
-                                ex);
-                            policyFault = ex;
-                            break;
-                        }
-                    }
-
                     executionState.Reset();
 
                     executionState.FillBacklog(plan);

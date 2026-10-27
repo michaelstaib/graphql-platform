@@ -18,8 +18,6 @@ namespace HotChocolate.Fusion.Policies;
 internal sealed class PolicyEvaluator
 {
     internal const string UnauthenticatedReason = "unauthenticated";
-    private const string SubscribeDecisionStandsReason = "subscribe-time decision stands";
-    private const string FrozenReason = "frozen";
 
     private static readonly ImmutableDictionary<string, object?> s_noArguments =
 #if NET10_0_OR_GREATER
@@ -82,11 +80,6 @@ internal sealed class PolicyEvaluator
     /// <param name="requestIndex">
     /// The index of the variable set within the request.
     /// </param>
-    /// <param name="frozenDenied">
-    /// The descriptors denied when a subscription started, or <c>null</c> to ask every policy.
-    /// A policy that does not reevaluate per event and every descriptor of a selection denied at that point
-    /// keep their earlier verdict instead of being asked.
-    /// </param>
     /// <param name="cancellationToken">
     /// The token that signals that the request was aborted.
     /// </param>
@@ -98,7 +91,6 @@ internal sealed class PolicyEvaluator
         IVariableValueCollection variables,
         IAuditScope scope,
         int requestIndex,
-        FrozenSet<PolicyDescriptor>? frozenDenied,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -114,45 +106,12 @@ internal sealed class PolicyEvaluator
         var groups = new List<PolicyGroup>();
         var groupsByPolicy = new Dictionary<IPolicy, PolicyGroup>();
         var answered = scope.IsRecording ? new HashSet<PolicyDescriptor>() : null;
-        var pinned = GetPinnedSelections(occurrences, frozenDenied);
         PolicyEvaluationContext? evaluating = null;
 
         try
         {
             foreach (var descriptor in occurrences)
             {
-                if (frozenDenied is not null
-                    && (!descriptor.Policy.ReevaluatesPerEvent || pinned.Contains((Selection)descriptor.Selection)))
-                {
-                    var isDenied = frozenDenied.Contains(descriptor);
-
-                    if (isDenied)
-                    {
-                        deniedDescriptors.Add(descriptor);
-                    }
-
-                    if (answered is not null)
-                    {
-                        var entry = new PolicyEvaluationEntry(
-                            descriptor,
-                            CoerceArguments((Selection)descriptor.Selection, variables));
-                        var reason = descriptor.Policy.ReevaluatesPerEvent
-                            ? SubscribeDecisionStandsReason
-                            : FrozenReason;
-
-                        scope.Record(
-                            CreateAuditEntry(
-                                entry,
-                                new PolicyVerdict(
-                                    isDenied ? PolicyOutcome.Denied : PolicyOutcome.Allowed,
-                                    reason,
-                                    null)));
-                        answered.Add(descriptor);
-                    }
-
-                    continue;
-                }
-
                 // An anonymous principal never reaches the scope and named policies, except an
                 // unresolved policy, which fails the request as a configuration error.
                 if (!isAuthenticated
@@ -229,7 +188,7 @@ internal sealed class PolicyEvaluator
                         RecordUnanswered(scope, occurrences, groups, answered, variables);
                     }
 
-                    return new PolicyEvaluation(null, ex, Freeze(deniedDescriptors));
+                    return new PolicyEvaluation(null, ex);
                 }
 
                 if (answered is not null)
@@ -243,10 +202,7 @@ internal sealed class PolicyEvaluator
 
             var denied = Freeze(deniedDescriptors);
 
-            return new PolicyEvaluation(
-                CreateDecisions(occurrences, denied, isAuthenticated, frozenDenied is not null),
-                null,
-                denied);
+            return new PolicyEvaluation(CreateDecisions(occurrences, denied, isAuthenticated), null);
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
@@ -356,8 +312,7 @@ internal sealed class PolicyEvaluator
     private PolicyDecisions? CreateDecisions(
         ImmutableArray<PolicyDescriptor> occurrences,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
-        bool isAuthenticated,
-        bool alwaysFinalize)
+        bool isAuthenticated)
     {
         if (deniedDescriptors.Count == 0)
         {
@@ -390,33 +345,7 @@ internal sealed class PolicyEvaluator
             : new PolicyDecisions(
                 denials.ToImmutable(),
                 _options.DenyHandling,
-                _options.EnableAttribution,
-                alwaysFinalize);
-    }
-
-    private static HashSet<Selection> GetPinnedSelections(
-        ImmutableArray<PolicyDescriptor> occurrences,
-        FrozenSet<PolicyDescriptor>? frozenDenied)
-    {
-        var pinned = new HashSet<Selection>();
-
-        if (frozenDenied is null || frozenDenied.Count == 0)
-        {
-            return pinned;
-        }
-
-        var selections = new List<Selection>();
-        var descriptorsBySelection = GroupBySelection(occurrences, selections);
-
-        foreach (var selection in selections)
-        {
-            if (FindDenyingDescriptor(selection, descriptorsBySelection[selection], frozenDenied) is not null)
-            {
-                pinned.Add(selection);
-            }
-        }
-
-        return pinned;
+                _options.EnableAttribution);
     }
 
     private static Dictionary<Selection, List<PolicyDescriptor>> GroupBySelection(

@@ -1,5 +1,3 @@
-using System.Collections.Frozen;
-
 namespace HotChocolate.Fusion.Policies;
 
 /// <summary>
@@ -11,11 +9,6 @@ namespace HotChocolate.Fusion.Policies;
 /// <param name="Failure">
 /// The failure of a policy that no provider resolved, or <c>null</c> if every policy was evaluated.
 /// </param>
-/// <param name="DeniedDescriptors">
-/// The descriptors whose policy did not allow them, including those of a selection that another
-/// policy group allowed.
-/// </param>
 internal readonly record struct PolicyEvaluation(
     PolicyDecisions? Decisions,
-    InvalidOperationException? Failure,
-    FrozenSet<PolicyDescriptor> DeniedDescriptors);
+    InvalidOperationException? Failure);

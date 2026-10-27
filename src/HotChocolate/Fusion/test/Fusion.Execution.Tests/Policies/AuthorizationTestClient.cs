@@ -28,8 +28,6 @@ internal sealed class AuthorizationTestClient(string data) : ISourceSchemaClient
 
     public SourceSchemaClientCapabilities Capabilities => SourceSchemaClientCapabilities.None;
 
-    public Action? Subscribing { get; set; }
-
     public int SubscribeCalls => Volatile.Read(ref _subscribeCalls);
 
     public void Publish(string eventData)
@@ -57,7 +55,6 @@ internal sealed class AuthorizationTestClient(string data) : ISourceSchemaClient
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _subscribeCalls);
-        Subscribing?.Invoke();
 
         await foreach (var eventData in _events.Reader.ReadAllAsync(cancellationToken))
         {

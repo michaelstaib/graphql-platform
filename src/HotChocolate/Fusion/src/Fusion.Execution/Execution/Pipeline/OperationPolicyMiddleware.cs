@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
@@ -101,7 +100,6 @@ internal sealed class OperationPolicyMiddleware
                     variableSets[i],
                     scope,
                     i,
-                    null,
                     context.RequestAborted);
             }
             catch (Exception ex) when (PolicyEvaluator.IsFault(ex, context.RequestAborted))
@@ -163,8 +161,7 @@ internal sealed class OperationPolicyMiddleware
                     plan,
                     policies,
                     scope,
-                    variableSets[i],
-                    evaluation.DeniedDescriptors);
+                    variableSets[i]);
             }
 
             if (policies.Variables.IsEmpty)
@@ -236,10 +233,9 @@ internal sealed class OperationPolicyMiddleware
         OperationPlan plan,
         PolicyPlan policies,
         IAuditScope scope,
-        IVariableValueCollection variables,
-        FrozenSet<PolicyDescriptor> deniedDescriptors)
+        IVariableValueCollection variables)
     {
-        if (!policies.HasReevaluatedPolicies && SubscriptionPolicies.GetExpiry(user) is null)
+        if (SubscriptionPolicies.GetExpiry(user) is null)
         {
             return;
         }
@@ -251,8 +247,6 @@ internal sealed class OperationPolicyMiddleware
                 plan,
                 policies,
                 variables,
-                deniedDescriptors,
-                _booleanType,
                 _timeProvider));
     }
 
