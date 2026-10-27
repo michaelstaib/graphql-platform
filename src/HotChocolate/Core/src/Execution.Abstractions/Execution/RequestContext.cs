@@ -72,7 +72,7 @@ public abstract class RequestContext : IFeatureProvider
     internal MemoryArena? Memory => _memory;
 
     /// <summary>
-    /// Gets or sets the execution of an aborted operation that may still run against this request,
+    /// Gets or sets the execution of an incremental operation that may still run against this request,
     /// or <c>null</c> when no execution is outstanding.
     /// </summary>
     internal Task? OutstandingExecution { get; set; }

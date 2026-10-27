@@ -96,7 +96,24 @@ internal sealed class OperationExecutionMiddleware
                 }
             }
 
-            await _next(context).ConfigureAwait(false);
+            var result = context.Result;
+
+            try
+            {
+                await _next(context).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (result is { Kind: ExecutionResultKind.DeferredResult }
+                    && context.OutstandingExecution is { IsCompleted: false } execution)
+                {
+                    // the failed request drops the response stream, so the stream is released once the
+                    // execution that still runs against it settled.
+                    context.OutstandingExecution = RunWhenSettledAsync(execution, result.DisposeAsync);
+                }
+
+                throw;
+            }
         }
         else if (context.Request is VariableBatchRequest variableBatchRequest
             && variableBatchRequest.VariableValues.Document.RootElement.GetArrayLength() == 0)
@@ -320,16 +337,28 @@ internal sealed class OperationExecutionMiddleware
         }
         catch (Exception ex)
         {
-            if (ex is OperationCanceledException)
+            if (context.OutstandingExecution is { IsCompleted: false } execution)
             {
-                // if an operation is canceled we will abandon the rented operation context
-                // to ensure that that abandoned tasks do not leak into new operations.
+                // The execution still runs against the operation context, so we abandon the rented
+                // operation context and release the request cleanup once the execution settled.
                 operationContextOwner = null;
+                context.OutstandingExecution = RunWhenSettledAsync(
+                    execution,
+                    () => ExecuteAbortCleanupAsync(operationContext));
             }
+            else
+            {
+                if (ex is OperationCanceledException)
+                {
+                    // if an operation is canceled we will abandon the rented operation context
+                    // to ensure that that abandoned tasks do not leak into new operations.
+                    operationContextOwner = null;
+                }
 
-            // No result will be built, so the cleanup tasks registered for the request would
-            // never run if we did not release them here.
-            await ExecuteAbortCleanupAsync(operationContext).ConfigureAwait(false);
+                // No result will be built, so the cleanup tasks registered for the request would
+                // never run if we did not release them here.
+                await ExecuteAbortCleanupAsync(operationContext).ConfigureAwait(false);
+            }
 
             // We rethrow so that another middleware can deal with the failure.
             throw;
@@ -337,6 +366,20 @@ internal sealed class OperationExecutionMiddleware
         finally
         {
             operationContextOwner?.Dispose();
+        }
+    }
+
+    private static async Task RunWhenSettledAsync(Task execution, Func<ValueTask> release)
+    {
+        await RequestCleanup.WaitUntilSettledAsync(execution).ConfigureAwait(false);
+
+        try
+        {
+            await release().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Preserve the failure that caused the abort.
         }
     }
 

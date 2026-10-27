@@ -202,8 +202,10 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
             {
                 if (context.OutstandingExecution is { IsCompleted: false } execution)
                 {
-                    // the abandoned execution still reads the request context, so it is returned once it settled.
-                    _ = ReturnWhenSettledAsync(context, execution);
+                    // the abandoned execution still reads the request context and resolves services
+                    // from the request scope, so both are released once it settled.
+                    _ = ReleaseWhenSettledAsync(context, scope, execution);
+                    scope = null;
                 }
                 else
                 {
@@ -211,21 +213,33 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 }
             }
 
-            if (scope is IAsyncDisposable asyncScope)
-            {
-                await asyncScope.DisposeAsync();
-            }
-            else
-            {
-                scope?.Dispose();
-            }
+            await DisposeScopeAsync(scope).ConfigureAwait(false);
         }
     }
 
-    private async Task ReturnWhenSettledAsync(PooledRequestContext context, Task execution)
+    private async Task ReleaseWhenSettledAsync(PooledRequestContext context, IServiceScope? scope, Task execution)
     {
         await RequestCleanup.WaitUntilSettledAsync(execution).ConfigureAwait(false);
-        _contextPool.Return(context);
+
+        try
+        {
+            await DisposeScopeAsync(scope).ConfigureAwait(false);
+        }
+        finally
+        {
+            _contextPool.Return(context);
+        }
+    }
+
+    private static ValueTask DisposeScopeAsync(IServiceScope? scope)
+    {
+        if (scope is IAsyncDisposable asyncScope)
+        {
+            return asyncScope.DisposeAsync();
+        }
+
+        scope?.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     private void RegisterPoolReturn(PooledRequestContext context, IRequestCleanup? requestCleanup)
