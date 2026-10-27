@@ -94,8 +94,6 @@ public class WorkSchedulerLoopFailureTests
         public void BeginDispatch(CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("The dispatcher failed.");
 
-        // DEBUG
-
         public void Dispose()
         {
         }
