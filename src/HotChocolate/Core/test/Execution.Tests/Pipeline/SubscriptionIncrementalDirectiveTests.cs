@@ -263,6 +263,193 @@ public sealed class SubscriptionIncrementalDirectiveTests
             """);
     }
 
+    [Fact]
+    public async Task Subscription_Should_ReturnError_When_DeferInNamedFragmentIsEnabledByVariable()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($d: Boolean!) {
+                  onMessage {
+                    ...Body
+                  }
+                }
+
+                fragment Body on Message {
+                  ... @defer(if: $d) {
+                    body
+                  }
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["d"] = true })
+            .Build();
+
+        // act
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResult().MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The @defer directive cannot be enabled in a subscription operation. Pass false to its `if` argument to disable it.",
+                  "extensions": {
+                    "directive": "defer"
+                  }
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Subscription_Should_DeliverEvents_When_DeferInNamedFragmentIsDisabledByVariable()
+    {
+        // arrange
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        var executor = await CreateExecutorAsync();
+        var sender = executor.Schema.Services.GetRootServiceProvider()
+            .GetRequiredService<ITopicEventSender>();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($d: Boolean!) {
+                  onMessage {
+                    ...Body
+                  }
+                }
+
+                fragment Body on Message {
+                  ... @defer(if: $d) {
+                    body
+                  }
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["d"] = false })
+            .Build();
+
+        var subscribe = await executor.ExecuteAsync(request, cts.Token);
+        await using var stream = subscribe.ExpectResponseStream();
+        await using var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(cts.Token);
+
+        // act
+        await sender.SendAsync("OnMessage", new Message("hello", ["a", "b"]), cts.Token);
+        var moved = await enumerator.MoveNextAsync();
+
+        // assert
+        Assert.True(moved);
+        enumerator.Current.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "onMessage": {
+                  "body": "hello"
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Subscription_Should_ReturnError_When_StreamInNamedFragmentIsEnabledByVariable()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($s: Boolean!) {
+                  onMessage {
+                    ...Tags
+                  }
+                }
+
+                fragment Tags on Message {
+                  tags @stream(if: $s)
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["s"] = true })
+            .Build();
+
+        // act
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResult().MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The @stream directive cannot be enabled in a subscription operation. Pass false to its `if` argument to disable it.",
+                  "extensions": {
+                    "directive": "stream"
+                  }
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Subscription_Should_DeliverEvents_When_StreamInNamedFragmentIsDisabledByVariable()
+    {
+        // arrange
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        var executor = await CreateExecutorAsync();
+        var sender = executor.Schema.Services.GetRootServiceProvider()
+            .GetRequiredService<ITopicEventSender>();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($s: Boolean!) {
+                  onMessage {
+                    ...Tags
+                  }
+                }
+
+                fragment Tags on Message {
+                  tags @stream(if: $s)
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["s"] = false })
+            .Build();
+
+        var subscribe = await executor.ExecuteAsync(request, cts.Token);
+        await using var stream = subscribe.ExpectResponseStream();
+        await using var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(cts.Token);
+
+        // act
+        await sender.SendAsync("OnMessage", new Message("hello", ["a", "b"]), cts.Token);
+        var moved = await enumerator.MoveNextAsync();
+
+        // assert
+        Assert.True(moved);
+        enumerator.Current.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "onMessage": {
+                  "tags": [
+                    "a",
+                    "b"
+                  ]
+                }
+              }
+            }
+            """);
+    }
+
     private static ValueTask<IRequestExecutor> CreateExecutorAsync()
         => new ServiceCollection()
             .AddGraphQL()
