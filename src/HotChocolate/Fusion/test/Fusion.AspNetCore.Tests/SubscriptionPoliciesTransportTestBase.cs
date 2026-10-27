@@ -25,6 +25,9 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
     protected static readonly SubscriptionPoliciesSource.Item Event =
         new("1", "name", "code", "note", "tag");
 
+    protected static void DenyLivePolicy(IFusionGatewayBuilder builder)
+        => builder.AddInMemoryPolicies(policies => policies.Deny(SubscriptionPoliciesSource.LivePolicy));
+
     protected Task<SubscriptionGateway> CreateSubscriptionGatewayAsync(DenyHandling denyHandling)
         => CreateSubscriptionGatewayAsync(denyHandling, _ => { });
 
@@ -34,8 +37,6 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
     {
         var feed = new SubscriptionPoliciesFeed();
         var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddHours(1));
-        var live = new SwitchablePolicy(SubscriptionPoliciesSource.LivePolicy, reevaluatesPerEvent: true);
-        var flip = new SwitchablePolicy(SubscriptionPoliciesSource.FlipPolicy, reevaluatesPerEvent: true);
         var audit = new RecordingAuditProvider();
 
         var source = CreateSourceSchema(
@@ -54,15 +55,19 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
                     {
                         services.AddSingleton<TimeProvider>(time);
                         services.AddSingleton<IAuditProvider>(audit);
-                        services.AddSingleton<IPolicyProvider>(live);
-                        services.AddSingleton<IPolicyProvider>(flip);
                     });
                 builder.ModifyAuthorizationOptions(o => o.DenyHandling = denyHandling);
+
+                // The policies the test configures take precedence over the allowing defaults below.
                 configure(builder);
+                builder.AddInMemoryPolicies(
+                    policies => policies
+                        .Allow(SubscriptionPoliciesSource.LivePolicy)
+                        .Allow(SubscriptionPoliciesSource.FlipPolicy));
             },
             includeOperationPlan: false);
 
-        return new SubscriptionGateway(gateway, feed, time, live, flip, audit);
+        return new SubscriptionGateway(gateway, feed, time, audit);
     }
 
     /// <summary>
@@ -119,8 +124,6 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
         Gateway gateway,
         SubscriptionPoliciesFeed feed,
         FakeTimeProvider time,
-        SwitchablePolicy live,
-        SwitchablePolicy flip,
         RecordingAuditProvider audit) : IDisposable
     {
         public Gateway Gateway { get; } = gateway;
@@ -128,10 +131,6 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
         public SubscriptionPoliciesFeed Feed { get; } = feed;
 
         public FakeTimeProvider Time { get; } = time;
-
-        public SwitchablePolicy Live { get; } = live;
-
-        public SwitchablePolicy Flip { get; } = flip;
 
         public RecordingAuditProvider Audit { get; } = audit;
 
