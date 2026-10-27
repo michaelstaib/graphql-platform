@@ -347,7 +347,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
         try
         {
-            var completionContext = new ValueCompletionContext(context, _resolverContext, tasks, itemsBranchId);
+            var completionContext = new ValueCompletionContext(context, _resolverContext, tasks, groupScope: null);
             Complete(completionContext, _selection, listResult, items);
         }
         catch (OperationCanceledException)
