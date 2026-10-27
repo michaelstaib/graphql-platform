@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
+using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Processing;
 using HotChocolate.Features;
 using HotChocolate.Fetching;
@@ -15,6 +16,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
     private readonly ObjectPool<PooledRequestContext> _contextPool;
     private readonly DefaultRequestContextAccessor _contextAccessor;
     private readonly IRequestContextEnricher[] _enricher;
+    private readonly IExecutionDiagnosticEvents _diagnosticEvents;
     private List<Task>? _taskList;
 
     public DefaultRequestExecutor(
@@ -23,12 +25,14 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         RequestDelegate requestDelegate,
         ObjectPool<PooledRequestContext> requestContextPool,
         DefaultRequestContextAccessor contextAccessor,
+        IExecutionDiagnosticEvents diagnosticEvents,
         ulong version)
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(applicationServices);
         ArgumentNullException.ThrowIfNull(requestContextPool);
         ArgumentNullException.ThrowIfNull(contextAccessor);
+        ArgumentNullException.ThrowIfNull(diagnosticEvents);
 
         Schema = schema;
         Version = version;
@@ -37,6 +41,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         _applicationServices = applicationServices;
         _contextPool = requestContextPool;
         _contextAccessor = contextAccessor;
+        _diagnosticEvents = diagnosticEvents;
 
         var list = new List<IRequestContextEnricher>();
         CollectEnricher(applicationServices, list);
@@ -224,6 +229,11 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         try
         {
             await DisposeScopeAsync(scope).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // no caller is left that could observe the failure of the scope disposal.
+            _diagnosticEvents.RequestError(context, ex);
         }
         finally
         {

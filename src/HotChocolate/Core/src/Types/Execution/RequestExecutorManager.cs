@@ -387,6 +387,7 @@ internal sealed partial class RequestExecutorManager
             sp.GetRequiredService<RequestDelegate>(),
             sp.GetRequiredService<ObjectPool<PooledRequestContext>>(),
             sp.GetRootServiceProvider().GetRequiredService<DefaultRequestContextAccessor>(),
+            sp.GetRequiredService<IExecutionDiagnosticEvents>(),
             sp.GetRequiredService<SchemaVersionInfo>().Version));
 
         serviceCollection.AddSingleton(static sp =>

@@ -508,6 +508,29 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_ReportCancellationFailure_When_MiddlewareFailsAfterExecution()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            "{ failingCancellation items { id ... @defer { stubborn } } }",
+            TestContext.Current.CancellationToken);
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Errors.ToArray().MatchInlineSnapshots(
+        [
+            "request error: One or more errors occurred. (cancellation callback failed)",
+            "request error: request middleware failed"
+        ]);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_ReportCleanupFailure_When_MiddlewareFailsAfterExecution()
     {
         // arrange
@@ -631,6 +654,12 @@ public class IncrementalEarlyDisposeTests
                 },
                 CleanAfter.Request);
             return "tracked";
+        }
+
+        public string GetFailingCancellation(CancellationToken cancellationToken)
+        {
+            cancellationToken.Register(static () => throw new InvalidOperationException("cancellation callback failed"));
+            return "registered";
         }
 
         public IAsyncEnumerable<int> GetNumbers([Service] Probe probe, [Service] ScopeProbe scopeProbe)

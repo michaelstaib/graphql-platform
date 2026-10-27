@@ -112,7 +112,7 @@ internal sealed class OperationExecutionMiddleware
                     context.OutstandingExecution = RunWhenSettledAsync(context, execution, result.DisposeAsync);
 
                     // the abandoned execution is canceled at once, the release above waits for it to settle.
-                    CancelAbandonedExecution(requestCleanup);
+                    CancelAbandonedExecution(context, requestCleanup);
                 }
 
                 throw;
@@ -388,15 +388,16 @@ internal sealed class OperationExecutionMiddleware
         }
     }
 
-    private static void CancelAbandonedExecution(RequestCleanup requestCleanup)
+    private void CancelAbandonedExecution(RequestContext context, RequestCleanup requestCleanup)
     {
         try
         {
             requestCleanup.Cancel();
         }
-        catch
+        catch (Exception ex)
         {
-            // Preserve the failure that caused the abort.
+            // the caller rethrows the failure that caused the abort, so this failure is only reported.
+            _diagnosticEvents.RequestError(context, ex);
         }
     }
 
