@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Tracing;
 using System.Text.Json;
 using HotChocolate.Execution.Configuration;
+using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.Instrumentation;
+using HotChocolate.Execution.Processing;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
@@ -474,8 +476,59 @@ public class IncrementalEarlyDisposeTests
             "resolver 1 resolved the scoped service",
             "resolver 2 resolved the scoped service",
             "request cleanup ran",
+            "operation context returned",
             "request scope disposed",
             "request context returned"
+        ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_CancelAbandonedExecution_When_MiddlewareFailsAfterExecution()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            "{ items { id ... @defer { slow } } }",
+            TestContext.Current.CancellationToken);
+        await probe.Cancelled("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.Cancelled("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.ScopeDisposed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Events.Order().ToArray().MatchInlineSnapshots(
+        [
+            "operation context returned",
+            "request context returned",
+            "request scope disposed"
+        ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ReportCleanupFailure_When_MiddlewareFailsAfterExecution()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            "{ items { id ... @defer { failingCleanup } } }",
+            TestContext.Current.CancellationToken);
+        await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Errors.ToArray().MatchInlineSnapshots(
+        [
+            "request error: request middleware failed",
+            "request error: cleanup failed"
         ]);
     }
 
@@ -528,7 +581,13 @@ public class IncrementalEarlyDisposeTests
         => CreateExecutorBuilder(probe).BuildRequestExecutorAsync();
 
     private static ValueTask<IRequestExecutor> CreateExecutorWithFailingMiddlewareAsync(Probe probe)
-        => CreateExecutorBuilder(probe)
+    {
+        var builder = CreateExecutorBuilder(probe);
+        builder.Services.AddSingleton<IFactory<OperationContextOwner>>(
+            sp => new OperationContextOwnerFactory(
+                new TrackingOperationContextPool(probe, sp.GetRequiredService<ObjectPool<OperationContext>>())));
+
+        return builder
             .UseRequest(
                 (_, next) => async context =>
                 {
@@ -538,6 +597,7 @@ public class IncrementalEarlyDisposeTests
                 key: "FailAfterExecution",
                 after: WellKnownRequestMiddleware.OperationExecutionMiddleware)
             .BuildRequestExecutorAsync();
+    }
 
     private static IRequestExecutorBuilder CreateExecutorBuilder(Probe probe)
         => new ServiceCollection()
@@ -697,6 +757,8 @@ public class IncrementalEarlyDisposeTests
 
         public TaskCompletionSource RequestContextReturned { get; } = Create();
 
+        public TaskCompletionSource ScopeDisposed { get; } = Create();
+
         public TaskCompletionSource ProducerDisposedSignal { get; } = Create();
 
         public int ProducerDisposeCount => Volatile.Read(ref _producerDisposeCount);
@@ -729,7 +791,11 @@ public class IncrementalEarlyDisposeTests
 
     public sealed class ScopeProbe(Probe probe) : IDisposable
     {
-        public void Dispose() => probe.Log("request scope disposed");
+        public void Dispose()
+        {
+            probe.Log("request scope disposed");
+            probe.ScopeDisposed.TrySetResult();
+        }
     }
 
     private sealed class TrackingRequestContextPool(Probe probe) : ObjectPool<PooledRequestContext>
@@ -754,6 +820,29 @@ public class IncrementalEarlyDisposeTests
             probe.Log("request context returned");
             probe.RequestContextReturned.TrySetResult();
             probe.ContextReturned(obj).TrySetResult();
+        }
+    }
+
+    private sealed class TrackingOperationContextPool(Probe probe, ObjectPool<OperationContext> inner)
+        : ObjectPool<OperationContext>
+    {
+        private OperationContext? _root;
+
+        public override OperationContext Get()
+        {
+            var context = inner.Get();
+            Interlocked.CompareExchange(ref _root, context, null);
+            return context;
+        }
+
+        public override void Return(OperationContext obj)
+        {
+            inner.Return(obj);
+
+            if (ReferenceEquals(obj, Volatile.Read(ref _root)))
+            {
+                probe.Log("operation context returned");
+            }
         }
     }
 

@@ -104,12 +104,15 @@ internal sealed class OperationExecutionMiddleware
             }
             catch
             {
-                if (result is { Kind: ExecutionResultKind.DeferredResult }
+                if (result is ResponseStream { RequestCleanup: RequestCleanup requestCleanup }
                     && context.OutstandingExecution is { IsCompleted: false } execution)
                 {
                     // the failed request drops the response stream, so the stream is released once the
                     // execution that still runs against it settled.
-                    context.OutstandingExecution = RunWhenSettledAsync(execution, result.DisposeAsync);
+                    context.OutstandingExecution = RunWhenSettledAsync(context, execution, result.DisposeAsync);
+
+                    // the abandoned execution is canceled at once, the release above waits for it to settle.
+                    CancelAbandonedExecution(requestCleanup);
                 }
 
                 throw;
@@ -343,8 +346,9 @@ internal sealed class OperationExecutionMiddleware
                 // operation context and release the request cleanup once the execution settled.
                 operationContextOwner = null;
                 context.OutstandingExecution = RunWhenSettledAsync(
+                    context,
                     execution,
-                    () => ExecuteAbortCleanupAsync(operationContext));
+                    () => ReleaseAbortedExecutionAsync(operationContext));
             }
             else
             {
@@ -369,7 +373,7 @@ internal sealed class OperationExecutionMiddleware
         }
     }
 
-    private static async Task RunWhenSettledAsync(Task execution, Func<ValueTask> release)
+    private async Task RunWhenSettledAsync(RequestContext context, Task execution, Func<ValueTask> release)
     {
         await RequestCleanup.WaitUntilSettledAsync(execution).ConfigureAwait(false);
 
@@ -377,10 +381,33 @@ internal sealed class OperationExecutionMiddleware
         {
             await release().ConfigureAwait(false);
         }
+        catch (Exception ex)
+        {
+            // no caller is left that could observe the failure of the release.
+            _diagnosticEvents.RequestError(context, ex);
+        }
+    }
+
+    private static void CancelAbandonedExecution(RequestCleanup requestCleanup)
+    {
+        try
+        {
+            requestCleanup.Cancel();
+        }
         catch
         {
             // Preserve the failure that caused the abort.
         }
+    }
+
+    private static async ValueTask ReleaseAbortedExecutionAsync(OperationContext operationContext)
+    {
+        if (operationContext.RequestCleanup is { } requestCleanup)
+        {
+            await requestCleanup.ReleaseAsync().ConfigureAwait(false);
+        }
+
+        await operationContext.Result.ExecuteCleanupTasksAsync().ConfigureAwait(false);
     }
 
     private static async ValueTask ExecuteAbortCleanupAsync(OperationContext operationContext)
