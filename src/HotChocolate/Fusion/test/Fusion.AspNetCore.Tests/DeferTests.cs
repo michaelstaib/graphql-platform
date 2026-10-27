@@ -3334,6 +3334,87 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public async Task Defer_Should_DeliverFieldsOfBothSchemas_When_GroupSelectsOwnFieldsOfTwoSchemas()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "details") {
+                        name
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverOuterGroupFields_When_NestedGroupSelectsFieldOfAnotherSchema()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        name
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") {
+                            rating
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDox"},{"id":"UHJvZHVjdDoy"},{"id":"UHJvZHVjdDoz"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"name":"Product: UHJvZHVjdDox","reviews":[{"id":"UmV2aWV3OjE="},{"id":"UmV2aWV3OjI="},{"id":"UmV2aWV3OjM="}]}},{"id":"0","subPath":[1],"data":{"name":"Product: UHJvZHVjdDoy","reviews":[{"id":"UmV2aWV3OjQ="},{"id":"UmV2aWV3OjU="},{"id":"UmV2aWV3OjY="}]}},{"id":"0","subPath":[2],"data":{"name":"Product: UHJvZHVjdDoz","reviews":[{"id":"UmV2aWV3Ojc="},{"id":"UmV2aWV3Ojg="},{"id":"UmV2aWV3Ojk="}]}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","subPath":[0],"data":{"rating":123}},{"id":"1","subPath":[1],"data":{"rating":123}},{"id":"1","subPath":[2],"data":{"rating":123}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
     private static OperationRequest CreateNestedMessageDeferRequest(bool outerEnabled, bool innerEnabled)
         => new(
             query: """
@@ -3401,6 +3482,60 @@ public class DeferTests : FusionTestBase
         [
             ("A", server1),
             ("B", server2)
+        ]);
+    }
+
+    private async Task<Gateway> CreateProductDetailsGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                products: [Product!]!
+                productNameById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """);
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                productById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                reviews: [Review!]!
+            }
+
+            type Review {
+                id: ID!
+            }
+            """);
+
+        var server3 = CreateSourceSchema(
+            "C",
+            """
+            type Query {
+                productRatingById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                rating: Int!
+            }
+            """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
         ]);
     }
 
