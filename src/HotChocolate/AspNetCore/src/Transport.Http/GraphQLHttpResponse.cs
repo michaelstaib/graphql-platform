@@ -410,13 +410,7 @@ public sealed class GraphQLHttpResponse : IDisposable
     private async ValueTask<OperationResult> ReadAsResultInternalAsync(string? charSet, CancellationToken ct)
 #endif
     {
-#if FUSION
-        await using var contentStream = await HttpTransportUtilities
-            .ReadAsStreamAsync(_message.Content, ct)
-            .ConfigureAwait(false);
-#else
         await using var contentStream = await _message.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-#endif
 
         var stream = contentStream;
 

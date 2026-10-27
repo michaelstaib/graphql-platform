@@ -2,18 +2,14 @@ using System.Buffers;
 using System.Collections.Immutable;
 using System.Net;
 using System.Text;
-using HotChocolate.Buffers;
-using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Transport.Http;
 using HotChocolate.Language;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.ObjectPool;
 
 namespace HotChocolate.Fusion.Execution.Clients;
 
-public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
+public sealed class HttpSourceSchemaClientRequestTests : SourceSchemaClientTestBase
 {
     private const string SingleQuery = "query A { field }";
     private const string VariableQuery = "query B($id: Int!) { field(id: $id) }";
@@ -25,7 +21,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteAsync_Should_SendSingleOperation_When_RequestHasNoVariableSets()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration(
             "A",
             s_baseAddress,
@@ -54,7 +50,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteAsync_Should_SendSingleOperation_When_RequestHasOneVariableSet()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration("A", s_baseAddress);
         var request = CreateRequest(fixture.RootNode, VariableQuery, """{"id":1}""");
 
@@ -80,7 +76,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteAsync_Should_SendVariableBatch_When_SourceSchemaSupportsVariableBatching()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration("A", s_baseAddress);
         var request = CreateRequest(fixture.RootNode, VariableQuery, """{"id":1}""", """{"id":2}""");
 
@@ -106,7 +102,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteAsync_Should_SendOperationPerVariableSet_When_SourceSchemaLacksVariableBatching()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration(
             "A",
             s_baseAddress,
@@ -135,7 +131,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteBatchAsync_Should_SendOperationBatch_When_SourceSchemaSupportsVariableBatching()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration(
             "A",
             s_baseAddress,
@@ -167,7 +163,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteBatchAsync_Should_SendOperationPerVariableSet_When_SourceSchemaLacksVariableBatching()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration(
             "A",
             s_baseAddress,
@@ -198,7 +194,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteBatchAsync_Should_SendEntryWithoutArray_When_BatchHasOneEntry()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration("A", s_baseAddress);
         var variableBatch = ImmutableArray.Create(
             CreateRequest(fixture.RootNode, OtherVariableQuery, """{"id":2}""", """{"id":3}"""));
@@ -240,7 +236,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteAsync_Should_InvokeRequestHooks_When_HooksAreConfigured()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var hookCalls = new List<string>();
         var configuration = new HttpSourceSchemaClientConfiguration(
             "A",
@@ -287,7 +283,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     public async Task ExecuteAsync_Should_WriteEveryBodyCompletely_When_RequestWritersAreReused()
     {
         // arrange
-        await using var fixture = await ClientTestFixture.CreateAsync();
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
         var configuration = new HttpSourceSchemaClientConfiguration("A", s_baseAddress);
         var longValue = new string('a', 10_000);
         var longRequest = CreateRequest(fixture.RootNode, VariableQuery, $$"""{"id":"{{longValue}}"}""");
@@ -314,8 +310,212 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
             direct.Bodies);
     }
 
+    [Fact]
+    public async Task ExecuteBufferedAsync_Should_SendSameRequests_When_ClientWritesBodiesDirectly()
+    {
+        // arrange
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
+        var configuration = new HttpSourceSchemaClientConfiguration("A", s_baseAddress);
+        SourceSchemaClientRequest[] requests =
+        [
+            CreateRequest(fixture.RootNode, SingleQuery),
+            CreateRequest(fixture.RootNode, VariableQuery, """{"id":1}"""),
+            CreateRequest(fixture.RootNode, VariableQuery, """{"id":1}""", """{"id":2}""")
+        ];
+
+        // act
+        var (direct, legacy) = await CaptureBothAsync(
+            fixture,
+            configuration,
+            async (client, context) =>
+            {
+                foreach (var request in requests)
+                {
+                    await client.ExecuteBufferedAsync(
+                        context,
+                        request,
+                        DisposingSink.Instance,
+                        TestContext.Current.CancellationToken);
+                }
+            });
+
+        // assert
+        Assert.Equal(legacy.Requests, direct.Requests);
+        direct.Requests.MatchInlineSnapshots(
+            [
+                """
+                POST http://localhost:5000/graphql HTTP/2.0 RequestVersionOrHigher
+                Accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+                Content-Type: application/json; charset=utf-8
+                OperationKind: Query
+                {"query":"query A { field }"}
+                """,
+                """
+                POST http://localhost:5000/graphql HTTP/2.0 RequestVersionOrHigher
+                Accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+                Content-Type: application/json; charset=utf-8
+                OperationKind: Query
+                {"query":"query B($id: Int!) { field(id: $id) }","variables":{"id":1}}
+                """,
+                """
+                POST http://localhost:5000/graphql HTTP/2.0 RequestVersionOrHigher
+                Accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+                Content-Type: application/json; charset=utf-8
+                OperationKind: Query
+                {"query":"query B($id: Int!) { field(id: $id) }","variables":[{"id":1},{"id":2}]}
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteBatchBufferedAsync_Should_SendSameRequest_When_ClientWritesBodyDirectly()
+    {
+        // arrange
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
+        var configuration = new HttpSourceSchemaClientConfiguration("A", s_baseAddress);
+        var requests = ImmutableArray.Create(
+            CreateRequest(fixture.RootNode, SingleQuery),
+            CreateRequest(fixture.RootNode, OtherVariableQuery, """{"id":2}""", """{"id":3}"""));
+
+        // act
+        var (direct, legacy) = await CaptureBothAsync(
+            fixture,
+            configuration,
+            (client, context) => client.ExecuteBatchBufferedAsync(
+                context,
+                requests,
+                DisposingSink.Instance,
+                TestContext.Current.CancellationToken).AsTask());
+
+        // assert
+        Assert.Equal(legacy.Requests, direct.Requests);
+        Assert.Single(direct.Requests).MatchInlineSnapshot(
+            """
+            POST http://localhost:5000/graphql HTTP/2.0 RequestVersionOrHigher
+            Accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+            Content-Type: application/json; charset=utf-8
+            OperationKind: Query
+            [{"query":"query A { field }"},{"query":"query C($id: Int!) { field(id: $id) }","variables":[{"id":2},{"id":3}]}]
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteBufferedAsync_Should_InvokeRequestHooks_When_ClientWritesBodiesDirectly()
+    {
+        // arrange
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
+        var hookCalls = new List<string>();
+        var configuration = new HttpSourceSchemaClientConfiguration(
+            "A",
+            s_baseAddress,
+            onBeforeSend: (_, _, message) =>
+            {
+                message.Headers.TryAddWithoutValidation("X-Hook", "before");
+                hookCalls.Add($"before {message.Content!.Headers.ContentLength}");
+            },
+            onAfterReceive: (_, _, message) => hookCalls.Add($"after {(int)message.StatusCode}"));
+        var request = CreateRequest(fixture.RootNode, SingleQuery);
+        var requests = ImmutableArray.Create(
+            CreateRequest(fixture.RootNode, SingleQuery),
+            CreateRequest(fixture.RootNode, VariableQuery, """{"id":1}"""));
+
+        async Task SendAsync(HttpSourceSchemaClient client, OperationPlanContext context)
+        {
+            await client.ExecuteBufferedAsync(
+                context,
+                request,
+                DisposingSink.Instance,
+                TestContext.Current.CancellationToken);
+            await client.ExecuteBatchBufferedAsync(
+                context,
+                requests,
+                DisposingSink.Instance,
+                TestContext.Current.CancellationToken);
+        }
+
+        // act
+        var direct = await CaptureAsync(fixture, useDefaultClient: true, configuration, SendAsync);
+        var directHookCalls = hookCalls.ToArray();
+        hookCalls.Clear();
+        var legacy = await CaptureAsync(fixture, useDefaultClient: false, configuration, SendAsync);
+
+        // assert
+        Assert.Equal(legacy.Requests, direct.Requests);
+        Assert.Equal(hookCalls, directHookCalls);
+        directHookCalls.MatchInlineSnapshots(
+            [
+                "before 29",
+                "after 200",
+                "before 102",
+                "after 200"
+            ]);
+        direct.Requests.MatchInlineSnapshots(
+            [
+                """
+                POST http://localhost:5000/graphql HTTP/2.0 RequestVersionOrHigher
+                Accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+                X-Hook: before
+                Content-Type: application/json; charset=utf-8
+                OperationKind: Query
+                {"query":"query A { field }"}
+                """,
+                """
+                POST http://localhost:5000/graphql HTTP/2.0 RequestVersionOrHigher
+                Accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+                X-Hook: before
+                Content-Type: application/json; charset=utf-8
+                OperationKind: Query
+                [{"query":"query A { field }"},{"query":"query B($id: Int!) { field(id: $id) }","variables":{"id":1}}]
+                """
+            ]);
+    }
+
+    [Fact]
+    public async Task ExecuteBufferedAsync_Should_PassCallerTokenToHandler_When_ExecutionHasDeadline()
+    {
+        // arrange
+        await using var fixture = await SourceSchemaClientTestFixture.CreateAsync();
+        var handler = new CapturingHandler();
+        using var cancellationTokenSource = new CancellationTokenSource();
+        await using var client = new HttpSourceSchemaClient(
+            new DefaultGraphQLHttpClient(new HttpClient(handler, disposeHandler: false), handler),
+            new HttpSourceSchemaClientConfiguration("A", s_baseAddress));
+        var context = fixture.CreateContext();
+        var request = CreateRequest(fixture.RootNode, SingleQuery);
+        var requests = ImmutableArray.Create(
+            CreateRequest(fixture.RootNode, SingleQuery),
+            CreateRequest(fixture.RootNode, VariableQuery, """{"id":1}"""));
+        var results = new List<string>();
+
+        // act
+        foreach (var hasDeadline in new[] { true, false })
+        {
+            context.HasExecutionDeadline = hasDeadline;
+            await client.ExecuteBufferedAsync(context, request, DisposingSink.Instance, cancellationTokenSource.Token);
+            await client.ExecuteBatchBufferedAsync(
+                context,
+                requests,
+                DisposingSink.Instance,
+                cancellationTokenSource.Token);
+        }
+
+        foreach (var token in handler.Tokens)
+        {
+            results.Add($"callerToken={token == cancellationTokenSource.Token}");
+        }
+
+        // assert
+        results.MatchInlineSnapshots(
+            [
+                "callerToken=True",
+                "callerToken=True",
+                "callerToken=False",
+                "callerToken=False"
+            ]);
+    }
+
     private static async Task<(CapturingHandler Direct, CapturingHandler Legacy)> CaptureBothAsync(
-        ClientTestFixture fixture,
+        SourceSchemaClientTestFixture fixture,
         HttpSourceSchemaClientConfiguration configuration,
         Func<HttpSourceSchemaClient, OperationPlanContext, Task> send)
     {
@@ -325,7 +525,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
     }
 
     private static async Task<CapturingHandler> CaptureAsync(
-        ClientTestFixture fixture,
+        SourceSchemaClientTestFixture fixture,
         bool useDefaultClient,
         HttpSourceSchemaClientConfiguration configuration,
         Func<HttpSourceSchemaClient, OperationPlanContext, Task> send)
@@ -395,6 +595,17 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
         };
     }
 
+    private sealed class DisposingSink : ISourceSchemaResultSink
+    {
+        public static DisposingSink Instance { get; } = new();
+
+        public bool OnResult(int requestIndex, SourceSchemaResult result)
+        {
+            result.Dispose();
+            return true;
+        }
+    }
+
     /// <summary>
     /// A client that is not a <see cref="DefaultGraphQLHttpClient"/>, so the source schema client
     /// sends every request as a <see cref="GraphQLHttpRequest"/>.
@@ -420,6 +631,8 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
         public List<string> Requests { get; } = [];
 
         public List<string> Bodies { get; } = [];
+
+        public List<CancellationToken> Tokens { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -450,6 +663,7 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
 
             Requests.Add(text.ToString());
             Bodies.Add(body);
+            Tokens.Add(cancellationToken);
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
@@ -458,105 +672,6 @@ public sealed class HttpSourceSchemaClientRequestTests : FusionTestBase
                     Encoding.UTF8,
                     "application/json")
             };
-        }
-    }
-
-    private sealed class ClientTestFixture : IAsyncDisposable
-    {
-        private readonly ServiceProvider _services;
-        private readonly IRequestExecutor _executor;
-        private readonly OperationPlan _operationPlan;
-        private readonly List<OperationPlanContext> _rentedContexts = [];
-        private readonly List<CancellationTokenSource> _cancellationTokenSources = [];
-        private readonly List<PooledRequestContext> _requestContexts = [];
-        private readonly ObjectPool<PooledRequestContext> _requestContextPool;
-
-        private ClientTestFixture(
-            ServiceProvider services,
-            IRequestExecutor executor,
-            OperationPlan operationPlan)
-        {
-            _services = services;
-            _executor = executor;
-            _operationPlan = operationPlan;
-            _requestContextPool =
-                executor.Schema.Services.GetRequiredService<ObjectPool<PooledRequestContext>>();
-        }
-
-        public ExecutionNode RootNode => _operationPlan.RootNodes[0];
-
-        public static async Task<ClientTestFixture> CreateAsync()
-        {
-            var serviceCollection = new ServiceCollection();
-            serviceCollection.AddHttpClient();
-            var services = serviceCollection
-                .AddGraphQLGateway()
-                .AddInMemoryConfiguration(
-                    ComposeSchemaDocument(
-                        """
-                        type Query {
-                          field: String!
-                        }
-                        """))
-                .Services
-                .BuildServiceProvider();
-
-            var executor = await services.GetRequestExecutorAsync();
-            var schema = (Fusion.Types.FusionSchemaDefinition)executor.Schema;
-            var operationPlan = PlanOperation(schema, "{ field }");
-
-            return new ClientTestFixture(services, executor, operationPlan);
-        }
-
-        public OperationPlanContext CreateContext()
-        {
-            var contextPool = _executor.Schema.Services.GetRequiredService<OperationPlanContextPool>();
-            var context = contextPool.Rent();
-            var cancellationTokenSource = new CancellationTokenSource();
-            var requestContext = _requestContextPool.Get();
-            var request = OperationRequestBuilder.New()
-                .SetDocument("{ field }")
-                .Build();
-
-            requestContext.Initialize(
-                _executor.Schema,
-                _executor.Version,
-                request,
-                requestIndex: 0,
-                requestServices: _services,
-                requestAborted: CancellationToken.None);
-
-            context.Initialize(
-                requestContext,
-                VariableValueCollection.Empty,
-                _operationPlan,
-                cancellationTokenSource,
-                new MemoryArena());
-
-            _cancellationTokenSources.Add(cancellationTokenSource);
-            _requestContexts.Add(requestContext);
-            _rentedContexts.Add(context);
-            return context;
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            foreach (var context in _rentedContexts)
-            {
-                await context.DisposeAsync();
-            }
-
-            foreach (var requestContext in _requestContexts)
-            {
-                _requestContextPool.Return(requestContext);
-            }
-
-            foreach (var cancellationTokenSource in _cancellationTokenSources)
-            {
-                cancellationTokenSource.Dispose();
-            }
-
-            await _services.DisposeAsync();
         }
     }
 }

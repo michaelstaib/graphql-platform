@@ -41,6 +41,9 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
 
     private readonly HttpClient _http;
     private readonly bool _disposeInnerClient;
+#if FUSION
+    private readonly HttpMessageInvoker? _invoker;
+#endif
 
     /// <summary>
     /// Initializes a new instance of <see cref="DefaultGraphQLHttpClient"/>.
@@ -75,6 +78,30 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         : this(httpClient, disposeInnerClient: true)
     {
     }
+
+#if FUSION
+    /// <summary>
+    /// Initializes a new instance of <see cref="DefaultGraphQLHttpClient"/> that sends requests with a
+    /// deadline straight to <paramref name="handler"/> and all other requests through <paramref name="httpClient"/>.
+    /// </summary>
+    /// <param name="httpClient">
+    /// The HTTP client that sends requests without a deadline. It is disposed with this instance
+    /// and must have no configuration other than its base address.
+    /// </param>
+    /// <param name="handler">
+    /// The message handler of <paramref name="httpClient"/>. It is not disposed with this instance.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="httpClient"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
+    internal DefaultGraphQLHttpClient(HttpClient httpClient, HttpMessageHandler handler)
+        : this(httpClient, disposeInnerClient: true)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        _invoker = new HttpMessageInvoker(handler, disposeHandler: false);
+    }
+#endif
 
     /// <summary>
     /// Sends the GraphQL request to the specified GraphQL request <see cref="Uri"/>.
@@ -134,9 +161,23 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         requestMessage.Version = _http.DefaultRequestVersion;
         requestMessage.VersionPolicy = _http.DefaultVersionPolicy;
 
+#if FUSION
+        HttpResponseMessage responseMessage;
+
+        // A request with a deadline skips the timeout and cancellation setup of the HTTP client.
+        if (_invoker is not null && request.HasDeadline && requestMessage.RequestUri is { IsAbsoluteUri: true })
+        {
+            responseMessage = await _invoker.SendAsync(requestMessage, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            responseMessage = await _http.SendAsync(requestMessage, ResponseHeadersRead, ct).ConfigureAwait(false);
+        }
+#else
         var responseMessage = await _http
             .SendAsync(requestMessage, ResponseHeadersRead, ct)
             .ConfigureAwait(false);
+#endif
 
 #if FUSION
         if (request.State is { } receivedState)
@@ -163,6 +204,10 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
     /// <param name="state">
     /// The state passed to the configured request hooks, or <see langword="null"/> when no hooks are configured.
     /// </param>
+    /// <param name="hasDeadline">
+    /// Whether <paramref name="cancellationToken"/> is canceled within the default <see cref="HttpClient.Timeout"/>
+    /// of the start of the request.
+    /// </param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the HTTP request.</param>
     /// <returns>The GraphQL HTTP response.</returns>
     internal Task<GraphQLHttpResponse> SendJsonAsync<TBody>(
@@ -171,6 +216,7 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         string acceptHeaderValue,
         OperationType? operationKind,
         RequestCallbackState? state,
+        bool hasDeadline,
         CancellationToken cancellationToken)
         where TBody : struct, IRequestBody
     {
@@ -205,13 +251,14 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
             throw;
         }
 
-        return SendJsonMessageAsync(requestMessage, arrayWriter, state, cancellationToken);
+        return SendJsonMessageAsync(requestMessage, arrayWriter, state, hasDeadline, cancellationToken);
     }
 
     private async Task<GraphQLHttpResponse> SendJsonMessageAsync(
         HttpRequestMessage requestMessage,
         PooledArrayWriter arrayWriter,
         RequestCallbackState? state,
+        bool hasDeadline,
         CancellationToken ct)
     {
         // The array writer holds the request body, so it is only reused after the response was received.
@@ -219,9 +266,17 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
 
         try
         {
-            var responseMessage = await _http
-                .SendAsync(requestMessage, ResponseHeadersRead, ct)
-                .ConfigureAwait(false);
+            HttpResponseMessage responseMessage;
+
+            // A request with a deadline skips the timeout and cancellation setup of the HTTP client.
+            if (_invoker is not null && hasDeadline && requestMessage.RequestUri is { IsAbsoluteUri: true })
+            {
+                responseMessage = await _invoker.SendAsync(requestMessage, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                responseMessage = await _http.SendAsync(requestMessage, ResponseHeadersRead, ct).ConfigureAwait(false);
+            }
 
             if (state is { } callbackState)
             {
@@ -805,6 +860,9 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         if (disposing && _disposeInnerClient)
         {
             _http.Dispose();
+#if FUSION
+            _invoker?.Dispose();
+#endif
         }
     }
 

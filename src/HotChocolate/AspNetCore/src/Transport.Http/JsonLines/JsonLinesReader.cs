@@ -44,7 +44,7 @@ internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<O
         CancellationToken cancellationToken = default)
     {
 #if FUSION
-        var responseStream = await HttpTransportUtilities.ReadAsStreamAsync(message.Content, cancellationToken);
+        var responseStream = await message.Content.ReadAsStreamAsync(cancellationToken);
         await using var stream = readTimeout == Timeout.InfiniteTimeSpan
             ? responseStream
             : new ReadTimeoutStream(responseStream, readTimeout);
