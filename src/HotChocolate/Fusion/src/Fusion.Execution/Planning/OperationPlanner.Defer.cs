@@ -1582,8 +1582,7 @@ public sealed partial class OperationPlanner
     /// it never satisfies a requirement.
     /// </summary>
     /// <returns>
-    /// <c>false</c> when <paramref name="selectionSet"/> selects a composite field, which is
-    /// output of its own.
+    /// <c>false</c> when <paramref name="selectionSet"/> selects a composite field.
     /// </returns>
     private static bool TryCollectLeafFieldNames(SelectionSetNode selectionSet, HashSet<string> names)
     {
