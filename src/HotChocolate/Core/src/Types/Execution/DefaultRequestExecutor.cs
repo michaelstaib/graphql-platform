@@ -199,7 +199,15 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
             if (context is not null)
             {
-                _contextPool.Return(context);
+                if (context.OutstandingExecution is { IsCompleted: false } execution)
+                {
+                    // the abandoned execution still reads the request context, so it is returned once it settled.
+                    _ = ReturnWhenSettledAsync(context, execution);
+                }
+                else
+                {
+                    _contextPool.Return(context);
+                }
             }
 
             if (scope is IAsyncDisposable asyncScope)
@@ -211,6 +219,20 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 scope?.Dispose();
             }
         }
+    }
+
+    private async Task ReturnWhenSettledAsync(PooledRequestContext context, Task execution)
+    {
+        try
+        {
+            await execution.ConfigureAwait(false);
+        }
+        catch
+        {
+            // an aborted execution has no consumer left that could observe its failure.
+        }
+
+        _contextPool.Return(context);
     }
 
     private void RegisterPoolReturn(PooledRequestContext context, IRequestCleanup? requestCleanup)

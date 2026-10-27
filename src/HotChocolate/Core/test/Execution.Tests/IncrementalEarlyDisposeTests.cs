@@ -385,6 +385,34 @@ public class IncrementalEarlyDisposeTests
         listener.Events.ToArray().MatchInlineSnapshots(["ArenaSealed"]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepRequestContextOutOfThePool_When_AbortedBeforeTheFirstPayload()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        using var abort = new CancellationTokenSource();
+        var aborted = executor.ExecuteAsync("{ items { id stubborn ... @defer { quick } } }", abort.Token);
+        await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await abort.CancelAsync();
+        await aborted;
+        var abortedContext = Assert.Single(probe.RentedContexts);
+
+        // act
+        var second = await executor.ExecuteAsync("{ items { id } }", TestContext.Current.CancellationToken);
+        await second.DisposeAsync();
+        var isReturnedWhileRunning = probe.ContextReturned(abortedContext).Task.IsCompleted;
+        var secondContext = probe.RentedContexts[1];
+
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+        await probe.ContextReturned(abortedContext).Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.False(isReturnedWhileRunning);
+        Assert.NotSame(abortedContext, secondContext);
+    }
+
     private static Task<bool> MoveNextAsync(IAsyncEnumerator<OperationResult> enumerator)
         => enumerator.MoveNextAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
@@ -541,11 +569,17 @@ public class IncrementalEarlyDisposeTests
         private readonly ConcurrentDictionary<string, TaskCompletionSource> _sources = new();
         private readonly ConcurrentQueue<string> _events = new();
         private readonly ConcurrentQueue<string> _errors = new();
+        private readonly ConcurrentDictionary<RequestContext, TaskCompletionSource> _returnedContexts = new();
         private int _producerDisposeCount;
 
         public IReadOnlyCollection<string> Events => _events;
 
         public IReadOnlyCollection<string> Errors => _errors;
+
+        public List<RequestContext> RentedContexts { get; } = [];
+
+        public TaskCompletionSource ContextReturned(RequestContext context)
+            => _returnedContexts.GetOrAdd(context, static _ => Create());
 
         public TaskCompletionSource RequestContextReturned { get; } = Create();
 
@@ -588,13 +622,24 @@ public class IncrementalEarlyDisposeTests
     {
         private readonly DefaultObjectPool<PooledRequestContext> _inner = new(new RequestContextPooledObjectPolicy());
 
-        public override PooledRequestContext Get() => _inner.Get();
+        public override PooledRequestContext Get()
+        {
+            var context = _inner.Get();
+
+            lock (probe.RentedContexts)
+            {
+                probe.RentedContexts.Add(context);
+            }
+
+            return context;
+        }
 
         public override void Return(PooledRequestContext obj)
         {
             _inner.Return(obj);
             probe.Log("request context returned");
             probe.RequestContextReturned.TrySetResult();
+            probe.ContextReturned(obj).TrySetResult();
         }
     }
 
