@@ -18,18 +18,6 @@ internal sealed partial class WorkScheduler
 
         AssertNotPooled();
 
-        return OpenExecutionGroupScope(plan, includeFlags, generation);
-    }
-
-    /// <summary>
-    /// Opens an execution group scope that belongs to the specified scheduler generation, or returns
-    /// <c>null</c> if the group has nothing to sequence.
-    /// </summary>
-    public ExecutionGroupScope? OpenExecutionGroupScope(
-        ExecutionGroupPlan plan,
-        ConditionFlags includeFlags,
-        int generation)
-    {
         var scope = ExecutionGroupScope.Open(this, plan, includeFlags, generation);
 
         if (scope is null)

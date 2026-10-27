@@ -12,12 +12,9 @@ namespace HotChocolate.Execution.Processing;
 /// </summary>
 internal sealed class ExecutionGroupTestHarness
 {
-    private readonly Action<CancellationToken> _initialize;
-
-    private ExecutionGroupTestHarness(OperationContext operationContext, Action<CancellationToken> initialize)
+    private ExecutionGroupTestHarness(OperationContext operationContext)
     {
         OperationContext = operationContext;
-        _initialize = initialize;
 
         var operation = operationContext.Operation;
         var root = operation.RootSelectionSet.Selections[0];
@@ -38,30 +35,12 @@ internal sealed class ExecutionGroupTestHarness
     public Selection GetSelection(string fieldName)
         => RootSet.Selections.ToArray().Single(s => s.Field.Name == fieldName);
 
-    /// <summary>
-    /// Initializes the operation context for another request with the specified abort token.
-    /// </summary>
-    public void Initialize(CancellationToken requestAborted) => _initialize(requestAborted);
-
     public static Task<T> RunAsync<T>(string query, Func<ExecutionGroupTestHarness, T> test)
-        => RunAsync(query, new Dictionary<string, object?>(), CancellationToken.None, test);
+        => RunAsync(query, new Dictionary<string, object?>(), test);
 
-    public static Task<T> RunAsync<T>(
-        string query,
-        CancellationToken requestAborted,
-        Func<ExecutionGroupTestHarness, T> test)
-        => RunAsync(query, new Dictionary<string, object?>(), requestAborted, test);
-
-    public static Task<T> RunAsync<T>(
+    public static async Task<T> RunAsync<T>(
         string query,
         Dictionary<string, object?> variables,
-        Func<ExecutionGroupTestHarness, T> test)
-        => RunAsync(query, variables, CancellationToken.None, test);
-
-    private static async Task<T> RunAsync<T>(
-        string query,
-        Dictionary<string, object?> variables,
-        CancellationToken requestAborted,
         Func<ExecutionGroupTestHarness, T> test)
     {
         ExceptionDispatchInfo? failure = null;
@@ -82,22 +61,18 @@ internal sealed class ExecutionGroupTestHarness
                             // the owner is abandoned, because tasks that were registered are never executed.
                             var operationContext = contextFactory.Create().OperationContext;
 
-                            void Initialize(CancellationToken aborted)
-                                => operationContext.Initialize(
-                                    context,
-                                    context.RequestServices,
-                                    context.RequestServices.GetRequiredService<IBatchDispatcher>(),
-                                    context.GetOperation(),
-                                    context.VariableValues[0],
-                                    rootValue: null,
-                                    resolveQueryRootValue: () => null,
-                                    requestAbortedOverride: aborted);
-
-                            Initialize(requestAborted);
+                            operationContext.Initialize(
+                                context,
+                                context.RequestServices,
+                                context.RequestServices.GetRequiredService<IBatchDispatcher>(),
+                                context.GetOperation(),
+                                context.VariableValues[0],
+                                rootValue: null,
+                                resolveQueryRootValue: () => null);
 
                             try
                             {
-                                outcome = test(new ExecutionGroupTestHarness(operationContext, Initialize));
+                                outcome = test(new ExecutionGroupTestHarness(operationContext));
                             }
                             catch (Exception ex)
                             {

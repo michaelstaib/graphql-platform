@@ -178,36 +178,6 @@ public class ExecutionGroupScopeTests
     }
 
     [Fact]
-    public async Task Clear_Should_NotPoolScope_When_AbortedRequestOpenedItAfterItsClear()
-    {
-        // arrange
-        using var aborted = new CancellationTokenSource();
-
-        // act
-        var (expected, actual) = await ExecutionGroupTestHarness.RunAsync(
-            Query,
-            aborted.Token,
-            harness =>
-            {
-                var scheduler = harness.Scheduler;
-                var includeFlags = harness.IncludeFlags;
-                var opened = scheduler.OpenExecutionGroupScope(harness.Plan, includeFlags)!;
-                aborted.Cancel();
-                harness.OperationContext.Clean();
-
-                // a task of the aborted request opens its scope after the clear.
-                var late = scheduler.OpenExecutionGroupScope(harness.Plan, includeFlags, opened.Generation)!;
-
-                harness.Initialize(CancellationToken.None);
-                harness.OperationContext.Clean();
-                return (harness.Plan, late.Plan);
-            });
-
-        // assert
-        Assert.Same(expected, actual);
-    }
-
-    [Fact]
     public async Task ReleaseSlotsBelow_Should_SkipMembersBelowTheSelection_When_NoChildTaskWasCreated()
     {
         // arrange
