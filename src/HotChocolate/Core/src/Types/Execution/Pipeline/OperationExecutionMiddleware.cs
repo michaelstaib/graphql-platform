@@ -114,9 +114,11 @@ internal sealed class OperationExecutionMiddleware
                     // the abandoned execution is canceled at once, the release above waits for it to settle.
                     CancelAbandonedExecution(context, requestCleanup);
                 }
-                else if (result is not null)
+                else if (result is not null
+                    && !(context.VariableValues.Length > 1 && operation.HasIncrementalParts))
                 {
                     // the failed request drops the result, so it is released at once.
+                    // a dropped incremental variable batch is not released.
                     await DisposeDroppedResultAsync(context, result).ConfigureAwait(false);
                 }
 

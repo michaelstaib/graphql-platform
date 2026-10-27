@@ -579,6 +579,33 @@ public class IncrementalEarlyDisposeTests
         ]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepBatchContextOutOfThePool_When_MiddlewareFailsAfterIncrementalBatch()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe, readResultsFirst: false);
+        var request = OperationRequestBuilder
+            .New()
+            .SetDocument("query($defer: Boolean!) { items { id ... @defer(if: $defer) { stubborn } } }")
+            .SetVariableValues(
+                new List<IReadOnlyDictionary<string, object?>>
+                {
+                    new Dictionary<string, object?> { ["defer"] = true },
+                    new Dictionary<string, object?> { ["defer"] = true }
+                })
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+        var isReturnedWhileRunning = probe.OperationContextReturned.Task.IsCompleted;
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+
+        // assert
+        Assert.False(isReturnedWhileRunning);
+    }
+
     private static Task<bool> MoveNextAsync(IAsyncEnumerator<OperationResult> enumerator)
         => enumerator.MoveNextAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
@@ -824,6 +851,8 @@ public class IncrementalEarlyDisposeTests
 
         public TaskCompletionSource ScopeDisposed { get; } = Create();
 
+        public TaskCompletionSource OperationContextReturned { get; } = Create();
+
         public TaskCompletionSource ProducerDisposedSignal { get; } = Create();
 
         public int ProducerDisposeCount => Volatile.Read(ref _producerDisposeCount);
@@ -907,6 +936,7 @@ public class IncrementalEarlyDisposeTests
             if (ReferenceEquals(obj, Volatile.Read(ref _root)))
             {
                 probe.Log("operation context returned");
+                probe.OperationContextReturned.TrySetResult();
             }
         }
     }
