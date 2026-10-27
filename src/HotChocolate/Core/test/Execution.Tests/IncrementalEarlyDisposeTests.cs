@@ -454,7 +454,7 @@ public class IncrementalEarlyDisposeTests
     {
         // arrange
         var probe = new Probe();
-        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe, readResultsFirst: false);
 
         // act
         await using var result = await executor.ExecuteAsync(
@@ -483,11 +483,35 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_ReleaseDroppedResult_When_MiddlewareFailsAfterExecutionCompleted()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe, readResultsFirst: true);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            "{ tracked items { id ... @defer { quick } } }",
+            TestContext.Current.CancellationToken);
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Errors.ToArray().MatchInlineSnapshots(["request error: request middleware failed"]);
+        probe.Events.ToArray().MatchInlineSnapshots(
+        [
+            "request cleanup ran",
+            "operation context returned",
+            "request context returned",
+            "request scope disposed"
+        ]);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_CancelAbandonedExecution_When_MiddlewareFailsAfterExecution()
     {
         // arrange
         var probe = new Probe();
-        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe, readResultsFirst: false);
 
         // act
         await using var result = await executor.ExecuteAsync(
@@ -512,7 +536,7 @@ public class IncrementalEarlyDisposeTests
     {
         // arrange
         var probe = new Probe();
-        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe, readResultsFirst: false);
 
         // act
         await using var result = await executor.ExecuteAsync(
@@ -535,7 +559,7 @@ public class IncrementalEarlyDisposeTests
     {
         // arrange
         var probe = new Probe();
-        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe, readResultsFirst: false);
 
         // act
         await using var result = await executor.ExecuteAsync(
@@ -603,7 +627,9 @@ public class IncrementalEarlyDisposeTests
     private static ValueTask<IRequestExecutor> CreateExecutorAsync(Probe probe)
         => CreateExecutorBuilder(probe).BuildRequestExecutorAsync();
 
-    private static ValueTask<IRequestExecutor> CreateExecutorWithFailingMiddlewareAsync(Probe probe)
+    private static ValueTask<IRequestExecutor> CreateExecutorWithFailingMiddlewareAsync(
+        Probe probe,
+        bool readResultsFirst)
     {
         var builder = CreateExecutorBuilder(probe);
         builder.Services.AddSingleton<IFactory<OperationContextOwner>>(
@@ -615,6 +641,16 @@ public class IncrementalEarlyDisposeTests
                 (_, next) => async context =>
                 {
                     await next(context);
+
+                    // the stream completes only after the execution has completed.
+                    if (readResultsFirst && context.Result is ResponseStream stream)
+                    {
+                        await foreach (var payload in stream.ReadResultsAsync())
+                        {
+                            await payload.DisposeAsync();
+                        }
+                    }
+
                     throw new InvalidOperationException("request middleware failed");
                 },
                 key: "FailAfterExecution",

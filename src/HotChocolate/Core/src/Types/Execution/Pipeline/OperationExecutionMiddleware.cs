@@ -114,6 +114,11 @@ internal sealed class OperationExecutionMiddleware
                     // the abandoned execution is canceled at once, the release above waits for it to settle.
                     CancelAbandonedExecution(context, requestCleanup);
                 }
+                else if (result is not null)
+                {
+                    // the failed request drops the result, so it is released at once.
+                    await DisposeDroppedResultAsync(context, result).ConfigureAwait(false);
+                }
 
                 throw;
             }
@@ -384,6 +389,19 @@ internal sealed class OperationExecutionMiddleware
         catch (Exception ex)
         {
             // no caller is left that could observe the failure of the release.
+            _diagnosticEvents.RequestError(context, ex);
+        }
+    }
+
+    private async ValueTask DisposeDroppedResultAsync(RequestContext context, IExecutionResult result)
+    {
+        try
+        {
+            await result.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // the caller rethrows the failure that caused the abort, so this failure is only reported.
             _diagnosticEvents.RequestError(context, ex);
         }
     }
