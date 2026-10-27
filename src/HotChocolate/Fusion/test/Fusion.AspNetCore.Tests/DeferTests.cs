@@ -2885,6 +2885,57 @@ public class DeferTests : FusionTestBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Defer_Should_DeliverFieldWithInnerGroup_When_OuterGroupWithOwnFieldsIsDisabledAndInnerIsEnabled(
+        bool bodyBehindLookup)
+    {
+        // arrange
+        using var gateway = await CreateMessageGatewayAsync(bodyBehindLookup);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            query: """
+            query ($a: Boolean!, $b: Boolean!) {
+                message {
+                    id
+                    ... @defer(if: $a) {
+                        title
+                        ... @defer(if: $b) {
+                            body
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = false, ["b"] = true });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(
+            gateway,
+            request,
+            result,
+            postFix: bodyBehindLookup ? "Lookup" : "SameSubgraph",
+            stableStream: true);
+
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"message":{"id":"TWVzc2FnZTox","title":"Message: TWVzc2FnZTox"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Defer_Should_DeliverFieldWithOuterGroup_When_EmptyOuterGroupIsEnabledAndInnerIsDisabled(
         bool bodyBehindLookup)
     {
@@ -3312,6 +3363,7 @@ public class DeferTests : FusionTestBase
 
                 type Message {
                     id: ID!
+                    title: String!
                     body: String!
                 }
                 """);
@@ -3340,6 +3392,7 @@ public class DeferTests : FusionTestBase
 
             type Message @key(fields: "id") {
                 id: ID!
+                title: String!
                 body: String!
             }
             """);

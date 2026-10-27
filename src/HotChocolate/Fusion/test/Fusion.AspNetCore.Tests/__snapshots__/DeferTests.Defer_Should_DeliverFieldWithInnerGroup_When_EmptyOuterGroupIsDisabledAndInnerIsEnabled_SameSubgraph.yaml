@@ -73,6 +73,7 @@ sourceSchemas:
 
       type Message {
         id: ID!
+        title: String!
         body: String!
       }
     interactions:
