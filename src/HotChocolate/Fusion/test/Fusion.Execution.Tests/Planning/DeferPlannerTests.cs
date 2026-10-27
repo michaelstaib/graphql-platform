@@ -1,4 +1,11 @@
+using System.Collections.Immutable;
+using System.Reflection;
+using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Types;
+using HotChocolate.Language;
+using Microsoft.Extensions.ObjectPool;
+using FieldSelectionMapParser = HotChocolate.Fusion.Language.FieldSelectionMapParser;
 
 namespace HotChocolate.Fusion.Planning;
 
@@ -2623,4 +2630,212 @@ public class DeferPlannerTests : FusionTestBase
         // assert
         MatchSnapshot(plan);
     }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanLookupOfInnerGroup_When_ListItemsSelectFieldOfAnotherSchema()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                            ... @defer(label: "inner") {
+                                text
+                                rating
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanLookupOfInnerGroup_When_ListItemsSelectNestedObjectOfAnotherSchema()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                            ... @defer(label: "inner") {
+                                author {
+                                    rating
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanOuterFetch_When_OuterGroupOnlySelectsListFieldOfAnotherSchema()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") {
+                            rating
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_ThrowPlannerError_When_RequirementPathLiesOutsideDeferAnchor()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+        var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
+            new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
+        var planner = new OperationPlanner(schema, new OperationCompiler(schema, pool));
+        var applyDeferRequirements = typeof(OperationPlanner).GetMethod(
+            "ApplyDeferRequirementsToParent",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        // the requirement of the consumer is anchored below the defer anchor
+        var anchor = SelectionPath.Parse("$.products");
+        var definition = (OperationDefinitionNode)Utf8GraphQLParser.Parse("query { id }").Definitions[0];
+        var producer = new OperationPlanStep
+        {
+            Id = 1,
+            Definition = definition,
+            Type = schema.QueryType,
+            RootSelectionSetId = 0,
+            SelectionSets = [],
+            SchemaName = "b",
+            Target = anchor,
+            Source = anchor,
+            Dependents = [2]
+        };
+        var consumer = producer with
+        {
+            Id = 2,
+            SchemaName = "c",
+            Target = SelectionPath.Parse("$.products.reviews"),
+            Dependents = [],
+            Requirements = ImmutableDictionary<string, OperationRequirement>.Empty.Add(
+                "__fusion_1_id",
+                new OperationRequirement(
+                    "__fusion_1_id",
+                    new NonNullTypeNode(new NamedTypeNode("ID")),
+                    SelectionPath.Parse("$.products.reviews"),
+                    new FieldSelectionMapParser("id").Parse()))
+        };
+        var descriptor = new IncrementalPlanDescriptor([], definition, anchor, null);
+
+        // act
+        var error = Assert.Throws<TargetInvocationException>(
+            () => applyDeferRequirements.Invoke(
+                planner,
+                [descriptor, ImmutableList.Create<PlanStep>(producer, consumer), null, null]));
+
+        // assert
+        Assert.IsType<InvalidOperationException>(error.InnerException).Message.MatchInlineSnapshot(
+            """
+            The deferred incremental plan's requirement '__fusion_1_id' at path '$.products.reviews' could not be resolved from the parent plan. Defer anchor: '$.products'. Target schema: 'b'. Reason: requirement path lies outside the defer's anchor.
+            """);
+    }
+
+    private static FusionSchemaDefinition ComposeProductReviewSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                products: [Product!]!
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                reviews: [Review!]!
+            }
+
+            type Review @key(fields: "id") {
+                id: ID!
+            }
+            """,
+            """
+            # name: c
+            type Query {
+                productRatingById(id: ID!): Product @lookup @internal
+                reviewById(id: ID!): Review @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                rating: Int!
+            }
+
+            type Review @key(fields: "id") {
+                id: ID!
+                text: String!
+                rating: Int!
+                author: Author!
+            }
+
+            type Author @key(fields: "id") {
+                id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+                authorById(id: ID!): Author @lookup @internal
+            }
+
+            type Author @key(fields: "id") {
+                id: ID!
+                rating: Int!
+            }
+            """);
 }
