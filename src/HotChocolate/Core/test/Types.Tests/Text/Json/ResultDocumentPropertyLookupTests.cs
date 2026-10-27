@@ -46,8 +46,7 @@ public class ResultDocumentPropertyLookupTests
     public void TryGetProperty_Should_ReturnFalse_When_ObjectHoldsFewerPropertiesThanItsSelectionSet()
     {
         // arrange
-        // the deferred fragment document holds only the deferred selection, which sits at the row
-        // the first selection would occupy in a complete object.
+        // deferred fragment document holding only the deferred selection
         using var document = CreateDeferredDocument("{ first ... @defer { second } third }");
 
         // act
