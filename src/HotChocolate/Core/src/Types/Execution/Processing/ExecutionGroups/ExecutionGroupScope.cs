@@ -47,6 +47,11 @@ internal sealed class ExecutionGroupScope
     }
 
     /// <summary>
+    /// Gets the generation of the work scheduler in which this scope was opened.
+    /// </summary>
+    public int Generation { get; private set; }
+
+    /// <summary>
     /// Gets or sets the next scope in the list of scopes that are owned by one work scheduler.
     /// </summary>
     public ExecutionGroupScope? NextScope { get; set; }
@@ -58,7 +63,8 @@ internal sealed class ExecutionGroupScope
     public static ExecutionGroupScope? Open(
         WorkScheduler scheduler,
         ExecutionGroupPlan plan,
-        ConditionFlags includeFlags)
+        ConditionFlags includeFlags,
+        int generation)
     {
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(plan);
@@ -70,7 +76,7 @@ internal sealed class ExecutionGroupScope
 
         var scope = s_pool.Get();
 
-        if (scope.Initialize(scheduler, plan, includeFlags) < 2)
+        if (scope.Initialize(scheduler, plan, includeFlags, generation) < 2)
         {
             scope.Return();
             return null;
@@ -163,7 +169,11 @@ internal sealed class ExecutionGroupScope
         s_pool.Return(this);
     }
 
-    private int Initialize(WorkScheduler scheduler, ExecutionGroupPlan plan, ConditionFlags includeFlags)
+    private int Initialize(
+        WorkScheduler scheduler,
+        ExecutionGroupPlan plan,
+        ConditionFlags includeFlags,
+        int generation)
     {
         var slots = plan.Slots;
         var slotCount = slots.Length;
@@ -204,6 +214,7 @@ internal sealed class ExecutionGroupScope
 
         _scheduler = scheduler;
         _plan = plan;
+        Generation = generation;
         _slotCount = slotCount;
         _wordCount = wordCount;
         return included;

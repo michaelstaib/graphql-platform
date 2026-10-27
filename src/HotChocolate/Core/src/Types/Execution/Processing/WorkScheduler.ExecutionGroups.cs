@@ -6,6 +6,7 @@ internal sealed partial class WorkScheduler
 {
     private ExecutionGroupScope? _groupScopes;
     private volatile bool _hasExecutionGroups;
+    private int _generation;
 
     /// <summary>
     /// Opens an execution group scope that stays valid until the scheduler is cleared, or returns
@@ -13,9 +14,23 @@ internal sealed partial class WorkScheduler
     /// </summary>
     public ExecutionGroupScope? OpenExecutionGroupScope(ExecutionGroupPlan plan, ConditionFlags includeFlags)
     {
+        var generation = Volatile.Read(ref _generation);
+
         AssertNotPooled();
 
-        var scope = ExecutionGroupScope.Open(this, plan, includeFlags);
+        return OpenExecutionGroupScope(plan, includeFlags, generation);
+    }
+
+    /// <summary>
+    /// Opens an execution group scope that belongs to the specified scheduler generation, or returns
+    /// <c>null</c> if the group has nothing to sequence.
+    /// </summary>
+    public ExecutionGroupScope? OpenExecutionGroupScope(
+        ExecutionGroupPlan plan,
+        ConditionFlags includeFlags,
+        int generation)
+    {
+        var scope = ExecutionGroupScope.Open(this, plan, includeFlags, generation);
 
         if (scope is null)
         {
@@ -113,12 +128,13 @@ internal sealed partial class WorkScheduler
         var scope = Interlocked.Exchange(ref _groupScopes, null);
         var reuse = !_ct.IsCancellationRequested;
 
-        // after an aborted request tasks can still be running, so their scopes are not handed out again.
+        // after an aborted request tasks can still be running, and a task can open a scope after
+        // the release, so only scopes of this request are handed out again.
         while (scope is not null)
         {
             var next = scope.NextScope;
 
-            if (reuse)
+            if (reuse && scope.Generation == _generation)
             {
                 scope.Return();
             }

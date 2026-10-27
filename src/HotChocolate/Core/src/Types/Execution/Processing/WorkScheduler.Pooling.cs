@@ -83,6 +83,10 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _executionCompleted = false;
         _clearAfterExecution = false;
         _isInitialized = false;
+
+        // published after the scheduler is marked as pooled, so a scope that observes the new generation
+        // also observes the pooled scheduler.
+        Volatile.Write(ref _generation, _generation + 1);
     }
 
     public void ClearAfterExecution()
