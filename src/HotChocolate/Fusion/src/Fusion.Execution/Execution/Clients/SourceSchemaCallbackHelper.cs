@@ -12,7 +12,8 @@ namespace HotChocolate.Fusion.Execution.Clients;
 internal static class SourceSchemaCallbackHelper
 {
     /// <summary>
-    /// Attaches <see cref="HttpSourceSchemaClientConfiguration.OnBeforeSend"/> and
+    /// Attaches the <see cref="RequestCallbackState"/> and the
+    /// <see cref="HttpSourceSchemaClientConfiguration.OnBeforeSend"/> and
     /// <see cref="HttpSourceSchemaClientConfiguration.OnAfterReceive"/> callbacks to
     /// the HTTP request.
     /// </summary>
@@ -26,12 +27,13 @@ internal static class SourceSchemaCallbackHelper
         ExecutionNode node,
         HttpSourceSchemaClientConfiguration configuration)
     {
+        // The state also gives the transport the gateway request of the HTTP request.
+        request.State = new RequestCallbackState(context, node, configuration);
+
         if (configuration.OnBeforeSend is null && configuration.OnAfterReceive is null)
         {
             return;
         }
-
-        request.State = new RequestCallbackState(context, node, configuration);
 
         if (configuration.OnBeforeSend is not null)
         {
