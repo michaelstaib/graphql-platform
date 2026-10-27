@@ -116,8 +116,7 @@ internal sealed partial class WorkScheduler
         var scope = Interlocked.Exchange(ref _groupScopes, null);
         var reuse = !_ct.IsCancellationRequested;
 
-        // after an aborted request tasks can still be running, and a task can open a scope after
-        // the release, so only scopes of this request are handed out again.
+        // after an aborted request tasks can still be running, so their scopes are not handed out again.
         while (scope is not null)
         {
             var next = scope.NextScope;
