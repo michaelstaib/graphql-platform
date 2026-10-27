@@ -388,7 +388,6 @@ internal sealed class OperationExecutionMiddleware
         }
         catch (Exception ex)
         {
-            // no caller is left that could observe the failure of the release.
             _diagnosticEvents.RequestError(context, ex);
         }
     }
@@ -401,7 +400,6 @@ internal sealed class OperationExecutionMiddleware
         }
         catch (Exception ex)
         {
-            // the caller rethrows the failure that caused the abort, so this failure is only reported.
             _diagnosticEvents.RequestError(context, ex);
         }
     }
@@ -414,7 +412,6 @@ internal sealed class OperationExecutionMiddleware
         }
         catch (Exception ex)
         {
-            // the caller rethrows the failure that caused the abort, so this failure is only reported.
             _diagnosticEvents.RequestError(context, ex);
         }
     }

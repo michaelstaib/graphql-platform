@@ -232,7 +232,6 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         }
         catch (Exception ex)
         {
-            // no caller is left that could observe the failure of the scope disposal.
             _diagnosticEvents.RequestError(context, ex);
         }
         finally

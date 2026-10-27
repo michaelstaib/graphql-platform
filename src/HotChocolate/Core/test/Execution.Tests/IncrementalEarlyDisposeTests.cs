@@ -642,7 +642,6 @@ public class IncrementalEarlyDisposeTests
                 {
                     await next(context);
 
-                    // the stream completes only after the execution has completed.
                     if (readResultsFirst && context.Result is ResponseStream stream)
                     {
                         await foreach (var payload in stream.ReadResultsAsync())
@@ -694,7 +693,8 @@ public class IncrementalEarlyDisposeTests
 
         public string GetFailingCancellation(CancellationToken cancellationToken)
         {
-            cancellationToken.Register(static () => throw new InvalidOperationException("cancellation callback failed"));
+            cancellationToken.Register(
+                static () => throw new InvalidOperationException("cancellation callback failed"));
             return "registered";
         }
 
