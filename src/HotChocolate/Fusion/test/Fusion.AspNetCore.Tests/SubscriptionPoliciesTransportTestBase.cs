@@ -124,7 +124,8 @@ public abstract class SubscriptionPoliciesTransportTestBase : FusionTestBase
         Gateway gateway,
         SubscriptionPoliciesFeed feed,
         FakeTimeProvider time,
-        RecordingAuditProvider audit) : IDisposable
+        RecordingAuditProvider audit)
+        : IDisposable
     {
         public Gateway Gateway { get; } = gateway;
 
