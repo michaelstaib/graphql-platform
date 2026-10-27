@@ -114,11 +114,10 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     }
 
     /// <summary>
-    /// Completes when <paramref name="execution"/> has settled. A failure of an aborted execution
-    /// is not observable by any consumer and is not rethrown.
+    /// Completes when <paramref name="execution"/> has completed, without rethrowing its failure.
     /// </summary>
     /// <param name="execution">
-    /// The execution of an aborted operation.
+    /// The execution to wait for.
     /// </param>
     public static async Task WaitUntilSettledAsync(Task execution)
     {
