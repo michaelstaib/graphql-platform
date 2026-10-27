@@ -184,9 +184,6 @@ public class DeferNestedConditionTests
             ]);
     }
 
-    // The body resolver waits until the initial payload has been read, so the first payload
-    // never races with the deferred payloads. Without any enabled @defer the body belongs to
-    // the initial result and the gate opens up front.
     private static async Task<List<string>> ExecuteAsync(bool a, bool b)
     {
         var bodyGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
