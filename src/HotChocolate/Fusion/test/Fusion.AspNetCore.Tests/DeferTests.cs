@@ -78,6 +78,213 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_DeliverLookupFields_When_RootFieldsPrecedeTheDeferredList()
+    {
+        // arrange
+        using var gateway = await CreateProductGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                a: __typename
+                b: __typename
+                products {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverLookupFields_When_NoRootFieldsPrecedeTheDeferredList()
+    {
+        // arrange
+        using var gateway = await CreateProductGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                products {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverLookupFields_When_PlainRootFieldPrecedesTheDeferredList()
+    {
+        // arrange
+        using var gateway = await CreateProductGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                version
+                products {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverLookupFields_When_FragmentRootFieldsPrecedeTheDeferredList()
+    {
+        // arrange
+        using var gateway = await CreateProductGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                ... on Query {
+                    version
+                    a: __typename
+                }
+                ...RootFields
+                products {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+
+            fragment RootFields on Query {
+                b: __typename
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverNestedDeferFields_When_RootFieldsPrecedeTheDeferredList()
+    {
+        // arrange
+        using var gateway = await CreateProductGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                a: __typename
+                b: __typename
+                products {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                            ... @defer {
+                                text
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    private async Task<Gateway> CreateProductGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                version: String!
+                products: [Product!]!
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+            }
+            """);
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                productById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                reviews: [Review!]!
+            }
+
+            type Review {
+                id: ID!
+                text: String!
+            }
+            """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    [Fact]
     public async Task Defer_IfFalse_Variable_Should_Return_NonStreamed_Result()
     {
         // arrange
