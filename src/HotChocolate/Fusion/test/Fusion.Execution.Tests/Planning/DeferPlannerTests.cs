@@ -2764,7 +2764,7 @@ public class DeferPlannerTests : FusionTestBase
         var error = Assert.Throws<InvalidOperationException>(
             () => planner.ApplyDeferRequirementsToParent(
                 descriptor,
-                ImmutableList.Create<PlanStep>(producer, consumer),
+                [producer, consumer],
                 null!,
                 null!));
 
