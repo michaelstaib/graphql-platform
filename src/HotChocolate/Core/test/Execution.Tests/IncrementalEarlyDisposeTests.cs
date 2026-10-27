@@ -606,6 +606,33 @@ public class IncrementalEarlyDisposeTests
         Assert.False(isReturnedWhileRunning);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_ReportScopeDisposalFailure_When_AbortedBeforeFirstPayload()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        using var abort = new CancellationTokenSource();
+        var aborted = executor.ExecuteAsync("{ items { id failingScope ... @defer { plain } } }", abort.Token);
+        await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // act
+        await abort.CancelAsync();
+        await using var abortedResult = await aborted;
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Errors.ToArray().MatchInlineSnapshots(
+        [
+            "request error: The operation was canceled.",
+            "request error: scope disposal failed"
+        ]);
+        probe.Events.ToArray().MatchInlineSnapshots(["request context returned"]);
+    }
+
     private static Task<bool> MoveNextAsync(IAsyncEnumerator<OperationResult> enumerator)
         => enumerator.MoveNextAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
@@ -688,6 +715,7 @@ public class IncrementalEarlyDisposeTests
         => new ServiceCollection()
             .AddSingleton(probe)
             .AddScoped<ScopeProbe>()
+            .AddScoped<FailingScopeProbe>()
             .AddGraphQL()
             .AddQueryType<Query>()
             .AddDiagnosticEventListener(_ => new ErrorListener(probe))
@@ -827,7 +855,16 @@ public class IncrementalEarlyDisposeTests
             return $"scoped {id}";
         }
 
+        public async Task<string> GetFailingScopeAsync([Service] Probe probe, [Service] FailingScopeProbe scopeProbe)
+        {
+            probe.Started(id).TrySetResult();
+            await probe.Gate(id).Task;
+            return $"failing scope {id}";
+        }
+
         public string GetQuick([Service] ScopeProbe scopeProbe) => $"quick {id}";
+
+        public string GetPlain() => $"plain {id}";
     }
 
     public sealed class Probe
@@ -890,6 +927,11 @@ public class IncrementalEarlyDisposeTests
             probe.Log("request scope disposed");
             probe.ScopeDisposed.TrySetResult();
         }
+    }
+
+    public sealed class FailingScopeProbe : IDisposable
+    {
+        public void Dispose() => throw new InvalidOperationException("scope disposal failed");
     }
 
     private sealed class TrackingRequestContextPool(Probe probe) : ObjectPool<PooledRequestContext>
