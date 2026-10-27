@@ -67,7 +67,13 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _activePaths.Clear();
         _pendingBatches.Clear();
         _signal.Reset();
-        ReleaseExecutionGroupScopes();
+
+        if (Volatile.Read(ref _groupScopes) is not null)
+        {
+            ReleaseExecutionGroupScopes();
+        }
+
+        _hasExecutionGroups = false;
 
         _result = null!;
         _batchDispatcherSession?.Dispose();
