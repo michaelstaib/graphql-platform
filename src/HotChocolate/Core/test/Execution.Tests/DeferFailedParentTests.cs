@@ -11,7 +11,11 @@ public class DeferFailedParentTests
     public async Task Defer_Should_NotAnnounceNestedFragment_When_ParentFragmentHasNoData()
     {
         // arrange
-        var executor = await CreateExecutorAsync(Task.CompletedTask, Task.CompletedTask, new TaskCompletionSource());
+        var initialDelivered = CreateGate();
+        var executor = await CreateExecutorAsync(
+            beforeBad: initialDelivered.Task,
+            beforeZ: Task.CompletedTask,
+            nestedWorkSettled: CreateGate());
 
         // act
         var payloads = await ReadPayloadsAsync(
@@ -24,7 +28,8 @@ public class DeferFailedParentTests
                 obj { y ... @defer(label: "C") { z } }
               }
             }
-            """);
+            """,
+            _ => initialDelivered.TrySetResult());
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -72,7 +77,11 @@ public class DeferFailedParentTests
     public async Task Defer_Should_NotAnnounceNestedFragment_When_ItsObjectWasNulledInTheParentFragment()
     {
         // arrange
-        var executor = await CreateExecutorAsync(Task.CompletedTask, Task.CompletedTask, new TaskCompletionSource());
+        var initialDelivered = CreateGate();
+        var executor = await CreateExecutorAsync(
+            beforeBad: initialDelivered.Task,
+            beforeZ: Task.CompletedTask,
+            nestedWorkSettled: CreateGate());
 
         // act
         var payloads = await ReadPayloadsAsync(
@@ -85,7 +94,8 @@ public class DeferFailedParentTests
                 obj { bad ... @defer(label: "C") { z } }
               }
             }
-            """);
+            """,
+            _ => initialDelivered.TrySetResult());
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -146,10 +156,13 @@ public class DeferFailedParentTests
         bool nestedWorkSettlesFirst)
     {
         // arrange
-        var nestedWorkSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var parentDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initialDelivered = CreateGate();
+        var nestedWorkSettled = CreateGate();
+        var parentDelivered = CreateGate();
         var executor = await CreateExecutorAsync(
-            beforeBad: nestedWorkSettlesFirst ? nestedWorkSettled.Task : Task.CompletedTask,
+            beforeBad: nestedWorkSettlesFirst
+                ? Task.WhenAll(initialDelivered.Task, nestedWorkSettled.Task)
+                : initialDelivered.Task,
             beforeZ: nestedWorkSettlesFirst ? Task.CompletedTask : parentDelivered.Task,
             nestedWorkSettled);
 
@@ -167,6 +180,8 @@ public class DeferFailedParentTests
             """,
             payload =>
             {
+                initialDelivered.TrySetResult();
+
                 if (payload.Contains("\"completed\"", StringComparison.Ordinal))
                 {
                     parentDelivered.TrySetResult();
@@ -218,7 +233,7 @@ public class DeferFailedParentTests
     private static async Task<List<string>> ReadPayloadsAsync(
         IRequestExecutor executor,
         string query,
-        Action<string>? onPayload = null)
+        Action<string> onPayload)
     {
         return await Task.Run(
                 async () =>
@@ -233,7 +248,7 @@ public class DeferFailedParentTests
                         await using var cleanup = payload;
                         var json = payload.ToJson();
                         payloads.Add(json);
-                        onPayload?.Invoke(json);
+                        onPayload(json);
                     }
 
                     return payloads;
@@ -241,6 +256,9 @@ public class DeferFailedParentTests
                 TestContext.Current.CancellationToken)
             .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
     }
+
+    private static TaskCompletionSource CreateGate()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static ValueTask<IRequestExecutor> CreateExecutorAsync(
         Task beforeBad,
@@ -268,7 +286,14 @@ public class DeferFailedParentTests
                     descriptor =>
                     {
                         descriptor.Name("Obj");
-                        descriptor.Field("bad").Type<NonNullType<StringType>>().Resolve(_ => (object?)null);
+                        descriptor
+                            .Field("bad")
+                            .Type<NonNullType<StringType>>()
+                            .Resolve(async _ =>
+                            {
+                                await beforeBad.ConfigureAwait(false);
+                                return null;
+                            });
                         descriptor.Field("y").Type<StringType>().Resolve("y");
                         descriptor
                             .Field("z")
