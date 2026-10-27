@@ -68,20 +68,17 @@ public sealed class FeatureCollection : IFeatureCollection
 
             if (store is KeyValuePair<Type, object>[] items)
             {
-                return CountItems(items) == 0;
+                if (CountItems(items) > 0)
+                {
+                    return false;
+                }
             }
-
-            if (store is not null)
+            else if (store is not null && Unsafe.As<Dictionary<Type, object>>(store).Count > 0)
             {
-                return Unsafe.As<Dictionary<Type, object>>(store).Count == 0;
+                return false;
             }
 
-            if (_defaults is not null)
-            {
-                return _defaults.IsEmpty;
-            }
-
-            return true;
+            return _defaults?.IsEmpty ?? true;
         }
     }
 

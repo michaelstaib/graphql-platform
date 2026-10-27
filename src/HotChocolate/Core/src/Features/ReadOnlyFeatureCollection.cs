@@ -53,7 +53,7 @@ public sealed class ReadOnlyFeatureCollection : IFeatureCollection
     public bool IsReadOnly => true;
 
     /// <inheritdoc />
-    public bool IsEmpty => (_items?.Length ?? _features!.Count) > 0;
+    public bool IsEmpty => (_items?.Length ?? _features!.Count) == 0;
 
     /// <inheritdoc />
     public int Revision => _containerRevision;
