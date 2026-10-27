@@ -14,14 +14,27 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
     {
         AssertNotPooled();
 
+        var isLoopFailed = false;
+
         try
         {
             await ExecuteInternalAsync(_buffer);
         }
+        catch (Exception) when (!_ct.IsCancellationRequested)
+        {
+            // tasks that were already started can still be running, so the scheduler
+            // does not report the execution as completed and the context is not cleaned.
+            isLoopFailed = true;
+            throw;
+        }
         finally
         {
             _buffer.AsSpan().Clear();
-            CompleteExecution();
+
+            if (!isLoopFailed)
+            {
+                CompleteExecution();
+            }
         }
     }
 
