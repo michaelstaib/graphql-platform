@@ -5,12 +5,17 @@ using HotChocolate.Fusion.Text.Json;
 
 namespace HotChocolate.Fusion.Transport.Http;
 
-public class JsonLinesReaderTests
+public class JsonLinesReaderTests : IDisposable
 {
-    public enum ArenaSourceKind
+    private readonly List<MemoryArena> _arenas = [];
+
+    public void Dispose()
     {
-        Fixed,
-        PerDocument
+        foreach (var arena in _arenas)
+        {
+            arena.Seal();
+            arena.Dispose();
+        }
     }
 
     [Theory]
@@ -127,7 +132,7 @@ public class JsonLinesReaderTests
     public async Task GetAsyncEnumerator_Should_LeaveArenaUnused_When_BodyHasNoRecords(string body)
     {
         // arrange
-        var arena = new MemoryArena();
+        var arena = CreateArena();
 
         // act
         var result = await ReadValuesAsync(body, int.MaxValue, new FixedMemoryArenaSource(arena));
@@ -141,7 +146,7 @@ public class JsonLinesReaderTests
     public async Task GetAsyncEnumerator_Should_NotRequestAnArena_When_BodyHasOnlyBlankLines()
     {
         // arrange
-        var arenaSource = new PerDocumentArenaSource();
+        var arenaSource = new PerDocumentArenaSource(CreateArena);
 
         // act
         var result = await ReadValuesAsync("\n \r\n\t", int.MaxValue, arenaSource);
@@ -161,7 +166,7 @@ public class JsonLinesReaderTests
         // arrange
         string[] values = ["a", new string('b', 300), "c"];
         var body = string.Concat(values.Select(value => CreateRecord(value) + "\n")) + "\n";
-        var arenaSource = new PerDocumentArenaSource();
+        var arenaSource = new PerDocumentArenaSource(CreateArena);
 
         // act
         var result = await ReadValuesAsync(body, maxBytesPerRead, arenaSource);
@@ -182,8 +187,8 @@ public class JsonLinesReaderTests
     {
         // arrange
         var body = CreateBody(recordCount: 40, maxValueLength: 900);
-        var inPlaceArena = new MemoryArena();
-        var copyArena = new MemoryArena();
+        var inPlaceArena = CreateArena();
+        var copyArena = CreateArena();
 
         // act
         await ReadValuesAsync(body, maxBytesPerRead, new FixedMemoryArenaSource(inPlaceArena));
@@ -205,9 +210,9 @@ public class JsonLinesReaderTests
         // the stream rents from the arena on every read, like a concurrent fetch of the same request.
         var values = CreateValues(recordCount: 40, maxValueLength: 900);
         var body = CreateBody(values);
-        var copyArena = new MemoryArena();
+        var copyArena = CreateArena();
         await ReadValuesAsync(body, maxBytesPerRead, new SharedArenaSource(copyArena));
-        var arena = new MemoryArena();
+        var arena = CreateArena();
         var stream = new RentingStream(
             new DripStream(new MemoryStream(Encoding.UTF8.GetBytes(body)), maxBytesPerRead),
             arena);
@@ -230,7 +235,7 @@ public class JsonLinesReaderTests
     {
         // arrange
         var values = CreateValues(recordCount: 300, maxValueLength: 2000);
-        var arena = new MemoryArena();
+        var arena = CreateArena();
         arena.Rent(JsonMemory.BufferSize - 1500);
 
         // act
@@ -246,9 +251,9 @@ public class JsonLinesReaderTests
     {
         // arrange
         var body = Encoding.UTF8.GetBytes(CreateRecord("a") + "\n");
-        var expectedArena = new MemoryArena();
+        var expectedArena = CreateArena();
         await ReadValuesAsync(CreateRecord("a") + "\n", int.MaxValue, new FixedMemoryArenaSource(expectedArena));
-        var arena = new MemoryArena();
+        var arena = CreateArena();
         using var message = CreateMessage(new FailingStream(body));
         var reader = new JsonLinesReader(message, new FixedMemoryArenaSource(arena), Timeout.InfiniteTimeSpan);
         var values = new List<string>();
@@ -258,7 +263,10 @@ public class JsonLinesReaderTests
         {
             await foreach (var document in reader.WithCancellation(TestContext.Current.CancellationToken))
             {
-                values.Add(GetValue(document));
+                using (document)
+                {
+                    values.Add(GetValue(document));
+                }
             }
         }
 
@@ -277,7 +285,7 @@ public class JsonLinesReaderTests
         var stream = new CountingStream(new DripStream(new MemoryStream(body), record.Length));
 
         // act
-        var result = await ReadValuesAsync(stream, new FixedMemoryArenaSource(new MemoryArena()));
+        var result = await ReadValuesAsync(stream, new FixedMemoryArenaSource(CreateArena()));
 
         // assert
         // three reads return a record each and the fourth read returns the end of the stream.
@@ -295,7 +303,7 @@ public class JsonLinesReaderTests
         var stream = new CountingStream(new DripStream(new MemoryStream(body), record.Length));
 
         // act
-        var result = await ReadValuesAsync(stream, new PerDocumentArenaSource());
+        var result = await ReadValuesAsync(stream, new PerDocumentArenaSource(CreateArena));
 
         // assert
         // every read starts without a partial record, so a zero-byte read precedes each of them.
@@ -318,7 +326,8 @@ public class JsonLinesReaderTests
         using var cts = new CancellationTokenSource();
         await using var enumerator = reader.GetAsyncEnumerator(cts.Token);
         var hasFirst = await enumerator.MoveNextAsync();
-        var value = GetValue(enumerator.Current);
+        using var first = enumerator.Current;
+        var value = GetValue(first);
 
         // act
         await cts.CancelAsync();
@@ -344,7 +353,10 @@ public class JsonLinesReaderTests
         // act
         await foreach (var document in reader.WithCancellation(TestContext.Current.CancellationToken))
         {
-            values.Add(GetValue(document));
+            using (document)
+            {
+                values.Add(GetValue(document));
+            }
 
             if (values.Count == 2)
             {
@@ -399,10 +411,17 @@ public class JsonLinesReaderTests
     private static string CreateBody(int recordCount, int maxValueLength)
         => CreateBody(CreateValues(recordCount, maxValueLength));
 
-    private static IMemoryArenaSource CreateArenaSource(ArenaSourceKind kind)
+    private MemoryArena CreateArena()
+    {
+        var arena = new MemoryArena();
+        _arenas.Add(arena);
+        return arena;
+    }
+
+    private IMemoryArenaSource CreateArenaSource(ArenaSourceKind kind)
         => kind == ArenaSourceKind.Fixed
-            ? new FixedMemoryArenaSource(new MemoryArena())
-            : new PerDocumentArenaSource();
+            ? new FixedMemoryArenaSource(CreateArena())
+            : new PerDocumentArenaSource(CreateArena);
 
     private static long GetUsedBytes(MemoryArena arena)
     {
@@ -411,18 +430,24 @@ public class JsonLinesReaderTests
         return ((long)(arena.RentedPageCount - 1) * JsonMemory.BufferSize) + cursor.Offset;
     }
 
+    public enum ArenaSourceKind
+    {
+        Fixed,
+        PerDocument
+    }
+
     private sealed class SharedArenaSource(IMemoryArena arena) : IMemoryArenaSource
     {
         public IMemoryArena GetNextArena() => arena;
     }
 
-    private sealed class PerDocumentArenaSource : IMemoryArenaSource
+    private sealed class PerDocumentArenaSource(Func<MemoryArena> createArena) : IMemoryArenaSource
     {
         public List<MemoryArena> Arenas { get; } = [];
 
         public IMemoryArena GetNextArena()
         {
-            var arena = new MemoryArena();
+            var arena = createArena();
             Arenas.Add(arena);
             return arena;
         }

@@ -187,8 +187,6 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
     {
         var length = record.Length;
 
-        // A record whose length fits within MaxSingleSpanRecordLength is copied into a single
-        // exact-length arena chunk and parsed as one span.
         if (length > 0 && length <= MaxSingleSpanRecordLength)
         {
             var buffer = arena.Rent(length);
@@ -204,8 +202,6 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                 lastLength: length);
         }
 
-        // Larger records are filled across the geometric data chunk schedule and parsed as a
-        // multi-segment sequence, using the same per-record mechanic as the SSE reader.
         var chunks = arena.RentSegmentTable(64);
         var chunkIndex = 0;
         var chunkSize = SourceResultDocument.GetDataChunkSize(chunkIndex);

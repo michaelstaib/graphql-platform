@@ -1,7 +1,6 @@
 namespace HotChocolate.Buffers;
 
 /// <summary>
-/// An <see cref="IMemoryArenaSource"/> whose <see cref="IMemoryArenaSource.GetNextArena"/> returns the
-/// same arena for every document of a stream, so calling it does not start a new document.
+/// Provides the same memory arena for every document in a result stream.
 /// </summary>
 internal interface IFixedMemoryArenaSource : IMemoryArenaSource;
