@@ -56,7 +56,7 @@ internal sealed class SubscriptionDeferStreamVisitor : DocumentValidatorVisitor
             {
                 var directive = directives[i];
 
-                if (IsDeferOrStream(directive) && !CanBeDisabled(directive))
+                if (directive.IsDeferOrStreamDirective() && !CanBeDisabled(directive))
                 {
                     context.ReportError(context.DeferAndStreamNotDisableableInSubscription(directive));
                 }
@@ -90,10 +90,6 @@ internal sealed class SubscriptionDeferStreamVisitor : DocumentValidatorVisitor
 
         return false;
     }
-
-    private static bool IsDeferOrStream(DirectiveNode directive)
-        => directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal)
-            || directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal);
 
     private static bool CanBeDisabled(DirectiveNode directive)
         => directive.GetArgumentValue(DirectiveNames.Defer.Arguments.If)

@@ -293,24 +293,25 @@ public static class HotChocolateValidationBuilderExtensions
     /// Subscription operations must have exactly one root field.
     ///
     /// https://spec.graphql.org/September2025/#sec-Single-Root-Field
+    ///
+    /// AND
+    ///
+    /// Defer and Stream Directives Are Used On Valid Root Field
+    ///
+    /// https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-On-Valid-Root-Field
+    ///
+    /// AND
+    ///
+    /// Defer and Stream Directives Are Used In Valid Operations
+    ///
+    /// https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-In-Valid-Operations
     /// </summary>
     public static DocumentValidatorBuilder AddOperationRules(
         this DocumentValidatorBuilder builder)
     {
-        return builder.AddVisitor<OperationVisitor>();
-    }
-
-    /// <summary>
-    /// The @defer and @stream directives can not be used to defer or stream data in
-    /// subscription operations. If these directives appear in a subscription operation
-    /// they must be disabled using an if argument.
-    ///
-    /// https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-In-Valid-Operations
-    /// </summary>
-    public static DocumentValidatorBuilder AddSubscriptionDeferStreamRules(
-        this DocumentValidatorBuilder builder)
-    {
-        return builder.AddVisitor<SubscriptionDeferStreamVisitor>();
+        return builder
+            .AddVisitor<OperationVisitor>()
+            .AddVisitor<SubscriptionDeferStreamVisitor>();
     }
 
     /// <summary>
@@ -421,7 +422,6 @@ public static class HotChocolateValidationBuilderExtensions
             .AddIntrospectionDepthRule()
             .AddDocumentRules()
             .AddOperationRules()
-            .AddSubscriptionDeferStreamRules()
             .AddFieldRules()
             .AddArgumentRules()
             .AddFragmentRules()

@@ -196,7 +196,7 @@ public class OperationVisitor : DocumentValidatorVisitor
     }
 }
 
-file static class DirectiveExtensions
+internal static class DirectiveExtensions
 {
     internal static bool HasSkipOrIncludeDirective(this IReadOnlyList<DirectiveNode> directives)
     {
@@ -228,10 +228,7 @@ file static class DirectiveExtensions
 
         for (var i = 0; i < directives.Count; i++)
         {
-            var directive = directives[i];
-
-            if (directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal)
-                || directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal))
+            if (directives[i].IsDeferOrStreamDirective())
             {
                 return true;
             }
@@ -239,4 +236,8 @@ file static class DirectiveExtensions
 
         return false;
     }
+
+    internal static bool IsDeferOrStreamDirective(this DirectiveNode directive)
+        => directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal)
+            || directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal);
 }

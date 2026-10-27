@@ -1,9 +1,11 @@
+using HotChocolate.Validation.Rules;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Validation;
 
 public class DeferAndStreamDirectivesAreUsedInValidOperationsTests()
-    : DocumentValidatorVisitorTestBase(builder => builder.AddSubscriptionDeferStreamRules())
+    : DocumentValidatorVisitorTestBase(
+        builder => builder.AddOperationRules().RemoveVisitor<OperationVisitor>())
 {
     [Fact]
     public void Defer_Should_ReportError_When_NestedInSubscriptionWithoutIf()
