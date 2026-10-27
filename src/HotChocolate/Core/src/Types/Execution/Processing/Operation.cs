@@ -39,7 +39,8 @@ public sealed class Operation : IOperation
         OperationFeatureCollection features,
         int lastId,
         object[] elementsById,
-        bool hasIncrementalParts)
+        bool hasIncrementalParts,
+        bool mayContainBatchFields)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(hash);
@@ -67,6 +68,7 @@ public sealed class Operation : IOperation
         _elementsById = elementsById;
         _features = features;
         HasIncrementalParts = hasIncrementalParts;
+        MayContainBatchFields = mayContainBatchFields;
         HasWideIncludeFlags = includeConditions.Count > 64;
         HasWideDeferFlags = deferConditions.Count > 64;
         CacheId = CreateCacheId();
@@ -131,6 +133,11 @@ public sealed class Operation : IOperation
 
     /// <inheritdoc />
     public bool HasIncrementalParts { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the operation selects a field name that has a batch resolver in the schema.
+    /// </summary>
+    internal bool MayContainBatchFields { get; }
 
     /// <summary>
     /// Gets a value indicating whether this operation has more than 64 include

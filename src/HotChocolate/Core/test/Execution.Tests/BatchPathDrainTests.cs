@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using HotChocolate.Execution.Processing;
+using HotChocolate.Language;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
@@ -72,9 +74,39 @@ public sealed class BatchPathDrainTests
             """);
     }
 
+    [Theory]
+    [InlineData("{ sibling }", false)]
+    [InlineData("{ sibling foo { name } }", false)]
+    [InlineData("{ foo { batch } }", true)]
+    [InlineData("{ sibling ... on Query { foo { name ... on Foo { batch } } } }", true)]
+    public async Task Compile_Should_FlagTheOperation_When_ItSelectsABatchField(string query, bool expected)
+    {
+        // arrange
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(d =>
+            {
+                d.Name("Query");
+                d.Field("sibling").Type<StringType>().Resolve("sibling");
+                d.Field("foo").Type<ObjectType<Foo>>().Resolve(new Foo());
+            })
+            .AddObjectType<Foo>(d =>
+                d.Field("batch")
+                    .Type<StringType>()
+                    .ResolveBatch(contexts =>
+                        new ValueTask<IReadOnlyList<ResolverResult>>(
+                            contexts.Select(_ => ResolverResult.Ok("batched")).ToArray())))
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var operation = OperationCompiler.Compile("opid", Utf8GraphQLParser.Parse(query), (Schema)executor.Schema);
+
+        // assert
+        Assert.Equal(expected, operation.MayContainBatchFields);
+    }
+
     private static Task<string> ExecuteAsync(IRequestExecutor executor, string query)
     {
-        // the scheduler loop must not be able to block the test thread, so the request runs off it.
         return Task.Run(
                 async () =>
                 {

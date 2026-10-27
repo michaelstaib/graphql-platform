@@ -18,6 +18,7 @@ public sealed partial class OperationCompiler
 {
     private static readonly ArrayPool<object> s_objectArrayPool = ArrayPool<object>.Shared;
     private readonly Schema _schema;
+    private readonly HashSet<string> _batchFieldNames;
     private readonly ObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>> _fieldsPool;
     private readonly OperationCompilerOptimizers _optimizers;
     private readonly InputParser _inputValueParser;
@@ -36,6 +37,7 @@ public sealed partial class OperationCompiler
         ArgumentNullException.ThrowIfNull(fieldsPool);
 
         _schema = schema;
+        _batchFieldNames = CollectBatchFieldNames(schema);
         _inputValueParser = inputValueParser;
         _fieldsPool = fieldsPool;
         _optimizers = optimizers;
@@ -174,7 +176,8 @@ public sealed partial class OperationCompiler
                 compilationContext.Features,
                 lastId,
                 compilationContext.ElementsById,
-                hasIncrementalParts: hasIncrementalParts);
+                hasIncrementalParts: hasIncrementalParts,
+                mayContainBatchFields: SelectsBatchField(operationDefinition.SelectionSet));
 
             selectionSet.Complete(operation, executionGroup: null);
 
@@ -827,6 +830,47 @@ public sealed partial class OperationCompiler
         }
 
         return null;
+    }
+
+    private static HashSet<string> CollectBatchFieldNames(Schema schema)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var objectType in schema.Types.OfType<ObjectType>())
+        {
+            foreach (var field in objectType.Fields)
+            {
+                if (field.BatchResolver is not null)
+                {
+                    names.Add(field.Name);
+                }
+            }
+        }
+
+        return names;
+    }
+
+    private bool SelectsBatchField(SelectionSetNode? selectionSet)
+    {
+        if (selectionSet is null || _batchFieldNames.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode field
+                    when _batchFieldNames.Contains(field.Name.Value) || SelectsBatchField(field.SelectionSet):
+                    return true;
+
+                case InlineFragmentNode fragment when SelectsBatchField(fragment.SelectionSet):
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     private class IncludeConditionVisitor : SyntaxWalker<IncludeConditionCollection>

@@ -125,7 +125,7 @@ internal sealed partial class WorkScheduler
 
         switch (task)
         {
-            case Tasks.ResolverTask resolverTask:
+            case Tasks.ResolverTask resolverTask when _countsPaths:
                 lock (_sync)
                 {
                     CompleteBranchTaskUnsafe(task.BranchId);

@@ -51,6 +51,11 @@ internal sealed partial class WorkScheduler
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void IncrementPathCountUnsafe(SelectionPath path)
     {
+        if (!_countsPaths)
+        {
+            return;
+        }
+
         ref var count = ref CollectionsMarshal.GetValueRefOrAddDefault(_activePaths, path, out _);
         count++;
     }
@@ -61,6 +66,11 @@ internal sealed partial class WorkScheduler
     /// </summary>
     private void DecrementPathCountUnsafe(SelectionPath path)
     {
+        if (!_countsPaths)
+        {
+            return;
+        }
+
         ref var count = ref CollectionsMarshal.GetValueRefOrNullRef(_activePaths, path);
 
         if (!Unsafe.IsNullRef(ref count) && --count <= 0)
