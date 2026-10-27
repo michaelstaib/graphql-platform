@@ -395,7 +395,7 @@ public class IncrementalEarlyDisposeTests
         var aborted = executor.ExecuteAsync("{ items { id stubborn ... @defer { quick } } }", abort.Token);
         await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         await abort.CancelAsync();
-        await aborted;
+        await using var abortedResult = await aborted;
         var abortedContext = Assert.Single(probe.RentedContexts);
 
         // act
