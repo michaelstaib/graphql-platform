@@ -2503,4 +2503,124 @@ public class DeferPlannerTests : FusionTestBase
         }
         Assert.True(dependsOnProvider);
     }
+
+    [Fact]
+    public void Defer_Should_PlanBothFetches_When_GroupSelectsFieldsOfTwoSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+                product(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                reviews: [Review!]!
+            }
+
+            type Review {
+                id: ID!
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product(id: "1") {
+                    id
+                    ... @defer(label: "details") {
+                        name
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanOuterFetches_When_OuterGroupSelectsFieldsOfTwoSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+                product(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                reviews: [Review!]!
+            }
+
+            type Review {
+                id: ID!
+            }
+            """,
+            """
+            # name: c
+            type Query {
+                productRatingById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                rating: Int!
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        name
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") {
+                            rating
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
 }

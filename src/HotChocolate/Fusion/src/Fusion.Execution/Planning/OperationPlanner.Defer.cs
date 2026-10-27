@@ -1516,7 +1516,7 @@ public sealed partial class OperationPlanner
                 && operationStep.SchemaName is not null
                 && !operationStep.Dependents.IsEmpty
                 && (operationStep.Target.Equals(anchorPath) || operationStep.Target.IsRoot)
-                && IsPureRequirementProducer(operationStep, incrementalPlanSteps))
+                && IsPureRequirementProducer(operationStep, anchorPath, incrementalPlanSteps))
             {
                 producers.Add(operationStep);
             }
@@ -1526,18 +1526,22 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Determines whether every field <paramref name="step"/> selects is consumed as a
-    /// requirement by one of its dependents, meaning the step carries no output of its
-    /// own beyond what those dependents need from it.
+    /// Determines whether <paramref name="step"/> selects nothing at <paramref name="anchorPath"/>
+    /// except leaf fields that its dependents consume as requirements, meaning the step carries
+    /// no output of its own beyond what those dependents need from it.
     /// </summary>
     private static bool IsPureRequirementProducer(
         OperationPlanStep step,
+        SelectionPath anchorPath,
         ImmutableList<PlanStep> incrementalPlanSteps)
     {
-        var ownFields = new HashSet<string>(StringComparer.Ordinal);
-        CollectLeafFieldNames(step.Definition.SelectionSet, ownFields);
+        var anchorSelectionSet = LocateSelectionSetAtPath(
+            GetStepEntitySelectionSet(step),
+            anchorPath,
+            step.Target.Length);
 
-        if (ownFields.Count == 0)
+        var ownFields = new HashSet<string>(StringComparer.Ordinal);
+        if (!TryCollectLeafFieldNames(anchorSelectionSet, ownFields) || ownFields.Count == 0)
         {
             return false;
         }
@@ -1573,21 +1577,22 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Collects the response names of every leaf field selection within
-    /// <paramref name="selectionSet"/>, descending through composite fields and inline
-    /// fragments (a composite field wraps a lookup or entity boundary, not output of its
-    /// own). The <c>__typename</c> discriminator is ignored; it never satisfies a
-    /// requirement.
+    /// Collects the response names of the leaf fields of <paramref name="selectionSet"/>,
+    /// descending through inline fragments. The <c>__typename</c> discriminator is ignored;
+    /// it never satisfies a requirement.
     /// </summary>
-    private static void CollectLeafFieldNames(SelectionSetNode selectionSet, HashSet<string> names)
+    /// <returns>
+    /// <c>false</c> when <paramref name="selectionSet"/> selects a composite field, which is
+    /// output of its own.
+    /// </returns>
+    private static bool TryCollectLeafFieldNames(SelectionSetNode selectionSet, HashSet<string> names)
     {
         foreach (var selection in selectionSet.Selections)
         {
             switch (selection)
             {
-                case FieldNode { SelectionSet: { } nested }:
-                    CollectLeafFieldNames(nested, names);
-                    break;
+                case FieldNode { SelectionSet: not null }:
+                    return false;
 
                 case FieldNode field:
                     if (!field.Name.Value.Equals("__typename", StringComparison.Ordinal))
@@ -1597,10 +1602,15 @@ public sealed partial class OperationPlanner
                     break;
 
                 case InlineFragmentNode fragment:
-                    CollectLeafFieldNames(fragment.SelectionSet, names);
+                    if (!TryCollectLeafFieldNames(fragment.SelectionSet, names))
+                    {
+                        return false;
+                    }
                     break;
             }
         }
+
+        return true;
     }
 
     /// <summary>
