@@ -13,6 +13,7 @@ internal sealed class DeferTask : ExecutionTask
     private ExecutionGroupScope? _groupScope;
     private int _executionBranchId;
     private DeferUsage _deferUsage = null!;
+    private Path _selectionPath = null!;
 
     // the defer tasks runs in the system branch as it's just an orchestration task.
     public override int BranchId => BranchTracker.SystemBranchId;
@@ -80,6 +81,13 @@ internal sealed class DeferTask : ExecutionTask
             var result = deferContext.BuildResult();
             await deferContext.DeferExecutionCoordinator.EnqueueResult(result, _executionBranchId);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // a branch that fails after its work settled still completes with the coordinator,
+            // otherwise the response stream would never end.
+            var failedResult = new OperationResult(CreateErrors(deferContext, ex));
+            await deferContext.DeferExecutionCoordinator.EnqueueResult(failedResult, _executionBranchId);
+        }
         finally
         {
             deferContext.Scheduler.UnparkRunningTask();
@@ -128,6 +136,7 @@ internal sealed class DeferTask : ExecutionTask
         _groupScope = groupScope;
         _executionBranchId = executionBranchId;
         _deferUsage = deferUsage;
+        _selectionPath = selectionPath;
     }
 
     public new void Reset()
@@ -139,7 +148,31 @@ internal sealed class DeferTask : ExecutionTask
         _groupScope = null;
         _executionBranchId = 0;
         _deferUsage = null!;
+        _selectionPath = null!;
 
         base.Reset();
+    }
+
+    private ImmutableList<IError> CreateErrors(OperationContext deferContext, Exception exception)
+    {
+        var errors = ImmutableList.CreateBuilder<IError>();
+        var error = ErrorHelper.DeferredFragmentFailed(exception, _selectionPath);
+        var handled = deferContext.ErrorHandler.Handle(error);
+
+        if (handled is AggregateError aggregateError)
+        {
+            errors.AddRange(aggregateError.Errors);
+        }
+        else
+        {
+            errors.Add(handled);
+        }
+
+        foreach (var handledError in errors)
+        {
+            deferContext.DiagnosticEvents.TaskError(this, handledError);
+        }
+
+        return errors.ToImmutable();
     }
 }
