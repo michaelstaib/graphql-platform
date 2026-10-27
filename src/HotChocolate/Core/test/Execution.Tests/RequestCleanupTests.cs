@@ -106,7 +106,7 @@ public class RequestCleanupTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Should_ThrowFirstFailureAfterRunningAllActions_When_ActionsFail()
+    public async Task ExecuteAsync_Should_ThrowAllFailuresAfterRunningAllActions_When_ActionsFail()
     {
         // arrange
         var log = new List<string>();
@@ -116,11 +116,47 @@ public class RequestCleanupTests
         cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("second failure")));
 
         // act
+        var exception = await Assert.ThrowsAsync<AggregateException>(() => cleanup.ExecuteAsync().AsTask());
+
+        // assert
+        exception.InnerExceptions.Select(t => t.Message).ToArray()
+            .MatchInlineSnapshots(["first failure", "second failure"]);
+        log.MatchInlineSnapshots(["between"]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ThrowTheFailureAsIs_When_OneActionFails()
+    {
+        // arrange
+        var cleanup = new RequestCleanup();
+        cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("only failure")));
+
+        // act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => cleanup.ExecuteAsync().AsTask());
 
         // assert
-        Assert.Equal("first failure", exception.Message);
-        log.MatchInlineSnapshots(["between"]);
+        Assert.Equal("only failure", exception.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ReportEveryFailureToDiagnosticEvents_When_ActionsFail()
+    {
+        // arrange
+        var listener = new RecordingListener();
+        using var cancellation = new CancellationTokenSource();
+        var cleanup = new RequestCleanup(
+            cancellation,
+            CancellationToken.None,
+            new PooledRequestContext(),
+            listener);
+        cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("first failure")));
+        cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("second failure")));
+
+        // act
+        await Assert.ThrowsAsync<AggregateException>(() => cleanup.ExecuteAsync().AsTask());
+
+        // assert
+        listener.Errors.ToArray().MatchInlineSnapshots(["first failure", "second failure"]);
     }
 
     [Fact]

@@ -30,8 +30,8 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     /// <summary>
     /// Initializes a collector that cancels <paramref name="cancellation"/> when <paramref name="requestAborted"/>
-    /// is canceled. Cleanup failures that no response stream can observe are reported
-    /// to <paramref name="diagnosticEvents"/> with <paramref name="requestContext"/>.
+    /// is canceled. Every cleanup failure is reported to <paramref name="diagnosticEvents"/>
+    /// with <paramref name="requestContext"/>.
     /// </summary>
     public RequestCleanup(
         CancellationTokenSource cancellation,
@@ -187,7 +187,8 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     /// <summary>
     /// Releases the hold of the caller. The last holder runs all registered cleanup actions
-    /// and marks the collector as executed.
+    /// and marks the collector as executed. Cleanup failures are thrown after all actions ran:
+    /// the failure itself when there is one, otherwise an <see cref="AggregateException"/>.
     /// </summary>
     public ValueTask ExecuteAsync()
         => ReleaseAsync(isBackground: false);
@@ -252,8 +253,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
         var node = Reverse(Interlocked.Exchange(ref _head, s_drained));
         var last = Interlocked.Exchange(ref _last, null);
-        var report = isBackground && _diagnosticEvents is not null;
-        ExceptionDispatchInfo? exception = null;
+        List<Exception>? failures = null;
 
         while (true)
         {
@@ -280,18 +280,26 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                if (report)
+                _diagnosticEvents?.RequestError(_requestContext!, ex);
+
+                if (!isBackground)
                 {
-                    _diagnosticEvents!.RequestError(_requestContext!, ex);
-                }
-                else
-                {
-                    exception ??= ExceptionDispatchInfo.Capture(ex);
+                    (failures ??= []).Add(ex);
                 }
             }
         }
 
-        exception?.Throw();
+        if (failures is null)
+        {
+            return;
+        }
+
+        if (failures.Count is 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw ThrowHelper.RequestCleanup_Failed(failures);
     }
 
     private void Add(object action)
