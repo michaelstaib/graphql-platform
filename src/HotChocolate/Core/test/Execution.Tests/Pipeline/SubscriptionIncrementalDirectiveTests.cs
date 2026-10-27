@@ -450,6 +450,187 @@ public sealed class SubscriptionIncrementalDirectiveTests
             """);
     }
 
+    [Fact]
+    public async Task Subscription_Should_ReturnError_When_EnabledDeferRepeatsAFieldOfTheSelectionSet()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($defer: Boolean!) {
+                  onMessage {
+                    body
+                    ... @defer(if: $defer) {
+                      body
+                    }
+                  }
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["defer"] = true })
+            .Build();
+
+        // act
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResult().MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The @defer directive cannot be enabled in a subscription operation. Pass false to its `if` argument to disable it.",
+                  "extensions": {
+                    "directive": "defer"
+                  }
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Subscription_Should_ReturnError_When_EnabledOuterDeferHoldsOnlyDisabledNestedDefer()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($outer: Boolean!, $inner: Boolean!) {
+                  onMessage {
+                    ... @defer(if: $outer) {
+                      ... @defer(if: $inner) {
+                        body
+                      }
+                    }
+                  }
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["outer"] = true, ["inner"] = false })
+            .Build();
+
+        // act
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResult().MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The @defer directive cannot be enabled in a subscription operation. Pass false to its `if` argument to disable it.",
+                  "extensions": {
+                    "directive": "defer"
+                  }
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Subscription_Should_DeliverEvents_When_EnabledDeferIsUnderFieldSkippedByLiteral()
+    {
+        // arrange
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        var executor = await CreateExecutorAsync();
+        var sender = executor.Schema.Services.GetRootServiceProvider()
+            .GetRequiredService<ITopicEventSender>();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($defer: Boolean!) {
+                  onMessage {
+                    id
+                    author @skip(if: true) {
+                      ... @defer(if: $defer) {
+                        name
+                      }
+                    }
+                  }
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["defer"] = true })
+            .Build();
+
+        var subscribe = await executor.ExecuteAsync(request, cts.Token);
+        await using var stream = subscribe.ExpectResponseStream();
+        await using var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(cts.Token);
+
+        // act
+        await sender.SendAsync("OnMessage", new Message("hello", ["a", "b"]), cts.Token);
+        var moved = await enumerator.MoveNextAsync();
+
+        // assert
+        Assert.True(moved);
+        enumerator.Current.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "onMessage": {
+                  "id": 1
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Subscription_Should_DeliverEvents_When_EnabledDeferIsUnderFieldSkippedByVariable()
+    {
+        // arrange
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        var executor = await CreateExecutorAsync();
+        var sender = executor.Schema.Services.GetRootServiceProvider()
+            .GetRequiredService<ITopicEventSender>();
+
+        var request = OperationRequestBuilder.New()
+            .SetDocument(
+                """
+                subscription($defer: Boolean!, $skip: Boolean!) {
+                  onMessage {
+                    id
+                    author @skip(if: $skip) {
+                      ... @defer(if: $defer) {
+                        name
+                      }
+                    }
+                  }
+                }
+                """)
+            .SetVariableValues(new Dictionary<string, object?> { ["defer"] = true, ["skip"] = true })
+            .Build();
+
+        var subscribe = await executor.ExecuteAsync(request, cts.Token);
+        await using var stream = subscribe.ExpectResponseStream();
+        await using var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(cts.Token);
+
+        // act
+        await sender.SendAsync("OnMessage", new Message("hello", ["a", "b"]), cts.Token);
+        var moved = await enumerator.MoveNextAsync();
+
+        // assert
+        Assert.True(moved);
+        enumerator.Current.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "onMessage": {
+                  "id": 1
+                }
+              }
+            }
+            """);
+    }
+
     private static ValueTask<IRequestExecutor> CreateExecutorAsync()
         => new ServiceCollection()
             .AddGraphQL()
@@ -469,7 +650,11 @@ public sealed class SubscriptionIncrementalDirectiveTests
     public sealed record Message(string Body, string[] Tags)
     {
         public int Id => 1;
+
+        public Author Author => new("jane");
     }
+
+    public sealed record Author(string Name);
 
     public sealed class Subscription
     {

@@ -113,13 +113,33 @@ internal sealed partial class SubscriptionExecutor(
         IVariableValueCollection variables,
         [NotNullWhen(true)] out string? directiveName)
     {
-        return TryFindEnabledIncrementalDirective(
+        var deferFlags = operation.CreateDeferConditionFlags(variables);
+        var accountedDeferConditions = new bool[operation.DeferConditionCount];
+
+        if (TryFindEnabledIncrementalDirective(
             operation,
             operation.RootSelectionSet,
             variables,
             operation.CreateIncludeConditionFlags(variables),
-            operation.CreateDeferConditionFlags(variables),
-            out directiveName);
+            deferFlags,
+            isReachable: true,
+            accountedDeferConditions,
+            out directiveName))
+        {
+            return true;
+        }
+
+        for (var i = 0; i < accountedDeferConditions.Length; i++)
+        {
+            if (!accountedDeferConditions[i] && IsConditionEnabled(deferFlags, i))
+            {
+                directiveName = DirectiveNames.Defer.Name;
+                return true;
+            }
+        }
+
+        directiveName = null;
+        return false;
     }
 
     private static bool TryFindEnabledIncrementalDirective(
@@ -128,22 +148,33 @@ internal sealed partial class SubscriptionExecutor(
         IVariableValueCollection variables,
         ConditionFlags includeFlags,
         ConditionFlags deferFlags,
+        bool isReachable,
+        bool[] accountedDeferConditions,
         [NotNullWhen(true)] out string? directiveName)
     {
         foreach (var selection in selectionSet.Selections)
         {
-            if (!selection.IsIncluded(includeFlags))
+            var isIncluded = isReachable && selection.IsIncluded(includeFlags);
+            var activeDeferUsages = selection.GetActiveDeferUsages(deferFlags);
+
+            if (activeDeferUsages is not null)
             {
-                continue;
+                foreach (var activeDeferUsage in activeDeferUsages)
+                {
+                    for (var usage = activeDeferUsage; usage is not null; usage = usage.Parent)
+                    {
+                        accountedDeferConditions[usage.DeferConditionIndex] = true;
+                    }
+                }
             }
 
-            if (selection.IsDeferred(deferFlags))
+            if (isIncluded && (activeDeferUsages is not null || selection.IsDeferred(deferFlags)))
             {
                 directiveName = DirectiveNames.Defer.Name;
                 return true;
             }
 
-            if (IsStreamEnabled(selection, variables))
+            if (isIncluded && IsStreamEnabled(selection, variables))
             {
                 directiveName = DirectiveNames.Stream.Name;
                 return true;
@@ -162,6 +193,8 @@ internal sealed partial class SubscriptionExecutor(
                     variables,
                     includeFlags,
                     deferFlags,
+                    isIncluded,
+                    accountedDeferConditions,
                     out directiveName))
                 {
                     return true;
@@ -171,6 +204,20 @@ internal sealed partial class SubscriptionExecutor(
 
         directiveName = null;
         return false;
+    }
+
+    private static bool IsConditionEnabled(ConditionFlags flags, int index)
+    {
+        if (index < 64)
+        {
+            return (flags.Word0 & (1ul << index)) != 0;
+        }
+
+        var word = (index >> 6) - 1;
+
+        return flags.Overflow is { } overflow
+            && (uint)word < (uint)overflow.Length
+            && (overflow[word] & (1ul << (index & 63))) != 0;
     }
 
     private static bool IsStreamEnabled(Selection selection, IVariableValueCollection variables)
