@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Reflection;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
@@ -2729,11 +2728,8 @@ public class DeferPlannerTests : FusionTestBase
         var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
             new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
         var planner = new OperationPlanner(schema, new OperationCompiler(schema, pool));
-        var applyDeferRequirements = typeof(OperationPlanner).GetMethod(
-            "ApplyDeferRequirementsToParent",
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
 
-        // the requirement of the consumer is anchored below the defer anchor
+        // the requirement of the consumer is anchored beside the defer anchor
         var anchor = SelectionPath.Parse("$.products");
         var definition = (OperationDefinitionNode)Utf8GraphQLParser.Parse("query { id }").Definitions[0];
         var producer = new OperationPlanStep
@@ -2759,21 +2755,23 @@ public class DeferPlannerTests : FusionTestBase
                 new OperationRequirement(
                     "__fusion_1_id",
                     new NonNullTypeNode(new NamedTypeNode("ID")),
-                    SelectionPath.Parse("$.products.reviews"),
+                    SelectionPath.Parse("$.other"),
                     new FieldSelectionMapParser("id").Parse()))
         };
         var descriptor = new IncrementalPlanDescriptor([], definition, anchor, null);
 
         // act
-        var error = Assert.Throws<TargetInvocationException>(
-            () => applyDeferRequirements.Invoke(
-                planner,
-                [descriptor, ImmutableList.Create<PlanStep>(producer, consumer), null, null]));
+        var error = Assert.Throws<InvalidOperationException>(
+            () => planner.ApplyDeferRequirementsToParent(
+                descriptor,
+                ImmutableList.Create<PlanStep>(producer, consumer),
+                null!,
+                null!));
 
         // assert
-        Assert.IsType<InvalidOperationException>(error.InnerException).Message.MatchInlineSnapshot(
+        error.Message.MatchInlineSnapshot(
             """
-            The deferred incremental plan's requirement '__fusion_1_id' at path '$.products.reviews' could not be resolved from the parent plan. Defer anchor: '$.products'. Target schema: 'b'. Reason: requirement path lies outside the defer's anchor.
+            The deferred incremental plan's requirement '__fusion_1_id' at path '$.other' could not be resolved from the parent plan. Defer anchor: '$.products'. Target schema: 'b'. Reason: requirement path lies outside the defer's anchor.
             """);
     }
 

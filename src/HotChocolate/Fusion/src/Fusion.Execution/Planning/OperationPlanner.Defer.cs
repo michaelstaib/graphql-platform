@@ -434,7 +434,7 @@ public sealed partial class OperationPlanner
     /// The updated incremental plan step list, or the original list when no
     /// parent-scope requirements can be moved.
     /// </returns>
-    private ImmutableList<PlanStep> ApplyDeferRequirementsToParent(
+    internal ImmutableList<PlanStep> ApplyDeferRequirementsToParent(
         IncrementalPlanDescriptor descriptor,
         ImmutableList<PlanStep> incrementalPlanSteps,
         ParentPlanContext parentContext,
@@ -1527,8 +1527,7 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Determines whether <paramref name="step"/> selects nothing at <paramref name="anchorPath"/>
-    /// except leaf fields that its dependents consume as requirements, meaning the step carries
-    /// no output of its own beyond what those dependents need from it.
+    /// except leaf fields that its dependents consume as requirements.
     /// </summary>
     private static bool IsPureRequirementProducer(
         OperationPlanStep step,
