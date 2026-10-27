@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Tracing;
 using System.Text.Json;
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
@@ -413,6 +414,71 @@ public class IncrementalEarlyDisposeTests
         Assert.NotSame(abortedContext, secondContext);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_DisposeRequestScopeAfterResolverFinished_When_AbortedBeforeFirstPayload()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        using var abort = new CancellationTokenSource();
+        var aborted = executor.ExecuteAsync("{ tracked items { id scoped ... @defer { quick } } }", abort.Token);
+        await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // act
+        await abort.CancelAsync();
+        await using var abortedResult = await aborted;
+        var eventsAfterAbort = probe.Events.ToArray();
+
+        probe.Gate("1").TrySetResult();
+        await probe.Returned("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        probe.Gate("2").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Empty(eventsAfterAbort);
+        probe.Events.ToArray().MatchInlineSnapshots(
+        [
+            "resolver 1 resolved the scoped service",
+            "resolver 2 resolved the scoped service",
+            "request cleanup ran",
+            "request scope disposed",
+            "request context returned"
+        ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_RunCleanupAfterResolverFinished_When_MiddlewareFailsAfterExecution()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorWithFailingMiddlewareAsync(probe);
+
+        // act
+        await using var result = await executor.ExecuteAsync(
+            "{ tracked items { id ... @defer { scoped } } }",
+            TestContext.Current.CancellationToken);
+        await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var eventsBeforeResolvers = probe.Events.ToArray();
+
+        probe.Gate("1").TrySetResult();
+        await probe.Returned("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        probe.Gate("2").TrySetResult();
+        await probe.RequestContextReturned.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Empty(eventsBeforeResolvers);
+        probe.Events.ToArray().MatchInlineSnapshots(
+        [
+            "resolver 1 resolved the scoped service",
+            "resolver 2 resolved the scoped service",
+            "request cleanup ran",
+            "request scope disposed",
+            "request context returned"
+        ]);
+    }
+
     private static Task<bool> MoveNextAsync(IAsyncEnumerator<OperationResult> enumerator)
         => enumerator.MoveNextAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
@@ -459,6 +525,21 @@ public class IncrementalEarlyDisposeTests
     }
 
     private static ValueTask<IRequestExecutor> CreateExecutorAsync(Probe probe)
+        => CreateExecutorBuilder(probe).BuildRequestExecutorAsync();
+
+    private static ValueTask<IRequestExecutor> CreateExecutorWithFailingMiddlewareAsync(Probe probe)
+        => CreateExecutorBuilder(probe)
+            .UseRequest(
+                (_, next) => async context =>
+                {
+                    await next(context);
+                    throw new InvalidOperationException("request middleware failed");
+                },
+                key: "FailAfterExecution",
+                after: WellKnownRequestMiddleware.OperationExecutionMiddleware)
+            .BuildRequestExecutorAsync();
+
+    private static IRequestExecutorBuilder CreateExecutorBuilder(Probe probe)
         => new ServiceCollection()
             .AddSingleton(probe)
             .AddScoped<ScopeProbe>()
@@ -474,12 +555,23 @@ public class IncrementalEarlyDisposeTests
                     options.EnableDefer = true;
                     options.EnableStream = true;
                     options.DefaultQueryDependencyInjectionScope = DependencyInjectionScope.Request;
-                })
-            .BuildRequestExecutorAsync();
+                });
 
     public sealed class Query
     {
         public List<Item> GetItems() => [new("1"), new("2")];
+
+        public string GetTracked(IResolverContext context, [Service] Probe probe)
+        {
+            ((IMiddlewareContext)context).RegisterForCleanup(
+                () =>
+                {
+                    probe.Log("request cleanup ran");
+                    return ValueTask.CompletedTask;
+                },
+                CleanAfter.Request);
+            return "tracked";
+        }
 
         public IAsyncEnumerable<int> GetNumbers([Service] Probe probe, [Service] ScopeProbe scopeProbe)
             => new CountingEnumerable(probe);
@@ -559,6 +651,28 @@ public class IncrementalEarlyDisposeTests
             probe.Started(id).TrySetResult();
             await probe.Gate(id).Task;
             return $"failing {id}";
+        }
+
+        public async Task<string> GetScopedAsync(
+            IResolverContext context,
+            [Service] Probe probe,
+            [Service] ScopeProbe scopeProbe)
+        {
+            probe.Started(id).TrySetResult();
+            await probe.Gate(id).Task;
+
+            try
+            {
+                _ = context.Services.GetRequiredService<ScopeProbe>();
+                probe.Log($"resolver {id} resolved the scoped service");
+            }
+            catch (ObjectDisposedException)
+            {
+                probe.Log($"resolver {id} found the request scope disposed");
+            }
+
+            probe.Returned(id).TrySetResult();
+            return $"scoped {id}";
         }
 
         public string GetQuick([Service] ScopeProbe scopeProbe) => $"quick {id}";
