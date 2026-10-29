@@ -245,7 +245,7 @@ public class IncrementalEarlyDisposeTests
 
         // assert
         Assert.Equal("cleanup failed", exception.Message);
-        probe.Errors.ToArray().MatchInlineSnapshots(["request error: cleanup failed"]);
+        Assert.Empty(probe.Errors);
         eventsAtLastPayload.MatchInlineSnapshots(
         [
             "source returned",
@@ -330,7 +330,7 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
-    public async Task DisposeAsync_Should_ReportAndThrowCleanupFailures_When_TheStreamIsDisposedLast()
+    public async Task DisposeAsync_Should_ThrowAllCleanupFailuresWithoutReporting_When_TheStreamIsDisposedLast()
     {
         // arrange
         var probe = new Probe();
@@ -358,11 +358,7 @@ public class IncrementalEarlyDisposeTests
 
         // assert
         Assert.Equal(2, exception.InnerExceptions.Count);
-        probe.Errors.ToArray().MatchInlineSnapshots(
-        [
-            "request error: cleanup failed",
-            "request error: cleanup failed"
-        ]);
+        Assert.Empty(probe.Errors);
     }
 
     [Fact]
@@ -580,8 +576,7 @@ public class IncrementalEarlyDisposeTests
         [
             "request error: request middleware failed",
             "request error: cleanup failed",
-            "request error: cleanup failed",
-            "request error: One or more errors occurred. (cleanup failed) (cleanup failed)"
+            "request error: cleanup failed"
         ]);
     }
 

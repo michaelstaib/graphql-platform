@@ -187,7 +187,7 @@ internal sealed class OperationExecutionMiddleware
                 {
                     if (operationContextBuffer[i] is { } owner)
                     {
-                        await ExecuteAbortCleanupAsync(owner.OperationContext).ConfigureAwait(false);
+                        await ExecuteAbortCleanupAsync(context, owner.OperationContext).ConfigureAwait(false);
                     }
                 }
             }
@@ -365,7 +365,7 @@ internal sealed class OperationExecutionMiddleware
 
                 // No result will be built, so the cleanup tasks registered for the request would
                 // never run if we did not release them here.
-                await ExecuteAbortCleanupAsync(operationContext).ConfigureAwait(false);
+                await ExecuteAbortCleanupAsync(context, operationContext).ConfigureAwait(false);
             }
 
             // We rethrow so that another middleware can deal with the failure.
@@ -387,7 +387,7 @@ internal sealed class OperationExecutionMiddleware
         }
         catch (Exception ex)
         {
-            _diagnosticEvents.RequestError(context, ex);
+            ReportFailures(context, ex);
         }
     }
 
@@ -399,8 +399,23 @@ internal sealed class OperationExecutionMiddleware
         }
         catch (Exception ex)
         {
-            _diagnosticEvents.RequestError(context, ex);
+            ReportFailures(context, ex);
         }
+    }
+
+    private void ReportFailures(RequestContext context, Exception exception)
+    {
+        if (exception is AggregateException aggregate)
+        {
+            foreach (var failure in aggregate.InnerExceptions)
+            {
+                _diagnosticEvents.RequestError(context, failure);
+            }
+
+            return;
+        }
+
+        _diagnosticEvents.RequestError(context, exception);
     }
 
     private void CancelAbandonedExecution(RequestContext context, RequestCleanup requestCleanup)
@@ -425,7 +440,7 @@ internal sealed class OperationExecutionMiddleware
         await operationContext.Result.ExecuteCleanupTasksAsync().ConfigureAwait(false);
     }
 
-    private static async ValueTask ExecuteAbortCleanupAsync(OperationContext operationContext)
+    private async ValueTask ExecuteAbortCleanupAsync(RequestContext context, OperationContext operationContext)
     {
         try
         {
@@ -434,9 +449,10 @@ internal sealed class OperationExecutionMiddleware
                 await requestCleanup.ExecuteAsync().ConfigureAwait(false);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Preserve the execution exception that caused the abort.
+            ReportFailures(context, ex);
         }
 
         try

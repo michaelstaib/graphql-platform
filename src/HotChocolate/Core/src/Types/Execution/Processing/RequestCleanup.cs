@@ -30,8 +30,8 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     /// <summary>
     /// Initializes a collector that cancels <paramref name="cancellation"/> when <paramref name="requestAborted"/>
-    /// is canceled. Every cleanup failure is reported to <paramref name="diagnosticEvents"/>
-    /// with <paramref name="requestContext"/>.
+    /// is canceled. Cleanup failures that no response stream can observe are reported
+    /// to <paramref name="diagnosticEvents"/> with <paramref name="requestContext"/>.
     /// </summary>
     public RequestCleanup(
         CancellationTokenSource cancellation,
@@ -187,8 +187,9 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     /// <summary>
     /// Releases the hold of the caller. The last holder runs all registered cleanup actions
-    /// and marks the collector as executed. Cleanup failures are thrown after all actions ran:
-    /// the failure itself when there is one, otherwise an <see cref="AggregateException"/>.
+    /// and marks the collector as executed. After all actions ran, a single cleanup failure is thrown as is
+    /// and several are thrown as an <see cref="AggregateException"/>. Failures are not reported to the
+    /// diagnostic events.
     /// </summary>
     public ValueTask ExecuteAsync()
         => ReleaseAsync(isBackground: false);
@@ -253,6 +254,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
         var node = Reverse(Interlocked.Exchange(ref _head, s_drained));
         var last = Interlocked.Exchange(ref _last, null);
+        var report = isBackground && _diagnosticEvents is not null;
         List<Exception>? failures = null;
 
         while (true)
@@ -280,9 +282,11 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _diagnosticEvents?.RequestError(_requestContext!, ex);
-
-                if (!isBackground)
+                if (report)
+                {
+                    _diagnosticEvents!.RequestError(_requestContext!, ex);
+                }
+                else
                 {
                     (failures ??= []).Add(ex);
                 }

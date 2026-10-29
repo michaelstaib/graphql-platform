@@ -139,7 +139,7 @@ public class RequestCleanupTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Should_ReportEveryFailureToDiagnosticEvents_When_ActionsFail()
+    public async Task ExecuteAsync_Should_NotReportFailuresToDiagnosticEvents_When_ActionsFail()
     {
         // arrange
         var listener = new RecordingListener();
@@ -153,10 +153,11 @@ public class RequestCleanupTests
         cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("second failure")));
 
         // act
-        await Assert.ThrowsAsync<AggregateException>(() => cleanup.ExecuteAsync().AsTask());
+        var exception = await Assert.ThrowsAsync<AggregateException>(() => cleanup.ExecuteAsync().AsTask());
 
         // assert
-        listener.Errors.ToArray().MatchInlineSnapshots(["first failure", "second failure"]);
+        Assert.Equal(2, exception.InnerExceptions.Count);
+        Assert.Empty(listener.Errors);
     }
 
     [Fact]
@@ -179,6 +180,29 @@ public class RequestCleanupTests
 
         // assert
         listener.Errors.ToArray().MatchInlineSnapshots(["cleanup failed"]);
+    }
+
+    [Fact]
+    public async Task ReleaseAsync_Should_ReportEveryFailureToDiagnosticEvents_When_LastHolderIsBackground()
+    {
+        // arrange
+        var listener = new RecordingListener();
+        using var cancellation = new CancellationTokenSource();
+        var cleanup = new RequestCleanup(
+            cancellation,
+            CancellationToken.None,
+            new PooledRequestContext(),
+            listener);
+        cleanup.Hold();
+        cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("first failure")));
+        cleanup.Register(() => ValueTask.FromException(new InvalidOperationException("second failure")));
+        await cleanup.ExecuteAsync();
+
+        // act
+        await cleanup.ReleaseAsync();
+
+        // assert
+        listener.Errors.ToArray().MatchInlineSnapshots(["first failure", "second failure"]);
     }
 
     [Fact]
