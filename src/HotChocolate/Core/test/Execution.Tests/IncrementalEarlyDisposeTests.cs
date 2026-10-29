@@ -682,19 +682,25 @@ public class IncrementalEarlyDisposeTests
                 })
             .Build();
 
-        // act
-        var aborted = executor.ExecuteAsync(request, abort.Token);
-        await probe.Started("abort").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
-        await using var result = await aborted.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
-        probe.Gate("abort").TrySetResult();
+        try
+        {
+            // act
+            var aborted = executor.ExecuteAsync(request, abort.Token);
+            await probe.Started("abort").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            await using var result = await aborted.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
-        // assert
-        Assert.Equal(ExecutionResultKind.SingleResult, result.Kind);
-        probe.Errors.ToArray().MatchInlineSnapshots(
-        [
-            "request error: cleanup failed",
-            "request error: The operation was canceled."
-        ]);
+            // assert
+            Assert.Equal(ExecutionResultKind.SingleResult, result.Kind);
+            probe.Errors.ToArray().MatchInlineSnapshots(
+            [
+                "request error: cleanup failed",
+                "request error: The operation was canceled."
+            ]);
+        }
+        finally
+        {
+            probe.Gate("abort").TrySetResult();
+        }
     }
 
     private static Task<bool> MoveNextAsync(IAsyncEnumerator<OperationResult> enumerator)
