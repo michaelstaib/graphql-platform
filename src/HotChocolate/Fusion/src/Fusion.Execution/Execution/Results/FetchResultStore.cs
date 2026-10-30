@@ -3789,18 +3789,18 @@ AddErrors_Next:
             // Track list containers that need imported elements.
             Dictionary<int, (CompositeResultElement Container, int MaxIndex)>? containers = null;
 
-            // Each pass creates the outermost lists that are still missing. A nested list below a
-            // created list is reached by another pass once the enclosing list items exist.
+            // Each pass creates the outermost lists that are still missing. A path that continues
+            // below a created list is walked again by the next pass once the list items exist.
             while (true)
             {
-                var hasNestedListBelowMissingList = false;
+                var hasPathBelowMissingList = false;
 
                 foreach (var entry in importedValues)
                 {
-                    TrackListContainerUnsafe(entry.Path, ref containers, ref hasNestedListBelowMissingList);
+                    TrackListContainerUnsafe(entry.Path, ref containers, ref hasPathBelowMissingList);
                     foreach (var additional in entry.AdditionalPaths.AsSpan())
                     {
-                        TrackListContainerUnsafe(additional, ref containers, ref hasNestedListBelowMissingList);
+                        TrackListContainerUnsafe(additional, ref containers, ref hasPathBelowMissingList);
                     }
                 }
 
@@ -3830,7 +3830,7 @@ AddErrors_Next:
                     }
                 }
 
-                if (!hasNestedListBelowMissingList)
+                if (!hasPathBelowMissingList)
                 {
                     return;
                 }
@@ -3843,7 +3843,7 @@ AddErrors_Next:
     private void TrackListContainerUnsafe(
         CompactPath path,
         ref Dictionary<int, (CompositeResultElement Container, int MaxIndex)>? containers,
-        ref bool hasNestedListBelowMissingList)
+        ref bool hasPathBelowMissingList)
     {
         if (path.IsRoot)
         {
@@ -3864,21 +3864,15 @@ AddErrors_Next:
 
             if (seg >= 0)
             {
-                var hasListAnchor = HasListAnchor(segments, i + 1);
-
+                // The path descends into this object, so it is initialized when it does not exist yet.
                 if (element.ValueKind is JsonValueKind.Undefined)
                 {
-                    if (!hasListAnchor)
-                    {
-                        return;
-                    }
-
                     InitializeIntermediateObjectUnsafe(element, element.Selection);
                 }
 
                 if (element.ValueKind is not JsonValueKind.Object)
                 {
-                    if (!hasListAnchor)
+                    if (!HasListAnchor(segments, i + 1))
                     {
                         return;
                     }
@@ -3909,15 +3903,16 @@ AddErrors_Next:
                     containers[cursorKey] = (element, index);
                 }
 
-                // Descend into an existing list item to reach a nested list; otherwise stop here.
-                if (i == segments.Length - 1 || !HasListAnchor(segments, i + 1))
+                // Descend into an existing list item when the path continues below it; otherwise
+                // stop here.
+                if (i == segments.Length - 1)
                 {
                     return;
                 }
 
                 if (element.ValueKind is not JsonValueKind.Array)
                 {
-                    hasNestedListBelowMissingList |= element.ValueKind is JsonValueKind.Undefined;
+                    hasPathBelowMissingList |= element.ValueKind is JsonValueKind.Undefined;
                     return;
                 }
 
