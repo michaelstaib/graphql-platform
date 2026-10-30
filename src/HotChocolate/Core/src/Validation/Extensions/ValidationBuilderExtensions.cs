@@ -384,6 +384,16 @@ public static class HotChocolateValidationBuilderExtensions
     }
 
     /// <summary>
+    /// Adds a validation rule that restricts how deep the selection sets of a GraphQL operation
+    /// can be nested when its fragment spreads are followed.
+    /// </summary>
+    public static DocumentValidatorBuilder AddSelectionSetDepthRule(
+        this DocumentValidatorBuilder builder)
+    {
+        return builder.AddRule((_, o) => new SelectionSetDepthRule(o.MaxAllowedSelectionSetDepth));
+    }
+
+    /// <summary>
     /// Adds a validation rule that restricts the depth of coordinate cycles in GraphQL operations.
     /// </summary>
     public static DocumentValidatorBuilder AddMaxAllowedFieldCycleDepthRule(
@@ -418,6 +428,7 @@ public static class HotChocolateValidationBuilderExtensions
         this DocumentValidatorBuilder builder)
     {
         return builder
+            .AddSelectionSetDepthRule()
             .AddIntrospectionAllowedRule()
             .AddIntrospectionDepthRule()
             .AddDocumentRules()
