@@ -51,6 +51,8 @@ internal sealed partial class WorkScheduler
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void IncrementPathCountUnsafe(SelectionPath path)
     {
+        AssertLockHeld();
+
         ref var count = ref CollectionsMarshal.GetValueRefOrAddDefault(_activePaths, path, out _);
         count++;
     }
@@ -61,6 +63,8 @@ internal sealed partial class WorkScheduler
     /// </summary>
     private void DecrementPathCountUnsafe(SelectionPath path)
     {
+        AssertLockHeld();
+
         ref var count = ref CollectionsMarshal.GetValueRefOrNullRef(_activePaths, path);
 
         if (!Unsafe.IsNullRef(ref count) && --count <= 0)
@@ -76,6 +80,8 @@ internal sealed partial class WorkScheduler
     /// </summary>
     private bool TryDispatchPendingBatchesUnsafe()
     {
+        AssertLockHeld();
+
         if (_pendingBatches.Count == 0)
         {
             return false;
@@ -154,6 +160,8 @@ internal sealed partial class WorkScheduler
     /// </summary>
     private bool CanDispatchBatchUnsafe(SelectionPath batchPath)
     {
+        AssertLockHeld();
+
         // Walk up ancestor paths. If any ancestor still has active tasks,
         // more entries could still be added to this batch.
         var ancestor = batchPath.Parent;

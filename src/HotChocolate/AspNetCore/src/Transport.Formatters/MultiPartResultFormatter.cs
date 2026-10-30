@@ -77,10 +77,11 @@ public sealed class MultiPartResultFormatter : IExecutionResultFormatter
 
     private async ValueTask FormatOperationResultAsync(
         OperationResult result,
-        PipeWriter writer,
+        PipeWriter pipe,
         bool useIncrementalRfc1,
         CancellationToken ct = default)
     {
+        using var writer = ChunkedPipeBufferWriter.Rent(pipe, growPipeSpans: false);
         OperationResultFormatterContext? formatContext = null;
         try
         {
@@ -110,10 +111,11 @@ public sealed class MultiPartResultFormatter : IExecutionResultFormatter
 
     private async ValueTask FormatResultBatchAsync(
         OperationResultBatch resultBatch,
-        PipeWriter writer,
+        PipeWriter pipe,
         bool useIncrementalRfc1,
         CancellationToken ct = default)
     {
+        using var writer = ChunkedPipeBufferWriter.Rent(pipe, growPipeSpans: true);
         foreach (var result in resultBatch.Results)
         {
             switch (result)
@@ -148,7 +150,7 @@ public sealed class MultiPartResultFormatter : IExecutionResultFormatter
                     break;
 
                 case IResponseStream responseStream:
-                    await FormatResponseStreamAsync(
+                    await WriteResponseStreamAsync(
                         responseStream,
                         writer,
                         useIncrementalRfc1,
@@ -160,13 +162,23 @@ public sealed class MultiPartResultFormatter : IExecutionResultFormatter
 
     private async ValueTask FormatResponseStreamAsync(
         IResponseStream responseStream,
-        PipeWriter writer,
+        PipeWriter pipe,
         bool useIncrementalRfc1,
         CancellationToken ct = default)
     {
+        using var writer = ChunkedPipeBufferWriter.Rent(pipe, growPipeSpans: true);
+        await WriteResponseStreamAsync(responseStream, writer, useIncrementalRfc1, ct).ConfigureAwait(false);
+    }
+
+    private async ValueTask WriteResponseStreamAsync(
+        IResponseStream responseStream,
+        ChunkedPipeBufferWriter writer,
+        bool useIncrementalRfc1,
+        CancellationToken ct)
+    {
         // first, we create the iterator.
         await using var enumerator = responseStream.ReadResultsAsync().GetAsyncEnumerator(ct);
-        OperationResultFormatterContext? formatContext = null;
+        var formatContext = OperationResultFormatterContext.CreateForResponseStream(useIncrementalRfc1);
         var first = true;
 
         try
@@ -199,6 +211,13 @@ public sealed class MultiPartResultFormatter : IExecutionResultFormatter
                         // If the result is a deferred result and has a next result, we need to
                         // write a new part so that the client knows that there is more to come.
                         MessageHelper.WriteNext(writer);
+                    }
+
+                    if (formatContext is { HasFinalCarriedPayload: true })
+                    {
+                        MessageHelper.WriteNext(writer);
+                        MessageHelper.WriteResultHeader(writer);
+                        _payloadFormatter.FormatCarried(writer, formatContext);
                     }
 
                     // Now we can write the part to the output stream and flush this chunk.

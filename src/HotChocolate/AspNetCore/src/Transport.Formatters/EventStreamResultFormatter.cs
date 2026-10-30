@@ -51,10 +51,11 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
 
     private async ValueTask FormatOperationResultAsync(
         OperationResult operationResult,
-        PipeWriter writer,
+        PipeWriter pipe,
         bool useIncrementalRfc1,
         CancellationToken ct)
     {
+        using var writer = ChunkedPipeBufferWriter.Rent(pipe, growPipeSpans: false);
         OperationResultFormatterContext? formatContext = null;
         var scope = Log.FormatOperationResultStart();
 
@@ -83,10 +84,11 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
 
     private async ValueTask FormatResultBatchAsync(
         OperationResultBatch resultBatch,
-        PipeWriter writer,
+        PipeWriter pipe,
         bool useIncrementalRfc1,
         CancellationToken ct)
     {
+        using var writer = ChunkedPipeBufferWriter.Rent(pipe, growPipeSpans: true);
         Exception? exception = null;
         using var semaphore = new SemaphoreSlim(1, 1);
         List<Task>? streams = null;
@@ -125,6 +127,8 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
                         catch (Exception ex)
                         {
                             scope?.AddError(ex);
+                            writer.Discard();
+                            throw;
                         }
                         finally
                         {
@@ -136,7 +140,7 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
                     }
 
                     case IResponseStream responseStream:
-                        keepAlive ??= new KeepAliveJob(semaphore, writer);
+                        keepAlive ??= new KeepAliveJob(semaphore, pipe);
                         var formatter = new StreamFormatter(
                             _payloadFormatter,
                             useIncrementalRfc1,
@@ -186,16 +190,17 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
 
     private async ValueTask FormatResponseStreamAsync(
         IResponseStream responseStream,
-        PipeWriter writer,
+        PipeWriter pipe,
         bool useIncrementalRfc1,
         CancellationToken ct)
     {
+        using var writer = ChunkedPipeBufferWriter.Rent(pipe, growPipeSpans: true);
         Exception? exception = null;
         using var semaphore = new SemaphoreSlim(1, 1);
 
         try
         {
-            using (var keepAlive = new KeepAliveJob(semaphore, writer))
+            using (var keepAlive = new KeepAliveJob(semaphore, pipe))
             {
                 var formatter = new StreamFormatter(
                     _payloadFormatter,
@@ -280,9 +285,10 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
         KeepAliveJob keepAliveJob,
         IResponseStream responseStream,
         SemaphoreSlim semaphore,
-        PipeWriter writer)
+        ChunkedPipeBufferWriter writer)
     {
-        private OperationResultFormatterContext? _formatContext;
+        private OperationResultFormatterContext? _formatContext
+            = OperationResultFormatterContext.CreateForResponseStream(useIncrementalRfc1);
 
         public async Task ProcessAsync(CancellationToken ct)
         {
@@ -309,6 +315,7 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
                     catch (Exception ex)
                     {
                         scope?.AddError(ex);
+                        writer.Discard();
                         throw;
                     }
                     finally
@@ -404,7 +411,7 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
     private static class MessageHelper
     {
         private static ReadOnlySpan<byte> NextEvent => "event: next\ndata: "u8;
-        private static ReadOnlySpan<byte> CompleteEvent => "event: complete\n\n"u8;
+        private static ReadOnlySpan<byte> CompleteEvent => "event: complete\ndata:\n\n"u8;
         private static ReadOnlySpan<byte> NewLine2 => "\n\n"u8;
 
         public static void FormatNextMessage(
@@ -426,6 +433,19 @@ public sealed class EventStreamResultFormatter(JsonResultFormatterOptions option
             span = writer.GetSpan(NewLine2.Length);
             NewLine2.CopyTo(span);
             writer.Advance(NewLine2.Length);
+
+            if (context is { HasFinalCarriedPayload: true })
+            {
+                span = writer.GetSpan(NextEvent.Length);
+                NextEvent.CopyTo(span);
+                writer.Advance(NextEvent.Length);
+
+                payloadFormatter.FormatCarried(writer, context);
+
+                span = writer.GetSpan(NewLine2.Length);
+                NewLine2.CopyTo(span);
+                writer.Advance(NewLine2.Length);
+            }
         }
 
         public static void FormatCompleteMessage(
