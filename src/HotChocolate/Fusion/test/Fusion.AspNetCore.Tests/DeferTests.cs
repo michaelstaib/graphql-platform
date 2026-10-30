@@ -4349,6 +4349,15 @@ public class DeferTests : FusionTestBase
                 data = initial.DeepClone();
             }
 
+            foreach (var completed in response["completed"]?.AsArray() ?? [])
+            {
+                if (completed!["errors"] is JsonArray errors)
+                {
+                    Assert.Fail(
+                        $"The delivery group '{completed["id"]}' completed with errors: {errors.ToJsonString()}");
+                }
+            }
+
             foreach (var pending in response["pending"]?.AsArray() ?? [])
             {
                 pendingPaths[pending!["id"]!.GetValue<string>()] = pending["path"]!.AsArray();

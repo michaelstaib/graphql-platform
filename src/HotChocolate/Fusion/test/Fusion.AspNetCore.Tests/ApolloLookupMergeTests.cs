@@ -204,6 +204,18 @@ public sealed class ApolloLookupMergeTests : FusionTestBase
             var payload = JsonNode.Parse(line)!.AsObject();
             data ??= payload["data"]?.DeepClone();
 
+            if (payload["completed"] is JsonArray completed)
+            {
+                foreach (var entry in completed)
+                {
+                    if (entry!["errors"] is JsonArray errors)
+                    {
+                        Assert.Fail(
+                            $"The delivery group '{entry["id"]}' completed with errors: {errors.ToJsonString()}");
+                    }
+                }
+            }
+
             if (payload["pending"] is JsonArray pending)
             {
                 foreach (var entry in pending)
