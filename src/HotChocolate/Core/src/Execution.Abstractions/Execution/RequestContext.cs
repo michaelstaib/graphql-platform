@@ -72,6 +72,12 @@ public abstract class RequestContext : IFeatureProvider
     internal MemoryArena? Memory => _memory;
 
     /// <summary>
+    /// Gets or sets the execution of an aborted operation that may still run against this request,
+    /// or <c>null</c> when no execution is outstanding.
+    /// </summary>
+    internal Task? OutstandingExecution { get; set; }
+
+    /// <summary>
     /// Attaches a memory arena to this request. The arena is owned by the request until it is
     /// detached on success or disposed when the context is reset.
     /// </summary>

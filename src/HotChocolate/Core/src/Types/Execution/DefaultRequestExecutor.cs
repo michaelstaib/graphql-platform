@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
+using HotChocolate.Execution.Processing;
 using HotChocolate.Features;
 using HotChocolate.Fetching;
 using Microsoft.Extensions.ObjectPool;
@@ -206,7 +207,15 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
             if (context is not null)
             {
-                _contextPool.Return(context);
+                if (context.OutstandingExecution is { IsCompleted: false } execution)
+                {
+                    // the abandoned execution still reads the request context, so it is returned once it settled.
+                    _ = ReturnWhenSettledAsync(context, execution);
+                }
+                else
+                {
+                    _contextPool.Return(context);
+                }
             }
 
             if (scope is IAsyncDisposable asyncScope)
@@ -218,6 +227,12 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 scope?.Dispose();
             }
         }
+    }
+
+    private async Task ReturnWhenSettledAsync(PooledRequestContext context, Task execution)
+    {
+        await RequestCleanup.WaitUntilSettledAsync(execution).ConfigureAwait(false);
+        _contextPool.Return(context);
     }
 
     private void RegisterPoolReturn(PooledRequestContext context, IRequestCleanup? requestCleanup)

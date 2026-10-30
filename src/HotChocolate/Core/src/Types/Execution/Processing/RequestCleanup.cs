@@ -114,6 +114,24 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     }
 
     /// <summary>
+    /// Completes when <paramref name="execution"/> has completed, without rethrowing its failure.
+    /// </summary>
+    /// <param name="execution">
+    /// The execution to wait for.
+    /// </param>
+    public static async Task WaitUntilSettledAsync(Task execution)
+    {
+        try
+        {
+            await execution.ConfigureAwait(false);
+        }
+        catch
+        {
+            // an aborted execution has no consumer left that could observe its failure.
+        }
+    }
+
+    /// <summary>
     /// Stops listening for the cancellation of the request. The collector no longer cancels
     /// its cancellation source afterwards.
     /// </summary>
@@ -200,15 +218,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     private async Task ReleaseWhenSettledAsync(Task execution)
     {
-        try
-        {
-            await execution.ConfigureAwait(false);
-        }
-        catch
-        {
-            // an aborted execution has no consumer left that could observe its failure.
-        }
-
+        await WaitUntilSettledAsync(execution).ConfigureAwait(false);
         await ReleaseAsync(isBackground: true).ConfigureAwait(false);
     }
 
