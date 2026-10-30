@@ -26,79 +26,119 @@ internal sealed class QueryExecutor
         OperationContext operationContext,
         IImmutableDictionary<string, object?> scopedContext)
     {
-        var requestCleanup = new RequestCleanup();
-        operationContext.RequestCleanup = requestCleanup;
+        var cancellation = operationContext.RentOperationAborted();
+        var operationAborted = cancellation.Token;
+        var requestCleanup = new RequestCleanup(
+            cancellation,
+            operationContext.RequestAborted,
+            operationContext.RequestContext,
+            operationContext.DiagnosticEvents);
 
-        EnqueueRootResolverTasks(
-            operationContext,
-            operationContext.RootValue,
-            operationContext.Result.Data.Data,
-            scopedContext);
-
-        var branchId = operationContext.ExecutionBranchId;
-        var scheduler = operationContext.Scheduler;
-        var coordinator = operationContext.DeferExecutionCoordinator;
-
-        // capture the arena now: the request executor detaches it from the context once this
-        // method returns the stream, so the deferred closure below seals the captured arena.
-        var memory = operationContext.Memory;
-
-        var execution = scheduler.ExecuteAsync1();
-        await scheduler.WaitForCompletionAsync(branchId).ConfigureAwait(false);
-        var initialResult = operationContext.BuildResult();
-
-        if (!coordinator.HasBranches)
+        try
         {
-            if (!execution.IsCompletedSuccessfully)
+            operationContext.RequestCleanup = requestCleanup;
+            operationContext.OverrideRequestAborted(operationAborted);
+
+            EnqueueRootResolverTasks(
+                operationContext,
+                operationContext.RootValue,
+                operationContext.Result.Data.Data,
+                scopedContext);
+
+            var branchId = operationContext.ExecutionBranchId;
+            var scheduler = operationContext.Scheduler;
+            var coordinator = operationContext.DeferExecutionCoordinator;
+
+            // capture the arena now: the request executor detaches it from the context once this
+            // method returns the stream, so the deferred closure below seals the captured arena.
+            var memory = operationContext.Memory;
+
+            var execution = scheduler.ExecuteAsync1();
+            await scheduler.WaitForCompletionAsync(branchId).ConfigureAwait(false);
+            var initialResult = operationContext.BuildResult();
+
+            if (!coordinator.HasBranches)
             {
-                await execution.ConfigureAwait(false);
+                if (!execution.IsCompletedSuccessfully)
+                {
+                    await execution.ConfigureAwait(false);
+                }
+
+                // the operation context is returned before the result is disposed, so the
+                // cancellation source must not be reachable from the request token anymore.
+                requestCleanup.DetachCancellation();
+
+                // there are no deferred parts, so this behaves like a buffered result: seal now.
+                memory.Seal();
+
+                foreach (var cleanupTask in operationContext.Result.TakeCleanupTasks())
+                {
+                    initialResult.RegisterForCleanup(cleanupTask);
+                }
+
+                initialResult.RegisterForCleanup(requestCleanup.ExecuteAsync);
+
+                return initialResult;
             }
 
-            // there are no deferred parts, so this behaves like a buffered result: seal now.
-            memory.Seal();
+            await coordinator.EnqueueResult(initialResult).ConfigureAwait(false);
 
             foreach (var cleanupTask in operationContext.Result.TakeCleanupTasks())
             {
-                initialResult.RegisterForCleanup(cleanupTask);
+                requestCleanup.Register(cleanupTask);
             }
 
-            initialResult.RegisterForCleanup(requestCleanup.ExecuteAsync);
+            // the request resources are shared between the response stream and the running execution,
+            // whichever releases last runs the cleanup.
+            requestCleanup.AttachExecution(execution);
 
-            return initialResult;
-        }
-
-        await coordinator.EnqueueResult(initialResult).ConfigureAwait(false);
-
-        foreach (var cleanupTask in operationContext.Result.TakeCleanupTasks())
-        {
-            requestCleanup.Register(cleanupTask);
-        }
-
-        var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult);
-
-        // the payloads are disposed while the stream is still being read, so the request cleanup
-        // is released when the stream itself is disposed.
-        stream.RegisterForCleanup(requestCleanup.ExecuteAsync);
-
-        return stream;
-
-        async IAsyncEnumerable<OperationResult> CreateStream()
-        {
-            var requestAborted = operationContext.RequestAborted;
-
-            await foreach (var result in coordinator.ReadResultsAsync(requestAborted))
+            var stream = new ResponseStream(CreateStream, ExecutionResultKind.DeferredResult)
             {
-                yield return result;
-            }
+                RequestCleanup = requestCleanup
+            };
 
-            if (!requestAborted.IsCancellationRequested)
+            // the payloads are disposed while the stream is still being read, so the stream
+            // releases its hold when the stream itself is disposed.
+            stream.RegisterForCleanup(requestCleanup);
+
+            return stream;
+
+            async IAsyncEnumerable<OperationResult> CreateStream()
             {
-                // The stream was read to completion, so every deferred branch has been delivered and
-                // the scheduler has fully settled: no resolver or batch task can write into the arena
-                // anymore, so we seal it to allow its memory to be returned on dispose.
-                await execution.ConfigureAwait(false);
-                memory.Seal();
+                var isRead = false;
+
+                try
+                {
+                    await foreach (var result in coordinator.ReadResultsAsync(operationAborted))
+                    {
+                        yield return result;
+                    }
+
+                    isRead = !operationAborted.IsCancellationRequested;
+                }
+                finally
+                {
+                    if (!isRead)
+                    {
+                        // the consumer stopped before the last payload, so the outstanding work is abandoned.
+                        requestCleanup.Cancel();
+                    }
+                }
+
+                if (isRead)
+                {
+                    // The stream was read to completion, so every deferred branch has been delivered and
+                    // the scheduler has fully settled: no resolver or batch task can write into the arena
+                    // anymore, so we seal it to allow its memory to be returned on dispose.
+                    await execution.ConfigureAwait(false);
+                    memory.Seal();
+                }
             }
+        }
+        catch
+        {
+            requestCleanup.DetachCancellation();
+            throw;
         }
     }
 

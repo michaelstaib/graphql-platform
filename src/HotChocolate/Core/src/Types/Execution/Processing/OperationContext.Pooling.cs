@@ -33,6 +33,7 @@ internal sealed partial class OperationContext
     private IExecutionDiagnosticEvents _diagnosticEvents = null!;
     private IDictionary<string, object?> _contextData = null!;
     private CancellationToken _requestAborted;
+    private CancellationTokenSource? _operationAborted;
     private Operation _operation = null!;
     private IVariableValueCollection _variables = null!;
     private IServiceProvider _services = null!;
@@ -92,6 +93,33 @@ internal sealed partial class OperationContext
         }
 
         Result.RegisterForCleanup(action);
+    }
+
+    /// <summary>
+    /// Replaces the request aborted token of this context and of its work scheduler.
+    /// It must be called before any work is enqueued.
+    /// </summary>
+    internal void OverrideRequestAborted(CancellationToken requestAborted)
+    {
+        AssertInitialized();
+        _requestAborted = requestAborted;
+        _currentWorkScheduler.OverrideCancellation(requestAborted);
+    }
+
+    /// <summary>
+    /// Gets a cancellation source that is not canceled and that this context keeps for the next incremental operation.
+    /// </summary>
+    internal CancellationTokenSource RentOperationAborted()
+    {
+        var source = _operationAborted;
+
+        if (source is null || !source.TryReset())
+        {
+            source?.Dispose();
+            _operationAborted = source = new CancellationTokenSource();
+        }
+
+        return source;
     }
 
     public bool IsSharedScheduler => !ReferenceEquals(_workScheduler, _currentWorkScheduler);

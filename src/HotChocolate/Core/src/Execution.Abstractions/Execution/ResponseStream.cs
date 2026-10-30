@@ -26,6 +26,12 @@ public sealed class ResponseStream : ExecutionResult, IResponseStream
 
     public override ExecutionResultKind Kind { get; }
 
+    /// <summary>
+    /// Gets or sets the cleanup that is shared with the execution of the stream, or <c>null</c>
+    /// when the stream owns the resources of its response.
+    /// </summary>
+    internal IRequestCleanup? RequestCleanup { get; set; }
+
     public ImmutableList<Func<OperationResult, OperationResult>> OnFirstResult
     {
         get => Features.Get<ImmutableList<Func<OperationResult, OperationResult>>>() ?? [];

@@ -39,6 +39,16 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
     /// Returns immediately if the branch has already completed or was never registered.
     /// </summary>
     public ValueTask WaitForCompletionAsync(int executionBranchId)
+        => WaitForBranchAsync(executionBranchId, _ct);
+
+    /// <summary>
+    /// Waits for all tasks in the specified execution branch to complete, also when the request was aborted.
+    /// Returns immediately if the branch has already completed or was never registered.
+    /// </summary>
+    public ValueTask WaitForSettlementAsync(int executionBranchId)
+        => WaitForBranchAsync(executionBranchId, CancellationToken.None);
+
+    private ValueTask WaitForBranchAsync(int executionBranchId, CancellationToken cancellationToken)
     {
         AssertNotPooled();
 
@@ -50,7 +60,7 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
         }
 
         return branch is not null
-            ? branch.WaitForCompletionAsync(_ct)
+            ? branch.WaitForCompletionAsync(cancellationToken)
             : ValueTask.CompletedTask;
     }
 
