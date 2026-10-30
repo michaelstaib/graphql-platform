@@ -3,7 +3,6 @@ using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
-using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Transport.Http;
@@ -22,6 +21,91 @@ namespace HotChocolate.Fusion.Execution;
 
 public sealed class OperationPlanContextRoutingTests : FusionTestBase
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateVariableValueSets_Should_PreserveForwardedValues_When_NoRequirements(bool multipleTargets)
+    {
+        // arrange
+        await using var fixture = await RoutingTestFixture.CreateAsync(
+            variables: new Dictionary<string, IValueNode>
+            {
+                ["limit"] = new IntValueNode(10),
+                ["nullable"] = HotChocolate.Language.NullValueNode.Default,
+                ["input"] = new HotChocolate.Language.ObjectValueNode(
+                    Field("name", new StringValueNode("quoted \"value\""))),
+                ["unused"] = new StringValueNode("not forwarded")
+            });
+        var context = fixture.CreateContext();
+        string[] forwardedVariables = ["nullable", "missing", "input", "limit", "limit"];
+
+        // act
+        var result = multipleTargets
+            ? context.CreateVariableValueSets([SelectionPath.Root], forwardedVariables, [])
+            : context.CreateVariableValueSets(SelectionPath.Root, forwardedVariables, []);
+
+        // assert
+        var entry = Assert.Single(result);
+        Assert.True(entry.Path.IsRoot);
+        Normalize(entry.Values).MatchInlineSnapshot(
+            """
+            {"nullable":null,"input":{"name":"quoted \u0022value\u0022"},"limit":10,"limit":10}
+            """);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CreateVariableValueSets_Should_WriteEmptyObject_When_ForwardedVariablesAreAbsent(
+        bool multipleTargets,
+        bool emptyVariables)
+    {
+        // arrange
+        await using var fixture = await RoutingTestFixture.CreateAsync(
+            variables: emptyVariables
+                ? null
+                : new Dictionary<string, IValueNode>
+                {
+                    ["unused"] = new IntValueNode(1)
+                });
+        var context = fixture.CreateContext();
+        string[] forwardedVariables = ["missing"];
+
+        // act
+        var result = multipleTargets
+            ? context.CreateVariableValueSets([SelectionPath.Root], forwardedVariables, [])
+            : context.CreateVariableValueSets(SelectionPath.Root, forwardedVariables, []);
+
+        // assert
+        var entry = Assert.Single(result);
+        Normalize(entry.Values).MatchInlineSnapshot("{}");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateVariableValueSets_Should_ReturnNoVariables_When_NoRequirementsOrForwardedVariables(
+        bool multipleTargets)
+    {
+        // arrange
+        await using var fixture = await RoutingTestFixture.CreateAsync(
+            variables: new Dictionary<string, IValueNode>
+            {
+                ["unused"] = new IntValueNode(1)
+            });
+        var context = fixture.CreateContext();
+
+        // act
+        var result = multipleTargets
+            ? context.CreateVariableValueSets([SelectionPath.Root], [], [])
+            : context.CreateVariableValueSets(SelectionPath.Root, [], []);
+
+        // assert
+        Assert.True(result.IsDefaultOrEmpty);
+    }
+
     [Fact]
     public async Task CreateVariableValueSets_Should_RouteThroughResultStore_When_RequirementKeysIsNull()
     {
@@ -237,6 +321,35 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
     }
 
     [Fact]
+    public async Task SetRequirements_Should_LeaveResultStoreUntouched_When_PathBelongsToAnotherOperation()
+    {
+        // arrange
+        await using var fixture = await RoutingTestFixture.CreateAsync();
+        var context = fixture.CreateContext();
+        var parentOperation = PlanOperation(fixture.Schema, "{ a: field b: field items { id } }").Operation;
+        Assert.True(parentOperation.RootSelectionSet.TryGetSelection("items", out var items));
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => fixture.SetRequirements(
+                context,
+                parentOperation,
+                Path(items.Id, ~0),
+                ImportedKeys("__fusion_1_id"),
+                Field("__fusion_1_id", new StringValueNode("1"))));
+
+        // assert
+        Assert.Equal(
+            "The field `items` of the enclosing result path is not selected by the incremental plan.",
+            exception.Message);
+        Assert.True(
+            context.CreateVariableValueSets(
+                SelectionPath.Root,
+                forwardedVariables: [],
+                requirements: [Requirement("__fusion_1_id")]).IsDefaultOrEmpty);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Should_Throw_When_RequestIsSubscription()
     {
         // arrange
@@ -285,6 +398,14 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             new PathNode(new PathSegmentNode(new FusionNameNode(key))),
             null);
 
+    private static CompactPath Path(params int[] segments)
+    {
+        var buffer = new int[segments.Length + 1];
+        buffer[0] = segments.Length;
+        segments.CopyTo(buffer.AsSpan(1));
+        return new CompactPath(buffer);
+    }
+
     private static HashSet<string> ImportedKeys(params string[] keys)
         => new(keys, StringComparer.Ordinal);
 
@@ -301,7 +422,6 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
         private readonly OperationPlan _operationPlan;
         private readonly IVariableValueCollection _variables;
         private readonly List<OperationPlanContext> _rentedContexts = [];
-        private readonly List<FetchResultStore> _stores = [];
         private readonly List<CancellationTokenSource> _ctsList = [];
         private readonly List<(ObjectPool<PooledRequestContext> Pool, PooledRequestContext Context)> _requestContexts = [];
 
@@ -329,6 +449,11 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
                         """
                         type Query {
                           field: String!
+                          items: [Item!]!
+                        }
+
+                        type Item {
+                          id: ID!
                         }
                         """))
                 .Services
@@ -361,6 +486,8 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
                 operationPlan,
                 new VariableValueCollection(coercedVariables));
         }
+
+        public FusionSchemaDefinition Schema => (FusionSchemaDefinition)_executor.Schema;
 
         public ExecutionNode GetRootNode() => _operationPlan.RootNodes[0];
 
@@ -397,7 +524,13 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             // The request executor always attaches a memory arena to the request before a plan
             // runs. The arena is supplied explicitly here because this fixture does not go through
             // the request executor that would otherwise attach it to the request context.
-            context.Initialize(requestContext, _variables, _operationPlan, cts, new MemoryArena());
+            context.Initialize(
+                requestContext,
+                _variables,
+                variableIndex: -1,
+                _operationPlan,
+                cts,
+                new MemoryArena());
             _rentedContexts.Add(context);
             return context;
         }
@@ -407,11 +540,23 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             HashSet<string> keys,
             params ObjectFieldNode[] fields)
         {
-            var sourceStore = new FetchResultStore();
-            _stores.Add(sourceStore);
+            // the requirement values come from the result store of a parent context
+            var parentStore = CreateContext().GetResultStoreForChildDefer();
+            var entry = parentStore.CreateVariableValueSets(CompactPath.Root, fields);
+            context.SetRequirements([entry], keys, _operationPlan.Operation);
+        }
 
-            var entry = sourceStore.CreateVariableValueSets(CompactPath.Root, fields);
-            context.SetRequirements([entry], keys);
+        public void SetRequirements(
+            OperationPlanContext context,
+            Operation parentOperation,
+            CompactPath parentPath,
+            HashSet<string> keys,
+            params ObjectFieldNode[] fields)
+        {
+            // the requirement values come from the result store of a parent context
+            var parentStore = CreateContext().GetResultStoreForChildDefer();
+            var entry = parentStore.CreateVariableValueSets(parentPath, fields);
+            context.SetRequirements([entry], keys, parentOperation);
         }
 
         public async ValueTask DisposeAsync()
@@ -424,11 +569,6 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             foreach (var (pool, context) in _requestContexts)
             {
                 pool.Return(context);
-            }
-
-            foreach (var store in _stores)
-            {
-                store.Dispose();
             }
 
             foreach (var cts in _ctsList)
