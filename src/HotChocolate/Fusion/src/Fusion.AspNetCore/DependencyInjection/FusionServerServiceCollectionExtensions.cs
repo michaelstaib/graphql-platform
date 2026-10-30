@@ -8,7 +8,9 @@ using HotChocolate.AspNetCore.Subscriptions.Protocols.Apollo;
 using HotChocolate.AspNetCore.Subscriptions.Protocols.GraphQLOverWebSocket;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.AspNetCore;
+using HotChocolate.Fusion.AspNetCore.Transport;
 using HotChocolate.Fusion.Configuration;
+using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Language;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -32,6 +34,7 @@ public static class FusionServerServiceCollectionExtensions
             .AddGraphQLGatewayServerCore(maxAllowedRequestSize)
             .AddStartupInitialization()
             .AddDefaultHttpRequestInterceptor()
+            .AddSourceSchemaHeaderForwarder()
             .AddSubscriptionServices();
 
         if (!disableDefaultSecurity)
@@ -113,6 +116,14 @@ public static class FusionServerServiceCollectionExtensions
         this IFusionGatewayBuilder builder)
         => builder.ConfigureSchemaServices(
             (_, s) => s.TryAddSingleton<IHttpRequestInterceptor, DefaultHttpRequestInterceptor>());
+
+    private static IFusionGatewayBuilder AddSourceSchemaHeaderForwarder(
+        this IFusionGatewayBuilder builder)
+    {
+        builder.Services.TryAddSingleton<ISourceSchemaHeaderForwarder>(
+            static _ => new HttpContextHeaderForwarder(ExperimentalSocketsHttpTransport.GetForwardedHeaders()));
+        return builder;
+    }
 
     private static IFusionGatewayBuilder AddSubscriptionServices(
         this IFusionGatewayBuilder builder)

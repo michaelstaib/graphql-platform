@@ -122,7 +122,7 @@ internal sealed class HttpSourceSchemaClientFactory
         var httpClient = new HttpClient(handler, disposeHandler: false) { BaseAddress = configuration.BaseAddress };
 
         return new HttpSourceSchemaClient(
-            new DefaultGraphQLHttpClient(httpClient, handler),
+            new DefaultGraphQLHttpClient(httpClient, handler, headerForwarder: null),
             configuration,
             schema.GetRequestOptions().AnnotateOperationKind);
     }
