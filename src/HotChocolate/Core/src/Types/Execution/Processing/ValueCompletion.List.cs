@@ -17,6 +17,7 @@ internal static partial class ValueCompletion
         object runtimeValue)
     {
         var elementType = type.InnerType();
+        var isNonNullElementType = elementType.IsNonNullType();
 
         if (runtimeValue is Array array)
         {
@@ -26,15 +27,13 @@ internal static partial class ValueCompletion
 
             foreach (var element in resultValue.EnumerateArray())
             {
-                Complete(
+                if (!TryCompleteListItem(
                     context,
                     selection,
                     elementType,
+                    isNonNullElementType,
                     element,
-                    array.GetValue(i++));
-
-                // if we ran into an error that invalidated the result we abort.
-                if (element.IsInvalidated)
+                    array.GetValue(i++)))
                 {
                     return;
                 }
@@ -51,15 +50,13 @@ internal static partial class ValueCompletion
 
             foreach (var element in resultValue.EnumerateArray())
             {
-                Complete(
+                if (!TryCompleteListItem(
                     context,
                     selection,
                     elementType,
+                    isNonNullElementType,
                     element,
-                    list[i++]);
-
-                // if we ran into an error that invalidated the result we abort.
-                if (element.IsInvalidated)
+                    list[i++]))
                 {
                     return;
                 }
@@ -78,15 +75,13 @@ internal static partial class ValueCompletion
             {
                 runtimeEnumerator.MoveNext();
 
-                Complete(
+                if (!TryCompleteListItem(
                     context,
                     selection,
                     elementType,
+                    isNonNullElementType,
                     element,
-                    runtimeEnumerator.Current);
-
-                // if we ran into an error that invalidated the result we abort.
-                if (element.IsInvalidated)
+                    runtimeEnumerator.Current))
                 {
                     return;
                 }
@@ -123,15 +118,13 @@ internal static partial class ValueCompletion
 
                 foreach (var element in resultValue.EnumerateArray())
                 {
-                    Complete(
+                    if (!TryCompleteListItem(
                         context,
                         selection,
                         elementType,
+                        isNonNullElementType,
                         element,
-                        buffer[i++]);
-
-                    // if we ran into an error that invalidated the result we abort.
-                    if (element.IsInvalidated)
+                        buffer[i++]))
                     {
                         return;
                     }
@@ -150,6 +143,42 @@ internal static partial class ValueCompletion
         var resolverContext = context.ResolverContext;
         var error = ListValueIsNotSupported(runtimeValue.GetType(), resultValue.Path);
         operationContext.ReportError(error, resolverContext);
+    }
+
+    private static bool TryCompleteListItem(
+        ValueCompletionContext context,
+        Selection selection,
+        IType elementType,
+        bool isNonNullElementType,
+        ResultElement element,
+        object? runtimeItem)
+    {
+        Complete(context, selection, elementType, element, runtimeItem);
+
+        // if we ran into an error that invalidated the result we abort.
+        if (element.IsInvalidated)
+        {
+            return false;
+        }
+
+        if (!isNonNullElementType || !element.IsNullOrInvalidated)
+        {
+            return true;
+        }
+
+        var operationContext = context.OperationContext;
+        var path = element.Path;
+
+        if (!operationContext.PropagateNullValues)
+        {
+            element.SetNullValue();
+            operationContext.Result.AddNonNullViolation(path);
+            return true;
+        }
+
+        PropagateNullValues(element);
+        operationContext.Result.AddNonNullViolation(path);
+        return false;
     }
 
     internal static void PropagateNullValues(ResultElement result)
