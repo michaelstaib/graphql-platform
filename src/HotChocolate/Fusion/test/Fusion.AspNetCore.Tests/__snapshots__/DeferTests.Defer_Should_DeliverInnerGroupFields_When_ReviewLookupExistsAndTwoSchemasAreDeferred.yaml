@@ -300,32 +300,6 @@ sourceSchemas:
                   ]
                 }
               }
-      - request:
-          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
-          document: |
-            query Op_defer_4 {
-              products {
-                id
-              }
-            }
-        response:
-          results:
-            - |
-              {
-                "data": {
-                  "products": [
-                    {
-                      "id": "1"
-                    },
-                    {
-                      "id": "2"
-                    },
-                    {
-                      "id": "3"
-                    }
-                  ]
-                }
-              }
   - name: B
     schema: |
       schema {
@@ -425,30 +399,30 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_defer_2($__fusion_2_id: ID!) {
-              reviewDetailsById(id: $__fusion_2_id) {
+            query Op_defer_1($__fusion_1_id: ID!) {
+              reviewDetailsById(id: $__fusion_1_id) {
                 text
               }
             }
           variables: |
             [
               {
-                "__fusion_2_id": "1"
+                "__fusion_1_id": "1"
               },
               {
-                "__fusion_2_id": "2"
+                "__fusion_1_id": "2"
               },
               {
-                "__fusion_2_id": "3"
+                "__fusion_1_id": "3"
               },
               {
-                "__fusion_2_id": "4"
+                "__fusion_1_id": "4"
               },
               {
-                "__fusion_2_id": "5"
+                "__fusion_1_id": "5"
               },
               {
-                "__fusion_2_id": "6"
+                "__fusion_1_id": "6"
               }
             ]
         response:
@@ -502,76 +476,6 @@ sourceSchemas:
                   }
                 }
               }
-      - request:
-          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
-          document: |
-            query Op_defer_3($__fusion_3_id: ID!) {
-              productById(id: $__fusion_3_id) {
-                reviews {
-                  id
-                }
-              }
-            }
-          variables: |
-            [
-              {
-                "__fusion_3_id": "1"
-              },
-              {
-                "__fusion_3_id": "2"
-              },
-              {
-                "__fusion_3_id": "3"
-              }
-            ]
-        response:
-          contentType: application/jsonl; charset=utf-8
-          results:
-            - |
-              {
-                "data": {
-                  "productById": {
-                    "reviews": [
-                      {
-                        "id": "1"
-                      },
-                      {
-                        "id": "2"
-                      }
-                    ]
-                  }
-                }
-              }
-            - |
-              {
-                "data": {
-                  "productById": {
-                    "reviews": [
-                      {
-                        "id": "3"
-                      },
-                      {
-                        "id": "4"
-                      }
-                    ]
-                  }
-                }
-              }
-            - |
-              {
-                "data": {
-                  "productById": {
-                    "reviews": [
-                      {
-                        "id": "5"
-                      },
-                      {
-                        "id": "6"
-                      }
-                    ]
-                  }
-                }
-              }
   - name: C
     schema: |
       schema {
@@ -590,31 +494,30 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_defer_1($__fusion_1_id: ID!) {
-              reviewById(id: $__fusion_1_id) {
+            query Op_defer_2($__fusion_2_id: ID!) {
+              reviewById(id: $__fusion_2_id) {
                 rating
-                id
               }
             }
           variables: |
             [
               {
-                "__fusion_1_id": "1"
+                "__fusion_2_id": "1"
               },
               {
-                "__fusion_1_id": "2"
+                "__fusion_2_id": "2"
               },
               {
-                "__fusion_1_id": "3"
+                "__fusion_2_id": "3"
               },
               {
-                "__fusion_1_id": "4"
+                "__fusion_2_id": "4"
               },
               {
-                "__fusion_1_id": "5"
+                "__fusion_2_id": "5"
               },
               {
-                "__fusion_1_id": "6"
+                "__fusion_2_id": "6"
               }
             ]
         response:
@@ -624,8 +527,7 @@ sourceSchemas:
               {
                 "data": {
                   "reviewById": {
-                    "rating": 10,
-                    "id": "1"
+                    "rating": 10
                   }
                 }
               }
@@ -633,8 +535,7 @@ sourceSchemas:
               {
                 "data": {
                   "reviewById": {
-                    "rating": 20,
-                    "id": "2"
+                    "rating": 20
                   }
                 }
               }
@@ -642,8 +543,7 @@ sourceSchemas:
               {
                 "data": {
                   "reviewById": {
-                    "rating": 30,
-                    "id": "3"
+                    "rating": 30
                   }
                 }
               }
@@ -651,8 +551,7 @@ sourceSchemas:
               {
                 "data": {
                   "reviewById": {
-                    "rating": 40,
-                    "id": "4"
+                    "rating": 40
                   }
                 }
               }
@@ -660,8 +559,7 @@ sourceSchemas:
               {
                 "data": {
                   "reviewById": {
-                    "rating": 50,
-                    "id": "5"
+                    "rating": 50
                   }
                 }
               }
@@ -669,8 +567,7 @@ sourceSchemas:
               {
                 "data": {
                   "reviewById": {
-                    "rating": 60,
-                    "id": "6"
+                    "rating": 60
                   }
                 }
               }
@@ -746,15 +643,6 @@ operationPlan:
                 id
           dependencies:
             - parentNodeId: 1
-        - id: 2
-          type: Operation
-          schema: A
-          operation: |
-            query Op_defer_4 {
-              products {
-                id
-              }
-            }
     - deliveryGroupIds:
         - 1
       parentNodeId: 1
@@ -765,61 +653,38 @@ operationPlan:
         - name: __fusion_2_id
           selectionMap: >-
             id
-        - name: __fusion_3_id
-          selectionMap: >-
-            id
       nodes:
         - id: 1
           type: Operation
-          schema: C
-          operation: |
-            query Op_defer_1($__fusion_1_id: ID!) {
-              reviewById(id: $__fusion_1_id) {
-                rating
-                id
-              }
-            }
-          source: $.reviewById
-          target: $.products.reviews
-          requirements:
-            - name: __fusion_1_id
-              selectionMap: >-
-                id
-          dependencies:
-            - id: 3
-        - id: 2
-          type: Operation
           schema: B
           operation: |
-            query Op_defer_2($__fusion_2_id: ID!) {
-              reviewDetailsById(id: $__fusion_2_id) {
+            query Op_defer_1($__fusion_1_id: ID!) {
+              reviewDetailsById(id: $__fusion_1_id) {
                 text
               }
             }
           source: $.reviewDetailsById
           target: $.products.reviews
           requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1
+        - id: 2
+          type: Operation
+          schema: C
+          operation: |
+            query Op_defer_2($__fusion_2_id: ID!) {
+              reviewById(id: $__fusion_2_id) {
+                rating
+              }
+            }
+          source: $.reviewById
+          target: $.products.reviews
+          requirements:
             - name: __fusion_2_id
               selectionMap: >-
                 id
           dependencies:
-            - id: 1
-        - id: 3
-          type: Operation
-          schema: B
-          operation: |
-            query Op_defer_3($__fusion_3_id: ID!) {
-              productById(id: $__fusion_3_id) {
-                reviews {
-                  id
-                }
-              }
-            }
-          source: $.productById
-          target: $.products
-          requirements:
-            - name: __fusion_3_id
-              selectionMap: >-
-                id
-          dependencies:
-            - parentNodeId: 2
+            - parentNodeId: 1

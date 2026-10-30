@@ -313,32 +313,6 @@ sourceSchemas:
                   ]
                 }
               }
-      - request:
-          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
-          document: |
-            query Op_defer_3 {
-              products {
-                id
-              }
-            }
-        response:
-          results:
-            - |
-              {
-                "data": {
-                  "products": [
-                    {
-                      "id": "1"
-                    },
-                    {
-                      "id": "2"
-                    },
-                    {
-                      "id": "3"
-                    }
-                  ]
-                }
-              }
   - name: B
     schema: |
       schema {
@@ -439,11 +413,9 @@ sourceSchemas:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
             query Op_defer_1($__fusion_1_id: ID!) {
-              productById(id: $__fusion_1_id) {
-                reviews {
-                  author {
-                    id
-                  }
+              reviewDetailsById(id: $__fusion_1_id) {
+                author {
+                  id
                 }
               }
             }
@@ -457,6 +429,15 @@ sourceSchemas:
               },
               {
                 "__fusion_1_id": "3"
+              },
+              {
+                "__fusion_1_id": "4"
+              },
+              {
+                "__fusion_1_id": "5"
+              },
+              {
+                "__fusion_1_id": "6"
               }
             ]
         response:
@@ -465,57 +446,60 @@ sourceSchemas:
             - |
               {
                 "data": {
-                  "productById": {
-                    "reviews": [
-                      {
-                        "author": {
-                          "id": "1"
-                        }
-                      },
-                      {
-                        "author": {
-                          "id": "2"
-                        }
-                      }
-                    ]
+                  "reviewDetailsById": {
+                    "author": {
+                      "id": "1"
+                    }
                   }
                 }
               }
             - |
               {
                 "data": {
-                  "productById": {
-                    "reviews": [
-                      {
-                        "author": {
-                          "id": "3"
-                        }
-                      },
-                      {
-                        "author": {
-                          "id": "4"
-                        }
-                      }
-                    ]
+                  "reviewDetailsById": {
+                    "author": {
+                      "id": "2"
+                    }
                   }
                 }
               }
             - |
               {
                 "data": {
-                  "productById": {
-                    "reviews": [
-                      {
-                        "author": {
-                          "id": "5"
-                        }
-                      },
-                      {
-                        "author": {
-                          "id": "6"
-                        }
-                      }
-                    ]
+                  "reviewDetailsById": {
+                    "author": {
+                      "id": "3"
+                    }
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "reviewDetailsById": {
+                    "author": {
+                      "id": "4"
+                    }
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "reviewDetailsById": {
+                    "author": {
+                      "id": "5"
+                    }
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "reviewDetailsById": {
+                    "author": {
+                      "id": "6"
+                    }
                   }
                 }
               }
@@ -686,15 +670,6 @@ operationPlan:
                 id
           dependencies:
             - parentNodeId: 1
-        - id: 2
-          type: Operation
-          schema: A
-          operation: |
-            query Op_defer_3 {
-              products {
-                id
-              }
-            }
     - deliveryGroupIds:
         - 1
       parentNodeId: 1
@@ -711,22 +686,20 @@ operationPlan:
           schema: B
           operation: |
             query Op_defer_1($__fusion_1_id: ID!) {
-              productById(id: $__fusion_1_id) {
-                reviews {
-                  author {
-                    id
-                  }
+              reviewDetailsById(id: $__fusion_1_id) {
+                author {
+                  id
                 }
               }
             }
-          source: $.productById
-          target: $.products
+          source: $.reviewDetailsById
+          target: $.products.reviews
           requirements:
             - name: __fusion_1_id
               selectionMap: >-
                 id
           dependencies:
-            - parentNodeId: 2
+            - parentNodeId: 1
         - id: 2
           type: Operation
           schema: D

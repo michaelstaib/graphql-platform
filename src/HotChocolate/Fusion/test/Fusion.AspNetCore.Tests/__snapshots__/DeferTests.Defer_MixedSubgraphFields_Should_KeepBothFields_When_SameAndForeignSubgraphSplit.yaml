@@ -156,21 +156,21 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_defer_2($__fusion_2_id: ID!) {
-              userById(id: $__fusion_2_id) {
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
                 birthdate
               }
             }
           variables: |
             [
               {
-                "__fusion_2_id": "VXNlcjox"
+                "__fusion_1_id": "VXNlcjox"
               },
               {
-                "__fusion_2_id": "VXNlcjoy"
+                "__fusion_1_id": "VXNlcjoy"
               },
               {
-                "__fusion_2_id": "VXNlcjoz"
+                "__fusion_1_id": "VXNlcjoz"
               }
             ]
         response:
@@ -218,21 +218,21 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_defer_1($__fusion_1_id: ID!) {
-              userById(id: $__fusion_1_id) {
+            query Op_defer_2($__fusion_2_id: ID!) {
+              userById(id: $__fusion_2_id) {
                 reviewCount
               }
             }
           variables: |
             [
               {
-                "__fusion_1_id": "VXNlcjox"
+                "__fusion_2_id": "VXNlcjox"
               },
               {
-                "__fusion_1_id": "VXNlcjoy"
+                "__fusion_2_id": "VXNlcjoy"
               },
               {
-                "__fusion_1_id": "VXNlcjoz"
+                "__fusion_2_id": "VXNlcjoz"
               }
             ]
         response:
@@ -302,11 +302,11 @@ operationPlan:
       nodes:
         - id: 1
           type: Operation
-          schema: reviews
+          schema: accounts
           operation: |
             query Op_defer_1($__fusion_1_id: ID!) {
               userById(id: $__fusion_1_id) {
-                reviewCount
+                birthdate
               }
             }
           source: $.userById
@@ -319,11 +319,11 @@ operationPlan:
             - parentNodeId: 1
         - id: 2
           type: Operation
-          schema: accounts
+          schema: reviews
           operation: |
             query Op_defer_2($__fusion_2_id: ID!) {
               userById(id: $__fusion_2_id) {
-                birthdate
+                reviewCount
               }
             }
           source: $.userById

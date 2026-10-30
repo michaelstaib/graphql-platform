@@ -89,28 +89,6 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
         }
     }
 
-    /// <summary>
-    /// Expands the lookup work item of <paramref name="planNodeTemplate"/> only into branches that
-    /// resolve it through a parent-type lookup or by reusing the path up to the root, skipping the
-    /// direct lookups of the work item's own type.
-    /// </summary>
-    public void EnqueueParentPathBranches(PlanNode planNodeTemplate)
-    {
-        if (planNodeTemplate.Backlog.IsEmpty
-            || planNodeTemplate.Backlog.Peek() is not OperationWorkItem { Kind: OperationWorkItemKind.Lookup } workItem)
-        {
-            return;
-        }
-
-        planNodeTemplate = planNodeTemplate with { ResolutionCost = 0 };
-        var backlog = planNodeTemplate.Backlog.Pop(out _);
-
-        foreach (var (toSchema, resolutionCost) in schema.GetPossibleSchemas(workItem.SelectionSet))
-        {
-            EnqueueParentPathLookupPlanNodes(planNodeTemplate, workItem, backlog, toSchema, resolutionCost);
-        }
-    }
-
     private void EnqueueRootPlanNodes(
         PlanNode planNodeTemplate,
         OperationWorkItem workItem)

@@ -257,7 +257,6 @@ public sealed partial class OperationPlanner
         // The anchor type for the mutation, non-root branch below, used to report
         // DeferredMutationLookupRequiredException when no incremental plan is found.
         ITypeDefinition? mutationAnchorType = null;
-        var seededLookup = false;
 
         if (descriptor.Path.IsRoot)
         {
@@ -362,11 +361,14 @@ public sealed partial class OperationPlanner
                     anchorType,
                     descriptor.Path);
 
-                var backlog = Backlog.Empty.Push(new OperationWorkItem(OperationWorkItemKind.Lookup, anchorSet));
+                var backlog = Backlog.Empty.Push(
+                    new OperationWorkItem(OperationWorkItemKind.Lookup, anchorSet)
+                    {
+                        AllowSourceSchemaReentry = true
+                    });
 
                 node = CreateIncrementalPlanNode(deferredOperation, index, backlog);
                 possiblePlans.EnqueueBranches(node);
-                seededLookup = true;
             }
         }
 
@@ -375,21 +377,7 @@ public sealed partial class OperationPlanner
             possiblePlans.Enqueue(node);
         }
 
-        var planId = operationId + "#defer_" + incrementalPlanId;
-        var plan = Plan(planId, possiblePlans, emitPlannerEvents, cancellationToken);
-
-        // A direct lookup of the anchor type suppresses the parent-path alternatives, but its key
-        // may not be producible by any other source schema. Retry through the parent path then.
-        if (!plan.HasValue && seededLookup)
-        {
-            possiblePlans = new PlanQueue(_schema);
-            possiblePlans.EnqueueParentPathBranches(node);
-
-            if (possiblePlans.Count > 0)
-            {
-                plan = Plan(planId, possiblePlans, emitPlannerEvents, cancellationToken);
-            }
-        }
+        var plan = Plan(operationId + "#defer_" + incrementalPlanId, possiblePlans, emitPlannerEvents, cancellationToken);
 
         if (!plan.HasValue)
         {
@@ -542,13 +530,16 @@ public sealed partial class OperationPlanner
 
         // Collect every step that depends directly on a producer; that is exactly
         // the set of steps whose requirements need to be routed to the enclosing
-        // scope.
+        // scope. A producer that targets an ancestor of the anchor only reaches the
+        // entity the enclosing scope already fetches, so its own requirement is not
+        // routed.
         var downstreamByStepId = new Dictionary<int, OperationPlanStep>();
         foreach (var producer in producers)
         {
             foreach (var dependentStepId in producer.Dependents)
             {
-                if (incrementalPlanSteps.ById(dependentStepId) is OperationPlanStep dependentStep)
+                if (incrementalPlanSteps.ById(dependentStepId) is OperationPlanStep dependentStep
+                    && (!producerIds.Contains(dependentStepId) || dependentStep.Target.Equals(descriptor.Path)))
                 {
                     downstreamByStepId[dependentStepId] = dependentStep;
                 }
@@ -706,14 +697,6 @@ public sealed partial class OperationPlanner
                     continue;
                 }
 
-                // The parent-sourced requirements of one incremental plan must share a single
-                // anchor path, so a requirement that the producer routing above already lifted
-                // from a different path keeps its in-plan provider.
-                if (lifted.Exists(t => !t.Requirement.Path.Equals(requirement.Path)))
-                {
-                    continue;
-                }
-
                 if (TryFindDeferRequirementProvider(incrementalPlanSteps, downstreamStep, requirement)
                         is not { } providerStep
                     || producerIds.Contains(providerStep.Id))
@@ -723,11 +706,9 @@ public sealed partial class OperationPlanner
                     continue;
                 }
 
-                // The provider must reach exactly the same entity as this defer's own
-                // anchor (or be a root re-fetch), matching FindDeferRequirementProducers'
-                // own restriction above; a provider targeting a shallower ancestor path
-                // only shares this requirement's field name by coincidence.
-                if (!providerStep.Target.Equals(descriptor.Path) && !providerStep.Target.IsRoot)
+                // The provider must target the defer's own anchor or one of its ancestors,
+                // matching FindDeferRequirementProducers' own restriction above.
+                if (!providerStep.Target.IsParentOfOrSame(descriptor.Path))
                 {
                     continue;
                 }
@@ -1524,7 +1505,8 @@ public sealed partial class OperationPlanner
 
             if (neededFieldName is null
                 || upstreamFieldName is null
-                || !neededFieldName.Equals(upstreamFieldName, StringComparison.Ordinal))
+                || !neededFieldName.Equals(upstreamFieldName, StringComparison.Ordinal)
+                || !upstreamRequirement.Path.Equals(currentRequirement.Path))
             {
                 return (current, currentRequirement);
             }
@@ -1580,8 +1562,8 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Finds every step in <paramref name="incrementalPlanSteps"/> that targets either
-    /// <paramref name="anchorPath"/> or the operation root and whose every selected field
+    /// Finds every step in <paramref name="incrementalPlanSteps"/> that targets
+    /// <paramref name="anchorPath"/> or one of its ancestors and whose every selected field
     /// is consumed as a requirement by one of its dependents.
     /// </summary>
     private static ImmutableArray<OperationPlanStep> FindDeferRequirementProducers(
@@ -1595,7 +1577,7 @@ public sealed partial class OperationPlanner
             if (step is OperationPlanStep operationStep
                 && operationStep.SchemaName is not null
                 && !operationStep.Dependents.IsEmpty
-                && (operationStep.Target.Equals(anchorPath) || operationStep.Target.IsRoot)
+                && operationStep.Target.IsParentOfOrSame(anchorPath)
                 && IsPureRequirementProducer(operationStep, anchorPath, incrementalPlanSteps))
             {
                 producers.Add(operationStep);

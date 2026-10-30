@@ -24,7 +24,9 @@ internal static class ThrowHelper
             path));
 
     public static InvalidOperationException DeferredGroupPlannedToNothing(SelectionPath path)
-        => new($"The deferred group at path '{path}' selects fields but its incremental plan has no execution nodes.");
+        => new(string.Format(
+            FusionExecutionResources.OperationPlan_DeferredGroupPlannedToNothing,
+            path));
 
     public static InvalidOperationException MissingBatchResult(int operationId)
         => new(string.Format(

@@ -2379,41 +2379,54 @@ AddErrors_Next:
 
         lock (_lock)
         {
-            // Track list containers that need imported elements.
-            Dictionary<int, (CompositeResultElement Container, int MaxIndex)>? containers = null;
-
-            foreach (var entry in importedValues)
+            // Each pass creates the outermost list that is still missing. Nested lists are reached
+            // by the next pass once their enclosing list items exist.
+            while (true)
             {
-                TrackListContainer(entry.Path, ref containers);
-                foreach (var additional in entry.AdditionalPaths.AsSpan())
-                {
-                    TrackListContainer(additional, ref containers);
-                }
-            }
+                // Track list containers that need imported elements.
+                Dictionary<int, (CompositeResultElement Container, int MaxIndex)>? containers = null;
 
-            if (containers is null)
-            {
-                return;
-            }
-
-            foreach (var (_, (container, maxIndex)) in containers)
-            {
-                if (container.ValueKind is JsonValueKind.Undefined)
+                foreach (var entry in importedValues)
                 {
-                    container.SetArrayValue(maxIndex + 1);
-                }
-                else if (container.ValueKind is JsonValueKind.Array)
-                {
-                    if (container.GetArrayLength() <= maxIndex)
+                    TrackListContainer(entry.Path, ref containers);
+                    foreach (var additional in entry.AdditionalPaths.AsSpan())
                     {
-                        throw new InvalidOperationException(
-                            $"The target path list container is shorter than required for index {maxIndex}.");
+                        TrackListContainer(additional, ref containers);
                     }
                 }
-                else if (container.ValueKind is not JsonValueKind.Null)
+
+                if (containers is null)
                 {
-                    throw new InvalidOperationException(
-                        "The target path list container does not exist in the data.");
+                    return;
+                }
+
+                var created = false;
+
+                foreach (var (_, (container, maxIndex)) in containers)
+                {
+                    if (container.ValueKind is JsonValueKind.Undefined)
+                    {
+                        container.SetArrayValue(maxIndex + 1);
+                        created = true;
+                    }
+                    else if (container.ValueKind is JsonValueKind.Array)
+                    {
+                        if (container.GetArrayLength() <= maxIndex)
+                        {
+                            throw new InvalidOperationException(
+                                $"The target path list container is shorter than required for index {maxIndex}.");
+                        }
+                    }
+                    else if (container.ValueKind is not JsonValueKind.Null)
+                    {
+                        throw new InvalidOperationException(
+                            "The target path list container does not exist in the data.");
+                    }
+                }
+
+                if (!created)
+                {
+                    return;
                 }
             }
         }
@@ -2451,7 +2464,7 @@ AddErrors_Next:
                         return;
                     }
 
-                    InitializeIntermediateObject(element);
+                    InitializeIntermediateObject(element, element.Selection);
                 }
 
                 if (element.ValueKind is not JsonValueKind.Object)
@@ -2487,8 +2500,21 @@ AddErrors_Next:
                     containers[cursorKey] = (element, index);
                 }
 
-                // Only process the outermost list anchor; stop here.
-                return;
+                // Descend into an existing list item to reach a nested list; otherwise stop here.
+                if (element.ValueKind is not JsonValueKind.Array
+                    || element.GetArrayLength() <= index
+                    || i == segments.Length - 1)
+                {
+                    return;
+                }
+
+                var listSelection = element.Selection;
+                element = element[index];
+
+                if (element.ValueKind is JsonValueKind.Undefined)
+                {
+                    InitializeIntermediateObject(element, listSelection);
+                }
             }
         }
     }
@@ -2506,9 +2532,9 @@ AddErrors_Next:
         return false;
     }
 
-    private void InitializeIntermediateObject(CompositeResultElement element)
+    private static void InitializeIntermediateObject(CompositeResultElement element, Selection? elementSelection)
     {
-        var selection = element.Selection
+        var selection = elementSelection
             ?? throw new InvalidOperationException(
                 "Cannot initialize an intermediate target object without selection metadata.");
 
