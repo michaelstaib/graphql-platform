@@ -499,15 +499,10 @@ public sealed class SubscriptionIncrementalDirectiveTests
     }
 
     [Fact]
-    public async Task Subscription_Should_DeliverEvents_When_EnabledOuterDeferDefersNothingAsNestedDeferIsDisabled()
+    public async Task Subscription_Should_ReturnError_When_EnabledOuterDeferStillDefersAsNestedDeferIsDisabled()
     {
         // arrange
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        cts.CancelAfter(TimeSpan.FromSeconds(30));
-
         var executor = await CreateExecutorAsync();
-        var sender = executor.Schema.Services.GetRootServiceProvider()
-            .GetRequiredService<ITopicEventSender>();
 
         var request = OperationRequestBuilder.New()
             .SetDocument(
@@ -525,24 +520,21 @@ public sealed class SubscriptionIncrementalDirectiveTests
             .SetVariableValues(new Dictionary<string, object?> { ["outer"] = true, ["inner"] = false })
             .Build();
 
-        var subscribe = await executor.ExecuteAsync(request, cts.Token);
-        await using var stream = subscribe.ExpectResponseStream();
-        await using var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(cts.Token);
-
         // act
-        await sender.SendAsync("OnMessage", new Message("hello", ["a", "b"]), cts.Token);
-        var moved = await enumerator.MoveNextAsync();
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
 
         // assert
-        Assert.True(moved);
-        enumerator.Current.MatchInlineSnapshot(
+        result.ExpectOperationResult().MatchInlineSnapshot(
             """
             {
-              "data": {
-                "onMessage": {
-                  "body": "hello"
+              "errors": [
+                {
+                  "message": "The @defer directive cannot be enabled in a subscription operation. Pass false to its `if` argument to disable it.",
+                  "extensions": {
+                    "directive": "defer"
+                  }
                 }
-              }
+              ]
             }
             """);
     }
