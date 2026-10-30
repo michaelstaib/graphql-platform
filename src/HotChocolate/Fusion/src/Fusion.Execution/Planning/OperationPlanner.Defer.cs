@@ -85,6 +85,20 @@ public sealed partial class OperationPlanner
                 }
             }
 
+            // A descriptor that selects only __typename needs no incremental plan: the field is
+            // made visible on the enclosing step, and its nested descriptors plan against the
+            // scope enclosing it.
+            if (rewrittenIncrementalPlan.IsEmpty
+                && TryServeTypeNameFromParent(descriptor, contextGraph.GetParentContext(descriptor), contextGraph))
+            {
+                if (descriptorsWithChildren.Contains(descriptor))
+                {
+                    contextGraph.RegisterTransparentDescriptor(descriptor);
+                }
+
+                continue;
+            }
+
             // When every field this descriptor would deliver incrementally is already
             // available from the enclosing scope (the anchor's own key fields, or a field
             // already fetched there as a requirement for an unrelated reason), the spec
@@ -319,6 +333,13 @@ public sealed partial class OperationPlanner
                 throw new InvalidOperationException(
                     $"Unable to locate the defer anchor selection set at path '{descriptor.Path}' "
                     + "inside the incremental plan operation.");
+            }
+
+            // Nothing to fetch: the anchor selects only __typename, which every source schema
+            // resolves, so no lookup is needed to produce it.
+            if (!isMutation && SelectsOnlyTypeName(anchorSelectionSet))
+            {
+                return new DeferIncrementalPlanResult([], null);
             }
 
             if (isMutation)
@@ -995,6 +1016,99 @@ public sealed partial class OperationPlanner
             }
         }
 
+        MakeFieldsVisibleInParentScope(
+            descriptor,
+            parentStep,
+            parentTargetSelectionSet,
+            parentContext,
+            contextGraph,
+            fieldNames);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Makes the <c>__typename</c> that <paramref name="descriptor"/> selects visible on the enclosing
+    /// step, so the descriptor needs no incremental plan nodes to deliver it.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c> when the descriptor selects anything besides <c>__typename</c> or no enclosing
+    /// step reaches its anchor.
+    /// </returns>
+    private bool TryServeTypeNameFromParent(
+        IncrementalPlanDescriptor descriptor,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph)
+    {
+        if (descriptor.Path.IsRoot
+            || descriptor.Operation.Operation != OperationType.Query
+            || !TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out var anchorSelectionSet,
+                out _)
+            || !SelectsOnlyTypeName(anchorSelectionSet))
+        {
+            return false;
+        }
+
+        foreach (var step in parentContext.ParentSteps)
+        {
+            if (step is OperationPlanStep candidate
+                && candidate.Target.IsParentOfOrSame(descriptor.Path)
+                && candidate.Conditions.Length == 0
+                && TryLocateSelectionSetAtPath(
+                    GetStepEntitySelectionSet(candidate),
+                    GetStepEntityType(candidate),
+                    descriptor.Path,
+                    candidate.Target.Length,
+                    out var parentTargetSelectionSet,
+                    out _))
+            {
+                MakeFieldsVisibleInParentScope(
+                    descriptor,
+                    candidate,
+                    parentTargetSelectionSet,
+                    parentContext,
+                    contextGraph,
+                    [IntrospectionFieldNames.TypeName]);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SelectsOnlyTypeName(SelectionSetNode selectionSet)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode { Directives.Count: 0 } field
+                    when field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal):
+                    break;
+
+                case InlineFragmentNode fragment when SelectsOnlyTypeName(fragment.SelectionSet):
+                    break;
+
+                default:
+                    return false;
+            }
+        }
+
+        return selectionSet.Selections.Count > 0;
+    }
+
+    private void MakeFieldsVisibleInParentScope(
+        IncrementalPlanDescriptor descriptor,
+        OperationPlanStep parentStep,
+        SelectionSetNode parentTargetSelectionSet,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph,
+        List<string> fieldNames)
+    {
         var updatedTargetSelectionSet = MakeFieldsVisible(parentTargetSelectionSet, fieldNames);
         var updatedParentStep = ReferenceEquals(updatedTargetSelectionSet, parentTargetSelectionSet)
             ? parentStep
@@ -1038,8 +1152,6 @@ public sealed partial class OperationPlanner
             contextGraph.UpdateDeferContext(
                 parentContext.OwnerDescriptor!, updatedParentSteps, updatedInternalOperation);
         }
-
-        return true;
     }
 
     /// <summary>

@@ -260,7 +260,8 @@ public sealed partial class OperationPlanner
                 // A descriptor whose deferred output turned out to be fully redundant with
                 // data the enclosing scope already fetches is routed without producing an
                 // incremental plan (see TryAbsorbFullyRedundantDefer); its own delivery
-                // group(s) must not surface as a pending entry with nothing to complete it.
+                // group(s) must not surface as a pending entry with nothing to complete it,
+                // unless a surviving nested group is enclosed by them.
                 if (deferRoutingStates.Length < deferSplit.Value.IncrementalPlanDescriptors.Length)
                 {
                     var usedDeliveryGroupIds = new HashSet<int>();
@@ -268,7 +269,10 @@ public sealed partial class OperationPlanner
                     {
                         foreach (var group in routingState.Descriptor.DeliveryGroupSet)
                         {
-                            usedDeliveryGroupIds.Add(group.Id);
+                            for (var current = group; current is not null; current = current.Parent)
+                            {
+                                usedDeliveryGroupIds.Add(current.Id);
+                            }
                         }
                     }
 

@@ -3899,6 +3899,362 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_DeliverTypenameAndInnerGroup_When_OuterGroupOnlySelectsTypename()
+    {
+        // arrange
+        using var gateway = await CreateReviewLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                products {
+                    ... @defer(label: "outer") {
+                        __typename
+                        ... @defer(label: "inner") {
+                            id
+                        }
+                    }
+                }
+            }
+            """;
+        const string plainQuery =
+            """
+            query {
+                products {
+                    __typename
+                    id
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plainData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(plainQuery));
+        Assert.True(JsonNode.DeepEquals(plainData, gatewayData));
+        gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "products": [
+                {
+                  "__typename": "Product",
+                  "id": "1"
+                },
+                {
+                  "__typename": "Product",
+                  "id": "2"
+                },
+                {
+                  "__typename": "Product",
+                  "id": "3"
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverInnerGroup_When_OuterGroupOnlySelectsTypenameAroundOtherSchemaField()
+    {
+        // arrange
+        using var gateway = await CreateReviewLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        __typename
+                        ... @defer(label: "inner") {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        const string plainQuery =
+            """
+            query {
+                products {
+                    id
+                    __typename
+                    reviews {
+                        id
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plainData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(plainQuery));
+        Assert.True(JsonNode.DeepEquals(plainData, gatewayData));
+        gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "products": [
+                {
+                  "id": "1",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "1"
+                    },
+                    {
+                      "id": "2"
+                    }
+                  ]
+                },
+                {
+                  "id": "2",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "3"
+                    },
+                    {
+                      "id": "4"
+                    }
+                  ]
+                },
+                {
+                  "id": "3",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "5"
+                    },
+                    {
+                      "id": "6"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTypenameBesideFields_When_OuterGroupSelectsTypenameAndNestedDefer()
+    {
+        // arrange
+        using var gateway = await CreateReviewLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        __typename
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") {
+                            reviews {
+                                text
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        const string plainQuery =
+            """
+            query {
+                products {
+                    id
+                    __typename
+                    reviews {
+                        id
+                        text
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plainData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(plainQuery));
+        Assert.True(JsonNode.DeepEquals(plainData, gatewayData));
+        gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "products": [
+                {
+                  "id": "1",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "1",
+                      "text": "Review 1"
+                    },
+                    {
+                      "id": "2",
+                      "text": "Review 2"
+                    }
+                  ]
+                },
+                {
+                  "id": "2",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "3",
+                      "text": "Review 3"
+                    },
+                    {
+                      "id": "4",
+                      "text": "Review 4"
+                    }
+                  ]
+                },
+                {
+                  "id": "3",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "5",
+                      "text": "Review 5"
+                    },
+                    {
+                      "id": "6",
+                      "text": "Review 6"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTypename_When_NestedDeferIsDisabled()
+    {
+        // arrange
+        using var gateway = await CreateReviewLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        __typename
+                        ... @defer(label: "inner", if: false) {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        const string plainQuery =
+            """
+            query {
+                products {
+                    id
+                    __typename
+                    reviews {
+                        id
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plainData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(plainQuery));
+        Assert.True(JsonNode.DeepEquals(plainData, gatewayData));
+        gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "products": [
+                {
+                  "id": "1",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "1"
+                    },
+                    {
+                      "id": "2"
+                    }
+                  ]
+                },
+                {
+                  "id": "2",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "3"
+                    },
+                    {
+                      "id": "4"
+                    }
+                  ]
+                },
+                {
+                  "id": "3",
+                  "__typename": "Product",
+                  "reviews": [
+                    {
+                      "id": "5"
+                    },
+                    {
+                      "id": "6"
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+    }
+
+    [Fact]
     public async Task Defer_Should_DeliverInnerGroupFields_When_ReviewLookupExistsAndAuthorIsDeferred()
     {
         // arrange
@@ -4321,6 +4677,12 @@ public class DeferTests : FusionTestBase
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         var result = await executor.ExecuteAsync(query, TestContext.Current.CancellationToken);
+
+        if (result is OperationResult operationResult)
+        {
+            return [operationResult.ToJson()];
+        }
+
         var stream = Assert.IsType<ResponseStream>(result);
         var payloads = new List<string>();
 
