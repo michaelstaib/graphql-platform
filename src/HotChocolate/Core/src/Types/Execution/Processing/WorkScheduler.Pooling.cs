@@ -32,6 +32,12 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
     private bool _isInitialized;
     private bool _executionCompleted;
     private bool _clearAfterExecution;
+    private bool _isFaulted;
+
+    /// <summary>
+    /// Defines if the processing loop ended with an error while tasks it started may still run.
+    /// </summary>
+    public bool IsFaulted => _isFaulted;
 
     public void Initialize(RequestContext requestContext, IBatchDispatcher batchDispatcher)
     {
@@ -49,6 +55,7 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _isCompleted = false;
         _executionCompleted = false;
         _clearAfterExecution = false;
+        _isFaulted = false;
         _isInitialized = true;
     }
 
@@ -90,6 +97,7 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _isCompleted = false;
         _executionCompleted = false;
         _clearAfterExecution = false;
+        _isFaulted = false;
         _isInitialized = false;
     }
 

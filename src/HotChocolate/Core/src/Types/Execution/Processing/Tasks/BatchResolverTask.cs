@@ -30,6 +30,7 @@ internal sealed class BatchResolverTask : IResolverTask
     private ObjectField _field = null!;
     private SelectionPath _selectionPath = null!;
     private int _branchId;
+    private bool _isContextReleased;
 
     public BatchResolverTask(
         ObjectPool<BatchResolverTask> objectPool,
@@ -165,7 +166,10 @@ internal sealed class BatchResolverTask : IResolverTask
         }
         finally
         {
-            _operationContext.Scheduler.Complete(this);
+            // the context can be reused as soon as it is released, so the scheduler is read first.
+            var scheduler = _operationContext.Scheduler;
+            ReleaseOperationContext();
+            scheduler.Complete(this);
 
             for (var i = 0; i < contexts.Length; i++)
             {
@@ -442,6 +446,7 @@ internal sealed class BatchResolverTask : IResolverTask
         DeferUsage? deferUsage)
     {
         _operationContext = operationContext;
+        _isContextReleased = false;
         _field = field;
         _selectionPath = selectionPath;
         _branchId = branchId;
@@ -465,6 +470,7 @@ internal sealed class BatchResolverTask : IResolverTask
 
         _rentedArgs.Clear();
         _branchIds.Clear();
+        ReleaseOperationContext();
         _operationContext = null!;
         _field = null!;
         _selectionPath = null!;
@@ -479,6 +485,26 @@ internal sealed class BatchResolverTask : IResolverTask
 #pragma warning restore CS0618
         State = null;
         return true;
+    }
+
+    /// <summary>
+    /// Tells the operation context that this task and its resolver tasks no longer use it.
+    /// Calling it again has no effect.
+    /// </summary>
+    private void ReleaseOperationContext()
+    {
+        foreach (var task in _resolverTasks)
+        {
+            task.ReleaseOperationContext();
+        }
+
+        if (_isContextReleased || _operationContext is null)
+        {
+            return;
+        }
+
+        _isContextReleased = true;
+        _operationContext.TaskReturned();
     }
 
     /// <summary>
