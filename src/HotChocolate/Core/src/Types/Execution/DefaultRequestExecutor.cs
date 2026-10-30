@@ -137,6 +137,13 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                     "The request pipeline is expected to produce an execution result.");
             }
 
+            // a request batch item refused before execution carries its request index.
+            if (requestIndex.HasValue
+                && context.Result is OperationResult { RequestIndex: null } operationResult)
+            {
+                operationResult.SetRequestIndex(requestIndex.Value);
+            }
+
             // the response stream of an incremental operation shares the request resources with the
             // still running execution, so their release is routed through the request cleanup.
             var requestCleanup = context.Result is ResponseStream { RequestCleanup: { } cleanup }
