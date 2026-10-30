@@ -3342,10 +3342,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"id":"VXNlcjox","name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjox"}}],"completed":[{"id":"3"}],"hasNext":true}
+            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"3"}],"hasNext":true}
             """,
             """
             {"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["user"]},{"message":"Unexpected Execution Error","path":["user","email"]}]},{"id":"1","errors":[{"message":"Unexpected Execution Error","path":["user"]},{"message":"Unexpected Execution Error","path":["user","email"]}]}],"hasNext":false}
@@ -3400,16 +3400,16 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"id":"VXNlcjox","name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjox"}}],"completed":[{"id":"3"}],"hasNext":true}
+            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"3"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"2","path":["user"],"label":"nested"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjox"}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":true}
+            {"pending":[{"id":"2","path":["user"],"label":"nested"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"2","data":{"phone":"User: VXNlcjox"}}],"completed":[{"id":"2"}],"hasNext":false}
+            {"incremental":[{"id":"2","data":{"phone":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
             """
         ]);
     }
