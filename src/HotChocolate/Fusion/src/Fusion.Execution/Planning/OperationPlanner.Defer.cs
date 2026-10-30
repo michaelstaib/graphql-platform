@@ -1542,8 +1542,8 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Finds every step in <paramref name="incrementalPlanSteps"/> that targets either
     /// <paramref name="anchorPath"/> or the operation root and whose every selected field
-    /// is consumed as a requirement at or above <paramref name="anchorPath"/> by one of
-    /// its dependents.
+    /// is consumed by one of its dependents as a requirement that does not lie below
+    /// <paramref name="anchorPath"/>.
     /// </summary>
     private static ImmutableArray<OperationPlanStep> FindDeferRequirementProducers(
         ImmutableList<PlanStep> incrementalPlanSteps,
@@ -1568,7 +1568,7 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Determines whether <paramref name="step"/> selects nothing at <paramref name="anchorPath"/>
-    /// except leaf fields that its dependents consume as requirements at or above
+    /// except leaf fields that its dependents consume as requirements that do not lie below
     /// <paramref name="anchorPath"/>.
     /// </summary>
     private static bool IsPureRequirementProducer(
@@ -1599,7 +1599,8 @@ public sealed partial class OperationPlanner
             {
                 // A requirement below the anchor reads a value this step fetches as
                 // deferred output, which the enclosing scope does not reach.
-                if (!requirement.Path.IsParentOfOrSame(anchorPath))
+                if (!requirement.Path.IsParentOfOrSame(anchorPath)
+                    && anchorPath.IsParentOfOrSame(requirement.Path))
                 {
                     continue;
                 }
