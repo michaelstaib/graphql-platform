@@ -3932,9 +3932,63 @@ public class DeferTests : FusionTestBase
         var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
         var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query));
         Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
-        gatewayData.ToJsonString().MatchInlineSnapshot(
+        gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
-            {"products":[{"id":"1","reviews":[{"id":"1","author":{"rating":100}},{"id":"2","author":{"rating":200}}]},{"id":"2","reviews":[{"id":"3","author":{"rating":300}},{"id":"4","author":{"rating":400}}]},{"id":"3","reviews":[{"id":"5","author":{"rating":500}},{"id":"6","author":{"rating":600}}]}]}
+            {
+              "products": [
+                {
+                  "id": "1",
+                  "reviews": [
+                    {
+                      "id": "1",
+                      "author": {
+                        "rating": 100
+                      }
+                    },
+                    {
+                      "id": "2",
+                      "author": {
+                        "rating": 200
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "2",
+                  "reviews": [
+                    {
+                      "id": "3",
+                      "author": {
+                        "rating": 300
+                      }
+                    },
+                    {
+                      "id": "4",
+                      "author": {
+                        "rating": 400
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "3",
+                  "reviews": [
+                    {
+                      "id": "5",
+                      "author": {
+                        "rating": 500
+                      }
+                    },
+                    {
+                      "id": "6",
+                      "author": {
+                        "rating": 600
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
             """);
     }
 
@@ -3976,9 +4030,57 @@ public class DeferTests : FusionTestBase
         var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
         var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query));
         Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
-        gatewayData.ToJsonString().MatchInlineSnapshot(
+        gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
-            {"products":[{"id":"1","reviews":[{"id":"1","text":"Review 1","rating":10},{"id":"2","text":"Review 2","rating":20}]},{"id":"2","reviews":[{"id":"3","text":"Review 3","rating":30},{"id":"4","text":"Review 4","rating":40}]},{"id":"3","reviews":[{"id":"5","text":"Review 5","rating":50},{"id":"6","text":"Review 6","rating":60}]}]}
+            {
+              "products": [
+                {
+                  "id": "1",
+                  "reviews": [
+                    {
+                      "id": "1",
+                      "text": "Review 1",
+                      "rating": 10
+                    },
+                    {
+                      "id": "2",
+                      "text": "Review 2",
+                      "rating": 20
+                    }
+                  ]
+                },
+                {
+                  "id": "2",
+                  "reviews": [
+                    {
+                      "id": "3",
+                      "text": "Review 3",
+                      "rating": 30
+                    },
+                    {
+                      "id": "4",
+                      "text": "Review 4",
+                      "rating": 40
+                    }
+                  ]
+                },
+                {
+                  "id": "3",
+                  "reviews": [
+                    {
+                      "id": "5",
+                      "text": "Review 5",
+                      "rating": 50
+                    },
+                    {
+                      "id": "6",
+                      "text": "Review 6",
+                      "rating": 60
+                    }
+                  ]
+                }
+              ]
+            }
             """);
     }
 
@@ -4247,11 +4349,17 @@ public class DeferTests : FusionTestBase
                 pendingPaths[pending!["id"]!.GetValue<string>()] = pending["path"]!.AsArray();
             }
 
-            foreach (var incremental in response["incremental"]?.AsArray() ?? [])
+            var entries = (response["incremental"]?.AsArray() ?? [])
+                .Select(incremental => (
+                    Incremental: incremental!,
+                    Segments: pendingPaths[incremental!["id"]!.GetValue<string>()]
+                        .Concat(incremental["subPath"]?.AsArray() ?? [])
+                        .ToList()))
+                .OrderBy(entry => entry.Segments.Count);
+
+            foreach (var (incremental, segments) in entries)
             {
                 var target = data!;
-                var segments = pendingPaths[incremental!["id"]!.GetValue<string>()]
-                    .Concat(incremental["subPath"]?.AsArray() ?? []);
 
                 foreach (var segment in segments)
                 {
