@@ -103,6 +103,88 @@ public sealed class ApolloLookupMergeTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task DeferredApolloLookups_Should_DeliverNonDeferredData_When_GroupIsAnchoredAtObjectBelowListItem()
+    {
+        // arrange
+        using var gateway = await CreateRelatedGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var deferredRequest = new OperationRequest(
+            """
+            {
+              products {
+                related {
+                  id
+                  ... @defer(label: "deeper") { name }
+                }
+              }
+            }
+            """);
+        var request = new OperationRequest(
+            """
+            {
+              products {
+                related {
+                  id
+                  name
+                }
+              }
+            }
+            """);
+
+        // act
+        var deferredData = await ExecuteAndMergeAsync(client, deferredRequest);
+        var data = await ExecuteAndMergeAsync(client, request);
+
+        // assert
+        Assert.Equal(data, deferredData);
+        deferredData.MatchInlineSnapshot(
+            """
+            {"products":[{"related":{"id":"p1-rel","name":"Product p1-rel"}},{"related":{"id":"p2-rel","name":"Product p2-rel"}}]}
+            """);
+    }
+
+    [Fact]
+    public async Task DeferredApolloLookups_Should_DeliverNonDeferredData_When_GroupIsAnchoredAtObjectBelowRoot()
+    {
+        // arrange
+        using var gateway = await CreateRelatedGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var deferredRequest = new OperationRequest(
+            """
+            {
+              product {
+                related {
+                  id
+                  ... @defer(label: "deeper") { name }
+                }
+              }
+            }
+            """);
+        var request = new OperationRequest(
+            """
+            {
+              product {
+                related {
+                  id
+                  name
+                }
+              }
+            }
+            """);
+
+        // act
+        var deferredData = await ExecuteAndMergeAsync(client, deferredRequest);
+        var data = await ExecuteAndMergeAsync(client, request);
+
+        // assert
+        Assert.Equal(data, deferredData);
+        deferredData.MatchInlineSnapshot(
+            """
+            {"product":{"related":{"id":"p1-rel","name":"Product p1-rel"}}}
+            """);
+    }
+
     private static async Task<string> ExecuteAndMergeAsync(
         GraphQLHttpClient client,
         OperationRequest request)
@@ -183,6 +265,8 @@ public sealed class ApolloLookupMergeTests : FusionTestBase
                     d.Name("Query");
                     d.Field("products").Type<NonNullType<ListType<NonNullType<KeyedProductType>>>>()
                         .Resolve(_ => new[] { new Product("p1"), new Product("p2") });
+                    d.Field("product").Type<NonNullType<KeyedProductType>>()
+                        .Resolve(_ => new Product("p1"));
                 }));
         var related = CreateSourceSchema(
             "b",
