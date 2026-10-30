@@ -9,7 +9,7 @@ namespace HotChocolate.Execution.Processing;
 
 internal static partial class ValueCompletion
 {
-    private static void CompleteListValue(
+    private static bool CompleteListValue(
         ValueCompletionContext context,
         Selection selection,
         IType type,
@@ -26,21 +26,18 @@ internal static partial class ValueCompletion
 
             foreach (var element in resultValue.EnumerateArray())
             {
-                Complete(
+                if (!TryCompleteListItem(
                     context,
                     selection,
                     elementType,
                     element,
-                    array.GetValue(i++));
-
-                // if we ran into an error that invalidated the result we abort.
-                if (element.IsInvalidated)
+                    array.GetValue(i++)))
                 {
-                    return;
+                    return false;
                 }
             }
 
-            return;
+            return true;
         }
 
         if (runtimeValue is IList list)
@@ -51,21 +48,18 @@ internal static partial class ValueCompletion
 
             foreach (var element in resultValue.EnumerateArray())
             {
-                Complete(
+                if (!TryCompleteListItem(
                     context,
                     selection,
                     elementType,
                     element,
-                    list[i++]);
-
-                // if we ran into an error that invalidated the result we abort.
-                if (element.IsInvalidated)
+                    list[i++]))
                 {
-                    return;
+                    return false;
                 }
             }
 
-            return;
+            return true;
         }
 
         if (runtimeValue is JsonElement { ValueKind: JsonValueKind.Array } node)
@@ -78,21 +72,18 @@ internal static partial class ValueCompletion
             {
                 runtimeEnumerator.MoveNext();
 
-                Complete(
+                if (!TryCompleteListItem(
                     context,
                     selection,
                     elementType,
                     element,
-                    runtimeEnumerator.Current);
-
-                // if we ran into an error that invalidated the result we abort.
-                if (element.IsInvalidated)
+                    runtimeEnumerator.Current))
                 {
-                    return;
+                    return false;
                 }
             }
 
-            return;
+            return true;
         }
 
         if (runtimeValue is IEnumerable enumerable)
@@ -123,17 +114,14 @@ internal static partial class ValueCompletion
 
                 foreach (var element in resultValue.EnumerateArray())
                 {
-                    Complete(
+                    if (!TryCompleteListItem(
                         context,
                         selection,
                         elementType,
                         element,
-                        buffer[i++]);
-
-                    // if we ran into an error that invalidated the result we abort.
-                    if (element.IsInvalidated)
+                        buffer[i++]))
                     {
-                        return;
+                        return false;
                     }
                 }
             }
@@ -143,13 +131,47 @@ internal static partial class ValueCompletion
                 ArrayPool<object?>.Shared.Return(buffer);
             }
 
-            return;
+            return true;
         }
 
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
         var error = ListValueIsNotSupported(runtimeValue.GetType(), resultValue.Path);
         operationContext.ReportError(error, resolverContext);
+        return true;
+    }
+
+    private static bool TryCompleteListItem(
+        ValueCompletionContext context,
+        Selection selection,
+        IType elementType,
+        ResultElement element,
+        object? runtimeItem)
+    {
+        // if we ran into an error that invalidated the result we abort.
+        if (!Complete(context, selection, elementType, element, runtimeItem) || element.IsInvalidated)
+        {
+            return false;
+        }
+
+        if (elementType.Kind is not TypeKind.NonNull || !element.IsNullOrInvalidated)
+        {
+            return true;
+        }
+
+        var operationContext = context.OperationContext;
+        var path = element.Path;
+
+        if (!operationContext.PropagateNullValues)
+        {
+            element.SetNullValue();
+            operationContext.Result.AddNonNullViolation(path);
+            return true;
+        }
+
+        PropagateNullValues(element);
+        operationContext.Result.AddNonNullViolation(path);
+        return false;
     }
 
     internal static void PropagateNullValues(ResultElement result)
