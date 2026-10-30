@@ -166,23 +166,28 @@ internal sealed class BatchResolverTask : IResolverTask
         }
         finally
         {
-            // the context can be reused as soon as it is released, so the scheduler is read first.
-            var scheduler = _operationContext.Scheduler;
-            ReleaseOperationContext();
-            scheduler.Complete(this);
-
-            for (var i = 0; i < contexts.Length; i++)
+            try
             {
-                var context = Unsafe.As<MiddlewareContext>(contexts[i]);
-                if (context.HasCleanupTasks)
+                for (var i = 0; i < contexts.Length; i++)
                 {
-                    await context.ExecuteCleanupTasksAsync().ConfigureAwait(false);
+                    var context = Unsafe.As<MiddlewareContext>(contexts[i]);
+                    if (context.HasCleanupTasks)
+                    {
+                        await context.ExecuteCleanupTasksAsync().ConfigureAwait(false);
+                    }
                 }
             }
+            finally
+            {
+                // the context can be reused as soon as it is released, so the scheduler is read first.
+                var scheduler = _operationContext.Scheduler;
+                ReleaseOperationContext();
+                scheduler.Complete(this);
 
-            ReturnResolverTasks();
+                ReturnResolverTasks();
 
-            _objectPool.Return(this);
+                _objectPool.Return(this);
+            }
         }
     }
 

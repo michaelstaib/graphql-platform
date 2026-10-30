@@ -8,6 +8,7 @@ namespace HotChocolate.Execution;
 public sealed class RootBatchResolverTests
 {
     private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan s_quietPeriod = TimeSpan.FromMilliseconds(250);
 
     [Fact]
     public async Task ExecuteAsync_Should_CompleteTheRequest_When_TheOnlyRootFieldIsABatchField()
@@ -198,6 +199,122 @@ public sealed class RootBatchResolverTests
             """);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_ProduceTheResultAfterTheEntryCleanup_When_TheBatchFieldIsTheLastTask()
+    {
+        // arrange
+        var probe = new CleanupProbe();
+        var executor = await CreateGatedExecutorAsync(probe);
+
+        // act
+        var execution = Task.Run(
+            async () =>
+            {
+                await using var result = await executor.ExecuteAsync(
+                    "{ gated }",
+                    TestContext.Current.CancellationToken);
+                probe.Add("result");
+                return result.ToJson(withIndentations: false);
+            },
+            TestContext.Current.CancellationToken);
+
+        string json;
+
+        try
+        {
+            await probe.Started.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            await WaitForQuietPeriodAsync(execution);
+        }
+        finally
+        {
+            probe.Release();
+        }
+
+        json = await execution.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        json.MatchInlineSnapshot(
+            """
+            {"data":{"gated":"gated-1"}}
+            """);
+        probe.Log.MatchInlineSnapshots(
+        [
+            """
+            cleanup started
+            """,
+            """
+            cleanup finished
+            """,
+            """
+            result
+            """,
+            """
+            request cleanup
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_DeliverTheLastPayloadAfterTheEntryCleanup_When_TheBatchFieldIsDeferred()
+    {
+        // arrange
+        var probe = new CleanupProbe();
+        var executor = await CreateGatedExecutorAsync(probe);
+
+        // act
+        var execution = Task.Run(
+            async () =>
+            {
+                await using var result = await executor.ExecuteAsync(
+                    "{ plain ... @defer { gated } }",
+                    TestContext.Current.CancellationToken);
+
+                await foreach (var payload in result
+                    .ExpectResponseStream()
+                    .ReadResultsAsync()
+                    .WithCancellation(TestContext.Current.CancellationToken))
+                {
+                    await using var payloadCleanup = payload;
+                    using var document = JsonDocument.Parse(payload.ToJson(withIndentations: false));
+
+                    if (!document.RootElement.GetProperty("hasNext").GetBoolean())
+                    {
+                        probe.Add("last payload");
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+
+        try
+        {
+            await probe.Started.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            await WaitForQuietPeriodAsync(execution);
+        }
+        finally
+        {
+            probe.Release();
+        }
+
+        await execution.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.Log.MatchInlineSnapshots(
+        [
+            """
+            cleanup started
+            """,
+            """
+            cleanup finished
+            """,
+            """
+            last payload
+            """,
+            """
+            request cleanup
+            """
+        ]);
+    }
+
     private static Task<string> ExecuteAsync(IRequestExecutor executor, string query)
     {
         // the scheduler loop must not be able to block the test thread, so the request runs off it.
@@ -272,6 +389,38 @@ public sealed class RootBatchResolverTests
         }
     }
 
+    private static async Task WaitForQuietPeriodAsync(Task execution)
+    {
+        // a request that completes while its entry cleanup is still gated finishes within this period.
+        await Task.WhenAny(execution, Task.Delay(s_quietPeriod, TestContext.Current.CancellationToken));
+    }
+
+    private static ValueTask<IRequestExecutor> CreateGatedExecutorAsync(CleanupProbe probe)
+        => new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType(d =>
+            {
+                d.Name("Query");
+                d.Field("plain").Type<StringType>().Resolve("plain");
+                d.Field("gated")
+                    .Type<StringType>()
+                    .ResolveBatch(contexts =>
+                    {
+                        probe.Register(contexts[0]);
+
+                        var results = new ResolverResult[contexts.Count];
+
+                        for (var i = 0; i < contexts.Count; i++)
+                        {
+                            results[i] = ResolverResult.Ok($"gated-{contexts.Count}");
+                        }
+
+                        return new ValueTask<IReadOnlyList<ResolverResult>>(results);
+                    });
+            })
+            .ModifyOptions(o => o.EnableDefer = true)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
     private static ValueTask<IRequestExecutor> CreateExecutorAsync()
         => new ServiceCollection()
             .AddGraphQL()
@@ -320,5 +469,58 @@ public sealed class RootBatchResolverTests
     public sealed class Foo
     {
         public string Name => "foo";
+    }
+
+    public sealed class CleanupProbe
+    {
+        private readonly object _sync = new();
+        private readonly List<string> _log = [];
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => _started.Task;
+
+        public string[] Log
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _log.ToArray();
+                }
+            }
+        }
+
+        public void Add(string entry)
+        {
+            lock (_sync)
+            {
+                _log.Add(entry);
+            }
+        }
+
+        public void Release() => _gate.TrySetResult();
+
+        public void Register(IResolverContext context)
+        {
+            var middlewareContext = (IMiddlewareContext)context;
+
+            middlewareContext.RegisterForCleanup(
+                async () =>
+                {
+                    Add("cleanup started");
+                    _started.TrySetResult();
+                    await _gate.Task;
+                    Add("cleanup finished");
+                });
+
+            middlewareContext.RegisterForCleanup(
+                () =>
+                {
+                    Add("request cleanup");
+                    return default;
+                },
+                CleanAfter.Request);
+        }
     }
 }
