@@ -167,6 +167,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
 
     /// <summary>
     /// Cancels the work of the operation unless its execution has completed, and releases the hold of the caller.
+    /// Cleanup failures are thrown as described for <see cref="ExecuteAsync"/>.
     /// </summary>
     public ValueTask DisposeAsync()
     {
@@ -186,8 +187,9 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
     }
 
     /// <summary>
-    /// Releases the hold of the caller. The last holder runs all registered cleanup actions
-    /// and marks the collector as executed.
+    /// Releases the hold of the caller; the last holder runs all registered cleanup actions.
+    /// A single failure is thrown as is and several as an <see cref="AggregateException"/>, without reporting them
+    /// to the diagnostic events.
     /// </summary>
     public ValueTask ExecuteAsync()
         => ReleaseAsync(isBackground: false);
@@ -253,7 +255,7 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
         var node = Reverse(Interlocked.Exchange(ref _head, s_drained));
         var last = Interlocked.Exchange(ref _last, null);
         var report = isBackground && _diagnosticEvents is not null;
-        ExceptionDispatchInfo? exception = null;
+        List<Exception>? failures = null;
 
         while (true)
         {
@@ -286,12 +288,22 @@ internal sealed class RequestCleanup : IRequestCleanup, IAsyncDisposable
                 }
                 else
                 {
-                    exception ??= ExceptionDispatchInfo.Capture(ex);
+                    (failures ??= []).Add(ex);
                 }
             }
         }
 
-        exception?.Throw();
+        if (failures is null)
+        {
+            return;
+        }
+
+        if (failures.Count is 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw ThrowHelper.RequestCleanup_Failed(failures);
     }
 
     private void Add(object action)

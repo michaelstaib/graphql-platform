@@ -355,4 +355,7 @@ internal static class ThrowHelper
             ErrorBuilder.New()
                 .SetMessage("The operation exceeds the maximum allowed number of selections and selection sets.")
                 .Build());
+
+    public static AggregateException RequestCleanup_Failed(IEnumerable<Exception> failures)
+        => new(failures);
 }

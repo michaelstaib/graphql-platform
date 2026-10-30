@@ -330,7 +330,7 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
-    public async Task DisposeAsync_Should_ThrowCleanupFailure_When_TheStreamIsDisposedLast()
+    public async Task DisposeAsync_Should_ThrowAllCleanupFailuresWithoutReporting_When_TheStreamIsDisposedLast()
     {
         // arrange
         var probe = new Probe();
@@ -354,10 +354,10 @@ public class IncrementalEarlyDisposeTests
             }
         }
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => stream.DisposeAsync().AsTask());
+        var exception = await Assert.ThrowsAsync<AggregateException>(() => stream.DisposeAsync().AsTask());
 
         // assert
-        Assert.Equal("cleanup failed", exception.Message);
+        Assert.Equal(2, exception.InnerExceptions.Count);
         Assert.Empty(probe.Errors);
     }
 
@@ -575,6 +575,7 @@ public class IncrementalEarlyDisposeTests
         probe.Errors.ToArray().MatchInlineSnapshots(
         [
             "request error: request middleware failed",
+            "request error: cleanup failed",
             "request error: cleanup failed"
         ]);
     }
@@ -632,6 +633,74 @@ public class IncrementalEarlyDisposeTests
             "request error: scope disposal failed"
         ]);
         probe.Events.ToArray().MatchInlineSnapshots(["request context returned"]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ReportCleanupFailureOnce_When_AbortedBeforeAResultIsBuilt()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        using var abort = new CancellationTokenSource();
+        probe.AbortRequest = abort;
+        var request = OperationRequestBuilder
+            .New()
+            .SetDocument(
+                "query($defer: Boolean!) { abortingWithFailingCleanup { id ... @defer(if: $defer) { plain } } }")
+            .SetVariableValues(new Dictionary<string, object?> { ["defer"] = false })
+            .Build();
+
+        // act
+        await using var result = await executor.ExecuteAsync(request, abort.Token);
+
+        // assert
+        Assert.Equal(ExecutionResultKind.SingleResult, result.Kind);
+        probe.Errors.ToArray().MatchInlineSnapshots(
+        [
+            "request error: cleanup failed",
+            "request error: The operation was canceled."
+        ]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ReportCleanupFailureOnce_When_VariableBatchIsAbortedBeforeResultsAreBuilt()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        using var abort = new CancellationTokenSource();
+        probe.AbortRequest = abort;
+        var request = OperationRequestBuilder
+            .New()
+            .SetDocument(
+                "query($defer: Boolean!) { abortingGatedWithFailingCleanup { id ... @defer(if: $defer) { plain } } }")
+            .SetVariableValues(
+                new List<IReadOnlyDictionary<string, object?>>
+                {
+                    new Dictionary<string, object?> { ["defer"] = false },
+                    new Dictionary<string, object?> { ["defer"] = false }
+                })
+            .Build();
+
+        try
+        {
+            // act
+            var aborted = executor.ExecuteAsync(request, abort.Token);
+            await probe.Started("abort").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            await using var result = await aborted.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+            // assert
+            Assert.Equal(ExecutionResultKind.SingleResult, result.Kind);
+            probe.Errors.ToArray().MatchInlineSnapshots(
+            [
+                "request error: cleanup failed",
+                "request error: The operation was canceled."
+            ]);
+        }
+        finally
+        {
+            probe.Gate("abort").TrySetResult();
+        }
     }
 
     private static Task<bool> MoveNextAsync(IAsyncEnumerator<OperationResult> enumerator)
@@ -746,6 +815,33 @@ public class IncrementalEarlyDisposeTests
                 CleanAfter.Request);
             return "tracked";
         }
+
+        public Item GetAbortingWithFailingCleanup(IResolverContext context, [Service] Probe probe)
+        {
+            RegisterFailingCleanup(context);
+            probe.AbortRequest!.Cancel();
+            return new Item("1");
+        }
+
+        public async Task<Item> GetAbortingGatedWithFailingCleanupAsync(
+            IResolverContext context,
+            [Service] Probe probe)
+        {
+            if (probe.TryClaimFailure())
+            {
+                RegisterFailingCleanup(context);
+            }
+
+            probe.AbortRequest!.Cancel();
+            probe.Started("abort").TrySetResult();
+            await probe.Gate("abort").Task;
+            return new Item("1");
+        }
+
+        private static void RegisterFailingCleanup(IResolverContext context)
+            => ((IMiddlewareContext)context).RegisterForCleanup(
+                static () => ValueTask.FromException(new InvalidOperationException("cleanup failed")),
+                CleanAfter.Request);
 
         public string GetFailingCancellation(CancellationToken cancellationToken)
         {
@@ -875,10 +971,15 @@ public class IncrementalEarlyDisposeTests
         private readonly ConcurrentQueue<string> _errors = new();
         private readonly ConcurrentDictionary<RequestContext, TaskCompletionSource> _returnedContexts = new();
         private int _producerDisposeCount;
+        private int _failureClaimed;
 
         public IReadOnlyCollection<string> Events => _events;
 
         public IReadOnlyCollection<string> Errors => _errors;
+
+        public CancellationTokenSource? AbortRequest { get; set; }
+
+        public bool TryClaimFailure() => Interlocked.Exchange(ref _failureClaimed, 1) is 0;
 
         public List<RequestContext> RentedContexts { get; } = [];
 
