@@ -111,13 +111,14 @@ internal sealed class BatchResolverTask : IResolverTask
     /// Called during value completion when a batch field is encountered.
     /// </summary>
     internal bool AddEntry(
+        OperationContext owner,
         object? parent,
         Selection selection,
         ResultElement resultValue,
         IImmutableDictionary<string, object?> scopedContextData,
         int branchId)
     {
-        _entries.Add(new BatchEntry(parent, selection, resultValue, scopedContextData, branchId));
+        _entries.Add(new BatchEntry(owner, parent, selection, resultValue, scopedContextData, branchId));
         return _branchIds.Add(branchId);
     }
 
@@ -346,6 +347,7 @@ internal sealed class BatchResolverTask : IResolverTask
             var context = Unsafe.As<MiddlewareContext>(contexts[i]);
             var resultValue = context.ResultValue;
             var result = context.Result;
+            var entryContext = _entries[i].OperationContext;
 
             try
             {
@@ -354,7 +356,7 @@ internal sealed class BatchResolverTask : IResolverTask
                 {
                     var completionContext =
                         new ValueCompletionContext(
-                            _operationContext,
+                            entryContext,
                             context,
                             _taskBuffer,
                             groupScope: null);
@@ -381,7 +383,7 @@ internal sealed class BatchResolverTask : IResolverTask
 
             if (resultValue is { IsNullable: false, IsNullOrInvalidated: true })
             {
-                if (_operationContext.PropagateNullValues)
+                if (entryContext.PropagateNullValues)
                 {
                     PropagateNullValues(resultValue);
                 }
@@ -391,7 +393,7 @@ internal sealed class BatchResolverTask : IResolverTask
                 }
 
                 _completionStatus = ExecutionTaskStatus.Faulted;
-                _operationContext.Result.AddNonNullViolation(context.Path);
+                entryContext.Result.AddNonNullViolation(context.Path);
                 _taskBuffer.Clear();
             }
         }
@@ -405,7 +407,7 @@ internal sealed class BatchResolverTask : IResolverTask
         {
             var entry = _entries[i];
             var resolverTask =
-                _operationContext.CreateResolverTask(
+                entry.OperationContext.CreateResolverTask(
                     entry.Parent,
                     entry.Selection,
                     entry.ResultValue,
@@ -509,6 +511,7 @@ internal sealed class BatchResolverTask : IResolverTask
     /// Represents a single entry in the batch — one parent object and its result location.
     /// </summary>
     private readonly record struct BatchEntry(
+        OperationContext OperationContext,
         object? Parent,
         Selection Selection,
         ResultElement ResultValue,
