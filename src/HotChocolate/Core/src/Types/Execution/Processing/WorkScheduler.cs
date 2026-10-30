@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace HotChocolate.Execution.Processing;
@@ -126,11 +127,11 @@ internal sealed partial class WorkScheduler
         switch (task)
         {
             case Tasks.ResolverTask resolverTask:
-                CompleteBranchTask(task.BranchId);
-
-                if (work.Complete())
+                lock (_sync)
                 {
-                    lock (_sync)
+                    CompleteBranchTaskUnsafe(task.BranchId);
+
+                    if (CompleteWorkUnsafe(work))
                     {
                         _completed.Add(resolverTask.Id);
                         DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
@@ -146,7 +147,7 @@ internal sealed partial class WorkScheduler
                         CompleteBranchTaskUnsafe(additionalBranchId);
                     }
 
-                    if (work.Complete())
+                    if (CompleteWorkUnsafe(work))
                     {
                         _completed.Add(task.Id);
                         DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
@@ -155,11 +156,11 @@ internal sealed partial class WorkScheduler
                 break;
 
             default:
-                CompleteBranchTask(task.BranchId);
-
-                if (work.Complete())
+                lock (_sync)
                 {
-                    lock (_sync)
+                    CompleteBranchTaskUnsafe(task.BranchId);
+
+                    if (CompleteWorkUnsafe(work))
                     {
                         _completed.Add(task.Id);
                     }
@@ -170,8 +171,26 @@ internal sealed partial class WorkScheduler
         _signal.Set();
     }
 
+    private bool CompleteWorkUnsafe(WorkQueue work)
+    {
+        AssertLockHeld();
+        return work.Complete();
+    }
+
+    [Conditional("DEBUG")]
+    private void AssertLockHeld()
+    {
+#if NET9_0_OR_GREATER
+        Debug.Assert(_sync.IsHeldByCurrentThread);
+#else
+        Debug.Assert(Monitor.IsEntered(_sync));
+#endif
+    }
+
     private void RegisterBranchTaskUnsafe(int branchId)
     {
+        AssertLockHeld();
+
         if (branchId == BranchTracker.SystemBranchId)
         {
             return;
@@ -186,27 +205,11 @@ internal sealed partial class WorkScheduler
         branch.RegisterTask();
     }
 
-    private void CompleteBranchTask(int branchId)
-    {
-        if (branchId == BranchTracker.SystemBranchId)
-        {
-            return;
-        }
-
-        lock (_sync)
-        {
-            if (_activeBranches.TryGetValue(branchId, out var branch)
-                && branch.CompleteTask())
-            {
-                _activeBranches.Remove(branchId);
-                branch.Complete();
-            }
-        }
-    }
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void CompleteBranchTaskUnsafe(int branchId)
     {
+        AssertLockHeld();
+
         if (branchId == BranchTracker.SystemBranchId)
         {
             return;
