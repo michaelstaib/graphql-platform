@@ -20,8 +20,8 @@ stableResponseStream: |
   {
     "data": {
       "message": {
-        "body": "Message: TWVzc2FnZTox",
-        "id": "TWVzc2FnZTox"
+        "body": "Message: TWVzc2FnZTo0MTY4NzUxNzE4",
+        "id": "TWVzc2FnZTo0MTY4NzUxNzE4"
       }
     }
   }
@@ -64,7 +64,7 @@ sourceSchemas:
               {
                 "data": {
                   "message": {
-                    "id": "TWVzc2FnZTox",
+                    "id": "TWVzc2FnZTo0MTY4NzUxNzE4",
                     "__typename": "Message"
                   }
                 }
@@ -95,7 +95,7 @@ sourceSchemas:
             }
           variables: |
             {
-              "__fusion_1_id": "TWVzc2FnZTox"
+              "__fusion_1_id": "TWVzc2FnZTo0MTY4NzUxNzE4"
             }
         response:
           results:
@@ -103,7 +103,7 @@ sourceSchemas:
               {
                 "data": {
                   "messageById": {
-                    "body": "Message: TWVzc2FnZTox"
+                    "body": "Message: TWVzc2FnZTo0MTY4NzUxNzE4"
                   }
                 }
               }
