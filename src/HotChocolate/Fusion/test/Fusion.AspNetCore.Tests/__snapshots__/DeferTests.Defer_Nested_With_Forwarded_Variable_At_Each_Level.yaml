@@ -28,7 +28,7 @@ stableResponseStream: |
     "initial": {
       "data": {
         "user": {
-          "id": "VXNlcjox"
+          "id": "VXNlcjoyMDkyMTcyNjc2"
         }
       }
     },
@@ -58,13 +58,13 @@ stableResponseStream: |
         "data": {
           "posts": [
             {
-              "id": "UG9zdDox"
+              "id": "UG9zdDozNDYyMzU2NDc3"
             },
             {
-              "id": "UG9zdDoy"
+              "id": "UG9zdDoxMjMwNzcyMjc4"
             },
             {
-              "id": "UG9zdDoz"
+              "id": "UG9zdDoxMTAxNjExODcw"
             }
           ]
         }
@@ -81,13 +81,13 @@ stableResponseStream: |
         "data": {
           "comments": [
             {
-              "id": "Q29tbWVudDox"
+              "id": "Q29tbWVudDoyNTM4OTE2NDc1"
             },
             {
-              "id": "Q29tbWVudDoy"
+              "id": "Q29tbWVudDozOTA5ODE4NTk5"
             },
             {
-              "id": "Q29tbWVudDoz"
+              "id": "Q29tbWVudDozODg2NjEzMDkz"
             }
           ]
         }
@@ -104,13 +104,13 @@ stableResponseStream: |
         "data": {
           "comments": [
             {
-              "id": "Q29tbWVudDo0"
+              "id": "Q29tbWVudDozNjA2NjE3MDk0"
             },
             {
-              "id": "Q29tbWVudDo1"
+              "id": "Q29tbWVudDo5OTY4NzIzNzM="
             },
             {
-              "id": "Q29tbWVudDo2"
+              "id": "Q29tbWVudDoxMDk3ODI3MTk3"
             }
           ]
         }
@@ -127,13 +127,13 @@ stableResponseStream: |
         "data": {
           "comments": [
             {
-              "id": "Q29tbWVudDo3"
+              "id": "Q29tbWVudDoxNTA5NTY1MTAw"
             },
             {
-              "id": "Q29tbWVudDo4"
+              "id": "Q29tbWVudDoyNzg5NTU5Nzcx"
             },
             {
-              "id": "Q29tbWVudDo5"
+              "id": "Q29tbWVudDozNjgyMTU1MzU4"
             }
           ]
         }
@@ -150,49 +150,49 @@ stableResponseStream: |
     "final": {
       "data": {
         "user": {
-          "id": "VXNlcjox",
+          "id": "VXNlcjoyMDkyMTcyNjc2",
           "posts": [
             {
               "comments": [
                 {
-                  "id": "Q29tbWVudDox"
+                  "id": "Q29tbWVudDoyNTM4OTE2NDc1"
                 },
                 {
-                  "id": "Q29tbWVudDoy"
+                  "id": "Q29tbWVudDozOTA5ODE4NTk5"
                 },
                 {
-                  "id": "Q29tbWVudDoz"
+                  "id": "Q29tbWVudDozODg2NjEzMDkz"
                 }
               ],
-              "id": "UG9zdDox"
+              "id": "UG9zdDozNDYyMzU2NDc3"
             },
             {
               "comments": [
                 {
-                  "id": "Q29tbWVudDo0"
+                  "id": "Q29tbWVudDozNjA2NjE3MDk0"
                 },
                 {
-                  "id": "Q29tbWVudDo1"
+                  "id": "Q29tbWVudDo5OTY4NzIzNzM="
                 },
                 {
-                  "id": "Q29tbWVudDo2"
+                  "id": "Q29tbWVudDoxMDk3ODI3MTk3"
                 }
               ],
-              "id": "UG9zdDoy"
+              "id": "UG9zdDoxMjMwNzcyMjc4"
             },
             {
               "comments": [
                 {
-                  "id": "Q29tbWVudDo3"
+                  "id": "Q29tbWVudDoxNTA5NTY1MTAw"
                 },
                 {
-                  "id": "Q29tbWVudDo4"
+                  "id": "Q29tbWVudDoyNzg5NTU5Nzcx"
                 },
                 {
-                  "id": "Q29tbWVudDo5"
+                  "id": "Q29tbWVudDozNjgyMTU1MzU4"
                 }
               ],
-              "id": "UG9zdDoz"
+              "id": "UG9zdDoxMTAxNjExODcw"
             }
           ]
         }
@@ -228,7 +228,25 @@ sourceSchemas:
               {
                 "data": {
                   "user": {
-                    "id": "VXNlcjox"
+                    "id": "VXNlcjoyMDkyMTcyNjc2"
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query GetUserPostsAndComments_defer_3 {
+              user(id: "1") {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "id": "VXNlcjoyMDkyMTcyNjc2"
                   }
                 }
               }
@@ -264,7 +282,7 @@ sourceSchemas:
           variables: |
             {
               "postLimit": 3,
-              "__fusion_1_id": "VXNlcjox"
+              "__fusion_1_id": "VXNlcjoyMDkyMTcyNjc2"
             }
         response:
           results:
@@ -274,13 +292,48 @@ sourceSchemas:
                   "userById": {
                     "posts": [
                       {
-                        "id": "UG9zdDox"
+                        "id": "UG9zdDozNDYyMzU2NDc3"
                       },
                       {
-                        "id": "UG9zdDoy"
+                        "id": "UG9zdDoxMjMwNzcyMjc4"
                       },
                       {
-                        "id": "UG9zdDoz"
+                        "id": "UG9zdDoxMTAxNjExODcw"
+                      }
+                    ]
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query GetUserPostsAndComments_defer_2($postLimit: Int!, $__fusion_2_id: ID!) {
+              userById(id: $__fusion_2_id) {
+                posts(first: $postLimit) {
+                  id
+                }
+              }
+            }
+          variables: |
+            {
+              "postLimit": 3,
+              "__fusion_2_id": "VXNlcjoyMDkyMTcyNjc2"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "posts": [
+                      {
+                        "id": "UG9zdDozNDYyMzU2NDc3"
+                      },
+                      {
+                        "id": "UG9zdDoxMjMwNzcyMjc4"
+                      },
+                      {
+                        "id": "UG9zdDoxMTAxNjExODcw"
                       }
                     ]
                   }
@@ -319,15 +372,15 @@ sourceSchemas:
             [
               {
                 "commentLimit": 2,
-                "__fusion_1_id": "UG9zdDox"
+                "__fusion_1_id": "UG9zdDozNDYyMzU2NDc3"
               },
               {
                 "commentLimit": 2,
-                "__fusion_1_id": "UG9zdDoy"
+                "__fusion_1_id": "UG9zdDoxMjMwNzcyMjc4"
               },
               {
                 "commentLimit": 2,
-                "__fusion_1_id": "UG9zdDoz"
+                "__fusion_1_id": "UG9zdDoxMTAxNjExODcw"
               }
             ]
         response:
@@ -339,13 +392,13 @@ sourceSchemas:
                   "postById": {
                     "comments": [
                       {
-                        "id": "Q29tbWVudDox"
+                        "id": "Q29tbWVudDoyNTM4OTE2NDc1"
                       },
                       {
-                        "id": "Q29tbWVudDoy"
+                        "id": "Q29tbWVudDozOTA5ODE4NTk5"
                       },
                       {
-                        "id": "Q29tbWVudDoz"
+                        "id": "Q29tbWVudDozODg2NjEzMDkz"
                       }
                     ]
                   }
@@ -357,13 +410,13 @@ sourceSchemas:
                   "postById": {
                     "comments": [
                       {
-                        "id": "Q29tbWVudDo0"
+                        "id": "Q29tbWVudDozNjA2NjE3MDk0"
                       },
                       {
-                        "id": "Q29tbWVudDo1"
+                        "id": "Q29tbWVudDo5OTY4NzIzNzM="
                       },
                       {
-                        "id": "Q29tbWVudDo2"
+                        "id": "Q29tbWVudDoxMDk3ODI3MTk3"
                       }
                     ]
                   }
@@ -375,13 +428,13 @@ sourceSchemas:
                   "postById": {
                     "comments": [
                       {
-                        "id": "Q29tbWVudDo3"
+                        "id": "Q29tbWVudDoxNTA5NTY1MTAw"
                       },
                       {
-                        "id": "Q29tbWVudDo4"
+                        "id": "Q29tbWVudDoyNzg5NTU5Nzcx"
                       },
                       {
-                        "id": "Q29tbWVudDo5"
+                        "id": "Q29tbWVudDozNjgyMTU1MzU4"
                       }
                     ]
                   }
@@ -448,11 +501,20 @@ operationPlan:
             - postLimit
           dependencies:
             - parentNodeId: 1
+        - id: 2
+          type: Operation
+          schema: A
+          operation: |
+            query GetUserPostsAndComments_defer_3 {
+              user(id: "1") {
+                id
+              }
+            }
     - deliveryGroupIds:
         - 1
       parentNodeId: 1
       requirements:
-        - name: __fusion_1_id
+        - name: __fusion_2_id
           selectionMap: >-
             id
       nodes:
@@ -476,4 +538,25 @@ operationPlan:
           forwardedVariables:
             - commentLimit
           dependencies:
-            - parentNodeId: 1
+            - id: 2
+        - id: 2
+          type: Operation
+          schema: B
+          operation: |
+            query GetUserPostsAndComments_defer_2($postLimit: Int!, $__fusion_2_id: ID!) {
+              userById(id: $__fusion_2_id) {
+                posts(first: $postLimit) {
+                  id
+                }
+              }
+            }
+          source: $.userById
+          target: $.user
+          requirements:
+            - name: __fusion_2_id
+              selectionMap: >-
+                id
+          forwardedVariables:
+            - postLimit
+          dependencies:
+            - parentNodeId: 2

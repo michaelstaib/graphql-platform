@@ -12,6 +12,7 @@ using HotChocolate.Language;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
 using HotChocolate.Types.Composite;
+using HotChocolate.Types.Relay;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -308,8 +309,12 @@ public class DeferTests : FusionTestBase
                         "unrelated",
                         (OperationDefinitionNode)Utf8GraphQLParser.Parse("{ version }").Definitions[0]);
                     var incrementalPlan = plan.IncrementalPlans[0];
-                    var deliveryGroups = incrementalPlan.DeliveryGroups
+                    // the delivery paths must resolve against the swapped incremental operation
+                    var planDeliveryGroups = plan.DeliveryGroups
                         .Select(group => group with { Path = SelectionPath.Root })
+                        .ToImmutableArray();
+                    var deliveryGroups = incrementalPlan.DeliveryGroups
+                        .Select(group => planDeliveryGroups.Single(t => t.Id == group.Id))
                         .ToImmutableArray();
 
                     context.SetOperationPlan(
@@ -318,7 +323,7 @@ public class DeferTests : FusionTestBase
                             plan.Operation,
                             plan.RootNodes,
                             plan.AllNodes,
-                            plan.DeliveryGroups,
+                            planDeliveryGroups,
                             [
                                 new IncrementalPlan(
                                     operation,
@@ -3170,16 +3175,16 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            {"data":{"user":{"name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"1","path":["user"],"label":"middle"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjox"}}],"completed":[{"id":"0"}],"hasNext":true}
+            {"pending":[{"id":"1","path":["user"],"label":"middle"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
             {"pending":[{"id":"2","path":["user"],"label":"inner"}],"completed":[{"id":"1"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjox"}}],"completed":[{"id":"2"}],"hasNext":false}
+            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
             """
         ]);
     }
@@ -3213,7 +3218,7 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox","body":"Message: TWVzc2FnZTox"}},"hasNext":false}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4","body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}},"hasNext":false}
             """
         ]);
     }
@@ -3247,10 +3252,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
     }
@@ -3298,10 +3303,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox","title":"Message: TWVzc2FnZTox"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4","title":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
     }
@@ -3335,10 +3340,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"0","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"0"}],"hasNext":false}
+            {"incremental":[{"id":"0","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"0"}],"hasNext":false}
             """
         ]);
     }
@@ -3372,13 +3377,13 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
             """,
             """
             {"pending":[{"id":"1","path":["message"]}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
     }
@@ -3587,10 +3592,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"id":"VXNlcjox","name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjox"}}],"completed":[{"id":"3"}],"hasNext":true}
+            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"3"}],"hasNext":true}
             """,
             """
             {"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["user","email"]}]},{"id":"1","errors":[{"message":"Unexpected Execution Error","path":["user","email"]}]}],"hasNext":false}
@@ -3645,16 +3650,16 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"id":"VXNlcjox","name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"first"},{"id":"1","path":["user"],"label":"second"},{"id":"3","path":["user"],"label":"third"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjox"}}],"completed":[{"id":"3"}],"hasNext":true}
+            {"incremental":[{"id":"3","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"3"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"2","path":["user"],"label":"nested"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjox"}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":true}
+            {"pending":[{"id":"2","path":["user"],"label":"nested"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"2","data":{"phone":"User: VXNlcjox"}}],"completed":[{"id":"2"}],"hasNext":false}
+            {"incremental":[{"id":"2","data":{"phone":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
             """
         ]);
     }
@@ -3699,7 +3704,7 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"id":"VXNlcjox","name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
             """,
             """
             {"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["user","email"]}]}],"hasNext":false}
@@ -3777,10 +3782,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"products":[{"id":"UHJvZHVjdDox"},{"id":"UHJvZHVjdDoy"},{"id":"UHJvZHVjdDoz"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"name":"Product: UHJvZHVjdDox","reviews":[{"id":"UmV2aWV3OjE="},{"id":"UmV2aWV3OjI="},{"id":"UmV2aWV3OjM="}]}},{"id":"0","subPath":[1],"data":{"name":"Product: UHJvZHVjdDoy","reviews":[{"id":"UmV2aWV3OjQ="},{"id":"UmV2aWV3OjU="},{"id":"UmV2aWV3OjY="}]}},{"id":"0","subPath":[2],"data":{"name":"Product: UHJvZHVjdDoz","reviews":[{"id":"UmV2aWV3Ojc="},{"id":"UmV2aWV3Ojg="},{"id":"UmV2aWV3Ojk="}]}}],"completed":[{"id":"0"}],"hasNext":true}
+            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"name":"Product: UHJvZHVjdDoxOTc0MTQ1MDk=","reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"name":"Product: UHJvZHVjdDozOTM1NzEyMDU5","reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"name":"Product: UHJvZHVjdDoyMjE1MjQ2OTE2","reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
             {"incremental":[{"id":"1","subPath":[0],"data":{"rating":123}},{"id":"1","subPath":[1],"data":{"rating":123}},{"id":"1","subPath":[2],"data":{"rating":123}}],"completed":[{"id":"1"}],"hasNext":false}
@@ -5017,5 +5022,392 @@ public class DeferTests : FusionTestBase
         {
             public int GetRating() => int.Parse(Id) * 100;
         }
+    }
+
+    [Fact]
+    public async Task Defer_RootFragment_Should_DeliverDeferredFetch_When_RootSelectsNothingElse()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                users: [User!]!
+            }
+
+            type User {
+                id: ID!
+                name: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync([("A", server1)]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                ... @defer {
+                    users {
+                        id
+                        name
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_RootFragment_Should_DeliverDeferredFetch_When_RootSelectsOnlyTypename()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                users: [User!]!
+            }
+
+            type User {
+                id: ID!
+                name: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync([("A", server1)]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                __typename
+                ... @defer {
+                    users {
+                        id
+                        name
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ResolveAllPrerequisites_When_RequirementMixesNativeAndComputedFields()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<MixedRequirementSourceA.Query>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<MixedRequirementSourceB.Query>());
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<MixedRequirementSourceC.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                product {
+                    id
+                    ... @defer {
+                        total
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ResolveAllPrerequisites_When_RequirementSelectsNestedFieldWithOwnRequirement()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<NestedRequirementSourceA.Query>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<NestedRequirementSourceB.Query>());
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<NestedRequirementSourceC.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                product {
+                    id
+                    ... @defer {
+                        total
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ResolveNestedLookupInDeferredPayload_When_DeferredFieldTraversesSubgraphs()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<NestedLookupSourceA.Query>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<NestedLookupSourceB.Query>());
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<NestedLookupSourceC.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                products {
+                    name
+                    ... @defer(label: "deeper") {
+                        related {
+                            name
+                        }
+                    }
+                }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    private static class NestedLookupSourceA
+    {
+        public class Query
+        {
+            public Product[] GetProducts() => [new(1), new(2)];
+
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id);
+    }
+
+    private static class NestedLookupSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public Product Related => new(Id + 10);
+        }
+    }
+
+    private static class NestedLookupSourceC
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public string Name => $"Product {Id}";
+        }
+    }
+
+    private static class MixedRequirementSourceA
+    {
+        public class Query
+        {
+            public Product GetProduct() => new(1);
+
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public int Raw => 7;
+
+            public int GetComputed([Require("value")] int value) => value * 10;
+        }
+    }
+
+    private static class MixedRequirementSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public int Value => 3;
+        }
+    }
+
+    private static class MixedRequirementSourceC
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public int GetTotal([Require("{ raw computed }")] TotalInput input)
+                => input.Raw + input.Computed;
+        }
+
+        public record TotalInput(int Raw, int Computed);
+    }
+
+    private static class NestedRequirementSourceA
+    {
+        public class Query
+        {
+            public Product GetProduct() => new(1);
+
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public User Owner => new(2);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Raw => 5;
+
+            public int GetComputed([Require("value")] int value) => value * 10;
+        }
+    }
+
+    private static class NestedRequirementSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Value => 4;
+        }
+    }
+
+    private static class NestedRequirementSourceC
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Product? GetProductById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public int GetTotal([Require("owner.{ raw computed }")] OwnerInput input)
+                => input.Raw * 1000 + input.Computed;
+        }
+
+        public record OwnerInput(int Raw, int Computed);
     }
 }
