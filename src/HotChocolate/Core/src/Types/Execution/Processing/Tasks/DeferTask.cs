@@ -60,6 +60,8 @@ internal sealed class DeferTask : ExecutionTask
             s_pool.Return(bufferedTasks);
         }
 
+        deferContext.Scheduler.ParkRunningTask();
+
         try
         {
             // ... and then wait for the scheduler to complete the deferred tasks. An aborted request
@@ -74,6 +76,8 @@ internal sealed class DeferTask : ExecutionTask
         }
         finally
         {
+            deferContext.Scheduler.UnparkRunningTask();
+
             // the request cleanup registered by the deferred resolvers is handed to the collector of
             // the response stream, also when the branch faults or is cancelled, before the context is reset.
             var requestCleanup = deferContext.RequestCleanup!;

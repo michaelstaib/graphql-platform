@@ -48,6 +48,40 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
     public ValueTask WaitForSettlementAsync(int executionBranchId)
         => WaitForBranchAsync(executionBranchId, CancellationToken.None);
 
+    /// <summary>
+    /// Marks the calling running task as waiting, so queued serial work can run while it waits.
+    /// </summary>
+    public void ParkRunningTask()
+    {
+        AssertNotPooled();
+
+        bool hasSerialWork;
+
+        lock (_sync)
+        {
+            _work.Park();
+            hasSerialWork = !_serial.IsEmpty;
+        }
+
+        if (hasSerialWork)
+        {
+            _signal.Set();
+        }
+    }
+
+    /// <summary>
+    /// Marks the calling running task as no longer waiting, after <see cref="ParkRunningTask"/>.
+    /// </summary>
+    public void UnparkRunningTask()
+    {
+        AssertNotPooled();
+
+        lock (_sync)
+        {
+            _work.Unpark();
+        }
+    }
+
     private ValueTask WaitForBranchAsync(int executionBranchId, CancellationToken cancellationToken)
     {
         AssertNotPooled();
@@ -158,7 +192,7 @@ RESTART:
 
         lock (_sync)
         {
-            var isParallel = !_work.IsEmpty || _work.HasRunningTasks;
+            var isParallel = !_work.IsEmpty || _work.HasBlockingTasks;
             var work = isParallel ? _work : _serial;
 
             if (isParallel)
@@ -240,7 +274,8 @@ RESTART:
 
         if (!isWaitingForTaskCompletion)
         {
-            isWaitingForTaskCompletion = _work is { HasRunningTasks: true, IsEmpty: true };
+            isWaitingForTaskCompletion = _work is { HasRunningTasks: true, IsEmpty: true }
+                && (_serial.IsEmpty || _work.HasBlockingTasks);
         }
 
         var hasWork = !_work.IsEmpty || !_serial.IsEmpty;
