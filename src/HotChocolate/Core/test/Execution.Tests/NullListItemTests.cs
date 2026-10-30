@@ -1,4 +1,7 @@
 using System.Text.Json;
+using HotChocolate.Execution.Configuration;
+using HotChocolate.Execution.Options;
+using HotChocolate.Language;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
@@ -797,6 +800,133 @@ public sealed class NullListItemTests
         ]);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Should_NullOnlyTheInnerList_When_TheInnerListIsNullableAndHasANullScalarItem()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await ExecuteAsync(executor, "{ lenientMatrix }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "lenientMatrix",
+                    1,
+                    1
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ],
+              "data": {
+                "lenientMatrix": [
+                  [
+                    "a"
+                  ],
+                  null,
+                  [
+                    "c"
+                  ]
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_NullOnlyTheInnerList_When_TheInnerListIsNullableAndHasANullObjectItem()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+
+        // act
+        var result = await ExecuteAsync(executor, "{ lenientObjectMatrix { id } }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "lenientObjectMatrix",
+                    1,
+                    1
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ],
+              "data": {
+                "lenientObjectMatrix": [
+                  [
+                    {
+                      "id": 1
+                    }
+                  ],
+                  null,
+                  [
+                    {
+                      "id": 3
+                    }
+                  ]
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_KeepTheNullItemAndReportTheViolation_When_TheErrorHandlingModeIsNull()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync(
+            o => o.DefaultErrorHandlingMode = ErrorHandlingMode.Null);
+
+        // act
+        var result = await ExecuteAsync(executor, "{ objects { id } }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "objects",
+                    1
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ],
+              "data": {
+                "objects": [
+                  {
+                    "id": 1
+                  },
+                  null,
+                  {
+                    "id": 3
+                  }
+                ]
+              }
+            }
+            """);
+    }
+
     private static async Task<string> ExecuteAsync(IRequestExecutor executor, string query)
     {
         await using var result = await executor
@@ -867,6 +997,12 @@ public sealed class NullListItemTests
     }
 
     private static ValueTask<IRequestExecutor> CreateExecutorAsync()
+        => CreateBuilder().BuildRequestExecutorAsync();
+
+    private static ValueTask<IRequestExecutor> CreateExecutorAsync(Action<RequestExecutorOptions> configure)
+        => CreateBuilder().ModifyRequestOptions(configure).BuildRequestExecutorAsync();
+
+    private static IRequestExecutorBuilder CreateBuilder()
         => new ServiceCollection()
             .AddGraphQL()
             .AddQueryType(d =>
@@ -882,6 +1018,12 @@ public sealed class NullListItemTests
                 d.Field("matrix")
                     .Type<NonNullType<ListType<NonNullType<ListType<NonNullType<StringType>>>>>>()
                     .Resolve(_ => new List<List<string?>> { new() { "a" }, new() { "b", null } });
+                d.Field("lenientMatrix")
+                    .Type<NonNullType<ListType<ListType<NonNullType<StringType>>>>>()
+                    .Resolve(_ => new List<List<string?>> { new() { "a" }, new() { "b", null }, new() { "c" } });
+                d.Field("lenientObjectMatrix")
+                    .Type<NonNullType<ListType<ListType<NonNullType<ObjectType<Item>>>>>>()
+                    .Resolve(_ => new List<List<Item?>> { new() { new(1) }, new() { new(2), null }, new() { new(3) } });
                 d.Field("brokenObjects")
                     .Type<NonNullType<ListType<NonNullType<ObjectType<Item>>>>>()
                     .Resolve(_ => new List<Item?> { new(1), new(2), new(3) });
@@ -934,8 +1076,7 @@ public sealed class NullListItemTests
                 {
                     o.EnableDefer = true;
                     o.EnableStream = true;
-                })
-            .BuildRequestExecutorAsync();
+                });
 
     private static List<Item?> Items() => [new(1), null, new(3)];
 

@@ -13,7 +13,7 @@ internal static partial class ValueCompletion
         object? result)
         => Complete(context, selection, selection.Type, resultValue, result);
 
-    private static bool Complete(
+    private static void Complete(
         ValueCompletionContext context,
         Selection selection,
         IType type,
@@ -31,26 +31,27 @@ internal static partial class ValueCompletion
         if (result is null)
         {
             resultValue.SetNullValue();
-            return true;
+            return;
         }
 
         switch (typeKind)
         {
             case TypeKind.Scalar or TypeKind.Enum:
                 CompleteLeafValue(context, (ILeafType)type, resultValue, result);
-                return true;
+                break;
 
             case TypeKind.List:
-                return CompleteListValue(context, selection, type, resultValue, result);
+                CompleteListValue(context, selection, type, resultValue, result);
+                break;
 
             case TypeKind.Object or TypeKind.Interface or TypeKind.Union:
                 CompleteCompositeValue(context, selection, type, resultValue, result);
-                return true;
+                break;
 
             default:
                 var error = UnexpectedValueCompletionError(resultValue.Path);
                 context.OperationContext.ReportError(error, context.ResolverContext);
-                return true;
+                break;
         }
     }
 }

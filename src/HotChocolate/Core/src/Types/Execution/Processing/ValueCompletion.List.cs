@@ -9,7 +9,7 @@ namespace HotChocolate.Execution.Processing;
 
 internal static partial class ValueCompletion
 {
-    private static bool CompleteListValue(
+    private static void CompleteListValue(
         ValueCompletionContext context,
         Selection selection,
         IType type,
@@ -33,11 +33,11 @@ internal static partial class ValueCompletion
                     element,
                     array.GetValue(i++)))
                 {
-                    return false;
+                    return;
                 }
             }
 
-            return true;
+            return;
         }
 
         if (runtimeValue is IList list)
@@ -55,11 +55,11 @@ internal static partial class ValueCompletion
                     element,
                     list[i++]))
                 {
-                    return false;
+                    return;
                 }
             }
 
-            return true;
+            return;
         }
 
         if (runtimeValue is JsonElement { ValueKind: JsonValueKind.Array } node)
@@ -79,11 +79,11 @@ internal static partial class ValueCompletion
                     element,
                     runtimeEnumerator.Current))
                 {
-                    return false;
+                    return;
                 }
             }
 
-            return true;
+            return;
         }
 
         if (runtimeValue is IEnumerable enumerable)
@@ -121,7 +121,7 @@ internal static partial class ValueCompletion
                         element,
                         buffer[i++]))
                     {
-                        return false;
+                        return;
                     }
                 }
             }
@@ -131,14 +131,13 @@ internal static partial class ValueCompletion
                 ArrayPool<object?>.Shared.Return(buffer);
             }
 
-            return true;
+            return;
         }
 
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
         var error = ListValueIsNotSupported(runtimeValue.GetType(), resultValue.Path);
         operationContext.ReportError(error, resolverContext);
-        return true;
     }
 
     private static bool TryCompleteListItem(
@@ -148,8 +147,10 @@ internal static partial class ValueCompletion
         ResultElement element,
         object? runtimeItem)
     {
+        Complete(context, selection, elementType, element, runtimeItem);
+
         // if we ran into an error that invalidated the result we abort.
-        if (!Complete(context, selection, elementType, element, runtimeItem) || element.IsInvalidated)
+        if (element.IsInvalidated)
         {
             return false;
         }
