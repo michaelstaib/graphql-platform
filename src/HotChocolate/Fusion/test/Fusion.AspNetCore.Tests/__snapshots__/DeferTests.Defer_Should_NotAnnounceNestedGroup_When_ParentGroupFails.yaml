@@ -20,8 +20,8 @@ stableResponseStream: |
     "initial": {
       "data": {
         "user": {
-          "id": "VXNlcjox",
-          "name": "User: VXNlcjox"
+          "id": "VXNlcjoyMDkyMTcyNjc2",
+          "name": "User: VXNlcjoyMDkyMTcyNjc2"
         }
       }
     },
@@ -51,8 +51,8 @@ stableResponseStream: |
     "final": {
       "data": {
         "user": {
-          "id": "VXNlcjox",
-          "name": "User: VXNlcjox"
+          "id": "VXNlcjoyMDkyMTcyNjc2",
+          "name": "User: VXNlcjoyMDkyMTcyNjc2"
         }
       }
     }
@@ -88,8 +88,8 @@ sourceSchemas:
               {
                 "data": {
                   "user": {
-                    "id": "VXNlcjox",
-                    "name": "User: VXNlcjox"
+                    "id": "VXNlcjoyMDkyMTcyNjc2",
+                    "name": "User: VXNlcjoyMDkyMTcyNjc2"
                   }
                 }
               }
@@ -107,7 +107,7 @@ sourceSchemas:
               {
                 "data": {
                   "user": {
-                    "id": "VXNlcjox"
+                    "id": "VXNlcjoyMDkyMTcyNjc2"
                   }
                 }
               }
@@ -138,7 +138,7 @@ sourceSchemas:
             }
           variables: |
             {
-              "__fusion_1_id": "VXNlcjox"
+              "__fusion_1_id": "VXNlcjoyMDkyMTcyNjc2"
             }
         response:
           results:
