@@ -3454,7 +3454,7 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"id":"VXNlcjox","name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
             """,
             """
             {"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["user","email"]}]}],"hasNext":false}
