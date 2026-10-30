@@ -59,13 +59,15 @@ public sealed class Selection : ISelection, IFeatureProvider
         Field = field;
         Type = field.Type;
         Arguments = arguments ?? s_emptyArguments;
-        ResolverPipeline = resolverPipeline;
         PureResolver = pureResolver;
         BatchResolverPipeline = batchResolverPipeline;
         Strategy = InferStrategy(
             isSerial: !field.IsParallelExecutable,
             hasPureResolver: pureResolver is not null,
             hasBatchResolver: batchResolverPipeline is not null);
+        ResolverPipeline = Strategy is SelectionExecutionStrategy.Serial && batchResolverPipeline is not null
+            ? CreateSingleEntryPipeline(batchResolverPipeline)
+            : resolverPipeline;
         _syntaxNodes = syntaxNodes;
         _includeFlags = includeFlags;
         _wideIncludeFlags = wideIncludeFlags;
@@ -1081,12 +1083,14 @@ nextItem:
             throw new NotSupportedException(Resources.PreparedSelection_ReadOnly);
         }
 
-        ResolverPipeline = resolverPipeline;
         PureResolver = pureResolver;
         BatchResolverPipeline = batchResolverPipeline;
         Strategy = InferStrategy(
             hasPureResolver: pureResolver is not null,
             hasBatchResolver: batchResolverPipeline is not null);
+        ResolverPipeline = Strategy is SelectionExecutionStrategy.Serial && batchResolverPipeline is not null
+            ? CreateSingleEntryPipeline(batchResolverPipeline)
+            : resolverPipeline;
     }
 
     /// <summary>
@@ -1125,16 +1129,16 @@ nextItem:
         bool hasPureResolver = false,
         bool hasBatchResolver = false)
     {
-        // batch resolver takes precedence — it handles its own execution strategy.
-        if (hasBatchResolver)
-        {
-            return SelectionExecutionStrategy.Batch;
-        }
-
+        // serial execution takes precedence over a batch resolver.
         // once a field is marked serial it even with a pure resolver cannot become pure.
         if (Strategy is SelectionExecutionStrategy.Serial || isSerial)
         {
             return SelectionExecutionStrategy.Serial;
+        }
+
+        if (hasBatchResolver)
+        {
+            return SelectionExecutionStrategy.Batch;
         }
 
         if (hasPureResolver)
@@ -1144,6 +1148,9 @@ nextItem:
 
         return SelectionExecutionStrategy.Default;
     }
+
+    private static FieldDelegate CreateSingleEntryPipeline(BatchFieldDelegate batchResolverPipeline)
+        => context => batchResolverPipeline([context]);
 
     private static bool IsStreamableField(ObjectField field)
         => (field.Flags & (CoreFieldFlags.ConnectionEdgesField | CoreFieldFlags.ConnectionNodesField)) == 0;
