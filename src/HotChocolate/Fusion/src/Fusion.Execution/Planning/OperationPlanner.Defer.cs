@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning.Partitioners;
@@ -906,9 +907,7 @@ public sealed partial class OperationPlanner
 
         foreach (var step in parentContext.ParentSteps)
         {
-            if (step is not OperationPlanStep candidate
-                || !candidate.Target.IsParentOfOrSame(descriptor.Path)
-                || candidate.Conditions.Length != 0)
+            if (!TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate))
             {
                 continue;
             }
@@ -945,13 +944,7 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        if (!TryLocateSelectionSetAtPath(
-            GetStepEntitySelectionSet(parentStep),
-            GetStepEntityType(parentStep),
-            descriptor.Path,
-            parentStep.Target.Length,
-            out var parentTargetSelectionSet,
-            out _))
+        if (!TryLocateDeferRequirementTarget(parentStep, descriptor.Path, out var parentTargetSelectionSet, out _))
         {
             return false;
         }
@@ -1027,14 +1020,6 @@ public sealed partial class OperationPlanner
         return true;
     }
 
-    /// <summary>
-    /// Makes the <c>__typename</c> that <paramref name="descriptor"/> selects visible on the enclosing
-    /// step, so the descriptor needs no incremental plan nodes to deliver it.
-    /// </summary>
-    /// <returns>
-    /// <c>false</c> when the descriptor selects anything besides <c>__typename</c> or no enclosing
-    /// step reaches its anchor.
-    /// </returns>
     private bool TryServeTypeNameFromParent(
         IncrementalPlanDescriptor descriptor,
         ParentPlanContext parentContext,
@@ -1054,16 +1039,8 @@ public sealed partial class OperationPlanner
 
         foreach (var step in parentContext.ParentSteps)
         {
-            if (step is OperationPlanStep candidate
-                && candidate.Target.IsParentOfOrSame(descriptor.Path)
-                && candidate.Conditions.Length == 0
-                && TryLocateSelectionSetAtPath(
-                    GetStepEntitySelectionSet(candidate),
-                    GetStepEntityType(candidate),
-                    descriptor.Path,
-                    candidate.Target.Length,
-                    out var parentTargetSelectionSet,
-                    out _))
+            if (TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate)
+                && TryLocateDeferRequirementTarget(candidate, descriptor.Path, out var parentTargetSelectionSet, out _))
             {
                 MakeFieldsVisibleInParentScope(
                     descriptor,
@@ -1077,6 +1054,23 @@ public sealed partial class OperationPlanner
             }
         }
 
+        return false;
+    }
+
+    private static bool TryGetUnconditionalEnclosingStep(
+        PlanStep step,
+        SelectionPath path,
+        [NotNullWhen(true)] out OperationPlanStep? enclosingStep)
+    {
+        if (step is OperationPlanStep candidate
+            && candidate.Target.IsParentOfOrSame(path)
+            && candidate.Conditions.Length == 0)
+        {
+            enclosingStep = candidate;
+            return true;
+        }
+
+        enclosingStep = null;
         return false;
     }
 
