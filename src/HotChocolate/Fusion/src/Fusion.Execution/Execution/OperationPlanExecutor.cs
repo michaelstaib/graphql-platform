@@ -588,7 +588,17 @@ internal static partial class OperationPlanExecutor
             context.Initialize(requestContext, variables, incrementalPlan, executionCts, requestArena);
 
             // Copy parent-scope requirements into the child context.
-            CollectIncrementalPlanRequirements(parentResultStore, incrementalPlan, context);
+            try
+            {
+                CollectIncrementalPlanRequirements(parentResultStore, incrementalPlan, context);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // The plan fails with an error and still completes through the channel.
+                executionCts.Dispose();
+                completion.TryWrite(new IncrementalPlanResult(incrementalPlan, deliveryGroups, context, null, ex));
+                return;
+            }
         }
         catch
         {
@@ -689,7 +699,7 @@ internal static partial class OperationPlanExecutor
             requestVariables: [],
             requirementSpan);
 
-        childContext.SetRequirements(parentValues, keys);
+        childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)
