@@ -27,6 +27,7 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
     private CancellationToken _ct;
 
     private int _hasBatches;
+    private bool _countsPaths;
     private bool _isCompleted;
     private bool _isInitialized;
     private bool _executionCompleted;
@@ -50,6 +51,7 @@ internal sealed partial class WorkScheduler(OperationContext operationContext)
         _ct = operationContext.RequestAborted;
 
         _hasBatches = 0;
+        _countsPaths = operationContext.Operation.MayContainBatchFields;
         _isCompleted = false;
         _executionCompleted = false;
         _clearAfterExecution = false;
