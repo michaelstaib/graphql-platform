@@ -3174,16 +3174,16 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"user":{"name":"User: VXNlcjox"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            {"data":{"user":{"name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"1","path":["user"],"label":"middle"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjox"}}],"completed":[{"id":"0"}],"hasNext":true}
+            {"pending":[{"id":"1","path":["user"],"label":"middle"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
             {"pending":[{"id":"2","path":["user"],"label":"inner"}],"completed":[{"id":"1"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjox"}}],"completed":[{"id":"2"}],"hasNext":false}
+            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
             """
         ]);
     }
@@ -3217,7 +3217,7 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox","body":"Message: TWVzc2FnZTox"}},"hasNext":false}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4","body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}},"hasNext":false}
             """
         ]);
     }
@@ -3251,10 +3251,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
     }
@@ -3302,10 +3302,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox","title":"Message: TWVzc2FnZTox"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4","title":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"1","path":["message"]}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
     }
@@ -3339,10 +3339,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"0","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"0"}],"hasNext":false}
+            {"incremental":[{"id":"0","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"0"}],"hasNext":false}
             """
         ]);
     }
@@ -3376,13 +3376,13 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"message":{"id":"TWVzc2FnZTox"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
+            {"data":{"message":{"id":"TWVzc2FnZTo0MTY4NzUxNzE4"}},"pending":[{"id":"0","path":["message"]}],"hasNext":true}
             """,
             """
             {"pending":[{"id":"1","path":["message"]}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTox"}}],"completed":[{"id":"1"}],"hasNext":false}
+            {"incremental":[{"id":"1","data":{"body":"Message: TWVzc2FnZTo0MTY4NzUxNzE4"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
     }
