@@ -400,7 +400,7 @@ internal sealed class BatchResolverTask : IResolverTask
 
                 _completionStatus = ExecutionTaskStatus.Faulted;
                 entryContext.Result.AddNonNullViolation(context.Path);
-                _taskBuffer.RemoveRange(taskBufferStart, _taskBuffer.Count - taskBufferStart);
+                ResolverTaskFactory.ReleaseUnregisteredTasks(_taskBuffer, taskBufferStart, _resolverTaskPool);
             }
         }
     }

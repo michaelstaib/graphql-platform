@@ -60,7 +60,7 @@ internal sealed partial class ResolverTask
 
             _completionStatus = ExecutionTaskStatus.Faulted;
             _operationContext.Result.AddNonNullViolation(_context.Path);
-            _taskBuffer.Clear();
+            ResolverTaskFactory.ReleaseUnregisteredTasks(_taskBuffer, start: 0, objectPool);
         }
     }
 }

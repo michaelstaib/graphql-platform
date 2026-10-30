@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using HotChocolate.Text.Json;
 using HotChocolate.Types;
+using Microsoft.Extensions.ObjectPool;
 using static HotChocolate.Execution.Processing.ValueCompletion;
 
 namespace HotChocolate.Execution.Processing.Tasks;
@@ -332,6 +333,32 @@ internal static class ResolverTaskFactory
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Releases the tasks from <paramref name="start"/> to the end of <paramref name="tasks"/> that were
+    /// created but will never be registered, and removes them from the list.
+    /// </summary>
+    public static void ReleaseUnregisteredTasks(
+        List<IExecutionTask> tasks,
+        int start,
+        ObjectPool<ResolverTask> resolverTaskPool)
+    {
+        for (var i = start; i < tasks.Count; i++)
+        {
+            switch (tasks[i])
+            {
+                case ResolverTask resolverTask:
+                    resolverTaskPool.Return(resolverTask);
+                    break;
+
+                case DeferTask deferTask:
+                    deferTask.Reset();
+                    break;
+            }
+        }
+
+        tasks.RemoveRange(start, tasks.Count - start);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
