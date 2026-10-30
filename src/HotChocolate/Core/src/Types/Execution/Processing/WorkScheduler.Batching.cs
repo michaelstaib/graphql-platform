@@ -77,13 +77,13 @@ internal sealed partial class WorkScheduler
     /// Checks all pending batch tasks and dispatches any whose ancestor paths
     /// all have zero active tasks.
     /// </summary>
-    private void TryDispatchPendingBatchesUnsafe()
+    private bool TryDispatchPendingBatchesUnsafe()
     {
         AssertLockHeld();
 
         if (_pendingBatches.Count == 0)
         {
-            return;
+            return false;
         }
 
         List<(SelectionPath Path, DeferUsage? Defer)>? toRemove = null;
@@ -98,14 +98,12 @@ internal sealed partial class WorkScheduler
             toRemove ??= [];
             toRemove.Add(key);
 
-            batchTask.Id = Interlocked.Increment(ref _nextId);
-            batchTask.IsRegistered = true;
-            _work.Push(batchTask);
+            PushBatchUnsafe(batchTask);
         }
 
         if (toRemove is null)
         {
-            return;
+            return false;
         }
 
         foreach (var key in toRemove)
@@ -114,6 +112,44 @@ internal sealed partial class WorkScheduler
         }
 
         _signal.Set();
+        return true;
+    }
+
+    /// <summary>
+    /// Dispatches the shallowest pending batch tasks regardless of the active path counts. It is only valid
+    /// while no task is queued and no running task can make progress.
+    /// </summary>
+    private void DispatchIdlePendingBatchesUnsafe()
+    {
+        if (TryDispatchPendingBatchesUnsafe())
+        {
+            return;
+        }
+
+        var depth = int.MaxValue;
+
+        foreach (var key in _pendingBatches.Keys)
+        {
+            depth = Math.Min(depth, key.Path.Length);
+        }
+
+        foreach (var (key, batchTask) in _pendingBatches)
+        {
+            if (key.Path.Length == depth)
+            {
+                _pendingBatches.Remove(key);
+                PushBatchUnsafe(batchTask);
+            }
+        }
+
+        _signal.Set();
+    }
+
+    private void PushBatchUnsafe(BatchResolverTask batchTask)
+    {
+        batchTask.Id = Interlocked.Increment(ref _nextId);
+        batchTask.IsRegistered = true;
+        _work.Push(batchTask);
     }
 
     /// <summary>
