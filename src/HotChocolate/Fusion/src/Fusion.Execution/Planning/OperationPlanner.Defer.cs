@@ -6,6 +6,7 @@ using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Types.Rewriters;
 using HotChocolate.Language;
 using HotChocolate.Types;
+using ThrowHelper = HotChocolate.Fusion.Execution.ThrowHelper;
 
 namespace HotChocolate.Fusion.Planning;
 
@@ -100,6 +101,8 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            EnsureSelectedFieldsHaveNodes(descriptor, rewrittenIncrementalPlan);
+
             var registeredInternalOp = incrementalPlanResult.InternalOperationDefinition ?? descriptor.Operation;
             contextGraph.RegisterDeferContext(
                 descriptor,
@@ -111,6 +114,59 @@ public sealed partial class OperationPlanner
         }
 
         return routingStates.ToImmutable();
+    }
+
+    /// <summary>
+    /// Throws when <paramref name="descriptor"/> selects fields but its incremental plan has no steps.
+    /// </summary>
+    internal void EnsureSelectedFieldsHaveNodes(
+        IncrementalPlanDescriptor descriptor,
+        ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        if (incrementalPlanSteps.Count == 0 && SelectsDeferredFields(descriptor))
+        {
+            throw ThrowHelper.DeferredGroupPlannedToNothing(descriptor.Path);
+        }
+    }
+
+    private bool SelectsDeferredFields(IncrementalPlanDescriptor descriptor)
+    {
+        if (descriptor.Path.IsRoot)
+        {
+            return ContainsSelectedField(descriptor.Operation.SelectionSet);
+        }
+
+        return TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out var anchorSelectionSet,
+                out _)
+            && ContainsSelectedField(anchorSelectionSet);
+    }
+
+    private static bool ContainsSelectedField(SelectionSetNode selectionSet)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode field
+                    when !field.Directives.Any(
+                        t => t.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)
+                            || t.Name.Value.Equals("fusion__empty", StringComparison.Ordinal)):
+                    if (field.SelectionSet is null || ContainsSelectedField(field.SelectionSet))
+                    {
+                        return true;
+                    }
+
+                    break;
+
+                case InlineFragmentNode fragment when ContainsSelectedField(fragment.SelectionSet):
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -201,6 +257,7 @@ public sealed partial class OperationPlanner
         // The anchor type for the mutation, non-root branch below, used to report
         // DeferredMutationLookupRequiredException when no incremental plan is found.
         ITypeDefinition? mutationAnchorType = null;
+        var seededLookup = false;
 
         if (descriptor.Path.IsRoot)
         {
@@ -309,6 +366,7 @@ public sealed partial class OperationPlanner
 
                 node = CreateIncrementalPlanNode(deferredOperation, index, backlog);
                 possiblePlans.EnqueueBranches(node);
+                seededLookup = true;
             }
         }
 
@@ -317,7 +375,21 @@ public sealed partial class OperationPlanner
             possiblePlans.Enqueue(node);
         }
 
-        var plan = Plan(operationId + "#defer_" + incrementalPlanId, possiblePlans, emitPlannerEvents, cancellationToken);
+        var planId = operationId + "#defer_" + incrementalPlanId;
+        var plan = Plan(planId, possiblePlans, emitPlannerEvents, cancellationToken);
+
+        // A direct lookup of the anchor type suppresses the parent-path alternatives, but its key
+        // may not be producible by any other source schema. Retry through the parent path then.
+        if (!plan.HasValue && seededLookup)
+        {
+            possiblePlans = new PlanQueue(_schema);
+            possiblePlans.EnqueueParentPathBranches(node);
+
+            if (possiblePlans.Count > 0)
+            {
+                plan = Plan(planId, possiblePlans, emitPlannerEvents, cancellationToken);
+            }
+        }
 
         if (!plan.HasValue)
         {
@@ -630,6 +702,14 @@ public sealed partial class OperationPlanner
             foreach (var (_, requirement) in downstreamStep.Requirements)
             {
                 if (!requirement.Path.Equals(descriptor.Path))
+                {
+                    continue;
+                }
+
+                // The parent-sourced requirements of one incremental plan must share a single
+                // anchor path, so a requirement that the producer routing above already lifted
+                // from a different path keeps its in-plan provider.
+                if (lifted.Exists(t => !t.Requirement.Path.Equals(requirement.Path)))
                 {
                     continue;
                 }
