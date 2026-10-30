@@ -3781,10 +3781,10 @@ public class DeferTests : FusionTestBase
         payloads.MatchInlineSnapshots(
         [
             """
-            {"data":{"products":[{"id":"UHJvZHVjdDox"},{"id":"UHJvZHVjdDoy"},{"id":"UHJvZHVjdDoz"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"name":"Product: UHJvZHVjdDox","reviews":[{"id":"UmV2aWV3OjE="},{"id":"UmV2aWV3OjI="},{"id":"UmV2aWV3OjM="}]}},{"id":"0","subPath":[1],"data":{"name":"Product: UHJvZHVjdDoy","reviews":[{"id":"UmV2aWV3OjQ="},{"id":"UmV2aWV3OjU="},{"id":"UmV2aWV3OjY="}]}},{"id":"0","subPath":[2],"data":{"name":"Product: UHJvZHVjdDoz","reviews":[{"id":"UmV2aWV3Ojc="},{"id":"UmV2aWV3Ojg="},{"id":"UmV2aWV3Ojk="}]}}],"completed":[{"id":"0"}],"hasNext":true}
+            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"name":"Product: UHJvZHVjdDoxOTc0MTQ1MDk=","reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"name":"Product: UHJvZHVjdDozOTM1NzEyMDU5","reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"name":"Product: UHJvZHVjdDoyMjE1MjQ2OTE2","reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
             {"incremental":[{"id":"1","subPath":[0],"data":{"rating":123}},{"id":"1","subPath":[1],"data":{"rating":123}},{"id":"1","subPath":[2],"data":{"rating":123}}],"completed":[{"id":"1"}],"hasNext":false}
