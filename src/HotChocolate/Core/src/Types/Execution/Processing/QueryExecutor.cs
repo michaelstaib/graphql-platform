@@ -33,7 +33,6 @@ internal sealed class QueryExecutor
             operationContext.RequestAborted,
             operationContext.RequestContext,
             operationContext.DiagnosticEvents);
-        Task? startedExecution = null;
 
         try
         {
@@ -55,7 +54,9 @@ internal sealed class QueryExecutor
             var memory = operationContext.Memory;
 
             var execution = scheduler.ExecuteAsync1();
-            startedExecution = execution;
+
+            // track the running execution on the request context.
+            operationContext.RequestContext.OutstandingExecution = execution;
             await scheduler.WaitForCompletionAsync(branchId).ConfigureAwait(false);
             var initialResult = operationContext.BuildResult();
 
@@ -140,9 +141,6 @@ internal sealed class QueryExecutor
         catch
         {
             requestCleanup.DetachCancellation();
-
-            // the aborted request may not hand its request context back to the pool before the execution settled.
-            operationContext.RequestContext.OutstandingExecution = startedExecution;
             throw;
         }
     }

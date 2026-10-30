@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
+using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Processing;
 using HotChocolate.Features;
 using HotChocolate.Fetching;
@@ -15,6 +16,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
     private readonly ObjectPool<PooledRequestContext> _contextPool;
     private readonly DefaultRequestContextAccessor _contextAccessor;
     private readonly IRequestContextEnricher[] _enricher;
+    private readonly IExecutionDiagnosticEvents _diagnosticEvents;
     private List<Task>? _taskList;
 
     public DefaultRequestExecutor(
@@ -23,12 +25,14 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         RequestDelegate requestDelegate,
         ObjectPool<PooledRequestContext> requestContextPool,
         DefaultRequestContextAccessor contextAccessor,
+        IExecutionDiagnosticEvents diagnosticEvents,
         ulong version)
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(applicationServices);
         ArgumentNullException.ThrowIfNull(requestContextPool);
         ArgumentNullException.ThrowIfNull(contextAccessor);
+        ArgumentNullException.ThrowIfNull(diagnosticEvents);
 
         Schema = schema;
         Version = version;
@@ -37,6 +41,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         _applicationServices = applicationServices;
         _contextPool = requestContextPool;
         _contextAccessor = contextAccessor;
+        _diagnosticEvents = diagnosticEvents;
 
         var list = new List<IRequestContextEnricher>();
         CollectEnricher(applicationServices, list);
@@ -209,8 +214,9 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
             {
                 if (context.OutstandingExecution is { IsCompleted: false } execution)
                 {
-                    // the abandoned execution still reads the request context, so it is returned once it settled.
-                    _ = ReturnWhenSettledAsync(context, execution);
+                    // release the request context and the scope once the execution settled.
+                    _ = ReleaseWhenSettledAsync(context, scope, execution);
+                    scope = null;
                 }
                 else
                 {
@@ -218,21 +224,37 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 }
             }
 
-            if (scope is IAsyncDisposable asyncScope)
-            {
-                await asyncScope.DisposeAsync();
-            }
-            else
-            {
-                scope?.Dispose();
-            }
+            await DisposeScopeAsync(scope).ConfigureAwait(false);
         }
     }
 
-    private async Task ReturnWhenSettledAsync(PooledRequestContext context, Task execution)
+    private async Task ReleaseWhenSettledAsync(PooledRequestContext context, IServiceScope? scope, Task execution)
     {
         await RequestCleanup.WaitUntilSettledAsync(execution).ConfigureAwait(false);
-        _contextPool.Return(context);
+
+        try
+        {
+            await DisposeScopeAsync(scope).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _diagnosticEvents.RequestError(context, ex);
+        }
+        finally
+        {
+            _contextPool.Return(context);
+        }
+    }
+
+    private static ValueTask DisposeScopeAsync(IServiceScope? scope)
+    {
+        if (scope is IAsyncDisposable asyncScope)
+        {
+            return asyncScope.DisposeAsync();
+        }
+
+        scope?.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     private void RegisterPoolReturn(PooledRequestContext context, IRequestCleanup? requestCleanup)
