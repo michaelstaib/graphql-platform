@@ -21,6 +21,7 @@ internal sealed partial class OperationContext
     private readonly BranchTracker _branchTracker = new();
     private readonly WorkScheduler _workScheduler;
     private readonly DeferExecutionCoordinator _deferExecutionCoordinator = new();
+    private readonly OperationResultBuilder _result = new();
     private WorkScheduler _currentWorkScheduler;
     private BranchTracker _currentBranchTracker;
     private DeferExecutionCoordinator _currentDeferExecutionCoordinator;
@@ -41,6 +42,9 @@ internal sealed partial class OperationContext
     private MemoryArena? _memory;
     private int _branchId;
     private int _variableIndex;
+    private int _outstandingTasks;
+    private OperationContext? _taskRoot;
+    private TaskCompletionSource? _idleSignal;
     private object? _rootValue;
     private bool _propagateNullValues;
     private bool _isInitialized;
@@ -92,6 +96,65 @@ internal sealed partial class OperationContext
 
     public bool IsSharedScheduler => !ReferenceEquals(_workScheduler, _currentWorkScheduler);
 
+    /// <summary>
+    /// Gets whether tasks created from this context, or from a defer context derived from it,
+    /// have not yet been returned to their pool.
+    /// </summary>
+    public bool HasOutstandingTasks => Volatile.Read(ref _outstandingTasks) > 0;
+
+    /// <summary>
+    /// Registers a task that was created from this context.
+    /// </summary>
+    public void TaskCreated()
+    {
+        Interlocked.Increment(ref _outstandingTasks);
+
+        if (_taskRoot is { } root)
+        {
+            Interlocked.Increment(ref root._outstandingTasks);
+        }
+    }
+
+    /// <summary>
+    /// Releases a task that was registered with <see cref="TaskCreated"/>.
+    /// </summary>
+    public void TaskReturned()
+    {
+        var root = _taskRoot;
+
+        if (Interlocked.Decrement(ref _outstandingTasks) == 0)
+        {
+            Volatile.Read(ref _idleSignal)?.TrySetResult();
+        }
+
+        if (root is not null)
+        {
+            Interlocked.Decrement(ref root._outstandingTasks);
+        }
+    }
+
+    /// <summary>
+    /// Waits until all tasks created from this context have been returned to their pool.
+    /// Only one caller may wait at a time.
+    /// </summary>
+    public ValueTask WaitForOutstandingTasksAsync()
+    {
+        if (!HasOutstandingTasks)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Interlocked.Exchange(ref _idleSignal, signal);
+
+        if (!HasOutstandingTasks)
+        {
+            signal.TrySetResult();
+        }
+
+        return new ValueTask(signal.Task);
+    }
+
     public void Initialize(
         RequestContext requestContext,
         IServiceProvider scopedServices,
@@ -104,6 +167,7 @@ internal sealed partial class OperationContext
         CancellationToken requestAbortedOverride = default,
         MemoryArena? memoryArena = null)
     {
+        _result.Reset();
         _requestContext = requestContext;
         _schema = Unsafe.As<Schema>(requestContext.Schema);
         _memory = memoryArena
@@ -136,9 +200,9 @@ internal sealed partial class OperationContext
 
         IncludeConditionFlags = operation.CreateIncludeConditionFlags(variables);
         DeferConditionFlags = operation.CreateDeferConditionFlags(variables);
-        Result.Data = new ResultDocument(_memory, operation, IncludeConditionFlags);
-        Result.RequestIndex = _requestContext.RequestIndex;
-        Result.VariableIndex = variableIndex;
+        _result.Data = new ResultDocument(_memory, operation, IncludeConditionFlags);
+        _result.RequestIndex = _requestContext.RequestIndex;
+        _result.VariableIndex = variableIndex;
 
         _currentBranchTracker = _branchTracker;
         _currentWorkScheduler = _workScheduler;
@@ -159,9 +223,10 @@ internal sealed partial class OperationContext
         int executionBranchId,
         DeferUsage deferUsage)
     {
+        _result.Reset();
         InitializeChildContext(context, executionBranchId);
 
-        Result.Data = new ResultDocument(
+        _result.Data = new ResultDocument(
             context._memory!,
             context.Operation,
             selectionSet,
@@ -169,8 +234,8 @@ internal sealed partial class OperationContext
             context.IncludeConditionFlags,
             context.DeferConditionFlags,
             deferUsage);
-        Result.RequestIndex = _requestContext.RequestIndex;
-        Result.VariableIndex = context._variableIndex;
+        _result.RequestIndex = _requestContext.RequestIndex;
+        _result.VariableIndex = context._variableIndex;
     }
 
     public void InitializeStreamContext(
@@ -180,17 +245,18 @@ internal sealed partial class OperationContext
         int firstItemIndex,
         int executionBranchId)
     {
+        _result.Reset();
         InitializeChildContext(context, executionBranchId);
 
-        Result.Data = new ResultDocument(
+        _result.Data = new ResultDocument(
             context._memory!,
             context.Operation,
             selection,
             parentPath,
             firstItemIndex,
             context.IncludeConditionFlags);
-        Result.RequestIndex = _requestContext.RequestIndex;
-        Result.VariableIndex = context._variableIndex;
+        _result.RequestIndex = _requestContext.RequestIndex;
+        _result.VariableIndex = context._variableIndex;
     }
 
     private void InitializeChildContext(OperationContext context, int executionBranchId)
@@ -209,14 +275,15 @@ internal sealed partial class OperationContext
         _rootValue = context._rootValue;
         _resolveQueryRootValue = context._resolveQueryRootValue;
         _batchDispatcher = context._batchDispatcher;
+        _variableIndex = context._variableIndex;
         _memory = context._memory;
         RequestCleanup = context.RequestCleanup;
         _currentBranchTracker = context._currentBranchTracker;
         _currentWorkScheduler = context._currentWorkScheduler;
         _currentDeferExecutionCoordinator = context._currentDeferExecutionCoordinator;
+        _taskRoot = context._taskRoot ?? context;
         _propagateNullValues = context._propagateNullValues;
         _branchId = executionBranchId;
-        _variableIndex = context._variableIndex;
         RootContext = context.RootContext;
         _isInitialized = true;
 
@@ -261,11 +328,13 @@ internal sealed partial class OperationContext
             RequestCleanup = null;
             RootContext = null!;
             _branchId = int.MinValue;
+            _taskRoot = null;
+            _idleSignal = null;
             _propagateNullValues = false;
             _isInitialized = false;
             IncludeConditionFlags = default;
             DeferConditionFlags = default;
-            Result.Reset();
+            _result.Reset();
         }
     }
 
