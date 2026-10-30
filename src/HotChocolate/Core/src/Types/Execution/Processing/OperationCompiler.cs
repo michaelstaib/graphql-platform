@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -8,6 +7,7 @@ using HotChocolate.Execution.Pipeline;
 using HotChocolate.Features;
 using HotChocolate.Language;
 using HotChocolate.Language.Visitors;
+using HotChocolate.Text.Json;
 using HotChocolate.Types;
 using HotChocolate.Types.Descriptors.Configurations;
 using Microsoft.Extensions.ObjectPool;
@@ -16,7 +16,6 @@ namespace HotChocolate.Execution.Processing;
 
 public sealed partial class OperationCompiler
 {
-    private static readonly ArrayPool<object> s_objectArrayPool = ArrayPool<object>.Shared;
     private readonly Schema _schema;
     private readonly ObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>> _fieldsPool;
     private readonly OperationCompilerOptimizers _optimizers;
@@ -124,7 +123,7 @@ public sealed partial class OperationCompiler
         DeferConditionVisitor.Instance.Visit(operationDefinition, deferConditions);
         var fields = _fieldsPool.Get();
 
-        var compilationContext = new CompilationContext(s_objectArrayPool.Rent(128));
+        var compilationContext = new CompilationContext(new object[128]);
 
         try
         {
@@ -369,7 +368,7 @@ public sealed partial class OperationCompiler
         var wideIncludeFlags = hasWideIncludeFlags ? new List<ulong[]>() : null;
         var wideIncludeFlagsStride = hasWideIncludeFlags ? (includeConditionCount - 1) >> 6 : 0;
         var deferUsages = new List<DeferUsage>();
-        var selectionSetId = ++lastId;
+        var selectionSetId = NewElementId(ref lastId);
         foreach (var (responseName, nodes) in fieldMap)
         {
             includeFlags.Clear();
@@ -503,14 +502,19 @@ public sealed partial class OperationCompiler
 
                 finalDeferUsage = deferUsages.ToArray();
 
+                // The mask carries the condition bits of every usage in each parent chain, so
+                // a selection stays deferred while any enclosing @defer is enabled.
                 if (!hasWideDeferFlags)
                 {
                     foreach (var usage in deferUsages)
                     {
-                        // This path only runs for operations with at most 64 defer
-                        // conditions, so the shift cannot wrap.
-                        Debug.Assert((uint)usage.DeferConditionIndex < 64);
-                        deferMask |= 1ul << usage.DeferConditionIndex;
+                        for (var chain = usage; chain is not null; chain = chain.Parent)
+                        {
+                            // This path only runs for operations with at most 64 defer
+                            // conditions, so the shift cannot wrap.
+                            Debug.Assert((uint)chain.DeferConditionIndex < 64);
+                            deferMask |= 1ul << chain.DeferConditionIndex;
+                        }
                     }
                 }
                 else
@@ -537,7 +541,7 @@ public sealed partial class OperationCompiler
             var selectionPath = path.AppendField(field.Name);
 
             var selection = new Selection(
-                ++lastId,
+                NewElementId(ref lastId),
                 responseName,
                 selectionPath,
                 field,
@@ -622,6 +626,22 @@ public sealed partial class OperationCompiler
         return new SelectionSet(selectionSetId, path, typeContext, selections, isConditional, hasDeferredSelections);
     }
 
+    /// <summary>
+    /// Gets the next operation unique id for a selection set or a selection.
+    /// </summary>
+    /// <exception cref="GraphQLException">
+    /// The operation needs more ids than a result document can reference.
+    /// </exception>
+    internal static int NewElementId(ref int lastId)
+    {
+        if (lastId >= ResultDocument.DbRow.MaxOperationReferenceId)
+        {
+            throw ThrowHelper.OperationCompiler_TooManySelections();
+        }
+
+        return ++lastId;
+    }
+
     private static bool IsOverflowEmpty(ulong[]? overflow)
     {
         if (overflow is null)
@@ -647,11 +667,14 @@ public sealed partial class OperationCompiler
 
         foreach (var usage in deferUsages)
         {
-            var word = usage.DeferConditionIndex >> 6;
-
-            if (word > maxWord)
+            for (var chain = usage; chain is not null; chain = chain.Parent)
             {
-                maxWord = word;
+                var word = chain.DeferConditionIndex >> 6;
+
+                if (word > maxWord)
+                {
+                    maxWord = word;
+                }
             }
         }
 
@@ -659,16 +682,19 @@ public sealed partial class OperationCompiler
 
         foreach (var usage in deferUsages)
         {
-            var index = usage.DeferConditionIndex;
-            var word = index >> 6;
+            for (var chain = usage; chain is not null; chain = chain.Parent)
+            {
+                var index = chain.DeferConditionIndex;
+                var word = index >> 6;
 
-            if (word == 0)
-            {
-                word0 |= 1ul << index;
-            }
-            else
-            {
-                overflow![word - 1] |= 1ul << (index & 63);
+                if (word == 0)
+                {
+                    word0 |= 1ul << index;
+                }
+                else
+                {
+                    overflow![word - 1] |= 1ul << (index & 63);
+                }
             }
         }
 
@@ -893,10 +919,8 @@ public sealed partial class OperationCompiler
         {
             if (id >= _elementsById.Length)
             {
-                var newArray = s_objectArrayPool.Rent(_elementsById.Length * 2);
-                _elementsById.AsSpan().CopyTo(newArray);
-                s_objectArrayPool.Return(_elementsById);
-                _elementsById = newArray;
+                // Existing readers may continue using the previous array.
+                Array.Resize(ref _elementsById, Math.Max(_elementsById.Length * 2, id + 1));
             }
 
             _elementsById[id] = element;
