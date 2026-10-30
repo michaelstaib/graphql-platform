@@ -13,7 +13,7 @@ internal static partial class ValueCompletion
         object? result)
         => Complete(context, selection, selection.Type, resultValue, result);
 
-    private static void Complete(
+    public static void Complete(
         ValueCompletionContext context,
         Selection selection,
         IType type,

@@ -17,6 +17,7 @@ internal static partial class ValueCompletion
         object runtimeValue)
     {
         var elementType = type.InnerType();
+        var isNonNullElementType = elementType.IsNonNullType();
 
         if (runtimeValue is Array array)
         {
@@ -30,6 +31,7 @@ internal static partial class ValueCompletion
                     context,
                     selection,
                     elementType,
+                    isNonNullElementType,
                     element,
                     array.GetValue(i++)))
                 {
@@ -52,6 +54,7 @@ internal static partial class ValueCompletion
                     context,
                     selection,
                     elementType,
+                    isNonNullElementType,
                     element,
                     list[i++]))
                 {
@@ -76,6 +79,7 @@ internal static partial class ValueCompletion
                     context,
                     selection,
                     elementType,
+                    isNonNullElementType,
                     element,
                     runtimeEnumerator.Current))
                 {
@@ -118,6 +122,7 @@ internal static partial class ValueCompletion
                         context,
                         selection,
                         elementType,
+                        isNonNullElementType,
                         element,
                         buffer[i++]))
                     {
@@ -144,6 +149,7 @@ internal static partial class ValueCompletion
         ValueCompletionContext context,
         Selection selection,
         IType elementType,
+        bool isNonNullElementType,
         ResultElement element,
         object? runtimeItem)
     {
@@ -155,7 +161,7 @@ internal static partial class ValueCompletion
             return false;
         }
 
-        if (elementType.Kind is not TypeKind.NonNull || !element.IsNullOrInvalidated)
+        if (!isNonNullElementType || !element.IsNullOrInvalidated)
         {
             return true;
         }
