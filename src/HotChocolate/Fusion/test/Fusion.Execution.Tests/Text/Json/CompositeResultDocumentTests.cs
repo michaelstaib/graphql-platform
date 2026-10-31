@@ -1171,8 +1171,7 @@ public class CompositeResultDocumentTests : FusionTestBase
         ulong deferFlags)
     {
         // arrange
-        // The operation is compiled directly because the planner splits statically deferred
-        // fragments into incremental plans.
+        // compile the operation directly so deferred fragments stay in one selection set
         var schema = CreateCompositeSchema();
         var document = Utf8GraphQLParser.Parse(
             """
