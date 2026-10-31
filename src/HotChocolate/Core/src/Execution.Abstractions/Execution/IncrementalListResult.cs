@@ -19,15 +19,18 @@ public sealed class IncrementalListResult : IIncrementalResult
     /// <param name="items">
     /// The list items to append to the streamed list field.
     /// </param>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="items"/> is <c>null</c>.
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="items"/> does not have a formatter.
     /// </exception>
     public IncrementalListResult(
         int id,
         ImmutableList<IError>? errors,
-        OperationResultItemCollection items)
+        OperationResultData items)
     {
-        ArgumentNullException.ThrowIfNull(items);
+        if (items.Formatter is null)
+        {
+            throw new ArgumentException("The list items must have a formatter.", nameof(items));
+        }
 
         Id = id;
         Errors = errors ?? [];
@@ -43,5 +46,5 @@ public sealed class IncrementalListResult : IIncrementalResult
     /// <summary>
     /// Gets the list items to append to the streamed list field.
     /// </summary>
-    public OperationResultItemCollection Items { get; }
+    public OperationResultData Items { get; }
 }

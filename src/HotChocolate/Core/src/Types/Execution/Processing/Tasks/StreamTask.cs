@@ -235,7 +235,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
 
                 await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
 
-                var result = context.BuildStreamItemsResult();
+                var result = context.BuildResult();
 
                 if (listResult.IsNullOrInvalidated || result.Data is { IsValueNull: true })
                 {
@@ -306,12 +306,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         List<IExecutionTask> tasks,
         int itemsBranchId)
     {
-        var listResult = default(ResultElement);
-
-        foreach (var property in context.Result.Data.Data.EnumerateObject())
-        {
-            listResult = property.Value;
-        }
+        var listResult = context.Result.Data.ListRoot;
 
         _resolverContext.Initialize(_parent, _selection, listResult, context, _deferUsage, _scopedContext);
         _resolverContext.BranchId = itemsBranchId;
