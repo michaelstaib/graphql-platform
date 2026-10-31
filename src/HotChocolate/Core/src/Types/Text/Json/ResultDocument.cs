@@ -338,9 +338,11 @@ public sealed partial class ResultDocument : IDisposable
         {
             parent = _metaDb.GetParentCursor(parent);
 
-            // in this case the parent must be a reference, otherwise we would have
-            // found an inconsistency in the database.
-            Debug.Assert(_metaDb.GetElementTokenType(parent, resolveReferences: false) == ElementTokenType.Reference);
+            // in this case the parent must be a reference, or null if the container was removed from the result
+            // by null propagation, otherwise we would have found an inconsistency in the database.
+            Debug.Assert(
+                _metaDb.GetElementTokenType(parent, resolveReferences: false)
+                    is ElementTokenType.Reference or ElementTokenType.Null);
         }
 
         return new ResultElement(this, parent);
@@ -1097,8 +1099,13 @@ public sealed partial class ResultDocument : IDisposable
             _previousData = null;
         }
 
-        _data.AsSpan().Clear();
-        s_arrayPool.Return(_data);
+        // a document whose construction failed has no data chunks to return.
+        if (_data is not null)
+        {
+            _data.AsSpan().Clear();
+            s_arrayPool.Return(_data);
+        }
+
         _data = [];
     }
 

@@ -57,6 +57,7 @@ public class ResolverCleanupTests
         // arrange
         List<string> log = [];
         var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = new CancellationTokenSource();
         var executor = await new ServiceCollection()
             .AddGraphQL()
@@ -78,7 +79,13 @@ public class ResolverCleanupTests
                         .Type<StringType>()
                         .Use(next => context =>
                         {
-                            context.RegisterForCleanup(() => Log(log, "request"), CleanAfter.Request);
+                            context.RegisterForCleanup(
+                                async () =>
+                                {
+                                    await Log(log, "request").ConfigureAwait(false);
+                                    cleanupCompleted.TrySetResult();
+                                },
+                                CleanAfter.Request);
                             registered.TrySetResult();
                             return next(context);
                         })
@@ -92,6 +99,7 @@ public class ResolverCleanupTests
             "{ block ... @defer { deferred } }",
             cancellation.Token);
         await result.DisposeAsync();
+        await cleanupCompleted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         // assert
         Assert.Equal(["request"], log);
