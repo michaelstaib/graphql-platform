@@ -3889,8 +3889,8 @@ public class DocumentRewriterTests : FusionTestBase
             mutation($x: Boolean!, $y: Boolean!) {
               thing: create @include(if: $x) {
                 id
-                title
                 name @include(if: $y)
+                title
               }
               thing: create @skip(if: $x) @include(if: $y) {
                 name
@@ -4073,10 +4073,10 @@ public class DocumentRewriterTests : FusionTestBase
             """
             mutation($x: Boolean!, $y: Boolean!) {
               thing: create {
-                title
                 ... @include(if: $x) {
                   id @include(if: $y)
                 }
+                title
                 ... @defer(label: "d") {
                   name
                 }
