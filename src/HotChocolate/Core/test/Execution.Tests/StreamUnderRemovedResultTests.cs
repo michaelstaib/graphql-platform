@@ -17,11 +17,13 @@ public sealed class StreamUnderRemovedResultTests
         var source = new StreamSource();
         var pool = new TrackingOperationContextPool();
         var executor = await CreateExecutorAsync(source, pool);
+        source.ObjectsGate.SetResult();
 
         // act
         var payloads = await ExecuteAsync(
             executor,
-            "{ name nullableObjects { id slowList @stream(initialCount: 0) } }");
+            "{ name nullableObjects { id slowList @stream(initialCount: 0) } }",
+            _ => ValueTask.CompletedTask);
         await pool.WaitForReturnsAsync(1);
         await source.WaitForDisposalAsync();
         CollectGarbage();
@@ -60,12 +62,15 @@ public sealed class StreamUnderRemovedResultTests
     {
         // arrange
         var source = new StreamSource();
-        var executor = await CreateExecutorAsync(source, new TrackingOperationContextPool());
+        var pool = new TrackingOperationContextPool();
+        var executor = await CreateExecutorAsync(source, pool);
 
         // act
         var payloads = await ExecuteAsync(
             executor,
-            "{ name nullableBroken { id broken slowList @stream(initialCount: 0) } }");
+            "{ name nullableBroken { id broken slowList @stream(initialCount: 0) } }",
+            _ => ValueTask.CompletedTask);
+        await pool.WaitForReturnsAsync(1);
         await source.WaitForDisposalAsync();
         CollectGarbage();
 
@@ -96,6 +101,7 @@ public sealed class StreamUnderRemovedResultTests
                 """
             ]);
         Assert.Equal(source.Started, source.Disposed);
+        Assert.All(pool.Reusable, Assert.True);
     }
 
     [Fact]
@@ -109,7 +115,16 @@ public sealed class StreamUnderRemovedResultTests
         // act
         var payloads = await ExecuteAsync(
             executor,
-            "{ name ... @defer { nullableObjects { id slowList @stream(initialCount: 0) } } }");
+            "{ name ... @defer { nullableObjects { id slowList @stream(initialCount: 0) } } }",
+            index =>
+            {
+                if (index is 0)
+                {
+                    source.ObjectsGate.TrySetResult();
+                }
+
+                return ValueTask.CompletedTask;
+            });
         await pool.WaitForReturnsAsync(2);
         await source.WaitForDisposalAsync();
         CollectGarbage();
@@ -177,7 +192,8 @@ public sealed class StreamUnderRemovedResultTests
         // act
         var payloads = await ExecuteAsync(
             executor,
-            "{ slow streamedObjects @stream(initialCount: 0) { id slowList @stream(initialCount: 0) } }");
+            "{ slow streamedObjects @stream(initialCount: 0) { id slowList @stream(initialCount: 0) } }",
+            _ => ValueTask.CompletedTask);
         await pool.WaitForReturnsAsync(2);
         CollectGarbage();
 
@@ -230,7 +246,10 @@ public sealed class StreamUnderRemovedResultTests
         GC.Collect();
     }
 
-    private static async Task<List<string>> ExecuteAsync(IRequestExecutor executor, string query)
+    private static async Task<List<string>> ExecuteAsync(
+        IRequestExecutor executor,
+        string query,
+        Func<int, ValueTask> onPayload)
     {
         return await Task.Run(
                 async () =>
@@ -252,6 +271,7 @@ public sealed class StreamUnderRemovedResultTests
                     {
                         await using var cleanup = payload;
                         payloads.Add(payload.ToJson());
+                        await onPayload(payloads.Count - 1);
                     }
 
                     return payloads;
@@ -283,7 +303,12 @@ public sealed class StreamUnderRemovedResultTests
                     descriptor
                         .Field("nullableObjects")
                         .Type("[Item!]")
-                        .Resolve(_ => new List<Item?> { new(1, source), null, new(3, source) });
+                        .Resolve(
+                            async _ =>
+                            {
+                                await source.ObjectsGate.Task;
+                                return new List<Item?> { new(1, source), null, new(3, source) };
+                            });
                     descriptor
                         .Field("nullableBroken")
                         .Type("[Item!]")
@@ -327,6 +352,8 @@ public sealed class StreamUnderRemovedResultTests
         private int _resolved;
         private int _started;
         private int _disposed;
+
+        public TaskCompletionSource ObjectsGate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int Resolved => Volatile.Read(ref _resolved);
 
