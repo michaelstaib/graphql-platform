@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HotChocolate.Execution.Pipeline;
 
 namespace HotChocolate.Execution;
 
@@ -29,7 +30,7 @@ public sealed class IncrementalListResult : IIncrementalResult
     {
         if (items.Formatter is null)
         {
-            throw new ArgumentException("The list items must have a formatter.", nameof(items));
+            throw ThrowHelper.IncrementalListResult_ItemsWithoutFormatter(nameof(items));
         }
 
         Id = id;
