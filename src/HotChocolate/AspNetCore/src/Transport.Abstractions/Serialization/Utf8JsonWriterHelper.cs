@@ -1,4 +1,6 @@
 #if FUSION
+using System.Collections.Immutable;
+using HotChocolate.Fusion.Execution;
 using HotChocolate.Language;
 using HotChocolate.Text.Json;
 #else
@@ -33,91 +35,133 @@ internal static class Utf8JsonWriterHelper
     }
 
     public static void WriteOperationRequest(JsonWriter writer, OperationRequest request)
+        => WriteOperationRequest(
+            writer,
+            request.Id,
+            request.Query.Span,
+            request.OperationName,
+            request.OnError,
+            request.Variables.Values,
+            request.Extensions);
+
+    /// <summary>
+    /// Writes a single GraphQL operation request object from its fields.
+    /// Empty or <see langword="null"/> fields are omitted.
+    /// </summary>
+    public static void WriteOperationRequest(
+        JsonWriter writer,
+        string? id,
+        ReadOnlySpan<byte> query,
+        string? operationName,
+        ErrorHandlingMode? onError,
+        JsonSegment variables,
+        JsonSegment extensions)
     {
         writer.WriteStartObject();
 
-        if (!string.IsNullOrWhiteSpace(request.Id))
+        if (!string.IsNullOrWhiteSpace(id))
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.IdProp);
-            writer.WriteStringValue(request.Id);
+            writer.WriteStringValue(id);
         }
 
-        if (!request.Query.IsEmpty)
+        if (!query.IsEmpty)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.QueryProp);
-            writer.WriteStringValue(request.Query.Span);
+            writer.WriteStringValue(query);
         }
 
-        if (!string.IsNullOrWhiteSpace(request.OperationName))
+        if (!string.IsNullOrWhiteSpace(operationName))
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.OperationNameProp);
-            writer.WriteStringValue(request.OperationName);
+            writer.WriteStringValue(operationName);
         }
 
-        if (request.OnError is { } errorHandlingMode)
+        if (onError is { } errorHandlingMode)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.OnErrorProp);
             writer.WriteStringValue(GetErrorHandlingModeAsString(errorHandlingMode));
         }
 
-        if (!request.Variables.IsEmpty)
+        if (!variables.IsEmpty)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.VariablesProp);
-            request.Variables.Values.WriteTo(writer);
+            variables.WriteTo(writer);
         }
 
-        if (!request.Extensions.IsEmpty)
+        if (!extensions.IsEmpty)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.ExtensionsProp);
-            request.Extensions.WriteTo(writer);
+            extensions.WriteTo(writer);
         }
 
         writer.WriteEndObject();
     }
 
     public static void WriteVariableBatchRequest(JsonWriter writer, VariableBatchRequest request)
+        => WriteVariableBatchRequest(
+            writer,
+            request.Id,
+            request.Query.Span,
+            request.OperationName,
+            request.OnError,
+            request.Variables,
+            request.Extensions);
+
+    /// <summary>
+    /// Writes a GraphQL variable batch request object from its fields.
+    /// Empty or <see langword="null"/> fields are omitted.
+    /// </summary>
+    public static void WriteVariableBatchRequest(
+        JsonWriter writer,
+        string? id,
+        ReadOnlySpan<byte> query,
+        string? operationName,
+        ErrorHandlingMode? onError,
+        ImmutableArray<VariableValues> variables,
+        JsonSegment extensions)
     {
         writer.WriteStartObject();
 
-        if (!string.IsNullOrWhiteSpace(request.Id))
+        if (!string.IsNullOrWhiteSpace(id))
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.IdProp);
-            writer.WriteStringValue(request.Id);
+            writer.WriteStringValue(id);
         }
 
-        if (!request.Query.IsEmpty)
+        if (!query.IsEmpty)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.QueryProp);
-            writer.WriteStringValue(request.Query.Span);
+            writer.WriteStringValue(query);
         }
 
-        if (!string.IsNullOrWhiteSpace(request.OperationName))
+        if (!string.IsNullOrWhiteSpace(operationName))
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.OperationNameProp);
-            writer.WriteStringValue(request.OperationName);
+            writer.WriteStringValue(operationName);
         }
 
-        if (request.OnError is { } errorHandlingMode)
+        if (onError is { } errorHandlingMode)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.OnErrorProp);
             writer.WriteStringValue(GetErrorHandlingModeAsString(errorHandlingMode));
         }
 
-        if (!request.Variables.IsDefaultOrEmpty)
+        if (!variables.IsDefaultOrEmpty)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.VariablesProp);
             writer.WriteStartArray();
-            foreach (var vars in request.Variables)
+            foreach (var vars in variables)
             {
                 vars.Values.WriteTo(writer);
             }
             writer.WriteEndArray();
         }
 
-        if (!request.Extensions.IsEmpty)
+        if (!extensions.IsEmpty)
         {
             writer.WritePropertyName(Utf8GraphQLRequestProperties.ExtensionsProp);
-            request.Extensions.WriteTo(writer);
+            extensions.WriteTo(writer);
         }
 
         writer.WriteEndObject();

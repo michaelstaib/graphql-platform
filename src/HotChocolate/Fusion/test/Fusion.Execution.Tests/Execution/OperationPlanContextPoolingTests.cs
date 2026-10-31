@@ -125,6 +125,26 @@ public sealed class OperationPlanContextPoolingTests : FusionTestBase
             dependent => Assert.Same(smallDependent, dependent));
     }
 
+    [Fact]
+    public async Task GetBatchRequestBuffer_Should_ReplaceBuffer_When_BatchLengthChanges()
+    {
+        // arrange
+        await using var fixture = await PoolingTestFixture.CreateAsync();
+        var (plan, _, _, batch, _) = CreateLargeCapabilityPlan(fixture.DefaultOperation);
+        await using var rental = fixture.Rent();
+        rental.Initialize(plan);
+
+        // act
+        var first = rental.Context.GetBatchRequestBuffer(batch, 2);
+        var second = rental.Context.GetBatchRequestBuffer(batch, 2);
+        var resized = rental.Context.GetBatchRequestBuffer(batch, 3);
+
+        // assert
+        Assert.Same(first, second);
+        Assert.NotSame(first, resized);
+        Assert.Equal(3, resized.Length);
+    }
+
     private static (
         OperationPlan Plan,
         NodeFieldExecutionNode NodeField,
