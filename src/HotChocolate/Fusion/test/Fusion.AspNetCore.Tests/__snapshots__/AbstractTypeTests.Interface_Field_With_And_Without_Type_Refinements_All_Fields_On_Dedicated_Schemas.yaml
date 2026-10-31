@@ -218,13 +218,13 @@ operationPlan:
           abstractTypes {
             __typename @fusion__requirement
             upvotes
-            id @fusion__requirement
             ... on Discussion {
               score
             }
             ... on Author {
               score
             }
+            id @fusion__requirement
           }
         }
       hash: f235c2c8196655defd31ba724ceb73d3
