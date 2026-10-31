@@ -20,6 +20,7 @@ public sealed partial class ResultDocument : IDisposable
     private readonly ulong[]? _wideIncludeFlags;
     private readonly Path _rootPath = Path.Root;
     private readonly int _startIndex;
+    private readonly Cursor? _listCursor;
     internal MetaDb _metaDb;
     private long _dataHead;
     private int _rentedDataChunks;
@@ -113,7 +114,7 @@ public sealed partial class ResultDocument : IDisposable
         _rootPath = path;
         _startIndex = startIndex;
 
-        Data = CreateListRoot(selection);
+        Data = CreateListRoot(selection, out _listCursor);
     }
 
     private static MemorySegment[] RentDataChunks()
@@ -132,6 +133,13 @@ public sealed partial class ResultDocument : IDisposable
     /// or <c>0</c> if the document does not have a list root.
     /// </summary>
     internal int StartIndex => _startIndex;
+
+    /// <summary>
+    /// Gets the list of a document that was created with a list root,
+    /// or the default element if the document does not have a list root.
+    /// </summary>
+    internal ResultElement ListRoot
+        => _listCursor is { } cursor ? new ResultElement(this, cursor) : default;
 
     // A data location packs the chunk index in the high 12 bits and the byte offset within the
     // chunk in the low 17 bits, fitting the 29-bit location field of a metadb row. The chunk size
@@ -601,20 +609,15 @@ public sealed partial class ResultDocument : IDisposable
         }
     }
 
-    private ResultElement CreateListRoot(Selection selection)
+    private ResultElement CreateListRoot(Selection selection, out Cursor? listCursor)
     {
         lock (_dataChunkLock)
         {
             var startObjectCursor = WriteStartObject(Cursor.CreateZero(), isSelectionSet: false);
 
-            if (_wideIncludeFlags is null)
-            {
-                WriteEmptyProperty(startObjectCursor, selection);
-            }
-            else
-            {
-                WriteEmptyPropertyWide(startObjectCursor, selection);
-            }
+            listCursor = _wideIncludeFlags is null
+                ? WriteEmptyProperty(startObjectCursor, selection)
+                : WriteEmptyPropertyWide(startObjectCursor, selection);
 
             WriteEndObject(startObjectCursor, 1);
 
@@ -957,7 +960,7 @@ public sealed partial class ResultDocument : IDisposable
     private void WriteEndArray() => _metaDb.Append(ElementTokenType.EndArray);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void WriteEmptyProperty(Cursor parent, Selection selection)
+    private Cursor WriteEmptyProperty(Cursor parent, Selection selection)
     {
         var flags = ElementFlags.None;
 
@@ -993,13 +996,13 @@ public sealed partial class ResultDocument : IDisposable
             operationReferenceType: OperationReferenceType.Selection,
             flags: flags);
 
-        _metaDb.Append(
+        return _metaDb.Append(
             ElementTokenType.None,
             parent: prop.Value);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void WriteEmptyPropertyWide(Cursor parent, Selection selection)
+    private Cursor WriteEmptyPropertyWide(Cursor parent, Selection selection)
     {
         var flags = ElementFlags.None;
 
@@ -1035,7 +1038,7 @@ public sealed partial class ResultDocument : IDisposable
             operationReferenceType: OperationReferenceType.Selection,
             flags: flags);
 
-        _metaDb.Append(
+        return _metaDb.Append(
             ElementTokenType.None,
             parent: prop.Value);
     }
