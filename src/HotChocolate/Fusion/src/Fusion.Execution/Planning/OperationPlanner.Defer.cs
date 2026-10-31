@@ -354,10 +354,10 @@ public sealed partial class OperationPlanner
                 // planned as a keyed lookup rooted at the anchor's own type rather than a
                 // fresh operation re-rooted at Query. Seeding a Lookup work item (instead
                 // of a Root work item) lets PlanQueue.EnqueueLookupPlanNodes pick a direct
-                // lookup for the anchor type when one exists; when none exists it falls
-                // back to walking the path up to the root
-                // (EnqueueParentPathLookupPlanNodes), which reproduces the previous root
-                // re-fetch behavior.
+                // lookup for the anchor type when one exists, even on the source schema
+                // the anchor came from, because the lookup key is routed to the enclosing
+                // scope. When no direct lookup resolves the anchor, it walks the path up
+                // to the root (EnqueueParentPathLookupPlanNodes).
                 var anchorSet = new SelectionSet(
                     index.GetId(anchorSelectionSet),
                     anchorSelectionSet,
@@ -516,9 +516,9 @@ public sealed partial class OperationPlanner
         }
 
         // A producer step exists purely to supply another incremental-plan step's
-        // requirement: it targets the defer's own anchor (the same entity the
-        // enclosing scope already fetches down to) and every field it selects is
-        // consumed as a requirement by its dependents, so it never carries
+        // requirement: it targets the defer's own anchor or one of its ancestors
+        // (entities the enclosing scope already fetches down to) and every field it
+        // selects is consumed as a requirement by its dependents, so it never carries
         // client-visible deferred output of its own. Such a step's data can always
         // be routed to the enclosing scope instead of being fetched a second time
         // inside this incremental plan. Earlier seeding always produced exactly one
