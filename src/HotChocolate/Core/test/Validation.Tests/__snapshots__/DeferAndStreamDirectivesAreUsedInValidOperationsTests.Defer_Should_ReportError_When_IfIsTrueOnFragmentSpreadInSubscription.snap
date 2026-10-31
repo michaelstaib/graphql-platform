@@ -1,0 +1,17 @@
+{
+  "message": "The @defer directive in a subscription operation must have an \u0060if\u0060 argument that can disable it, either a variable or the value false.",
+  "locations": [
+    {
+      "line": 3,
+      "column": 14
+    }
+  ],
+  "path": [
+    "newMessage"
+  ],
+  "extensions": {
+    "specifiedBy": "https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-In-Valid-Operations",
+    "rfc": "https://github.com/graphql/graphql-spec/pull/1110",
+    "directive": "defer"
+  }
+}

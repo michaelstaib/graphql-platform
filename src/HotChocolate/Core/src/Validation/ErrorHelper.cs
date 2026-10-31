@@ -686,6 +686,17 @@ internal static class ErrorHelper
                 .SetPath(context.CreateErrorPath())
                 .Build();
 
+        public IError DeferAndStreamNotDisableableInSubscription(DirectiveNode directive)
+            => ErrorBuilder.New()
+                .SetMessage(
+                    Resources.ErrorHelper_DeferAndStreamNotDisableableInSubscription,
+                    directive.Name.Value)
+                .AddLocation(directive)
+                .SpecifiedBy("sec-Defer-And-Stream-Directives-Are-Used-In-Valid-Operations", rfc: 1110)
+                .SetExtension("directive", directive.Name.Value)
+                .SetPath(context.CreateErrorPath())
+                .Build();
+
         public IError StreamOnNonListField(ISyntaxNode selection)
             => ErrorBuilder.New()
                 .SetMessage("@stream directive is only valid on list fields.")

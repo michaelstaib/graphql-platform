@@ -197,6 +197,21 @@ internal static class ErrorHelper
         return result;
     }
 
+    public static OperationResult DeferAndStreamEnabledInSubscription(string directiveName)
+    {
+        var result = OperationResult.FromError(
+            ErrorBuilder.New()
+                .SetMessage(ErrorHelper_DeferAndStreamEnabledInSubscription, directiveName)
+                .SetExtension("directive", directiveName)
+                .Build());
+
+        result.ContextData = result.ContextData.Add(
+            ExecutionContextData.HttpStatusCode,
+            HttpStatusCode.BadRequest);
+
+        return result;
+    }
+
     public static OperationResult RequestTypeNotAllowed()
     {
         var result = OperationResult.FromError(

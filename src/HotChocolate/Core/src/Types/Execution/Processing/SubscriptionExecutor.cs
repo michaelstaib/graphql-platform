@@ -1,7 +1,10 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Options;
+using HotChocolate.Types;
 using Microsoft.Extensions.ObjectPool;
+using static HotChocolate.Execution.ErrorHelper;
 using static HotChocolate.Execution.ThrowHelper;
 
 namespace HotChocolate.Execution.Processing;
@@ -41,6 +44,15 @@ internal sealed partial class SubscriptionExecutor(
 
         try
         {
+            if (operation.HasIncrementalParts
+                && TryFindEnabledIncrementalDirective(
+                    operation,
+                    requestContext.VariableValues[0],
+                    out var incrementalDirective))
+            {
+                return DeferAndStreamEnabledInSubscription(incrementalDirective);
+            }
+
             subscription = await Subscription.SubscribeAsync(
                 operationContextPool,
                 queryExecutor,
@@ -94,5 +106,88 @@ internal sealed partial class SubscriptionExecutor(
 
             return [error];
         }
+    }
+
+    private static bool TryFindEnabledIncrementalDirective(
+        Operation operation,
+        IVariableValueCollection variables,
+        [NotNullWhen(true)] out string? directiveName)
+        => TryFindEnabledIncrementalDirective(
+            operation,
+            operation.RootSelectionSet,
+            variables,
+            operation.CreateIncludeConditionFlags(variables),
+            operation.CreateDeferConditionFlags(variables),
+            out directiveName);
+
+    private static bool TryFindEnabledIncrementalDirective(
+        Operation operation,
+        SelectionSet selectionSet,
+        IVariableValueCollection variables,
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        [NotNullWhen(true)] out string? directiveName)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (!selection.IsIncluded(includeFlags))
+            {
+                continue;
+            }
+
+            if (selection.IsDeferred(deferFlags))
+            {
+                directiveName = DirectiveNames.Defer.Name;
+                return true;
+            }
+
+            if (selection.IsList && IsStreamEnabled(selection, variables))
+            {
+                directiveName = DirectiveNames.Stream.Name;
+                return true;
+            }
+
+            if (selection.IsLeaf)
+            {
+                continue;
+            }
+
+            foreach (var possibleType in operation.GetPossibleTypes(selection))
+            {
+                if (TryFindEnabledIncrementalDirective(
+                    operation,
+                    operation.GetSelectionSet(selection, possibleType),
+                    variables,
+                    includeFlags,
+                    deferFlags,
+                    out directiveName))
+                {
+                    return true;
+                }
+            }
+        }
+
+        directiveName = null;
+        return false;
+    }
+
+    private static bool IsStreamEnabled(Selection selection, IVariableValueCollection variables)
+    {
+        foreach (var syntaxNode in selection.SyntaxNodes)
+        {
+            var directive = syntaxNode.Node.GetStreamDirective();
+
+            if (directive is not null
+                && DirectiveIfCondition.IsEnabled(
+                    DirectiveNames.Stream.Name,
+                    directive.GetArgumentValue(DirectiveNames.Stream.Arguments.If),
+                    variables,
+                    defaultValue: true))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
