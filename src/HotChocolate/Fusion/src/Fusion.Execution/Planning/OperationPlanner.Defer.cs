@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning.Partitioners;
@@ -83,6 +84,20 @@ public sealed partial class OperationPlanner
                         throw new DeferredMutationLookupRequiredException(descriptor.Path, anchorTypeName);
                     }
                 }
+            }
+
+            // A descriptor that selects only __typename needs no incremental plan: the field is
+            // made visible on the enclosing step, and its nested descriptors plan against the
+            // scope enclosing it.
+            if (rewrittenIncrementalPlan.IsEmpty
+                && TryServeTypeNameFromParent(descriptor, contextGraph.GetParentContext(descriptor), contextGraph))
+            {
+                if (descriptorsWithChildren.Contains(descriptor))
+                {
+                    contextGraph.RegisterTransparentDescriptor(descriptor);
+                }
+
+                continue;
             }
 
             // When every field this descriptor would deliver incrementally is already
@@ -319,6 +334,13 @@ public sealed partial class OperationPlanner
                 throw new InvalidOperationException(
                     $"Unable to locate the defer anchor selection set at path '{descriptor.Path}' "
                     + "inside the incremental plan operation.");
+            }
+
+            // Nothing to fetch: the anchor selects only __typename, which every source schema
+            // resolves, so no lookup is needed to produce it.
+            if (!isMutation && SelectsOnlyTypeName(anchorSelectionSet))
+            {
+                return new DeferIncrementalPlanResult([], null);
             }
 
             if (isMutation)
@@ -885,9 +907,7 @@ public sealed partial class OperationPlanner
 
         foreach (var step in parentContext.ParentSteps)
         {
-            if (step is not OperationPlanStep candidate
-                || !candidate.Target.IsParentOfOrSame(descriptor.Path)
-                || candidate.Conditions.Length != 0)
+            if (!TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate))
             {
                 continue;
             }
@@ -924,13 +944,7 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        if (!TryLocateSelectionSetAtPath(
-            GetStepEntitySelectionSet(parentStep),
-            GetStepEntityType(parentStep),
-            descriptor.Path,
-            parentStep.Target.Length,
-            out var parentTargetSelectionSet,
-            out _))
+        if (!TryLocateDeferRequirementTarget(parentStep, descriptor.Path, out var parentTargetSelectionSet, out _))
         {
             return false;
         }
@@ -995,6 +1009,100 @@ public sealed partial class OperationPlanner
             }
         }
 
+        MakeFieldsVisibleInParentScope(
+            descriptor,
+            parentStep,
+            parentTargetSelectionSet,
+            parentContext,
+            contextGraph,
+            fieldNames);
+
+        return true;
+    }
+
+    private bool TryServeTypeNameFromParent(
+        IncrementalPlanDescriptor descriptor,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph)
+    {
+        if (descriptor.Path.IsRoot
+            || descriptor.Operation.Operation != OperationType.Query
+            || !TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out var anchorSelectionSet,
+                out _)
+            || !SelectsOnlyTypeName(anchorSelectionSet))
+        {
+            return false;
+        }
+
+        foreach (var step in parentContext.ParentSteps)
+        {
+            if (TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate)
+                && TryLocateDeferRequirementTarget(candidate, descriptor.Path, out var parentTargetSelectionSet, out _))
+            {
+                MakeFieldsVisibleInParentScope(
+                    descriptor,
+                    candidate,
+                    parentTargetSelectionSet,
+                    parentContext,
+                    contextGraph,
+                    [IntrospectionFieldNames.TypeName]);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetUnconditionalEnclosingStep(
+        PlanStep step,
+        SelectionPath path,
+        [NotNullWhen(true)] out OperationPlanStep? enclosingStep)
+    {
+        if (step is OperationPlanStep candidate
+            && candidate.Target.IsParentOfOrSame(path)
+            && candidate.Conditions.Length == 0)
+        {
+            enclosingStep = candidate;
+            return true;
+        }
+
+        enclosingStep = null;
+        return false;
+    }
+
+    private static bool SelectsOnlyTypeName(SelectionSetNode selectionSet)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode { Directives.Count: 0 } field
+                    when field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal):
+                    break;
+
+                case InlineFragmentNode fragment when SelectsOnlyTypeName(fragment.SelectionSet):
+                    break;
+
+                default:
+                    return false;
+            }
+        }
+
+        return selectionSet.Selections.Count > 0;
+    }
+
+    private void MakeFieldsVisibleInParentScope(
+        IncrementalPlanDescriptor descriptor,
+        OperationPlanStep parentStep,
+        SelectionSetNode parentTargetSelectionSet,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph,
+        List<string> fieldNames)
+    {
         var updatedTargetSelectionSet = MakeFieldsVisible(parentTargetSelectionSet, fieldNames);
         var updatedParentStep = ReferenceEquals(updatedTargetSelectionSet, parentTargetSelectionSet)
             ? parentStep
@@ -1038,8 +1146,6 @@ public sealed partial class OperationPlanner
             contextGraph.UpdateDeferContext(
                 parentContext.OwnerDescriptor!, updatedParentSteps, updatedInternalOperation);
         }
-
-        return true;
     }
 
     /// <summary>

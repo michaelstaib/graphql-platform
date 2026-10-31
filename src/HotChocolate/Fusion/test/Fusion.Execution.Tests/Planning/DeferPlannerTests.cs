@@ -3278,6 +3278,120 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_NestedDefer_Should_PlanInnerGroup_When_OuterGroupOnlySelectsTypename()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    products {
+                        ... @defer(label: "outer") {
+                            __typename
+                            ... @defer(label: "inner") {
+                                id
+                            }
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanInnerGroup_When_OuterGroupOnlySelectsTypenameAroundOtherSchemaField()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    products {
+                        id
+                        ... @defer(label: "outer") {
+                            __typename
+                            ... @defer(label: "inner") {
+                                reviews {
+                                    id
+                                }
+                            }
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanOuterGroup_When_TypenameIsSelectedBesideOtherFields()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    products {
+                        id
+                        ... @defer(label: "outer") {
+                            __typename
+                            reviews {
+                                id
+                            }
+                            ... @defer(label: "inner") {
+                                rating
+                            }
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_PlanTypenameOnly_When_InnerDeferIsDisabled()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    products {
+                        id
+                        ... @defer(label: "outer") {
+                            __typename
+                            ... @defer(label: "inner", if: false) {
+                                reviews {
+                                    id
+                                }
+                            }
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
