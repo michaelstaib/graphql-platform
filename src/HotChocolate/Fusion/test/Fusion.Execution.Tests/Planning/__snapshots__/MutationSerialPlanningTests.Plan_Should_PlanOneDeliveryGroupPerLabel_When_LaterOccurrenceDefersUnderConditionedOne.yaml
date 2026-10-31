@@ -2,8 +2,8 @@ operation:
   - document: |
       mutation M($x: Boolean!) {
         a: bump(counter: "s", by: 1) {
-          id @fusion__requirement
           id @include(if: $x)
+          id @fusion__requirement
         }
       }
     name: M
