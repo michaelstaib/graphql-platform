@@ -61,6 +61,24 @@ public class GraphQLHttpResponseArenaReadTests
         Assert.True(stream.IsDisposed);
     }
 
+    [Fact]
+    public async Task ReadAsResult_Should_NotIssueZeroByteReads_When_ContentLengthIsDeclared()
+    {
+        // arrange
+        var payload = CreatePayload(128);
+        var stream = new FragmentedStream(Encoding.UTF8.GetBytes(payload), 31, asynchronous: false);
+        using var response = CreateResponse(stream, contentLength: 128, "utf-8");
+        using var arena = new MemoryArena();
+
+        // act
+        using var document = await response.ReadAsResultAsync(arena, TestContext.Current.CancellationToken);
+        arena.Seal();
+
+        // assert
+        Assert.Equal(payload, document.Root.GetRawText());
+        Assert.Equal(0, stream.ZeroByteReads);
+    }
+
     [Theory]
     [InlineData(3)]
     [InlineData(4096)]
@@ -239,6 +257,8 @@ public class GraphQLHttpResponseArenaReadTests
     {
         public int BytesRead { get; private set; }
 
+        public int ZeroByteReads { get; private set; }
+
         public bool IsDisposed { get; private set; }
 
         public Action<int>? BeforeRead { get; init; }
@@ -268,6 +288,11 @@ public class GraphQLHttpResponseArenaReadTests
             if (asynchronous)
             {
                 await Task.Yield();
+            }
+
+            if (buffer.IsEmpty)
+            {
+                ZeroByteReads++;
             }
 
             BeforeRead?.Invoke(BytesRead);

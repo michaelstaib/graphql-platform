@@ -38,7 +38,7 @@ public sealed class GraphQLHttpResponse : IDisposable
         bufferSize: 4096,
         minimumReadSize: 1,
         leaveOpen: true,
-        useZeroByteReads: true);
+        useZeroByteReads: false);
 #endif
     private readonly HttpResponseMessage _message;
 
