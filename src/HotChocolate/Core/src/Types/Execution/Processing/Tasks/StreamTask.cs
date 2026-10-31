@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Text.Json;
+using Microsoft.Extensions.ObjectPool;
 using static HotChocolate.Execution.Processing.ValueCompletion;
 
 namespace HotChocolate.Execution.Processing.Tasks;
@@ -364,31 +365,32 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             _resolverContext.Clean();
         }
 
-        if (listResult is { IsNullable: false, IsNullOrInvalidated: true })
+        if (listResult.IsNullOrInvalidated)
         {
-            if (context.PropagateNullValues)
+            if (!listResult.IsNullable)
             {
-                PropagateNullValues(listResult);
-            }
-            else
-            {
-                listResult.SetNullValue();
-            }
+                if (context.PropagateNullValues)
+                {
+                    PropagateNullValues(listResult);
+                }
+                else
+                {
+                    listResult.SetNullValue();
+                }
 
-            context.Result.AddNonNullViolation(listResult.Path);
+                context.Result.AddNonNullViolation(listResult.Path);
+            }
 
             await _parentContext.DeferExecutionCoordinator.ReleaseChildBranches(itemsBranchId)
                 .ConfigureAwait(false);
 
-            foreach (var task in tasks)
+            if (tasks.Count > 0)
             {
-                if (task is DeferTask deferTask)
-                {
-                    deferTask.Reset();
-                }
+                ResolverTaskFactory.ReleaseUnregisteredTasks(
+                    tasks,
+                    start: 0,
+                    _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
             }
-
-            tasks.Clear();
         }
 
         return listResult;

@@ -395,8 +395,12 @@ public sealed partial class ResultDocument
                     _previousChunks = null;
                 }
 
-                _chunks.AsSpan().Clear();
-                s_arrayPool.Return(_chunks);
+                // a metadb that was never created has no tracking array to return.
+                if (_chunks is not null)
+                {
+                    _chunks.AsSpan().Clear();
+                    s_arrayPool.Return(_chunks);
+                }
 
                 _chunks = [];
                 _arena = null!;
