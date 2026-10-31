@@ -161,7 +161,8 @@ public sealed class IncrementalPlan : IOperationPlan
 
     /// <summary>
     /// Determines which incremental plans run, indexed like <paramref name="incrementalPlans"/>. A plan
-    /// runs when one of its delivery groups is active and its parent plan, if any, also runs.
+    /// runs when one of its delivery groups is active and the plan owning its nearest active enclosing
+    /// delivery group, if any, also runs.
     /// </summary>
     internal static ConditionFlags GetRunningPlans(
         ImmutableArray<IncrementalPlan> incrementalPlans,
@@ -181,7 +182,7 @@ public sealed class IncrementalPlan : IOperationPlan
             {
                 if (!running.IsSet(i)
                     && IsAnyDeliveryGroupActive(incrementalPlans[i], activeDeliveryGroups)
-                    && IsParentRunning(incrementalPlans[i], incrementalPlans, running))
+                    && IsParentRunning(incrementalPlans[i], incrementalPlans, running, activeDeliveryGroups))
                 {
                     if (i < 64)
                     {
@@ -219,9 +220,10 @@ public sealed class IncrementalPlan : IOperationPlan
     private static bool IsParentRunning(
         IncrementalPlan incrementalPlan,
         ImmutableArray<IncrementalPlan> incrementalPlans,
-        ConditionFlags running)
+        ConditionFlags running,
+        ConditionFlags activeDeliveryGroups)
     {
-        var parent = incrementalPlan.DeliveryGroups[0].Parent;
+        var parent = incrementalPlan.DeliveryGroups[0].GetActiveParent(activeDeliveryGroups);
 
         if (parent is null)
         {
