@@ -122,6 +122,11 @@ internal sealed class QueryExecutor
 
                 requestCleanup.Cancel();
             }
+            else if (execution.IsFaulted)
+            {
+                // an execution that faulted before the stream was disposed is observed here.
+                _ = execution.Exception;
+            }
         }
         finally
         {

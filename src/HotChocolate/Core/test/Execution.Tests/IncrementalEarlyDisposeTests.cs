@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Tracing;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.Instrumentation;
@@ -12,6 +13,7 @@ namespace HotChocolate.Execution;
 
 public class IncrementalEarlyDisposeTests
 {
+    private const string ProcessingFailure = "processing failed";
     private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(10);
 
     [Fact]
@@ -195,6 +197,95 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task DisposeAsync_Should_ObserveExecutionFault_When_ExecutionFaultedBeforeDisposal()
+    {
+        // arrange
+        // a process wide timer captures the execution context of the first request,
+        // so a warm-up request keeps the observed request collectable.
+        await ExecuteDeferredToCompletionAsync();
+        var unobserved = new ConcurrentQueue<string>();
+        EventHandler<UnobservedTaskExceptionEventArgs> handler = (_, e) =>
+        {
+            if (e.Exception.InnerException is { Message: ProcessingFailure } exception)
+            {
+                unobserved.Enqueue(exception.Message);
+            }
+        };
+        TaskScheduler.UnobservedTaskException += handler;
+
+        try
+        {
+            // act
+            await DisposeAfterExecutionFaultedAsync();
+
+            // the abandoned request becomes unreachable shortly after its last resolver has returned.
+            for (var i = 0; i < 10 && unobserved.IsEmpty; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+
+            // assert
+            Assert.Empty(unobserved);
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= handler;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task ExecuteDeferredToCompletionAsync()
+    {
+        var executor = await CreateFaultingExecutorAsync(new Probe());
+        var result = await executor.ExecuteAsync(
+            "{ items { id ... @defer { quick } } }",
+            CancellationToken.None);
+        var stream = Assert.IsType<ResponseStream>(result);
+
+        await using (stream)
+        {
+            await foreach (var payload in stream.ReadResultsAsync())
+            {
+                await payload.DisposeAsync();
+            }
+        }
+    }
+
+    // The stream and the execution task must be unreachable once this method returns,
+    // so that the garbage collector can finalize an unobserved faulted execution.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task DisposeAfterExecutionFaultedAsync()
+    {
+        var probe = new Probe();
+        var executor = await CreateFaultingExecutorAsync(probe);
+        var result = await executor.ExecuteAsync(
+            "{ items { id ... @defer { slow } } }",
+            CancellationToken.None);
+        var stream = Assert.IsType<ResponseStream>(result);
+
+        await using (var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(CancellationToken.None))
+        {
+            await ReadPayloadAsync(enumerator, []);
+            await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+            // the scheduler fails when it resumes after resolver 1 has completed.
+            probe.FailProcessing();
+            probe.Gate("1").TrySetResult();
+            await probe.ProcessingFailed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+            probe.Gate("2").TrySetResult();
+
+            // the fault unwinds on the scheduler thread right after the listener has thrown.
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+        }
+
+        await stream.DisposeAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_ThrowCleanupFailure_When_TheStreamIsDisposedLast()
     {
         // arrange
@@ -317,6 +408,15 @@ public class IncrementalEarlyDisposeTests
                 })
             .BuildRequestExecutorAsync();
 
+    private static ValueTask<IRequestExecutor> CreateFaultingExecutorAsync(Probe probe)
+        => new ServiceCollection()
+            .AddSingleton(probe)
+            .AddGraphQL()
+            .AddQueryType<Query>()
+            .AddDiagnosticEventListener(_ => new ProcessingListener(probe))
+            .ModifyOptions(options => options.EnableDefer = true)
+            .BuildRequestExecutorAsync();
+
     public sealed class Query
     {
         public List<Item> GetItems() => [new("1"), new("2")];
@@ -383,6 +483,7 @@ public class IncrementalEarlyDisposeTests
         private int _producerDisposeCount;
         private int _requestContextsReturned;
         private int _operationContextsReturned;
+        private int _failProcessing;
 
         public IReadOnlyCollection<string> Events => _events;
 
@@ -395,6 +496,12 @@ public class IncrementalEarlyDisposeTests
         public TaskCompletionSource EnumeratorDisposed { get; } = Create();
 
         public TaskCompletionSource ProducerDisposedSignal { get; } = Create();
+
+        public TaskCompletionSource ProcessingFailed { get; } = Create();
+
+        public bool IsProcessingFailing => Volatile.Read(ref _failProcessing) is 1;
+
+        public void FailProcessing() => Volatile.Write(ref _failProcessing, 1);
 
         public int ProducerDisposeCount => Volatile.Read(ref _producerDisposeCount);
 
@@ -555,6 +662,18 @@ public class IncrementalEarlyDisposeTests
 
         public override void RequestError(RequestContext context, IError error)
             => probe.LogError($"request error: {error.Message}");
+    }
+
+    private sealed class ProcessingListener(Probe probe) : ExecutionDiagnosticEventListener
+    {
+        public override void StartProcessing(RequestContext context)
+        {
+            if (probe.IsProcessingFailing)
+            {
+                probe.ProcessingFailed.TrySetResult();
+                throw new InvalidOperationException(ProcessingFailure);
+            }
+        }
     }
 
     private sealed class ArenaListener : EventListener
