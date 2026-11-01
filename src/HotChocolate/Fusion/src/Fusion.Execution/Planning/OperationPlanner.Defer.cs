@@ -1009,13 +1009,13 @@ public sealed partial class OperationPlanner
             }
         }
 
-        MakeFieldsVisibleInParentScope(
+        MakeSelectionsVisibleInParentScope(
             descriptor,
             parentStep,
             parentTargetSelectionSet,
             parentContext,
             contextGraph,
-            fieldNames);
+            fieldNames.ConvertAll(static fieldName => (ISelectionNode)new FieldNode(fieldName)));
 
         return true;
     }
@@ -1042,13 +1042,13 @@ public sealed partial class OperationPlanner
             if (TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate)
                 && TryLocateDeferRequirementTarget(candidate, descriptor.Path, out var parentTargetSelectionSet, out _))
             {
-                MakeFieldsVisibleInParentScope(
+                MakeSelectionsVisibleInParentScope(
                     descriptor,
                     candidate,
                     parentTargetSelectionSet,
                     parentContext,
                     contextGraph,
-                    [IntrospectionFieldNames.TypeName]);
+                    anchorSelectionSet.Selections);
 
                 return true;
             }
@@ -1095,15 +1095,15 @@ public sealed partial class OperationPlanner
         return selectionSet.Selections.Count > 0;
     }
 
-    private void MakeFieldsVisibleInParentScope(
+    private void MakeSelectionsVisibleInParentScope(
         IncrementalPlanDescriptor descriptor,
         OperationPlanStep parentStep,
         SelectionSetNode parentTargetSelectionSet,
         ParentPlanContext parentContext,
         PlanContextGraph contextGraph,
-        List<string> fieldNames)
+        IReadOnlyList<ISelectionNode> selections)
     {
-        var updatedTargetSelectionSet = MakeFieldsVisible(parentTargetSelectionSet, fieldNames);
+        var updatedTargetSelectionSet = MakeSelectionsVisible(parentTargetSelectionSet, selections);
         var updatedParentStep = ReferenceEquals(updatedTargetSelectionSet, parentTargetSelectionSet)
             ? parentStep
             : WithEntitySelectionSet(
@@ -1125,7 +1125,7 @@ public sealed partial class OperationPlanner
         if (TryLocateInternalSelectionSetAtPath(
             updatedInternalOperation.SelectionSet, descriptor.Path, out var internalTargetSelectionSet))
         {
-            var updatedInternalTargetSelectionSet = MakeFieldsVisible(internalTargetSelectionSet, fieldNames);
+            var updatedInternalTargetSelectionSet = MakeSelectionsVisible(internalTargetSelectionSet, selections);
 
             if (!ReferenceEquals(updatedInternalTargetSelectionSet, internalTargetSelectionSet))
             {
@@ -1241,26 +1241,28 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Returns a copy of <paramref name="selectionSet"/> where every field named in
-    /// <paramref name="fieldNames"/> is a plain, client-visible selection: an existing
+    /// Returns a copy of <paramref name="selectionSet"/> where every selection in
+    /// <paramref name="selections"/> is a plain, client-visible selection: an existing
     /// unaliased field has its <c>fusion__requirement</c> or <c>fusion__empty</c> marker
-    /// removed, and a field not yet selected is added.
+    /// removed, and a selection not yet present is added unchanged.
     /// </summary>
-    private static SelectionSetNode MakeFieldsVisible(SelectionSetNode selectionSet, List<string> fieldNames)
+    private static SelectionSetNode MakeSelectionsVisible(
+        SelectionSetNode selectionSet,
+        IReadOnlyList<ISelectionNode> selections)
     {
-        var selections = selectionSet.Selections;
+        var existingSelections = selectionSet.Selections;
 
-        var newSelections = new List<ISelectionNode>(selections.Count + fieldNames.Count);
+        var newSelections = new List<ISelectionNode>(existingSelections.Count + selections.Count);
         var present = new HashSet<string>(StringComparer.Ordinal);
         var changed = false;
 
-        foreach (var selection in selections)
+        foreach (var selection in existingSelections)
         {
             if (selection is FieldNode { Alias: null } field)
             {
                 present.Add(field.Name.Value);
 
-                if (fieldNames.Contains(field.Name.Value)
+                if (ContainsUnaliasedField(selections, field.Name.Value)
                     && (TryRemoveRequirementDirective(field.Directives, out var strippedDirectives)
                         || TryRemoveEmptyPlaceholderDirective(field.Directives, out strippedDirectives)))
                 {
@@ -1273,11 +1275,15 @@ public sealed partial class OperationPlanner
             newSelections.Add(selection);
         }
 
-        foreach (var fieldName in fieldNames)
+        foreach (var selection in selections)
         {
-            if (present.Add(fieldName))
+            var isNew = selection is FieldNode { Alias: null } unaliasedField
+                ? present.Add(unaliasedField.Name.Value)
+                : !newSelections.Contains(selection, SyntaxComparer.BySyntax);
+
+            if (isNew)
             {
-                newSelections.Add(new FieldNode(fieldName));
+                newSelections.Add(selection);
                 changed = true;
             }
         }
@@ -1285,9 +1291,23 @@ public sealed partial class OperationPlanner
         return changed ? new SelectionSetNode(newSelections) : selectionSet;
     }
 
+    private static bool ContainsUnaliasedField(IReadOnlyList<ISelectionNode> selections, string fieldName)
+    {
+        foreach (var selection in selections)
+        {
+            if (selection is FieldNode { Alias: null } field
+                && field.Name.Value.Equals(fieldName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Attempts to strip the synthetic <c>fusion__empty</c> placeholder marker from
-    /// <paramref name="directives"/>, used by <see cref="MakeFieldsVisible"/> to upgrade an
+    /// <paramref name="directives"/>, used by <see cref="MakeSelectionsVisible"/> to upgrade an
     /// existing placeholder <c>__typename</c> selection (kept only to satisfy an
     /// otherwise-empty selection set) into a plain, client-visible field.
     /// </summary>

@@ -3392,6 +3392,102 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_KeepTypenameAlias_When_GroupOnlySelectsAliasedTypename()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    products {
+                        id
+                        ... @defer(label: "leaf") {
+                            kind: __typename
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_KeepTypenameAlias_When_OuterGroupOnlySelectsAliasedTypename()
+    {
+        // arrange
+        var schema = ComposeProductReviewSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    products {
+                        id
+                        ... @defer(label: "outer") {
+                            kind: __typename
+                            ... @defer(label: "inner") {
+                                reviews {
+                                    id
+                                }
+                            }
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_KeepTypeCondition_When_GroupOnlySelectsTypenameOnOneInterfaceImplementation()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            type Query {
+                items: [Item!]!
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item {
+                id: ID!
+            }
+
+            type Other implements Item {
+                id: ID!
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+                query {
+                    items {
+                        id
+                        ... @defer(label: "product") {
+                            ... on Product {
+                                __typename
+                            }
+                        }
+                    }
+                }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
