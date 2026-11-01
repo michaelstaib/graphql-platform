@@ -3506,6 +3506,58 @@ public class DeferPlannerTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Defer_Should_CarryInclude_When_EnclosingFieldHasInclude()
+    {
+        // arrange
+        var schema = ComposeConditionalDeferSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_CarrySkip_When_EnclosingFieldHasSkip()
+    {
+        // arrange
+        var schema = ComposeConditionalDeferSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
     private static FusionSchemaDefinition ComposeConditionalItemSchema()
         => ComposeSchema(
             """

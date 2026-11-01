@@ -45,7 +45,7 @@ public sealed record DeliveryGroup(
 
     /// <summary>
     /// The <c>@skip</c> and <c>@include</c> conditions of the deferred fragment and its enclosing
-    /// inline fragments, outermost first. The group is not delivered when any condition is false.
+    /// inline fragments and fields, outermost first. The group is not delivered when any condition is false.
     /// </summary>
     internal ImmutableArray<IncludeCondition> Conditions { get; init; } = [];
 }

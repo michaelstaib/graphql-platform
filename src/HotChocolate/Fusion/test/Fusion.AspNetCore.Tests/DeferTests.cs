@@ -2194,6 +2194,222 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public async Task Defer_Should_EmitSinglePayload_When_EnclosingFieldIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var (payloads, requestCounts) = await ExecuteProductsDeferWithRequestCountsAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        requestCounts.MatchInlineSnapshot("");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitIncrementalPayloads_When_EnclosingFieldIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var (payloads, requestCounts) = await ExecuteProductsDeferWithRequestCountsAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        requestCounts.MatchInlineSnapshot("A: 1, B: 1");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSinglePayload_When_EnclosingFieldSkipIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var (payloads, requestCounts) = await ExecuteProductsDeferWithRequestCountsAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        requestCounts.MatchInlineSnapshot("");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitIncrementalPayloads_When_EnclosingFieldSkipIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var (payloads, requestCounts) = await ExecuteProductsDeferWithRequestCountsAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        requestCounts.MatchInlineSnapshot("A: 1, B: 1");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_EnclosingFieldHasInclude(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    reviews {
+                        id
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data.AsObject().ContainsKey("products"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_EnclosingFieldHasSkip(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    reviews {
+                        id
+                    }
+                }
+            }
+            """,
+            skip);
+
+        // assert
+        Assert.Equal(!skip, data.AsObject().ContainsKey("products"));
+    }
+
     private static async Task<List<string>> ExecuteProductsDeferAsync(
         Gateway gateway,
         string query,
@@ -2207,6 +2423,23 @@ public class DeferTests : FusionTestBase
             TestContext.Current.CancellationToken);
 
         return await ReadPayloadsAsync(result);
+    }
+
+    private static async Task<(List<string> Payloads, string RequestCounts)> ExecuteProductsDeferWithRequestCountsAsync(
+        Gateway gateway,
+        string query,
+        bool x)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            new OperationRequest(query, variables: new Dictionary<string, object?> { ["x"] = x }),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var payloads = await ReadPayloadsAsync(result);
+
+        return (payloads, await GetRequestCountsAsync(gateway, result));
     }
 
     private async Task<Gateway> CreateConditionalItemGatewayAsync()

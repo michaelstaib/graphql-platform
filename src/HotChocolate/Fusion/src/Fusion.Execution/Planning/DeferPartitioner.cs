@@ -68,7 +68,10 @@ internal static class DeferPartitioner
                 {
                     var responseName = field.Alias?.Value ?? field.Name.Value;
                     var childPath = currentPath.AppendField(responseName);
-                    Walk(sub.Selections, parent, childPath, conditions, deferConditions, byFragment, ordered);
+                    var childConditions = IncludeCondition.TryCreate(field, out var fieldCondition)
+                        ? conditions.Add(fieldCondition)
+                        : conditions;
+                    Walk(sub.Selections, parent, childPath, childConditions, deferConditions, byFragment, ordered);
                 }
 
                 continue;
