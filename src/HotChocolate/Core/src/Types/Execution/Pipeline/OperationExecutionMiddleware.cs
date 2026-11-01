@@ -298,21 +298,19 @@ internal sealed class OperationExecutionMiddleware
 
             if (result.IsStreamResult())
             {
-                var requestCleanup = result.Kind is ExecutionResultKind.DeferredResult
-                    ? operationContext.RequestCleanup
-                    : null;
-
-                if (requestCleanup is not null)
-                {
-                    // the response stream shares the operation context with the still running execution,
-                    // so it is returned once both have released the request cleanup.
-                    requestCleanup.Register(operationContextOwner);
-                }
-                else
-                {
-                    result.RegisterForCleanup(operationContextOwner);
-                }
-
+                // the arena is sealed once the stream was read to the end and the execution has finished.
+                // A stream that is disposed earlier abandons the operation context, because
+                // the outstanding work may still use it.
+                var owner = operationContextOwner;
+                var memory = operationContext.Memory;
+                result.RegisterForCleanup(
+                    () =>
+                    {
+                        if (memory.IsSealed)
+                        {
+                            owner.Dispose();
+                        }
+                    });
                 operationContextOwner = null;
             }
 
