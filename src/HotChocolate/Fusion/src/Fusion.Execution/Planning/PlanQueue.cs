@@ -109,7 +109,6 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
     {
         var backlog = planNodeTemplate.Backlog.Pop(out _);
         var allCandidateSchemas = planNodeTemplate.GetCandidateSchemas(workItem.SelectionSet.Id);
-        var type = (FusionComplexTypeDefinition)workItem.SelectionSet.Type;
 
         // If this work item already carries a chosen lookup, keep it and
         // only align the node schema to the lookup schema.
@@ -128,9 +127,16 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
             return;
         }
 
+        // A union has no fields of its own, so it is planned through the selection sets of its type conditions.
+        if (workItem.SelectionSet.Type is not FusionComplexTypeDefinition type)
+        {
+            EnqueueTypeConditionLookupPlanNodes(planNodeTemplate, workItem, backlog);
+            return;
+        }
+
         // For abstract types, try to resolve through per-concrete-type lookups
         // before falling through to the standard abstract-type lookup path.
-        if (type.Kind is TypeKind.Interface or TypeKind.Union)
+        if (type.Kind is TypeKind.Interface)
         {
             TryEnqueueConcreteTypeLookupPlanNodes(
                 planNodeTemplate,
@@ -221,6 +227,46 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
                 EnqueueParentPathLookupPlanNodes(planNodeTemplate, workItem, backlog, toSchema, resolutionCost);
             }
         }
+    }
+
+    /// <summary>
+    /// Replaces a work item whose selection set is a union with one work item per inline fragment of
+    /// that selection set and continues with the first of them.
+    /// </summary>
+    private void EnqueueTypeConditionLookupPlanNodes(
+        PlanNode planNodeTemplate,
+        OperationWorkItem workItem,
+        Backlog backlog)
+    {
+        var unionSelectionSet = workItem.SelectionSet;
+
+        // The backlog is LIFO, so the fragments are pushed in reverse to plan them in document order.
+        for (var i = unionSelectionSet.Selections.Count - 1; i >= 0; i--)
+        {
+            if (unionSelectionSet.Selections[i] is not InlineFragmentNode fragment)
+            {
+                continue;
+            }
+
+            var fragmentType = unionSelectionSet.Type;
+            var fragmentPath = unionSelectionSet.Path;
+
+            if (fragment.TypeCondition is { Name.Value: { } typeName })
+            {
+                fragmentType = schema.Types.GetType(typeName, allowInaccessibleFields: true);
+                fragmentPath = fragmentPath.AppendFragment(typeName);
+            }
+
+            var fragmentSelectionSet = new SelectionSet(
+                planNodeTemplate.SelectionSetIndex.GetId(fragment.SelectionSet),
+                fragment.SelectionSet,
+                fragmentType,
+                fragmentPath);
+
+            backlog = backlog.Push(workItem with { SelectionSet = fragmentSelectionSet });
+        }
+
+        EnqueueBranches(planNodeTemplate with { Backlog = backlog });
     }
 
     /// <summary>

@@ -3278,6 +3278,68 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_PlanLookupPerPossibleType_When_UnionTypedFieldAnchorsDeferredFragment()
+    {
+        // arrange
+        var schema = ComposeUnionOwnerSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            name
+                            ... @defer {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupForEverySelectedMember_When_UnionTypedFieldAnchorsDeferredFragment()
+    {
+        // arrange
+        var schema = ComposeUnionOwnerSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... @defer {
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                size
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
@@ -3444,6 +3506,49 @@ public class DeferPlannerTests : FusionTestBase
             type Author @key(fields: "id") {
                 id: ID!
                 rating: Int!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeUnionOwnerSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                product: Product!
+            }
+
+            type Product {
+                id: ID!
+                owner: Owner!
+            }
+
+            union Owner = User | Team
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+
+            type Team @key(fields: "id") {
+                id: ID!
+                title: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup @internal
+                teamById(id: ID!): Team @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                total: Int!
+            }
+
+            type Team @key(fields: "id") {
+                id: ID!
+                size: Int!
             }
             """);
 }

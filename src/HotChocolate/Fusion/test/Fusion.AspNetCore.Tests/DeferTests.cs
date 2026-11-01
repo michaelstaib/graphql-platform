@@ -5467,6 +5467,165 @@ public class DeferTests : FusionTestBase
         public record TotalInput(int Raw, int Computed);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_NestedDeferIsAnchoredOnUnionTypedField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<UnionOwnerSourceA.Query>()
+                .AddType<UnionOwnerSourceA.User>()
+                .AddType<UnionOwnerSourceA.Team>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<UnionOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(
+            """
+            {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner {
+                            __typename
+                            ... on User {
+                                name
+                                ... @defer(label: "user") {
+                                    total
+                                }
+                            }
+                            ... on Team {
+                                title
+                                ... @defer(label: "team") {
+                                    size
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        var plainRequest = new OperationRequest(
+            """
+            {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            name
+                            total
+                        }
+                        ... on Team {
+                            title
+                            size
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var deferredData = MergeIncrementalPayloads(await ReadPayloadsAsync(deferredResult));
+
+        using var plainResult = await client.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var plainBody = await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        var plainData = JsonNode.Parse(plainBody)!["data"]!;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        deferredData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "product": {
+                "id": "1",
+                "owner": {
+                  "__typename": "User",
+                  "name": "User 2",
+                  "total": 5000
+                }
+              }
+            }
+            """);
+    }
+
+    private static class UnionOwnerSourceA
+    {
+        public class Query
+        {
+            public Product GetProduct() => new(1);
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+
+            [Lookup]
+            [Internal]
+            public Team? GetTeamById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public IOwner Owner => new User(2);
+        }
+
+        public record User([property: ID] int Id) : IOwner
+        {
+            public string Name => $"User {Id}";
+        }
+
+        public record Team([property: ID] int Id) : IOwner
+        {
+            public string Title => $"Team {Id}";
+        }
+
+        [UnionType("Owner")]
+        public interface IOwner;
+    }
+
+    private static class UnionOwnerSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+
+            [Lookup]
+            [Internal]
+            public Team? GetTeamById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Total => 5000;
+        }
+
+        public record Team([property: ID] int Id)
+        {
+            public int Size => 7;
+        }
+    }
+
     private static class NestedRequirementSourceA
     {
         public class Query
