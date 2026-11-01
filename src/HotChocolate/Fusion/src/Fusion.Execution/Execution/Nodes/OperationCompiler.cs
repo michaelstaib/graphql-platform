@@ -97,6 +97,8 @@ public sealed class OperationCompiler
             includeConditions,
             out var deliveryGroupConditionIndices);
 
+        var hasIncrementalParts = HasDeferDirective(operationDefinition);
+
         // Scans the operation for @defer fragments and creates one
         // DeliveryGroup object for each. Also fills deferConditions with any
         // @defer(if: ...) expressions found along the way.
@@ -105,7 +107,9 @@ public sealed class OperationCompiler
         // instance. Runtime matching checks if two are the same object,
         // not just equal in content, so handing back a fresh copy with
         // equal field values would silently break it.
-        var partitioning = DeferPartitioner.Partition(operationDefinition, deferConditions);
+        var partitioning = hasIncrementalParts
+            ? DeferPartitioner.Partition(operationDefinition, deferConditions)
+            : DeferPartitioningResult.Empty;
 
         var fields = _fieldsPool.Get();
 
@@ -129,8 +133,6 @@ public sealed class OperationCompiler
                 includeConditions,
                 partitioning.ByFragment,
                 parentDeliveryGroup: null);
-
-            var hasIncrementalParts = HasDeferDirective(operationDefinition);
 
             var selectionSet = BuildSelectionSet(
                 fields,

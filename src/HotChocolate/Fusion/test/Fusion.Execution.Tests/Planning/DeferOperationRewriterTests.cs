@@ -258,6 +258,78 @@ public class DeferOperationRewriterTests
                 """));
     }
 
+    [Fact]
+    public void Split_Should_KeepInclude_When_EnclosingFieldHasInclude()
+    {
+        // arrange
+        const string query =
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var operations = Split(query);
+
+        // assert
+        Assert.Collection(
+            operations,
+            operation => operation.MatchInlineSnapshot(
+                """
+                query($x: Boolean!) {
+                  products @include(if: $x) {
+                    reviews {
+                      id
+                    }
+                  }
+                }
+                """));
+    }
+
+    [Fact]
+    public void Split_Should_KeepSkip_When_EnclosingFieldHasSkip()
+    {
+        // arrange
+        const string query =
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var operations = Split(query);
+
+        // assert
+        Assert.Collection(
+            operations,
+            operation => operation.MatchInlineSnapshot(
+                """
+                query($x: Boolean!) {
+                  products @skip(if: $x) {
+                    reviews {
+                      id
+                    }
+                  }
+                }
+                """));
+    }
+
     private static List<string> Split(string query)
     {
         var operation = (OperationDefinitionNode)Utf8GraphQLParser.Parse(query).Definitions[0];
