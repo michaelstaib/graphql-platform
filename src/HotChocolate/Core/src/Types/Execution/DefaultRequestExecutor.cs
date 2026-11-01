@@ -128,8 +128,6 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
             _contextAccessor.RequestContext = context;
 
-            context.AttachMemory(new MemoryArena());
-
             await _requestDelegate(context).ConfigureAwait(false);
 
             if (context.Result is null)
@@ -199,8 +197,9 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
     private void ReturnWhenExecutionFinished(PooledRequestContext context, MemoryArena? memory)
     {
-        // an arena that is not sealed belongs to an execution that may still run, so the request
-        // context is abandoned together with the arena.
+        // a null arena means the request never reached execution and the context is returned. An unsealed
+        // arena belongs to an execution that may still run and is abandoned with the context. A sealed arena
+        // is returned.
         if (memory is { IsSealed: false })
         {
             context.TryDetachMemory()?.Dispose();

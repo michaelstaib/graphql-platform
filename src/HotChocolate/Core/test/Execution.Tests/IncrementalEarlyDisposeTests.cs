@@ -170,6 +170,36 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_ReturnRequestContext_When_DocumentHasSyntaxError()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+
+        // act
+        var result = await executor.ExecuteAsync("{ items { id ", TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+
+        // assert
+        probe.PoolState.MatchInlineSnapshot("request contexts returned: 1; operation contexts returned: 0");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ReturnRequestContext_When_DocumentFailsValidation()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+
+        // act
+        var result = await executor.ExecuteAsync("{ nope }", TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+
+        // assert
+        probe.PoolState.MatchInlineSnapshot("request contexts returned: 1; operation contexts returned: 0");
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_CancelAndDisposeProducer_When_StreamIsDisposedAfterFirstBatch()
     {
         // arrange

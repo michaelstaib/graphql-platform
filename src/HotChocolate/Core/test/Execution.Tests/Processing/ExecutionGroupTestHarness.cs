@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using HotChocolate.Buffers;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.ExecutionGroups;
 using HotChocolate.Fetching;
@@ -68,7 +69,8 @@ internal sealed class ExecutionGroupTestHarness
                                 context.GetOperation(),
                                 context.VariableValues[0],
                                 rootValue: null,
-                                resolveQueryRootValue: () => null);
+                                resolveQueryRootValue: () => null,
+                                memoryArena: new MemoryArena());
 
                             try
                             {
