@@ -100,8 +100,8 @@ internal static class DeferOccurrenceCollector
                         occurrences,
                         compositeFields);
 
-                    // A composite field without fields of its own in the enclosing group is still
-                    // delivered by that group, so its nested groups find the object they merge into.
+                    // Adds a placeholder occurrence for a composite field that has no fields of its own
+                    // in the enclosing group.
                     if (enclosingDefer is not null
                         && !HasOccurrenceInGroup(occurrences, firstChildOccurrence, enclosingDefer))
                     {
