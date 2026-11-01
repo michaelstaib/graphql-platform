@@ -23,6 +23,7 @@ public sealed class Operation : IOperation
     private readonly IncludeConditionCollection _includeConditions;
     private readonly DeferConditionCollection _deferConditions;
     private readonly IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> _deliveryGroupByFragment;
+    private readonly ImmutableArray<int> _deliveryGroupIds;
     private readonly ImmutableArray<ImmutableArray<int>> _deliveryGroupConditionIndices;
     private readonly OperationFeatureCollection _features;
     private readonly bool _hasIncrementalParts;
@@ -41,6 +42,7 @@ public sealed class Operation : IOperation
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> deliveryGroupByFragment,
+        ImmutableArray<int> deliveryGroupIds,
         ImmutableArray<ImmutableArray<int>> deliveryGroupConditionIndices,
         bool hasIncrementalParts,
         int lastId,
@@ -70,6 +72,7 @@ public sealed class Operation : IOperation
         _includeConditions = includeConditions;
         _deferConditions = deferConditions;
         _deliveryGroupByFragment = deliveryGroupByFragment;
+        _deliveryGroupIds = deliveryGroupIds;
         _deliveryGroupConditionIndices = deliveryGroupConditionIndices;
         _hasIncrementalParts = hasIncrementalParts;
         _lastId = lastId;
@@ -299,8 +302,7 @@ public sealed class Operation : IOperation
     /// Determines whether include conditions of the delivery group were compiled into this operation.
     /// </summary>
     internal bool HasDeliveryGroupConditions(DeliveryGroup deliveryGroup)
-        => (uint)deliveryGroup.Id < (uint)_deliveryGroupConditionIndices.Length
-            && !_deliveryGroupConditionIndices[deliveryGroup.Id].IsDefault;
+        => _deliveryGroupIds.BinarySearch(deliveryGroup.Id) >= 0;
 
     /// <summary>
     /// Determines whether all include conditions of the delivery group are set in the specified
@@ -308,12 +310,14 @@ public sealed class Operation : IOperation
     /// </summary>
     internal bool AreDeliveryGroupConditionsIncluded(DeliveryGroup deliveryGroup, ConditionFlags includeFlags)
     {
-        if (!HasDeliveryGroupConditions(deliveryGroup))
+        var position = _deliveryGroupIds.BinarySearch(deliveryGroup.Id);
+
+        if (position < 0)
         {
             return true;
         }
 
-        foreach (var index in _deliveryGroupConditionIndices[deliveryGroup.Id])
+        foreach (var index in _deliveryGroupConditionIndices[position])
         {
             var isIncluded = index < 64
                 ? (includeFlags.Word0 & (1ul << index)) != 0

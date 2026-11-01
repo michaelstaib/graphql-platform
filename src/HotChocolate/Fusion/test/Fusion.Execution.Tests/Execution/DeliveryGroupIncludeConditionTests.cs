@@ -150,6 +150,56 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
             exception.Message);
     }
 
+    [Fact]
+    public void AreDeliveryGroupConditionsIncluded_Should_ReadFlags_When_GroupIdsAreSparse()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var include = new IncludeCondition(skip: null, include: "x");
+        var skip = new IncludeCondition(skip: "y", include: null);
+        var unconditionalGroup = new DeliveryGroup(null, null, 0) { Id = 1 };
+        var skipGroup = new DeliveryGroup(null, null, 0) { Id = int.MaxValue, Conditions = [skip] };
+        var includeGroup = new DeliveryGroup(null, null, 0) { Id = 3, Conditions = [include] };
+        var operationDefinition = ParseOperation("query($x: Boolean!, $y: Boolean!) { foo }");
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+        var operation = compiler.Compile(
+            "1",
+            "1",
+            "1",
+            operationDefinition,
+            [unconditionalGroup, skipGroup, includeGroup]);
+
+        // act
+        var variables = CreateVariables(schema, new Dictionary<string, bool> { ["x"] = true, ["y"] = true });
+        var flags = operation.CreateIncludeConditionFlags(variables);
+
+        // assert
+        Assert.True(operation.AreDeliveryGroupConditionsIncluded(includeGroup, flags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(skipGroup, flags));
+        Assert.True(operation.AreDeliveryGroupConditionsIncluded(unconditionalGroup, flags));
+    }
+
+    [Fact]
+    public void Compile_Should_ThrowArgumentException_When_GroupIdIsNegative()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var include = new IncludeCondition(skip: null, include: "x");
+        var deliveryGroup = new DeliveryGroup(null, null, 0) { Id = -2, Conditions = [include] };
+        var operationDefinition = ParseOperation("query($x: Boolean!) { foo }");
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+
+        // act
+        var exception = Assert.Throws<ArgumentException>(
+            () => compiler.Compile("1", "1", "1", operationDefinition, [deliveryGroup]));
+
+        // assert
+        Assert.Equal(
+            "The delivery group ID '-2' is invalid. Delivery group IDs must be zero or greater. "
+            + "(Parameter 'deliveryGroups')",
+            exception.Message);
+    }
+
     private static FusionSchemaDefinition CreateSchema()
     {
         const string sourceText =

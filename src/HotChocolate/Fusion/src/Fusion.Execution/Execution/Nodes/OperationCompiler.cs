@@ -71,6 +71,9 @@ public sealed class OperationCompiler
     /// Compiles the operation and registers the include conditions of the delivery groups, so
     /// that the include flags of a request also cover them.
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when a delivery group ID is negative.
+    /// </exception>
     internal Operation Compile(
         string id,
         string hash,
@@ -89,7 +92,10 @@ public sealed class OperationCompiler
         var deferConditions = new DeferConditionCollection(_maxAllowedDeferConditions);
         IncludeConditionVisitor.Instance.Visit(operationDefinition, includeConditions);
 
-        var deliveryGroupConditionIndices = RegisterDeliveryGroupConditions(deliveryGroups, includeConditions);
+        var deliveryGroupIds = RegisterDeliveryGroupConditions(
+            deliveryGroups,
+            includeConditions,
+            out var deliveryGroupConditionIndices);
 
         // Scans the operation for @defer fragments and creates one
         // DeliveryGroup object for each. Also fills deferConditions with any
@@ -150,6 +156,7 @@ public sealed class OperationCompiler
                 includeConditions,
                 deferConditions,
                 partitioning.ByFragment,
+                deliveryGroupIds,
                 deliveryGroupConditionIndices,
                 hasIncrementalParts,
                 lastId,
@@ -161,26 +168,43 @@ public sealed class OperationCompiler
         }
     }
 
-    private static ImmutableArray<ImmutableArray<int>> RegisterDeliveryGroupConditions(
+    private static ImmutableArray<int> RegisterDeliveryGroupConditions(
         ImmutableArray<DeliveryGroup> deliveryGroups,
-        IncludeConditionCollection includeConditions)
+        IncludeConditionCollection includeConditions,
+        out ImmutableArray<ImmutableArray<int>> conditionIndices)
     {
         if (deliveryGroups.IsDefaultOrEmpty)
         {
+            conditionIndices = [];
             return [];
         }
 
-        var maxId = -1;
+        var conditionalGroupCount = 0;
 
         foreach (var deliveryGroup in deliveryGroups)
         {
-            maxId = Math.Max(maxId, deliveryGroup.Id);
+            if (deliveryGroup.Id < 0)
+            {
+                throw ThrowHelper.DeliveryGroupIdNegative(deliveryGroup.Id, nameof(deliveryGroups));
+            }
+
+            if (!deliveryGroup.Conditions.IsDefaultOrEmpty)
+            {
+                conditionalGroupCount++;
+            }
         }
 
-        var indicesById = new ImmutableArray<int>[maxId + 1];
+        var ids = new int[conditionalGroupCount];
+        var indices = new ImmutableArray<int>[conditionalGroupCount];
+        var position = 0;
 
         foreach (var deliveryGroup in deliveryGroups)
         {
+            if (deliveryGroup.Conditions.IsDefaultOrEmpty)
+            {
+                continue;
+            }
+
             var groupIndices = ImmutableArray.CreateBuilder<int>(deliveryGroup.Conditions.Length);
 
             foreach (var condition in deliveryGroup.Conditions)
@@ -189,13 +213,16 @@ public sealed class OperationCompiler
                 groupIndices.Add(includeConditions.IndexOf(condition));
             }
 
-            if (deliveryGroup.Id >= 0)
-            {
-                indicesById[deliveryGroup.Id] = groupIndices.MoveToImmutable();
-            }
+            ids[position] = deliveryGroup.Id;
+            indices[position] = groupIndices.MoveToImmutable();
+            position++;
         }
 
-        return ImmutableCollectionsMarshal.AsImmutableArray(indicesById);
+        // The ids are sorted so that the operation can look up a group by its id with a binary search.
+        Array.Sort(ids, indices);
+
+        conditionIndices = ImmutableCollectionsMarshal.AsImmutableArray(indices);
+        return ImmutableCollectionsMarshal.AsImmutableArray(ids);
     }
 
     internal SelectionSet CompileSelectionSet(
