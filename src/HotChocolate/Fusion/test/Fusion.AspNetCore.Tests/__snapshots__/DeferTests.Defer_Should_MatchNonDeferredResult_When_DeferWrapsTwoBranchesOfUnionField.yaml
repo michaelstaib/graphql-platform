@@ -1,4 +1,4 @@
-title: Defer_Should_MatchNonDeferredResult_When_HoistedFragmentSpanTypeConditionsOfUnionField
+title: Defer_Should_MatchNonDeferredResult_When_DeferWrapsTwoBranchesOfUnionField
 request:
   document: |
     {

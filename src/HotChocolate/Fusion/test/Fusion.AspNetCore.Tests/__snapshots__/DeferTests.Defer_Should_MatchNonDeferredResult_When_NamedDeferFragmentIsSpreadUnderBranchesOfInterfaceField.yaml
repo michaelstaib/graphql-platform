@@ -1,6 +1,12 @@
-title: Defer_Should_MatchNonDeferredResult_When_SiblingBranchesSpanTypeConditionsOfInterfaceField
+title: Defer_Should_MatchNonDeferredResult_When_NamedDeferFragmentIsSpreadUnderBranchesOfInterfaceField
 request:
   document: |
+    fragment OwnerTotal on Owner {
+      ... @defer(label: "a") {
+        total
+      }
+    }
+
     {
       entities {
         __typename
@@ -9,9 +15,7 @@ request:
           owner {
             id
             name
-            ... @defer(label: "a") {
-              total
-            }
+            ...OwnerTotal
           }
         }
         ... on Review {
@@ -19,9 +23,7 @@ request:
           owner {
             id
             name
-            ... @defer(label: "b") {
-              total
-            }
+            ...OwnerTotal
           }
         }
       }
@@ -73,7 +75,7 @@ stableResponseStream: |
         "path": [
           "entities"
         ],
-        "label": "b"
+        "label": "a"
       }
     ],
     "incremental": [
@@ -249,7 +251,7 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query Op_67da4423_1 {
+            query Op_ddb34796_1 {
               entities {
                 __typename
                 ... on Product {
@@ -514,7 +516,7 @@ operationPlan:
             }
           }
         }
-      hash: cc63cd5337653579b596612dbbcc5a33
+      hash: cb5ead2de797b398eca4324ab86851b4
       searchSpace: 1
       expandedNodes: 1
   nodes:
@@ -522,7 +524,7 @@ operationPlan:
       type: Operation
       schema: A
       operation: |
-        query Op_67da4423_1 {
+        query Op_ddb34796_1 {
           entities {
             __typename
             ... on Product {
@@ -547,7 +549,7 @@ operationPlan:
       label: a
     - id: 1
       path: $.entities.owner
-      label: b
+      label: a
   incrementalPlans:
     - deliveryGroupIds:
         - 0

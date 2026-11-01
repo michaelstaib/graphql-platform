@@ -1,29 +1,31 @@
-title: Defer_Should_MatchNonDeferredResult_When_FragmentSpreadBranchesSpanTypeConditionsOfInterfaceField
+title: Defer_Should_MatchNonDeferredResult_When_DeferWrapsTwoBranchesOfInterfaceField
 request:
   document: |
-    fragment OwnerTotal on Owner {
-      ... @defer(label: "a") {
-        total
-      }
-    }
-
     {
       entities {
         __typename
         ... on Product {
-          id
           owner {
             id
             name
-            ...OwnerTotal
           }
         }
         ... on Review {
-          rating
           owner {
             id
             name
-            ...OwnerTotal
+          }
+        }
+        ... @defer(label: "a") {
+          ... on Product {
+            owner {
+              total
+            }
+          }
+          ... on Review {
+            owner {
+              total
+            }
           }
         }
       }
@@ -37,7 +39,6 @@ stableResponseStream: |
         "entities": [
           {
             "__typename": "Product",
-            "id": "1",
             "owner": {
               "id": "11",
               "name": "Owner 11"
@@ -48,12 +49,10 @@ stableResponseStream: |
             "owner": {
               "id": "22",
               "name": "Owner 22"
-            },
-            "rating": 4
+            }
           },
           {
             "__typename": "Product",
-            "id": "3",
             "owner": {
               "id": "13",
               "name": "Owner 13"
@@ -132,7 +131,6 @@ stableResponseStream: |
         "entities": [
           {
             "__typename": "Product",
-            "id": "1",
             "owner": {
               "id": "11",
               "name": "Owner 11",
@@ -145,12 +143,10 @@ stableResponseStream: |
               "id": "22",
               "name": "Owner 22",
               "total": 2200
-            },
-            "rating": 4
+            }
           },
           {
             "__typename": "Product",
-            "id": "3",
             "owner": {
               "id": "13",
               "name": "Owner 13",
@@ -196,18 +192,16 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query Op_9b0f34b8_1 {
+            query Op_46e30e06_1 {
               entities {
                 __typename
                 ... on Product {
-                  id
                   owner {
                     id
                     name
                   }
                 }
                 ... on Review {
-                  rating
                   owner {
                     id
                     name
@@ -223,7 +217,6 @@ sourceSchemas:
                   "entities": [
                     {
                       "__typename": "Product",
-                      "id": "1",
                       "owner": {
                         "id": "11",
                         "name": "Owner 11"
@@ -231,7 +224,6 @@ sourceSchemas:
                     },
                     {
                       "__typename": "Review",
-                      "rating": 4,
                       "owner": {
                         "id": "22",
                         "name": "Owner 22"
@@ -239,7 +231,6 @@ sourceSchemas:
                     },
                     {
                       "__typename": "Product",
-                      "id": "3",
                       "owner": {
                         "id": "13",
                         "name": "Owner 13"
@@ -251,18 +242,16 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query Op_ddb34796_1 {
+            query Op_f9bd1c2d_1 {
               entities {
                 __typename
                 ... on Product {
-                  id
                   owner {
                     id
                     name
                   }
                 }
                 ... on Review {
-                  rating
                   owner {
                     id
                     name
@@ -278,7 +267,6 @@ sourceSchemas:
                   "entities": [
                     {
                       "__typename": "Product",
-                      "id": "1",
                       "owner": {
                         "id": "11",
                         "name": "Owner 11"
@@ -286,7 +274,6 @@ sourceSchemas:
                     },
                     {
                       "__typename": "Review",
-                      "rating": 4,
                       "owner": {
                         "id": "22",
                         "name": "Owner 22"
@@ -294,7 +281,6 @@ sourceSchemas:
                     },
                     {
                       "__typename": "Product",
-                      "id": "3",
                       "owner": {
                         "id": "13",
                         "name": "Owner 13"
@@ -392,7 +378,7 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_9b0f34b8_2($__fusion_1_id: ID!) {
+            query Op_46e30e06_2($__fusion_1_id: ID!) {
               ownerById(id: $__fusion_1_id) {
                 total
               }
@@ -501,14 +487,12 @@ operationPlan:
           entities {
             __typename
             ... on Product {
-              id
               owner {
                 id
                 name
               }
             }
             ... on Review {
-              rating
               owner {
                 id
                 name
@@ -516,7 +500,7 @@ operationPlan:
             }
           }
         }
-      hash: cb5ead2de797b398eca4324ab86851b4
+      hash: 0fc60ba43a69f79dd695ef9452d99467
       searchSpace: 1
       expandedNodes: 1
   nodes:
@@ -524,18 +508,16 @@ operationPlan:
       type: Operation
       schema: A
       operation: |
-        query Op_ddb34796_1 {
+        query Op_f9bd1c2d_1 {
           entities {
             __typename
             ... on Product {
-              id
               owner {
                 id
                 name
               }
             }
             ... on Review {
-              rating
               owner {
                 id
                 name

@@ -5732,7 +5732,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_SiblingBranchesSpanTypeConditionsOfInterfaceField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_EachBranchOfInterfaceFieldHasLabeledDefer()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -5813,7 +5813,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_FragmentSpreadBranchesSpanTypeConditionsOfInterfaceField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_NamedDeferFragmentIsSpreadUnderBranchesOfInterfaceField()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -5896,7 +5896,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_SiblingBranchesSpanTypeConditionsOfUnionField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_EachBranchOfUnionFieldHasLabeledDefer()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -5977,7 +5977,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_FragmentSpreadBranchesSpanTypeConditionsOfUnionField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_NamedDeferFragmentIsSpreadUnderBranchesOfUnionField()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -6060,7 +6060,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_HoistedFragmentSpanTypeConditionsOfInterfaceField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferWrapsTwoBranchesOfInterfaceField()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -6143,7 +6143,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_HoistedFragmentSpanTypeConditionsOfUnionField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferWrapsTwoBranchesOfUnionField()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -6226,7 +6226,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_SharedInterfaceSpanTypeConditionsOfInterfaceField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferIsBelowSharedInterfaceBranchOfInterfaceField()
     {
         // arrange
         using var server1 = CreateSourceSchema(
@@ -6288,7 +6288,7 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_MatchNonDeferredResult_When_SharedInterfaceSpanTypeConditionsOfUnionField()
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferIsBelowSharedInterfaceBranchOfUnionField()
     {
         // arrange
         using var server1 = CreateSourceSchema(

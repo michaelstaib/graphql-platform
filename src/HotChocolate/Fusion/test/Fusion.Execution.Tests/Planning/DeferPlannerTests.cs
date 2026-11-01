@@ -3446,7 +3446,7 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Defer_Should_PlanLookupForEveryTypeCondition_When_FragmentGroupSpansInterfaceBranches()
+    public void Defer_Should_PlanOneGroupPerTypeCondition_When_NamedDeferFragmentIsSpreadUnderBranchesOfInterfaceField()
     {
         // arrange
         var schema = ComposeAbstractOwnerProfileSchema(isUnion: false);
@@ -3487,7 +3487,7 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Defer_Should_PlanLookupForEveryTypeCondition_When_FragmentGroupSpansUnionBranches()
+    public void Defer_Should_PlanOneGroupPerTypeCondition_When_NamedDeferFragmentIsSpreadUnderBranchesOfUnionField()
     {
         // arrange
         var schema = ComposeAbstractOwnerProfileSchema(isUnion: true);

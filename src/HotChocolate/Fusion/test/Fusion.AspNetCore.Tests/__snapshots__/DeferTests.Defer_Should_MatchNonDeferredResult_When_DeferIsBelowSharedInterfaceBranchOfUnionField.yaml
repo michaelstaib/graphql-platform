@@ -1,29 +1,16 @@
-title: Defer_Should_MatchNonDeferredResult_When_FragmentSpreadBranchesSpanTypeConditionsOfUnionField
+title: Defer_Should_MatchNonDeferredResult_When_DeferIsBelowSharedInterfaceBranchOfUnionField
 request:
   document: |
-    fragment OwnerTotal on Owner {
-      ... @defer(label: "a") {
-        total
-      }
-    }
-
     {
       entities {
         __typename
-        ... on Product {
-          id
+        ... on HasOwner {
           owner {
             id
             name
-            ...OwnerTotal
-          }
-        }
-        ... on Review {
-          rating
-          owner {
-            id
-            name
-            ...OwnerTotal
+            ... @defer(label: "a") {
+              total
+            }
           }
         }
       }
@@ -31,13 +18,12 @@ request:
 stableResponseStream: |
   {
     "kind": "stable-stream",
-    "payloadCount": 3,
+    "payloadCount": 2,
     "initial": {
       "data": {
         "entities": [
           {
             "__typename": "Product",
-            "id": "1",
             "owner": {
               "id": "11",
               "name": "Owner 11"
@@ -48,12 +34,10 @@ stableResponseStream: |
             "owner": {
               "id": "22",
               "name": "Owner 22"
-            },
-            "rating": 4
+            }
           },
           {
             "__typename": "Product",
-            "id": "3",
             "owner": {
               "id": "13",
               "name": "Owner 13"
@@ -65,13 +49,6 @@ stableResponseStream: |
     "pending": [
       {
         "id": "0",
-        "path": [
-          "entities"
-        ],
-        "label": "a"
-      },
-      {
-        "id": "1",
         "path": [
           "entities"
         ],
@@ -98,33 +75,30 @@ stableResponseStream: |
           "entities"
         ],
         "subPath": [
-          2,
-          "owner"
-        ],
-        "data": {
-          "total": 1300
-        }
-      },
-      {
-        "id": "1",
-        "path": [
-          "entities"
-        ],
-        "subPath": [
           1,
           "owner"
         ],
         "data": {
           "total": 2200
         }
+      },
+      {
+        "id": "0",
+        "path": [
+          "entities"
+        ],
+        "subPath": [
+          2,
+          "owner"
+        ],
+        "data": {
+          "total": 1300
+        }
       }
     ],
     "completed": [
       {
         "id": "0"
-      },
-      {
-        "id": "1"
       }
     ],
     "final": {
@@ -132,7 +106,6 @@ stableResponseStream: |
         "entities": [
           {
             "__typename": "Product",
-            "id": "1",
             "owner": {
               "id": "11",
               "name": "Owner 11",
@@ -145,12 +118,10 @@ stableResponseStream: |
               "id": "22",
               "name": "Owner 22",
               "total": 2200
-            },
-            "rating": 4
+            }
           },
           {
             "__typename": "Product",
-            "id": "3",
             "owner": {
               "id": "13",
               "name": "Owner 13",
@@ -178,14 +149,18 @@ sourceSchemas:
         name: String!
       }
 
-      type Product {
+      type Product implements HasOwner {
         id: ID!
         owner: Owner!
       }
 
-      type Review {
+      type Review implements HasOwner {
         id: ID!
         rating: Int!
+        owner: Owner!
+      }
+
+      interface HasOwner {
         owner: Owner!
       }
 
@@ -194,18 +169,11 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query Op_9b0f34b8_1 {
+            query Op_62b51394_1 {
               entities {
                 __typename
-                ... on Product {
-                  id
-                  owner {
-                    id
-                    name
-                  }
-                }
-                ... on Review {
-                  rating
+                ... on HasOwner {
+                  __typename
                   owner {
                     id
                     name
@@ -221,7 +189,6 @@ sourceSchemas:
                   "entities": [
                     {
                       "__typename": "Product",
-                      "id": "1",
                       "owner": {
                         "id": "11",
                         "name": "Owner 11"
@@ -229,7 +196,6 @@ sourceSchemas:
                     },
                     {
                       "__typename": "Review",
-                      "rating": 4,
                       "owner": {
                         "id": "22",
                         "name": "Owner 22"
@@ -237,62 +203,6 @@ sourceSchemas:
                     },
                     {
                       "__typename": "Product",
-                      "id": "3",
-                      "owner": {
-                        "id": "13",
-                        "name": "Owner 13"
-                      }
-                    }
-                  ]
-                }
-              }
-      - request:
-          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
-          document: |
-            query Op_ddb34796_1 {
-              entities {
-                __typename
-                ... on Product {
-                  id
-                  owner {
-                    id
-                    name
-                  }
-                }
-                ... on Review {
-                  rating
-                  owner {
-                    id
-                    name
-                  }
-                }
-              }
-            }
-        response:
-          results:
-            - |
-              {
-                "data": {
-                  "entities": [
-                    {
-                      "__typename": "Product",
-                      "id": "1",
-                      "owner": {
-                        "id": "11",
-                        "name": "Owner 11"
-                      }
-                    },
-                    {
-                      "__typename": "Review",
-                      "rating": 4,
-                      "owner": {
-                        "id": "22",
-                        "name": "Owner 22"
-                      }
-                    },
-                    {
-                      "__typename": "Product",
-                      "id": "3",
                       "owner": {
                         "id": "13",
                         "name": "Owner 13"
@@ -307,7 +217,8 @@ sourceSchemas:
             query Op_defer_2 {
               entities {
                 __typename
-                ... on Product {
+                ... on HasOwner {
+                  __typename
                   owner {
                     id
                   }
@@ -327,7 +238,10 @@ sourceSchemas:
                       }
                     },
                     {
-                      "__typename": "Review"
+                      "__typename": "Review",
+                      "owner": {
+                        "id": "22"
+                      }
                     },
                     {
                       "__typename": "Product",
@@ -341,12 +255,14 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query Op_defer_2 {
+            query Op_7fb3f62b_1 {
               entities {
                 __typename
-                ... on Review {
+                ... on HasOwner {
+                  __typename
                   owner {
                     id
+                    name
                   }
                 }
               }
@@ -358,16 +274,25 @@ sourceSchemas:
                 "data": {
                   "entities": [
                     {
-                      "__typename": "Product"
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "11",
+                        "name": "Owner 11"
+                      }
                     },
                     {
                       "__typename": "Review",
                       "owner": {
-                        "id": "22"
+                        "id": "22",
+                        "name": "Owner 22"
                       }
                     },
                     {
-                      "__typename": "Product"
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "13",
+                        "name": "Owner 13"
+                      }
                     }
                   ]
                 }
@@ -390,7 +315,7 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_9b0f34b8_2($__fusion_1_id: ID!) {
+            query Op_defer_1($__fusion_1_id: ID!) {
               ownerById(id: $__fusion_1_id) {
                 total
               }
@@ -398,10 +323,10 @@ sourceSchemas:
           variables: |
             [
               {
-                "__fusion_1_id": "22"
+                "__fusion_1_id": "11"
               },
               {
-                "__fusion_1_id": "11"
+                "__fusion_1_id": "22"
               },
               {
                 "__fusion_1_id": "13"
@@ -414,7 +339,7 @@ sourceSchemas:
               {
                 "data": {
                   "ownerById": {
-                    "total": 2200
+                    "total": 1100
                   }
                 }
               }
@@ -422,7 +347,7 @@ sourceSchemas:
               {
                 "data": {
                   "ownerById": {
-                    "total": 1100
+                    "total": 2200
                   }
                 }
               }
@@ -437,7 +362,7 @@ sourceSchemas:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_defer_1($__fusion_1_id: ID!) {
+            query Op_7fb3f62b_2($__fusion_1_id: ID!) {
               ownerById(id: $__fusion_1_id) {
                 total
               }
@@ -446,6 +371,9 @@ sourceSchemas:
             [
               {
                 "__fusion_1_id": "11"
+              },
+              {
+                "__fusion_1_id": "22"
               },
               {
                 "__fusion_1_id": "13"
@@ -466,29 +394,15 @@ sourceSchemas:
               {
                 "data": {
                   "ownerById": {
-                    "total": 1300
+                    "total": 2200
                   }
                 }
               }
-      - request:
-          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
-          document: |
-            query Op_defer_1($__fusion_1_id: ID!) {
-              ownerById(id: $__fusion_1_id) {
-                total
-              }
-            }
-          variables: |
-            {
-              "__fusion_1_id": "22"
-            }
-        response:
-          results:
             - |
               {
                 "data": {
                   "ownerById": {
-                    "total": 2200
+                    "total": 1300
                   }
                 }
               }
@@ -498,15 +412,7 @@ operationPlan:
         {
           entities {
             __typename
-            ... on Product {
-              id
-              owner {
-                id
-                name
-              }
-            }
-            ... on Review {
-              rating
+            ... on HasOwner {
               owner {
                 id
                 name
@@ -514,7 +420,7 @@ operationPlan:
             }
           }
         }
-      hash: cb5ead2de797b398eca4324ab86851b4
+      hash: 77daa6cc32e5c09640e47dbdd51f1262
       searchSpace: 1
       expandedNodes: 1
   nodes:
@@ -522,18 +428,11 @@ operationPlan:
       type: Operation
       schema: A
       operation: |
-        query Op_ddb34796_1 {
+        query Op_62b51394_1 {
           entities {
             __typename
-            ... on Product {
-              id
-              owner {
-                id
-                name
-              }
-            }
-            ... on Review {
-              rating
+            ... on HasOwner {
+              __typename
               owner {
                 id
                 name
@@ -543,9 +442,6 @@ operationPlan:
         }
   deliveryGroups:
     - id: 0
-      path: $.entities.owner
-      label: a
-    - id: 1
       path: $.entities.owner
       label: a
   incrementalPlans:
@@ -563,7 +459,7 @@ operationPlan:
               }
             }
           source: $.ownerById
-          target: $.entities<Product>.owner
+          target: $.entities<HasOwner>.owner
           requirements:
             - name: __fusion_1_id
               selectionMap: >-
@@ -577,42 +473,8 @@ operationPlan:
             query Op_defer_2 {
               entities {
                 __typename
-                ... on Product {
-                  owner {
-                    id
-                  }
-                }
-              }
-            }
-    - deliveryGroupIds:
-        - 1
-      parentNodeId: 1
-      nodes:
-        - id: 1
-          type: Operation
-          schema: B
-          operation: |
-            query Op_defer_1($__fusion_1_id: ID!) {
-              ownerById(id: $__fusion_1_id) {
-                total
-              }
-            }
-          source: $.ownerById
-          target: $.entities<Review>.owner
-          requirements:
-            - name: __fusion_1_id
-              selectionMap: >-
-                id
-          dependencies:
-            - id: 2
-        - id: 2
-          type: Operation
-          schema: A
-          operation: |
-            query Op_defer_2 {
-              entities {
-                __typename
-                ... on Review {
+                ... on HasOwner {
+                  __typename
                   owner {
                     id
                   }
