@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using HotChocolate.Execution;
-using HotChocolate.Language;
 using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
@@ -188,9 +187,7 @@ public sealed class IncrementalPlan : IOperationPlan
             }
         }
 
-        var syntaxSelectionSet = operation.Definition.SelectionSet;
         var selectionSet = operation.RootSelectionSet;
-        IOutputTypeDefinition type = operation.RootType;
 
         for (var i = 0; i < path.Length; i++)
         {
@@ -202,14 +199,6 @@ public sealed class IncrementalPlan : IOperationPlan
             }
 
             if (segment.Kind is not SelectionPathSegmentKind.Field
-                || !OperationPlan.TryFindField(
-                    operation.Schema,
-                    syntaxSelectionSet,
-                    type,
-                    segment.Name,
-                    out var fieldNode,
-                    out var field)
-                || fieldNode.SelectionSet is null
                 || !selectionSet.TryGetSelection(segment.Name, out var selection)
                 || selection.IsLeaf
                 || selection.NamedType is not IObjectTypeDefinition)
@@ -217,103 +206,27 @@ public sealed class IncrementalPlan : IOperationPlan
                 return [];
             }
 
-            syntaxSelectionSet = fieldNode.SelectionSet;
             selectionSet = selection.GetSelectionSet()!;
-            type = field.Type.NamedType<IOutputTypeDefinition>();
         }
 
-        var responseNames = new List<string>();
+        var selections = ImmutableArray.CreateBuilder<Selection>();
 
-        if (!TryCollectConditionalFields(syntaxSelectionSet, isConditional: false, responseNames)
-            || responseNames.Count == 0)
+        foreach (var selection in selectionSet.Selections)
         {
-            return [];
-        }
+            if (selection.IsInternal)
+            {
+                continue;
+            }
 
-        var selections = ImmutableArray.CreateBuilder<Selection>(responseNames.Count);
-
-        foreach (var responseName in responseNames)
-        {
-            if (!selectionSet.TryGetSelection(responseName, out var fieldSelection)
-                || !fieldSelection.IsConditional)
+            if (!selection.IsConditional)
             {
                 return [];
             }
 
-            selections.Add(fieldSelection);
+            selections.Add(selection);
         }
 
-        return selections.MoveToImmutable();
-    }
-
-    private static bool TryCollectConditionalFields(
-        SelectionSetNode selectionSet,
-        bool isConditional,
-        List<string> responseNames)
-    {
-        foreach (var selection in selectionSet.Selections)
-        {
-            switch (selection)
-            {
-                case FieldNode field:
-                    if (IsRequirementMarker(field))
-                    {
-                        break;
-                    }
-
-                    if (!isConditional && !HasIncludeCondition(field.Directives))
-                    {
-                        return false;
-                    }
-
-                    responseNames.Add(field.Alias?.Value ?? field.Name.Value);
-                    break;
-
-                case InlineFragmentNode fragment:
-                    if (!TryCollectConditionalFields(
-                        fragment.SelectionSet,
-                        isConditional || HasIncludeCondition(fragment.Directives),
-                        responseNames))
-                    {
-                        return false;
-                    }
-
-                    break;
-
-                default:
-                    return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsRequirementMarker(FieldNode field)
-    {
-        foreach (var directive in field.Directives)
-        {
-            if (directive.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)
-                || directive.Name.Value.Equals("fusion__empty", StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool HasIncludeCondition(IReadOnlyList<DirectiveNode> directives)
-    {
-        foreach (var directive in directives)
-        {
-            if (directive.Name.Value.Equals(DirectiveNames.Skip.Name, StringComparison.Ordinal)
-                || directive.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return selections.ToImmutable();
     }
 
     private static ExecutionNode?[] CreateNodeLookup(

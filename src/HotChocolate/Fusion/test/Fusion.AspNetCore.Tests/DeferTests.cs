@@ -1326,6 +1326,118 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Nested_Should_DeliverInnerRequirement_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+                preferences: String!
+            }
+            """);
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+            }
+            """);
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            """
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                customized(preferences: String! @require(field: "preferences")): String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var nonDeferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    name
+                    email @skip(if: $skipEmail)
+                    customized
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        var deferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            customized
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        // act
+        using var nonDeferredResult = await client.PostAsync(
+            nonDeferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var nonDeferredPayloads = await ReadPayloadsAsync(nonDeferredResult);
+        var payloads = await ReadPayloadsAsync(deferredResult);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"1","path":["user"],"label":"inner"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"customized":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse(nonDeferredPayloads[0])!["data"],
+                MergeIncrementalPayloads(payloads)));
+    }
+
+    [Fact]
     public async Task Defer_Nested_Should_DeliverInnerGroupWithEnclosingGroup_When_MiddleGroupFieldIsExcludedBySkip()
     {
         // act
@@ -1359,7 +1471,7 @@ public class DeferTests : FusionTestBase
             {"pending":[{"id":"2","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"name":"User: VXNlcjoyMDc0ODIxMjU4"}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
-            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDc0ODIxMjU4"}}],"completed":[{"id":"2"}],"hasNext":false}
+            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
             """
         ]);
     }
