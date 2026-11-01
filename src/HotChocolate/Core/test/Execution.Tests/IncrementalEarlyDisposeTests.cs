@@ -129,6 +129,47 @@ public class IncrementalEarlyDisposeTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Should_NotReturnRequestContext_When_AbortedWhileExecutionRuns()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        using var abort = new CancellationTokenSource();
+        var aborted = executor.ExecuteAsync("{ items { id stubborn ... @defer { quick } } }", abort.Token);
+        await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // act
+        await abort.CancelAsync();
+        await using var abortedResult = await aborted.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        var poolStateWhileRunning = probe.PoolState;
+
+        probe.Gate("1").TrySetResult();
+        await probe.Returned("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        probe.Gate("2").TrySetResult();
+        await probe.Returned("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        poolStateWhileRunning.MatchInlineSnapshot("request contexts returned: 0; operation contexts returned: 0");
+        probe.PoolState.MatchInlineSnapshot("request contexts returned: 0; operation contexts returned: 0");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Should_ReturnRequestContext_When_ExecutionCompletes()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+
+        // act
+        var result = await executor.ExecuteAsync("{ items { id } }", TestContext.Current.CancellationToken);
+        await result.DisposeAsync();
+
+        // assert
+        probe.PoolState.MatchInlineSnapshot("request contexts returned: 1; operation contexts returned: 1");
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_CancelAndDisposeProducer_When_StreamIsDisposedAfterFirstBatch()
     {
         // arrange

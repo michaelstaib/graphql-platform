@@ -112,6 +112,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
         }
 
         var context = _contextPool.Get();
+        MemoryArena? memory = null;
 
         try
         {
@@ -149,7 +150,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
             // transfer ownership of the request memory to the result so it is disposed when the
             // result is disposed. On the error path the arena stays attached and the pool reset
             // disposes it.
-            var memory = context.TryDetachMemory();
+            memory = context.TryDetachMemory();
 
             if (result.IsStreamResult())
             {
@@ -182,7 +183,7 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
             if (context is not null)
             {
-                _contextPool.Return(context);
+                ReturnWhenExecutionFinished(context, memory ?? context.Memory);
             }
 
             if (scope is IAsyncDisposable asyncScope)
@@ -194,6 +195,19 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 scope?.Dispose();
             }
         }
+    }
+
+    private void ReturnWhenExecutionFinished(PooledRequestContext context, MemoryArena? memory)
+    {
+        // an arena that is not sealed belongs to an execution that may still run, for example after
+        // an abort or a timeout, so the request context is abandoned together with the arena.
+        if (memory is { IsSealed: false })
+        {
+            context.TryDetachMemory()?.Dispose();
+            return;
+        }
+
+        _contextPool.Return(context);
     }
 
     private void ReturnWhenSealed(PooledRequestContext context, MemoryArena? memory)
