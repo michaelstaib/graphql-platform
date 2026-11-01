@@ -415,6 +415,16 @@ internal static partial class OperationPlanExecutor
                         .Build();
                     payload = OperationResult.FromError(errorObj);
                     MarkDeliveryGroupsFailed(deliveryGroups, [errorObj], ref failedDeliveryGroups);
+                    CompleteAnnouncedGroupsOfFailedSilentGroups(
+                        operationPlan,
+                        deliveryGroups,
+                        activeDeliveryGroupIds,
+                        silentDeliveryGroupIds,
+                        announcedDeliveryGroupIds,
+                        pendingCountByDeliveryGroup,
+                        failedDeliveryGroups,
+                        completed,
+                        [errorObj]);
                     CompleteDeliveryGroups(
                         deliveryGroups,
                         pendingCountByDeliveryGroup,
@@ -446,6 +456,16 @@ internal static partial class OperationPlanExecutor
                     if (failed)
                     {
                         MarkDeliveryGroupsFailed(deliveryGroups, result.Errors, ref failedDeliveryGroups);
+                        CompleteAnnouncedGroupsOfFailedSilentGroups(
+                            operationPlan,
+                            deliveryGroups,
+                            activeDeliveryGroupIds,
+                            silentDeliveryGroupIds,
+                            announcedDeliveryGroupIds,
+                            pendingCountByDeliveryGroup,
+                            failedDeliveryGroups,
+                            completed,
+                            result.Errors);
                     }
 
                     CompleteDeliveryGroups(
@@ -1182,6 +1202,68 @@ internal static partial class OperationPlanExecutor
         foreach (var deliveryGroup in deliveryGroups)
         {
             failedDeliveryGroups.TryAdd(deliveryGroup.Id, errors);
+        }
+    }
+
+    private static void CompleteAnnouncedGroupsOfFailedSilentGroups(
+        OperationPlan operationPlan,
+        ImmutableArray<DeliveryGroup> failedPlanDeliveryGroups,
+        HashSet<int> activeDeliveryGroupIds,
+        HashSet<int>? silentDeliveryGroupIds,
+        HashSet<int> announcedDeliveryGroupIds,
+        Dictionary<int, int> pendingCountByDeliveryGroup,
+        Dictionary<int, IReadOnlyList<IError>>? failedDeliveryGroups,
+        ImmutableList<CompletedResult>.Builder completed,
+        IReadOnlyList<IError> errors)
+    {
+        if (silentDeliveryGroupIds is null || failedDeliveryGroups is null)
+        {
+            return;
+        }
+
+        var hasFailedSilentGroup = false;
+
+        foreach (var deliveryGroup in failedPlanDeliveryGroups)
+        {
+            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id))
+            {
+                hasFailedSilentGroup = true;
+                break;
+            }
+        }
+
+        if (!hasFailedSilentGroup)
+        {
+            return;
+        }
+
+        foreach (var deliveryGroup in operationPlan.DeliveryGroups)
+        {
+            if (!announcedDeliveryGroupIds.Contains(deliveryGroup.Id)
+                || silentDeliveryGroupIds.Contains(deliveryGroup.Id)
+                || !pendingCountByDeliveryGroup.ContainsKey(deliveryGroup.Id)
+                || failedDeliveryGroups.ContainsKey(deliveryGroup.Id))
+            {
+                continue;
+            }
+
+            for (var ancestor = deliveryGroup.Parent; ancestor is not null; ancestor = ancestor.Parent)
+            {
+                var isSilent = silentDeliveryGroupIds.Contains(ancestor.Id);
+
+                if (isSilent && failedDeliveryGroups.ContainsKey(ancestor.Id))
+                {
+                    completed.Add(new CompletedResult(deliveryGroup.Id, errors));
+                    pendingCountByDeliveryGroup.Remove(deliveryGroup.Id);
+                    failedDeliveryGroups.Add(deliveryGroup.Id, errors);
+                    break;
+                }
+
+                if (!isSilent && activeDeliveryGroupIds.Contains(ancestor.Id))
+                {
+                    break;
+                }
+            }
         }
     }
 

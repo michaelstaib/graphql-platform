@@ -1477,6 +1477,83 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Nested_Should_CompleteAnnouncedInnerGroupWithErrors_When_SilentMiddlePlanFails()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<FailingUserLookupSourceA.Query>(),
+            services => services.AddSingleton<FailingUserLookupSourceA.LookupCounter>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        name @include(if: $includeName)
+                        ... @defer(label: "middle") {
+                            email @skip(if: $skipEmail)
+                            ... @defer(label: "inner") {
+                                address
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?>
+            {
+                ["includeName"] = true,
+                ["skipEmail"] = true
+            });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var payloads = await ReadPayloadsAsync(result);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"1"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"2","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"name":"User 1"}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"completed":[{"id":"2","errors":[{"message":"User lookup failed.","path":["user"]}]}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
     public async Task Defer_Nested_Without_Label_On_Inner_Should_Return_Incremental_Response()
     {
         // arrange
@@ -5291,6 +5368,32 @@ public class DeferTests : FusionTestBase
             await sequence.WaitForTurnAsync(sequence.IndexOf(body), cancellationToken);
 
             return await _invoker!.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private static class FailingUserLookupSourceA
+    {
+        public class Query
+        {
+            [Lookup]
+            public User? GetUser([GraphQLType<NonNullType<IdType>>] string id, [Service] LookupCounter counter)
+            {
+                if (counter.Next() == 3)
+                {
+                    throw new GraphQLException("User lookup failed.");
+                }
+
+                return new User(id, "User " + id);
+            }
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id, string Name);
+
+        public sealed class LookupCounter
+        {
+            private int _count;
+
+            public int Next() => Interlocked.Increment(ref _count);
         }
     }
 
