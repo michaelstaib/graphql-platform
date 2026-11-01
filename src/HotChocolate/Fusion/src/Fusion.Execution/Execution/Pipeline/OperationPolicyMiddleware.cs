@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
 using HotChocolate.Execution;
@@ -16,6 +17,7 @@ namespace HotChocolate.Fusion.Execution.Pipeline;
 internal sealed class OperationPolicyMiddleware
 {
     private const string Key = "FusionOperationPolicyMiddleware";
+    private const string ExpiryClaimType = "exp";
 
     private readonly PolicyEvaluator _evaluator;
     private readonly IAuditProvider _auditProvider;
@@ -24,6 +26,7 @@ internal sealed class OperationPolicyMiddleware
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly IInputType _booleanType;
     private readonly TimeProvider _timeProvider;
+    private readonly IErrorHandler _errorHandler;
 
     private OperationPolicyMiddleware(
         PolicyEvaluator evaluator,
@@ -32,7 +35,8 @@ internal sealed class OperationPolicyMiddleware
         AuthenticationSchemeResolver schemeResolver,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
         IInputType booleanType,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IErrorHandler errorHandler)
     {
         _evaluator = evaluator;
         _auditProvider = auditProvider;
@@ -41,6 +45,7 @@ internal sealed class OperationPolicyMiddleware
         _diagnosticEvents = diagnosticEvents;
         _booleanType = booleanType;
         _timeProvider = timeProvider;
+        _errorHandler = errorHandler;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
@@ -73,10 +78,11 @@ internal sealed class OperationPolicyMiddleware
         PolicyDecisions?[]? decisionSets = null;
         IVariableValueCollection[]? updatedVariableSets = null;
         var isSubscription = plan.Operation.Definition.Operation is OperationType.Subscription;
+        var expiry = isSubscription ? GetExpiry(user) : null;
+        IAuditScope? subscriptionScope = null;
+        IVariableValueCollection? subscriptionVariables = null;
 
-        if (isSubscription
-            && SubscriptionPolicies.GetExpiry(user) is { } expiry
-            && expiry <= _timeProvider.GetUtcNow())
+        if (expiry <= _timeProvider.GetUtcNow())
         {
             await RefuseExpiredAsync(context, trail, user, plan, policies, variableSets);
             return;
@@ -153,15 +159,10 @@ internal sealed class OperationPolicyMiddleware
                 return;
             }
 
-            if (isSubscription)
+            if (expiry is not null)
             {
-                TrackSubscription(
-                    context,
-                    user,
-                    plan,
-                    policies,
-                    scope,
-                    variableSets[i]);
+                subscriptionScope = scope;
+                subscriptionVariables = variableSets[i];
             }
 
             if (policies.Variables.IsEmpty)
@@ -195,6 +196,21 @@ internal sealed class OperationPolicyMiddleware
         }
 
         await next(context);
+
+        if (expiry is { } end
+            && subscriptionScope is not null
+            && context.Result is ResponseStream stream)
+        {
+            context.Result = EndOnExpiry(
+                context,
+                user,
+                plan,
+                policies,
+                subscriptionScope,
+                subscriptionVariables!,
+                end,
+                stream);
+        }
     }
 
     private async ValueTask RefuseExpiredAsync(
@@ -227,28 +243,40 @@ internal sealed class OperationPolicyMiddleware
         context.Result = result;
     }
 
-    private void TrackSubscription(
+    private ResponseStream EndOnExpiry(
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
         PolicyPlan policies,
         IAuditScope scope,
-        IVariableValueCollection variables)
+        IVariableValueCollection variables,
+        DateTimeOffset expiry,
+        ResponseStream stream)
     {
-        if (SubscriptionPolicies.GetExpiry(user) is null)
-        {
-            return;
-        }
-
-        context.Features.Set(
-            new SubscriptionPolicies(
+        ResponseStream? expiring = null;
+        expiring = new ResponseStream(
+            () => new ExpiringEventStream(
+                stream.ReadResultsAsync(),
+                expiring!,
+                user,
                 _evaluator,
                 scope,
                 plan,
                 policies,
                 variables,
-                _timeProvider));
+                expiry,
+                _timeProvider,
+                _errorHandler,
+                failure => _diagnosticEvents.RequestError(context, failure)));
+        expiring.RegisterForCleanup(stream);
+        return expiring;
     }
+
+    private static DateTimeOffset? GetExpiry(ClaimsPrincipal user)
+        => user.FindFirst(ExpiryClaimType) is { Value: var value }
+            && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+                : null;
 
     private async ValueTask RejectAsync(RequestContext context, SelectionDenial denial)
     {
@@ -279,6 +307,7 @@ internal sealed class OperationPolicyMiddleware
                 var auditProvider = fc.SchemaServices.GetRequiredService<IAuditProvider>();
                 var booleanType = GetBooleanType(schema);
                 var timeProvider = fc.SchemaServices.GetService<TimeProvider>() ?? TimeProvider.System;
+                var errorHandler = fc.SchemaServices.GetRequiredService<IErrorHandler>();
                 var middleware = new OperationPolicyMiddleware(
                     new PolicyEvaluator(options, diagnosticEvents),
                     auditProvider,
@@ -286,7 +315,8 @@ internal sealed class OperationPolicyMiddleware
                     schemeResolver,
                     diagnosticEvents,
                     booleanType,
-                    timeProvider);
+                    timeProvider,
+                    errorHandler);
                 return requestContext => middleware.InvokeAsync(requestContext, next);
             },
             Key);

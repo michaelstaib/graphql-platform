@@ -5,7 +5,6 @@ using System.Threading.Channels;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
-using HotChocolate.Fusion.Execution.Pipeline;
 using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Text.Json;
@@ -938,26 +937,16 @@ internal static partial class OperationPlanExecutor
             // and the unsealed arena is abandoned instead.
             requestContext.Memory?.Seal();
 
-            var subscriptionPolicies =
-                requestContext.Features.TryGet(out SubscriptionPolicies? policies)
-                    ? policies
-                    : null;
-            var concurrencyGate = requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>();
-            var eventTimeout = requestContext.Schema.GetRequestOptions().ExecutionTimeout;
-            var executionToken = executionCts.Token;
+            var subscriptionEnumerable = CreateResponseStream(
+                context,
+                root,
+                subscriptionResult,
+                requestContext.Schema.Services.GetService<ExecutionConcurrencyGate>(),
+                requestContext.Schema.GetRequestOptions().ExecutionTimeout,
+                executionCts.Token,
+                cancellationToken);
 
-            ResponseStream? stream = null;
-            stream = new ResponseStream(
-                () => CreateResponseStream(
-                    context,
-                    root,
-                    subscriptionResult,
-                    subscriptionPolicies,
-                    concurrencyGate,
-                    eventTimeout,
-                    stream!,
-                    executionToken,
-                    cancellationToken));
+            var stream = new ResponseStream(() => subscriptionEnumerable);
             stream.RegisterForCleanup(context);
             stream.RegisterForCleanup(executionCts);
             return stream;
@@ -1121,10 +1110,8 @@ internal static partial class OperationPlanExecutor
         OperationPlanContext context,
         ExecutionNode subscriptionNode,
         SubscriptionResult subscriptionResult,
-        SubscriptionPolicies? subscriptionPolicies,
         ExecutionConcurrencyGate? concurrencyGate,
         TimeSpan eventTimeout,
-        IExecutionResult responseStream,
         [EnumeratorCancellation] CancellationToken executionCancellationToken,
         CancellationToken requestCancellationToken)
     {
@@ -1143,33 +1130,11 @@ internal static partial class OperationPlanExecutor
         var (eventCts, eventCtsRegistration) = CreateEventCancellation();
 
         var schemaName = GetSubscriptionSchemaName(context, subscriptionNode);
-        var events = subscriptionResult.ReadStreamAsync();
-        Exception? policyFault = null;
-
-        if (subscriptionPolicies is not null
-            && SubscriptionPolicies.GetExpiry(OperationPolicyMiddleware.GetUser(context.RequestContext))
-                is { } expiry)
-        {
-            events = subscriptionPolicies.EndOnExpiry(
-                events,
-                responseStream,
-                context.RequestContext,
-                expiry,
-                failure =>
-                {
-                    policyFault = failure;
-                    context.DiagnosticEvents.SubscriptionEventError(
-                        context,
-                        subscriptionNode,
-                        schemaName,
-                        subscriptionResult.Id,
-                        failure);
-                });
-        }
 
         try
         {
-            await foreach (var eventArgs in events.WithCancellation(executionCancellationToken))
+            await foreach (var eventArgs in subscriptionResult.ReadStreamAsync()
+                .WithCancellation(executionCancellationToken))
             {
                 using var scope = context.DiagnosticEvents.OnSubscriptionEvent(
                     context,
@@ -1336,11 +1301,6 @@ internal static partial class OperationPlanExecutor
         {
             await eventCtsRegistration.DisposeAsync();
             eventCts?.Dispose();
-        }
-
-        if (policyFault is not null)
-        {
-            yield return ErrorHelper.SubscriptionFaulted(policyFault, context.ErrorHandler);
         }
 
         // Creates a fresh event-scoped cancellation source, links client-abort / shutdown into it,

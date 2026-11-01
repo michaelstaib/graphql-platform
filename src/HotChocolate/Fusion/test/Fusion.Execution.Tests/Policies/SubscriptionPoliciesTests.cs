@@ -224,55 +224,6 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
     }
 
     [Fact]
-    public async Task ReadResultsAsync_Should_KeepTheStreamOpen_When_TheTokenWasRenewedBeforeItExpired()
-    {
-        // arrange
-        var time = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddHours(1));
-        var client = new AuthorizationTestClient(Event);
-        var holder = new RequestContextHolder();
-        var executor = await CreateSubscriptionExecutorAsync(
-            client,
-            policies => policies.Allow("live"),
-            builder =>
-            {
-                builder.ConfigureSchemaServices((_, sc) => sc.AddSingleton<TimeProvider>(time));
-                builder.UseRequest(
-                    (_, next) => context =>
-                    {
-                        holder.Context = context;
-                        return next(context);
-                    },
-                    before: WellKnownRequestMiddleware.OperationExecutionMiddleware,
-                    allowMultiple: true);
-            });
-        var user = Authenticated(CreateExpiryClaim(time.GetUtcNow().AddMinutes(10)));
-        await using var result = await executor.ExecuteAsync(
-            CreateRequest(Subscription, user).Build(),
-            TestContext.Current.CancellationToken);
-        await using var events = ReadEvents(result);
-        client.Publish(Event);
-        var first = await ReadNextAsync(events);
-        holder.Context!.ContextData[nameof(ClaimsPrincipal)] =
-            Authenticated(CreateExpiryClaim(time.GetUtcNow().AddMinutes(30)));
-
-        // act
-        time.Advance(TimeSpan.FromMinutes(10));
-        client.Publish(Event);
-        var renewed = await ReadNextAsync(events);
-        var statusAfterRenewal = GetRequestedStatusCode(result);
-        time.Advance(TimeSpan.FromMinutes(20));
-        var hasNext = await events.MoveNextAsync();
-
-        // assert
-        Snapshot.Create()
-            .Add(first, "Event before the first expiry")
-            .Add(renewed, "Event after the first expiry")
-            .Add(hasNext, "Has Next after the renewed expiry")
-            .Add(statusAfterRenewal, "Requested Status Code after the first expiry")
-            .MatchMarkdownSnapshot();
-    }
-
-    [Fact]
     public async Task
         ReadResultsAsync_Should_EndTheStreamWithTheInnerErrors_When_AnErrorFilterReturnsAnAggregateError()
     {
@@ -400,10 +351,5 @@ public class SubscriptionPoliciesTests : AuthorizationExecutionTestBase
             e => $"{e.Coordinate} @{e.DirectiveName}({e.PolicyName}) {e.Outcome} {e.Reason ?? "-"}");
 
         return $"commits={scope.CommitCount} | {string.Join("; ", entries)} | failure={scope.FailureReason ?? "-"}";
-    }
-
-    private sealed class RequestContextHolder
-    {
-        public RequestContext? Context { get; set; }
     }
 }

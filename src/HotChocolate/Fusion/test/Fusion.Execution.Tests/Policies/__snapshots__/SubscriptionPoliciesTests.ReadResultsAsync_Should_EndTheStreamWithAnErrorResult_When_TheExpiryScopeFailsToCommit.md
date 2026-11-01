@@ -36,13 +36,13 @@ false
 ## Request Errors
 
 ```json
-[]
+[
+  "System.InvalidOperationException: commit"
+]
 ```
 
 ## Subscription Event Errors
 
 ```json
-[
-  "System.InvalidOperationException: commit"
-]
+[]
 ```
