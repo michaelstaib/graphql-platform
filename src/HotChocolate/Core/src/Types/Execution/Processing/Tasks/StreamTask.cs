@@ -25,11 +25,9 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly IAsyncEnumerator<object?> _enumerator;
     private readonly CancellationTokenSource _cancellation;
     private readonly CancellationToken _cancellationToken;
-    private readonly RequestCleanup? _requestCleanup;
     private readonly int _maxItemsPerPayload;
     private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
-    private Task? _producer;
     private int _nextItemIndex;
     private int _streamBranchId;
 
@@ -65,7 +63,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         _enumerator = enumerator;
         _cancellation = cancellation;
         _cancellationToken = cancellation.Token;
-        _requestCleanup = parentContext.RequestCleanup;
     }
 
     // the stream task runs in the system branch as it's just an orchestration task.
@@ -87,15 +84,10 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             this);
 
     /// <summary>
-    /// Starts reading the items of the source into the buffer of the stream. The request resources stay alive
-    /// until the producer has disposed the enumerator of the source, and the task waits for the producer
-    /// once the source returned.
+    /// Starts reading the items of the source into the buffer of the stream.
     /// </summary>
     public void StartProducer()
-    {
-        _requestCleanup?.Hold();
-        _producer = ProduceAsync();
-    }
+        => _ = ProduceAsync();
 
     /// <summary>
     /// Stops the stream. The enumerator is disposed by the producer once the source returns control.
@@ -114,11 +106,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
         finally
         {
-            if (_producer is { } producer && _buffer.Reader.Completion.IsCompleted)
-            {
-                await producer.ConfigureAwait(false);
-            }
-
             await DisposeAsync().ConfigureAwait(false);
         }
     }
@@ -153,11 +140,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             finally
             {
                 _cancellation.Dispose();
-            }
-
-            if (_requestCleanup is not null)
-            {
-                await _requestCleanup.ReleaseAsync().ConfigureAwait(false);
             }
         }
     }
@@ -251,8 +233,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
                     tasksRegistered = true;
                 }
 
-                await context.Scheduler.WaitForSettlementAsync(itemsBranchId).ConfigureAwait(false);
-                _cancellationToken.ThrowIfCancellationRequested();
+                await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
 
                 var result = context.BuildStreamItemsResult();
 
