@@ -95,6 +95,15 @@ internal static class ErrorHelper
             .Build();
     }
 
+    public static IError DeferredFragmentFailed(
+        Exception exception,
+        Path path)
+    {
+        return ErrorBuilder.FromException(exception)
+            .SetPath(path)
+            .Build();
+    }
+
     public static IError UnexpectedValueCompletionError(
         Path path)
     {
