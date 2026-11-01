@@ -350,14 +350,8 @@ public sealed partial class OperationPlanner
             }
             else
             {
-                // A defer anchored inside a parent result (a list item, an object) is
-                // planned as a keyed lookup rooted at the anchor's own type rather than a
-                // fresh operation re-rooted at Query. Seeding a Lookup work item (instead
-                // of a Root work item) lets PlanQueue.EnqueueLookupPlanNodes pick a direct
-                // lookup for the anchor type when one exists, even on the source schema
-                // the anchor came from, because the lookup key is routed to the enclosing
-                // scope. When no direct lookup resolves the anchor, it walks the path up
-                // to the root (EnqueueParentPathLookupPlanNodes).
+                // A defer anchored inside a parent result is planned as a lookup rooted at the anchor's
+                // type. When no direct lookup resolves the anchor, the path is walked up to the root.
                 var anchorSet = new SelectionSet(
                     index.GetId(anchorSelectionSet),
                     anchorSelectionSet,
@@ -515,16 +509,8 @@ public sealed partial class OperationPlanner
             return incrementalPlanSteps;
         }
 
-        // A producer step exists purely to supply another incremental-plan step's
-        // requirement: it targets the defer's own anchor or one of its ancestors
-        // (entities the enclosing scope already fetches down to) and every field it
-        // selects is consumed as a requirement by its dependents, so it never carries
-        // client-visible deferred output of its own. Such a step's data can always
-        // be routed to the enclosing scope instead of being fetched a second time
-        // inside this incremental plan. Earlier seeding always produced exactly one
-        // such step at index 0; a lookup-anchored seed may produce it anywhere in
-        // the list (or several, chained through each other), so every step is
-        // considered.
+        // A producer step only supplies requirements of other steps in this plan and selects no deferred
+        // output of its own. Its data is routed to the enclosing scope, and any step in the list can be one.
         var producers = FindDeferRequirementProducers(incrementalPlanSteps, descriptor.Path);
 
         if (producers.IsEmpty)
