@@ -123,12 +123,12 @@ public abstract partial class DataLoaderBase<TKey, TValue>
         bool allowCachePropagation,
         CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
-
         if (key is null)
         {
             throw new ArgumentNullException(nameof(key));
         }
+
+        ct.ThrowIfCancellationRequested();
 
         var cached = true;
         PromiseCacheKey cacheKey = new(cacheKeyType, key);
