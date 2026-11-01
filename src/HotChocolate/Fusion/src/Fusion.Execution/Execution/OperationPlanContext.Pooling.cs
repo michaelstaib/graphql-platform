@@ -27,22 +27,10 @@ public sealed partial class OperationPlanContext
         _executionState = new ExecutionState();
     }
 
-    internal void Initialize(
-        RequestContext requestContext,
-        IVariableValueCollection variables,
-        int variableIndex,
-        IOperationPlan operationPlan,
-        CancellationTokenSource cancellationTokenSource,
-        MemoryArena? memory = null)
-        => Initialize(
-            requestContext,
-            variables,
-            variableIndex,
-            operationPlan,
-            includeConditionFlags: null,
-            cancellationTokenSource,
-            memory);
-
+    /// <summary>
+    /// Prepares this context to execute <paramref name="operationPlan"/> with the given include flags,
+    /// or with include flags evaluated from <paramref name="variables"/> when they are <c>null</c>.
+    /// </summary>
     internal void Initialize(
         RequestContext requestContext,
         IVariableValueCollection variables,
@@ -50,7 +38,7 @@ public sealed partial class OperationPlanContext
         IOperationPlan operationPlan,
         ConditionFlags? includeConditionFlags,
         CancellationTokenSource cancellationTokenSource,
-        MemoryArena? memory)
+        MemoryArena? memory = null)
     {
         _activeNodeSlotCount = 0;
         _usesDynamicSchemaNames = true;

@@ -529,6 +529,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
                 _variables,
                 variableIndex: -1,
                 _operationPlan,
+                includeConditionFlags: null,
                 cts,
                 new MemoryArena());
             _rentedContexts.Add(context);

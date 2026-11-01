@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -35,6 +36,7 @@ internal static partial class OperationPlanExecutor
                 variables,
                 variableIndex,
                 operationPlan,
+                includeConditionFlags: null,
                 executionCts);
 
             // The engine token is linked to the request token, so it shares the request deadline.
@@ -85,6 +87,7 @@ internal static partial class OperationPlanExecutor
         // Execute the main (non-deferred) plan nodes first.
         var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         OperationPlanContext? rootContext = null;
+        ConditionFlags?[]? includeFlagsByPlan = null;
 
         try
         {
@@ -94,6 +97,7 @@ internal static partial class OperationPlanExecutor
                 variables,
                 variableIndex: -1,
                 operationPlan,
+                includeConditionFlags: null,
                 executionCts);
 
             rootContext.Begin();
@@ -133,7 +137,7 @@ internal static partial class OperationPlanExecutor
             var excludedIncrementalPlans = FindExcludedIncrementalPlans(
                 operationPlan,
                 variables,
-                out var includeFlagsByPlan);
+                out includeFlagsByPlan);
 
             var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(
                 operationPlan,
@@ -178,10 +182,15 @@ internal static partial class OperationPlanExecutor
                 // No active top-level delivery groups. Transfer retained
                 // result resources to the initial result.
                 rootContext.TransferRetainedMemoryTo(initialResult);
+                ReturnIncludeFlagsByPlan(ref includeFlagsByPlan);
                 executionCts.Dispose();
                 await rootContext.DisposeAsync();
                 return initialResult;
             }
+
+            // The first incremental stream takes the include flags buffer and returns it once it finishes.
+            var streamIncludeFlagsByPlan = includeFlagsByPlan;
+            includeFlagsByPlan = null;
 
             // Capture the single request arena now. The request executor detaches it from the
             // request context once this method returns the stream, so every incremental plan reuses
@@ -196,7 +205,7 @@ internal static partial class OperationPlanExecutor
                     activeDeliveryGroupIds,
                     deliveryGroupsByPlan,
                     excludedIncrementalPlans,
-                    includeFlagsByPlan,
+                    Interlocked.Exchange(ref streamIncludeFlagsByPlan, null),
                     silentDeliveryGroupIds,
                     rootContext,
                     cancellationToken),
@@ -208,6 +217,7 @@ internal static partial class OperationPlanExecutor
         }
         catch (Exception)
         {
+            ReturnIncludeFlagsByPlan(ref includeFlagsByPlan);
             executionCts.Dispose();
 
             if (rootContext is not null)
@@ -227,14 +237,11 @@ internal static partial class OperationPlanExecutor
         HashSet<int> activeDeliveryGroupIds,
         Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> deliveryGroupsByPlan,
         HashSet<IncrementalPlan>? excludedIncrementalPlans,
-        Dictionary<IncrementalPlan, ConditionFlags>? includeFlagsByPlan,
+        ConditionFlags?[]? includeFlagsByPlan,
         HashSet<int>? silentDeliveryGroupIds,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // Yield the initial result first.
-        yield return initialResult;
-
         var requestArena = rootContext.Memory;
         var incrementalPlans = operationPlan.IncrementalPlans;
 
@@ -313,8 +320,12 @@ internal static partial class OperationPlanExecutor
 
         try
         {
-            foreach (var incrementalPlan in incrementalPlans)
+            // Yield the initial result first.
+            yield return initialResult;
+
+            for (var i = 0; i < incrementalPlans.Length; i++)
             {
+                var incrementalPlan = incrementalPlans[i];
                 var deliveryGroups = deliveryGroupsByPlan[incrementalPlan];
 
                 if (deliveryGroups.IsEmpty
@@ -330,7 +341,7 @@ internal static partial class OperationPlanExecutor
                     variables,
                     incrementalPlan,
                     deliveryGroups,
-                    includeFlagsByPlan,
+                    includeFlagsByPlan?[i],
                     rootContext.GetResultStoreForChildDefer(),
                     channel.Writer,
                     requestArena,
@@ -510,8 +521,9 @@ internal static partial class OperationPlanExecutor
                 // every incremental plan that contains it, then mark their delivery
                 // groups as pending on the outgoing result.
                 var childPending = ImmutableList.CreateBuilder<PendingResult>();
-                foreach (var candidate in incrementalPlans)
+                for (var i = 0; i < incrementalPlans.Length; i++)
                 {
+                    var candidate = incrementalPlans[i];
                     var candidateGroups = deliveryGroupsByPlan[candidate];
 
                     if (candidateGroups.IsEmpty || started.Contains(candidate))
@@ -541,7 +553,7 @@ internal static partial class OperationPlanExecutor
                         variables,
                         candidate,
                         candidateGroups,
-                        includeFlagsByPlan,
+                        includeFlagsByPlan?[i],
                         parentStore,
                         channel.Writer,
                         requestArena,
@@ -671,6 +683,8 @@ internal static partial class OperationPlanExecutor
         }
         finally
         {
+            ReturnIncludeFlagsByPlan(ref includeFlagsByPlan);
+
             // Dispose completed incremental plan contexts after the stream
             // finishes. The root context is owned by the surrounding stream.
             foreach (var incrementalPlanContext in incrementalPlanContexts.Values)
@@ -689,7 +703,7 @@ internal static partial class OperationPlanExecutor
         IVariableValueCollection variables,
         IncrementalPlan incrementalPlan,
         ImmutableArray<DeliveryGroup> deliveryGroups,
-        Dictionary<IncrementalPlan, ConditionFlags>? includeFlagsByPlan,
+        ConditionFlags? includeFlags,
         FetchResultStore parentResultStore,
         ChannelWriter<IncrementalPlanResult> completion,
         MemoryArena requestArena,
@@ -706,15 +720,6 @@ internal static partial class OperationPlanExecutor
 
         try
         {
-            // Plans that were checked for exclusion already evaluated their include flags.
-            ConditionFlags? includeFlags = null;
-
-            if (includeFlagsByPlan is not null
-                && includeFlagsByPlan.TryGetValue(incrementalPlan, out var evaluatedFlags))
-            {
-                includeFlags = evaluatedFlags;
-            }
-
             // Reuse the single request arena instead of minting a per-plan arena: the request
             // executor has already detached it from the request context, so it is supplied
             // explicitly here.
@@ -958,13 +963,15 @@ internal static partial class OperationPlanExecutor
     private static HashSet<IncrementalPlan>? FindExcludedIncrementalPlans(
         OperationPlan operationPlan,
         IVariableValueCollection variables,
-        out Dictionary<IncrementalPlan, ConditionFlags>? includeFlagsByPlan)
+        out ConditionFlags?[]? includeFlagsByPlan)
     {
         HashSet<IncrementalPlan>? excludedIncrementalPlans = null;
+        var incrementalPlans = operationPlan.IncrementalPlans;
         includeFlagsByPlan = null;
 
-        foreach (var incrementalPlan in operationPlan.IncrementalPlans)
+        for (var i = 0; i < incrementalPlans.Length; i++)
         {
+            var incrementalPlan = incrementalPlans[i];
             var selections = incrementalPlan.ConditionalFieldSelections;
 
             if (selections.IsDefaultOrEmpty)
@@ -973,7 +980,14 @@ internal static partial class OperationPlanExecutor
             }
 
             var includeFlags = incrementalPlan.Operation.CreateIncludeConditionFlags(variables);
-            (includeFlagsByPlan ??= [])[incrementalPlan] = includeFlags;
+
+            if (includeFlagsByPlan is null)
+            {
+                includeFlagsByPlan = ArrayPool<ConditionFlags?>.Shared.Rent(incrementalPlans.Length);
+                includeFlagsByPlan.AsSpan(0, incrementalPlans.Length).Clear();
+            }
+
+            includeFlagsByPlan[i] = includeFlags;
             var included = false;
 
             foreach (var selection in selections)
@@ -992,6 +1006,18 @@ internal static partial class OperationPlanExecutor
         }
 
         return excludedIncrementalPlans;
+    }
+
+    /// <summary>
+    /// Returns a buffer rented by <see cref="FindExcludedIncrementalPlans"/> to the pool and clears the reference.
+    /// </summary>
+    private static void ReturnIncludeFlagsByPlan(ref ConditionFlags?[]? includeFlagsByPlan)
+    {
+        if (includeFlagsByPlan is not null)
+        {
+            ArrayPool<ConditionFlags?>.Shared.Return(includeFlagsByPlan, clearArray: true);
+            includeFlagsByPlan = null;
+        }
     }
 
     private static HashSet<int> FindSilentDeliveryGroups(
@@ -1556,6 +1582,7 @@ internal static partial class OperationPlanExecutor
                 requestContext.VariableValues[0],
                 variableIndex: -1,
                 operationPlan,
+                includeConditionFlags: null,
                 executionCts);
 
             var subscriptionResult = root switch
