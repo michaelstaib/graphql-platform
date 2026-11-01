@@ -3592,6 +3592,63 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_PlanOneGroupWithLookupPerBranch_When_DivergentInterfaceFieldHasDeferredSelection()
+    {
+        // arrange
+        var schema = ComposeDivergentOwnerSchema(isUnion: false);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                entities {
+                    id
+                    owner {
+                        id
+                        ... @defer(label: "a") {
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanOneGroupWithLookupPerBranch_When_DivergentInterfaceFieldIsSelectedOnUnion()
+    {
+        // arrange
+        var schema = ComposeDivergentOwnerSchema(isUnion: true);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                entities {
+                    __typename
+                    ... on Entity {
+                        id
+                        owner {
+                            id
+                            ... @defer(label: "a") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
@@ -3887,6 +3944,66 @@ public class DeferPlannerTests : FusionTestBase
             type Team @key(fields: "id") {
                 id: ID!
                 score: Int!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeDivergentOwnerSchema(bool isUnion)
+        => ComposeSchema(
+            $$"""
+            # name: a
+            schema { query: Query }
+
+            type Query {
+                entities: [{{(isUnion ? "EntityUnion" : "Entity")}}!]!
+                productById(id: ID! @is(field: "id")): Product @lookup @internal
+                reviewById(id: ID! @is(field: "id")): Review @lookup @internal
+                ownerById(id: ID! @is(field: "id")): Owner @lookup @internal
+            }
+
+            interface Entity {
+                id: ID!
+                owner: Owner!
+            }
+
+            union EntityUnion = Product | Review
+
+            type Product implements Entity @key(fields: "id") {
+                id: ID!
+                owner: Owner!
+            }
+
+            type Review implements Entity @key(fields: "id") {
+                id: ID!
+                owner: Owner!
+            }
+
+            type Owner @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            """
+            # name: b
+            schema { query: Query }
+
+            type Query {
+                reviewById(id: ID! @is(field: "id")): Review @lookup @internal
+                ownerById(id: ID! @is(field: "id")): Owner @lookup @internal
+            }
+
+            interface Entity {
+                id: ID!
+                owner: Owner!
+            }
+
+            type Review implements Entity @key(fields: "id") {
+                id: ID!
+                owner: Owner! @override(from: "a")
+            }
+
+            type Owner @key(fields: "id") {
+                id: ID!
+                total: Int!
             }
             """);
 }

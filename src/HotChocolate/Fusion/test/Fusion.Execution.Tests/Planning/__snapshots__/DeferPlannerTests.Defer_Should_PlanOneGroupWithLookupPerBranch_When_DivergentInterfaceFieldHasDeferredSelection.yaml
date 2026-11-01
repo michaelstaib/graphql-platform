@@ -1,0 +1,126 @@
+operation:
+  - document: |
+      {
+        entities {
+          __typename @fusion__requirement
+          id
+          ... on Product {
+            owner {
+              id
+            }
+          }
+          ... on Review {
+            owner {
+              id
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        entities {
+          __typename
+          id
+          ... on Product {
+            owner {
+              id
+            }
+          }
+          ... on Review {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        reviewById(id: $__fusion_1_id) {
+          owner {
+            id
+          }
+        }
+      }
+    source: $.reviewById
+    target: $.entities<Review>
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.entities.owner
+    label: a
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 1
+    nodes:
+      - id: 2
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_2_id: ID!) {
+            reviewById(id: $__fusion_2_id) {
+              owner {
+                id
+              }
+            }
+          }
+        source: $.reviewById
+        target: $.entities<Review>
+        requirements:
+          - name: __fusion_2_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 3
+      - id: 3
+        type: Operation
+        schema: a
+        operation: |
+          query Op_defer_3 {
+            entities {
+              __typename
+              ... on Review {
+                id
+              }
+              ... on Product {
+                owner {
+                  id
+                }
+              }
+            }
+          }
+      - id: 1
+        type: OperationBatch
+        schema: b
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            ownerById(id: $__fusion_1_id) {
+              total
+            }
+          }
+        source: $.ownerById
+        targets:
+          - $.entities<Review>.owner
+          - $.entities<Product>.owner
+        batchingGroupId: 5
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 2
+          - id: 3

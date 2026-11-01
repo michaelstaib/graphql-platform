@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HotChocolate.Execution;
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
@@ -16,6 +17,7 @@ using HotChocolate.Types.Relay;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Composite = HotChocolate.Types.Composite;
 using OperationRequest = HotChocolate.Transport.OperationRequest;
 
 namespace HotChocolate.Fusion;
@@ -6347,6 +6349,118 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_DivergentInterfaceFieldHasDeferredSelection()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => DivergentOwnerSourceA.Configure(b, isUnion: false));
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            DivergentOwnerSourceB.Configure);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    id
+                    owner {
+                        id
+                        ... @defer(label: "a") {
+                            total
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    id
+                    owner {
+                        id
+                        total
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_DivergentInterfaceFieldIsSelectedOnUnion()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => DivergentOwnerSourceA.Configure(b, isUnion: true));
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            DivergentOwnerSourceB.Configure);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Entity {
+                        id
+                        owner {
+                            id
+                            ... @defer(label: "a") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Entity {
+                        id
+                        owner {
+                            id
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
     private static async Task<(
         OperationRequest Request,
         GraphQLHttpResponse Result,
@@ -6376,6 +6490,111 @@ public class DeferTests : FusionTestBase
         var plainData = JsonNode.Parse(plainBody)!["data"]!;
 
         return (deferredRequest, deferredResult, deferredData, plainData);
+    }
+
+    // Source schemas are schema-first because the code-first API has no @override attribute.
+    private static class DivergentOwnerSourceA
+    {
+        public static void Configure(IRequestExecutorBuilder builder, bool isUnion)
+            => builder
+                .AddType<Composite.Lookup>()
+                .AddType<Composite.Internal>()
+                .AddType<Composite.Is>()
+                .AddType<Composite.EntityKey>()
+                .AddDocumentFromString(
+                    $$"""
+                    type Query {
+                        entities: [{{(isUnion ? "EntityUnion" : "Entity")}}!]!
+                        productById(id: ID! @is(field: "id")): Product @lookup @internal
+                        reviewById(id: ID! @is(field: "id")): Review @lookup @internal
+                        ownerById(id: ID! @is(field: "id")): Owner @lookup @internal
+                    }
+
+                    interface Entity {
+                        id: ID!
+                        owner: Owner!
+                    }
+
+                    union EntityUnion = Product | Review
+
+                    type Product implements Entity @key(fields: "id") {
+                        id: ID!
+                        owner: Owner!
+                    }
+
+                    type Review implements Entity @key(fields: "id") {
+                        id: ID!
+                        owner: Owner!
+                    }
+
+                    type Owner @key(fields: "id") {
+                        id: ID!
+                        name: String!
+                    }
+                    """)
+                .AddResolver(
+                    "Query",
+                    "entities",
+                    _ => new object[] { new Product(1), new Review(2), new Product(3) })
+                .AddResolver("Query", "productById", ctx => new Product(ctx.ArgumentValue<int>("id")))
+                .AddResolver("Query", "reviewById", ctx => new Review(ctx.ArgumentValue<int>("id")))
+                .AddResolver("Query", "ownerById", ctx => new Owner(ctx.ArgumentValue<int>("id")))
+                .AddResolver("Product", "owner", ctx => new Owner(ctx.Parent<Product>().Id + 10))
+                .AddResolver("Review", "owner", ctx => new Owner(ctx.Parent<Review>().Id + 20))
+                .AddResolver("Owner", "name", ctx => $"Owner {ctx.Parent<Owner>().Id}")
+                .BindRuntimeType<Product>("Product")
+                .BindRuntimeType<Review>("Review")
+                .BindRuntimeType<Owner>("Owner");
+
+        public record Product(int Id);
+
+        public record Review(int Id);
+
+        public record Owner(int Id);
+    }
+
+    private static class DivergentOwnerSourceB
+    {
+        public static void Configure(IRequestExecutorBuilder builder)
+            => builder
+                .AddType<Composite.Lookup>()
+                .AddType<Composite.Internal>()
+                .AddType<Composite.Is>()
+                .AddType<Composite.EntityKey>()
+                .AddDocumentFromString(
+                    """
+                    directive @override(from: String!) on FIELD_DEFINITION
+
+                    type Query {
+                        reviewById(id: ID! @is(field: "id")): Review @lookup @internal
+                        ownerById(id: ID! @is(field: "id")): Owner @lookup @internal
+                    }
+
+                    interface Entity {
+                        id: ID!
+                        owner: Owner!
+                    }
+
+                    type Review implements Entity @key(fields: "id") {
+                        id: ID!
+                        owner: Owner! @override(from: "A")
+                    }
+
+                    type Owner @key(fields: "id") {
+                        id: ID!
+                        total: Int!
+                    }
+                    """)
+                .AddResolver("Query", "reviewById", ctx => new Review(ctx.ArgumentValue<int>("id")))
+                .AddResolver("Query", "ownerById", ctx => new Owner(ctx.ArgumentValue<int>("id")))
+                .AddResolver("Review", "owner", ctx => new Owner(ctx.Parent<Review>().Id + 20))
+                .AddResolver("Owner", "total", ctx => ctx.Parent<Owner>().Id * 100)
+                .BindRuntimeType<Review>("Review")
+                .BindRuntimeType<Owner>("Owner");
+
+        public record Review(int Id);
+
+        public record Owner(int Id);
     }
 
     private static class OwnedInterfaceEntitySourceA
@@ -6458,15 +6677,13 @@ public class DeferTests : FusionTestBase
         }
     }
 
-    private static async Task<(
+    private static Task<(
         OperationRequest Request,
         GraphQLHttpResponse Result,
         JsonNode DeferredData,
         JsonNode PlainData)> ExecuteAnchorBelowTypeConditionAsync(Gateway gateway)
-    {
-        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
-
-        var deferredRequest = new OperationRequest(
+        => ExecuteDeferredAndPlainAsync(
+            gateway,
             """
             {
                 entities {
@@ -6486,9 +6703,7 @@ public class DeferTests : FusionTestBase
                     }
                 }
             }
-            """);
-
-        var plainRequest = new OperationRequest(
+            """,
             """
             {
                 entities {
@@ -6507,24 +6722,6 @@ public class DeferTests : FusionTestBase
                 }
             }
             """);
-
-        var deferredResult = await client.PostAsync(
-            deferredRequest,
-            new Uri("http://localhost:5000/graphql"),
-            TestContext.Current.CancellationToken);
-        await deferredResult.HttpResponseMessage.Content.LoadIntoBufferAsync();
-        var deferredData = MergeIncrementalPayloads(await ReadPayloadsAsync(deferredResult));
-
-        using var plainResult = await client.PostAsync(
-            plainRequest,
-            new Uri("http://localhost:5000/graphql"),
-            TestContext.Current.CancellationToken);
-        var plainBody = await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
-            TestContext.Current.CancellationToken);
-        var plainData = JsonNode.Parse(plainBody)!["data"]!;
-
-        return (deferredRequest, deferredResult, deferredData, plainData);
-    }
 
     private static class InterfaceEntitySourceA
     {

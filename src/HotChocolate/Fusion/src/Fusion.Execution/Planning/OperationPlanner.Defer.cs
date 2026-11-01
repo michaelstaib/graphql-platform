@@ -313,12 +313,10 @@ public sealed partial class OperationPlanner
         }
         else
         {
-            if (!TryLocateIncrementalPlanAnchor(
-                deferredOperation,
-                descriptor.Path,
-                out var anchorSelectionSet,
-                out var anchorType,
-                out var anchorPath))
+            var anchors = new List<IncrementalPlanAnchor>();
+            CollectIncrementalPlanAnchors(deferredOperation, descriptor.Path, anchors);
+
+            if (anchors.Count == 0)
             {
                 throw new InvalidOperationException(
                     $"Unable to locate the defer anchor selection set at path '{descriptor.Path}' "
@@ -327,7 +325,7 @@ public sealed partial class OperationPlanner
 
             if (isMutation)
             {
-                mutationAnchorType = anchorType;
+                mutationAnchorType = anchors[0].Type;
 
                 // A defer anchored inside a mutation's own result cannot walk back to the
                 // operation root to source a lookup key, so the incremental plan is seeded as
@@ -361,18 +359,24 @@ public sealed partial class OperationPlanner
                 // lookup for the anchor type when one exists; when none exists it falls
                 // back to walking the path up to the root
                 // (EnqueueParentPathLookupPlanNodes), which reproduces the previous root
-                // re-fetch behavior.
-                var anchorSet = new SelectionSet(
-                    index.GetId(anchorSelectionSet),
-                    anchorSelectionSet,
-                    anchorType,
-                    anchorPath);
+                // re-fetch behavior. A group reached through several type-condition branches
+                // of an abstract field is seeded with one lookup per branch.
+                var backlog = Backlog.Empty;
 
-                var backlog = Backlog.Empty.Push(
-                    new OperationWorkItem(OperationWorkItemKind.Lookup, anchorSet)
-                    {
-                        AllowSourceSchemaReentry = true
-                    });
+                foreach (var anchor in anchors)
+                {
+                    var anchorSet = new SelectionSet(
+                        index.GetId(anchor.SelectionSet),
+                        anchor.SelectionSet,
+                        anchor.Type,
+                        anchor.Path);
+
+                    backlog = backlog.Push(
+                        new OperationWorkItem(OperationWorkItemKind.Lookup, anchorSet)
+                        {
+                            AllowSourceSchemaReentry = true
+                        });
+                }
 
                 node = CreateIncrementalPlanNode(deferredOperation, index, backlog);
                 possiblePlans.EnqueueBranches(node);
@@ -439,10 +443,8 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Walks <paramref name="operation"/>'s selection set from its root type to locate
-    /// the selection set at <paramref name="path"/> and resolves its GraphQL type. A field that
-    /// is selected under the type conditions of an abstract field is located through them, and
-    /// <paramref name="anchorPath"/> is <paramref name="path"/> with those type conditions included.
+    /// Locates the first selection set at <paramref name="path"/> inside <paramref name="operation"/>
+    /// and resolves its GraphQL type.
     /// </summary>
     private bool TryLocateIncrementalPlanAnchor(
         OperationDefinitionNode operation,
@@ -451,66 +453,81 @@ public sealed partial class OperationPlanner
         out ITypeDefinition anchorType,
         out SelectionPath anchorPath)
     {
-        var currentSet = operation.SelectionSet;
-        ITypeDefinition currentType = _schema.GetOperationType(operation.Operation);
-        var currentPath = SelectionPath.Root;
+        var anchors = new List<IncrementalPlanAnchor>();
+        CollectIncrementalPlanAnchors(operation, path, anchors);
 
-        for (var i = 0; i < path.Length; i++)
+        if (anchors.Count == 0)
         {
-            var segment = path[i];
-
-            if (segment.Kind is not SelectionPathSegmentKind.Field
-                || !TryFindFieldNode(
-                    currentSet,
-                    currentType,
-                    segment.Name,
-                    currentPath,
-                    out var fieldNode,
-                    out var fieldType,
-                    out var fieldParentPath)
-                || fieldNode.SelectionSet is null)
-            {
-                anchorSelectionSet = null!;
-                anchorType = null!;
-                anchorPath = null!;
-                return false;
-            }
-
-            currentSet = fieldNode.SelectionSet;
-            currentType = fieldType;
-            currentPath = fieldParentPath.AppendField(segment.Name);
+            anchorSelectionSet = null!;
+            anchorType = null!;
+            anchorPath = null!;
+            return false;
         }
 
-        anchorSelectionSet = currentSet;
-        anchorType = currentType;
-        anchorPath = currentPath;
+        anchorSelectionSet = anchors[0].SelectionSet;
+        anchorType = anchors[0].Type;
+        anchorPath = anchors[0].Path;
         return true;
     }
 
     /// <summary>
-    /// Finds the field selected under <paramref name="responseName"/> in <paramref name="selectionSet"/>
-    /// or, when it is not selected directly, in its inline fragments, and resolves its named type and the
-    /// path of the selection set that directly contains it.
+    /// Walks <paramref name="operation"/>'s selection set from its root type and adds every selection set
+    /// located at <paramref name="path"/> to <paramref name="anchors"/>. A field that is selected under the
+    /// type conditions of an abstract field is located through each of them, and the anchor path is
+    /// <paramref name="path"/> with those type conditions included.
     /// </summary>
-    private bool TryFindFieldNode(
+    private void CollectIncrementalPlanAnchors(
+        OperationDefinitionNode operation,
+        SelectionPath path,
+        List<IncrementalPlanAnchor> anchors)
+        => CollectIncrementalPlanAnchors(
+            operation.SelectionSet,
+            _schema.GetOperationType(operation.Operation),
+            SelectionPath.Root,
+            path,
+            0,
+            anchors);
+
+    private void CollectIncrementalPlanAnchors(
         SelectionSetNode selectionSet,
         ITypeDefinition type,
-        string responseName,
+        SelectionPath selectionSetPath,
         SelectionPath path,
-        [NotNullWhen(true)] out FieldNode? fieldNode,
-        [NotNullWhen(true)] out ITypeDefinition? fieldType,
-        [NotNullWhen(true)] out SelectionPath? fieldParentPath)
+        int segmentIndex,
+        List<IncrementalPlanAnchor> anchors)
     {
-        if (TryResolveSelectedField(selectionSet, type, responseName, out fieldNode, out fieldType))
+        if (segmentIndex == path.Length)
         {
-            fieldParentPath = path;
-            return true;
+            anchors.Add(new IncrementalPlanAnchor(selectionSet, type, selectionSetPath));
+            return;
+        }
+
+        var segment = path[segmentIndex];
+
+        if (segment.Kind is not SelectionPathSegmentKind.Field)
+        {
+            return;
+        }
+
+        if (TryResolveSelectedField(selectionSet, type, segment.Name, out var fieldNode, out var fieldType))
+        {
+            if (fieldNode.SelectionSet is { } fieldSelectionSet)
+            {
+                CollectIncrementalPlanAnchors(
+                    fieldSelectionSet,
+                    fieldType,
+                    selectionSetPath.AppendField(segment.Name),
+                    path,
+                    segmentIndex + 1,
+                    anchors);
+            }
+
+            return;
         }
 
         if (fieldNode is not null)
         {
-            fieldParentPath = null;
-            return false;
+            return;
         }
 
         foreach (var selection in selectionSet.Selections)
@@ -521,7 +538,7 @@ public sealed partial class OperationPlanner
             }
 
             var fragmentType = type;
-            var fragmentPath = path;
+            var fragmentPath = selectionSetPath;
 
             if (fragment.TypeCondition is { } typeCondition)
             {
@@ -534,31 +551,17 @@ public sealed partial class OperationPlanner
                 }
 
                 fragmentType = conditionType;
-                fragmentPath = path.AppendFragment(typeCondition.Name.Value);
+                fragmentPath = selectionSetPath.AppendFragment(typeCondition.Name.Value);
             }
 
-            if (TryFindFieldNode(
+            CollectIncrementalPlanAnchors(
                 fragment.SelectionSet,
                 fragmentType,
-                responseName,
                 fragmentPath,
-                out fieldNode,
-                out fieldType,
-                out fieldParentPath))
-            {
-                return true;
-            }
-
-            if (fieldNode is not null)
-            {
-                return false;
-            }
+                path,
+                segmentIndex,
+                anchors);
         }
-
-        fieldNode = null;
-        fieldType = null;
-        fieldParentPath = null;
-        return false;
     }
 
     /// <summary>
@@ -2384,6 +2387,11 @@ public sealed partial class OperationPlanner
             + $"Defer anchor: '{selfFetch.Target}'. "
             + $"Target schema: '{selfFetch.SchemaName}'. "
             + $"Reason: {reason}.");
+
+    private readonly record struct IncrementalPlanAnchor(
+        SelectionSetNode SelectionSet,
+        ITypeDefinition Type,
+        SelectionPath Path);
 
     private readonly record struct LiftedDeferRequirement(
         OperationRequirement Requirement,
