@@ -1330,52 +1330,7 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Nested_Should_DeliverInnerRequirement_When_OuterGroupFieldIsExcludedBySkip()
     {
         // arrange
-        using var server1 = CreateSourceSchema(
-            "A",
-            """
-            type Query {
-                user(id: ID!): User @lookup
-            }
-
-            type User @key(fields: "id") {
-                id: ID!
-                name: String!
-                preferences: String!
-            }
-            """);
-
-        using var server2 = CreateSourceSchema(
-            "B",
-            """
-            type Query {
-                userById(id: ID!): User @lookup @internal
-            }
-
-            type User @key(fields: "id") {
-                id: ID!
-                email: String!
-            }
-            """);
-
-        using var server3 = CreateSourceSchema(
-            "C",
-            """
-            type Query {
-                userById(id: ID!): User @lookup @internal
-            }
-
-            type User @key(fields: "id") {
-                id: ID!
-                customized(preferences: String! @require(field: "preferences")): String!
-            }
-            """);
-
-        using var gateway = await CreateCompositeSchemaAsync(
-        [
-            ("A", server1),
-            ("B", server2),
-            ("C", server3)
-        ]);
+        using var gateway = await CreateUserPreferencesGatewayAsync();
 
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
 
@@ -1613,6 +1568,231 @@ public class DeferTests : FusionTestBase
 
         // assert
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNoSubgraphRequestForGroup_When_AllGroupFieldsAreExcludedBySkip()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "contact") {
+                        email @skip(if: $skipEmail)
+                    }
+                    ... @defer(label: "location") {
+                        address
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var requestCounts = await GetRequestCountsAsync(gateway, result);
+        var payloads = await ReadPayloadsAsync(result);
+        requestCounts.MatchInlineSnapshot("A: 1, B: 1");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"1","path":["user"],"label":"location"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_SendNoSubgraphRequestForOuterGroup_When_InnerGroupFieldsAreExcludedBySkip()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query($skipEmail: Boolean!, $skipAddress: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            address @skip(if: $skipAddress)
+                        }
+                    }
+                    ... @defer(label: "location") {
+                        phone
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?>
+            {
+                ["skipEmail"] = true,
+                ["skipAddress"] = true
+            });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var requestCounts = await GetRequestCountsAsync(gateway, result);
+        var payloads = await ReadPayloadsAsync(result);
+        requestCounts.MatchInlineSnapshot("A: 1, B: 1");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"2","path":["user"],"label":"location"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"2","data":{"phone":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_FetchOuterGroupAndMatchNonDeferredResult_When_InnerGroupNeedsItsData()
+    {
+        // arrange
+        using var gateway = await CreateUserPreferencesGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            customized
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        var nonDeferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    name
+                    email @skip(if: $skipEmail)
+                    customized
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        // act
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var requestCounts = await GetRequestCountsAsync(gateway, deferredResult);
+        var payloads = await ReadPayloadsAsync(deferredResult);
+
+        using var nonDeferredResult = await client.PostAsync(
+            nonDeferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var nonDeferredPayloads = await ReadPayloadsAsync(nonDeferredResult);
+
+        // assert
+        requestCounts.MatchInlineSnapshot("A: 2, C: 1");
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse(nonDeferredPayloads[0])!["data"],
+                MergeIncrementalPayloads(payloads)));
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_FetchEnclosingSilentGroups_When_InnermostGroupNeedsTheirData()
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!, $skipPhone: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "middle") {
+                            phone @skip(if: $skipPhone)
+                            ... @defer(label: "inner") {
+                                address
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?>
+            {
+                ["skipEmail"] = true,
+                ["skipPhone"] = true
+            });
+
+        var nonDeferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!, $skipPhone: Boolean!) {
+                user(id: "1") {
+                    id
+                    email @skip(if: $skipEmail)
+                    phone @skip(if: $skipPhone)
+                    address
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?>
+            {
+                ["skipEmail"] = true,
+                ["skipPhone"] = true
+            });
+
+        // act
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var requestCounts = await GetRequestCountsAsync(gateway, deferredResult);
+        var payloads = await ReadPayloadsAsync(deferredResult);
+
+        using var nonDeferredResult = await client.PostAsync(
+            nonDeferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var nonDeferredPayloads = await ReadPayloadsAsync(nonDeferredResult);
+
+        // assert
+        requestCounts.MatchInlineSnapshot("A: 3, B: 1");
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse(nonDeferredPayloads[0])!["data"],
+                MergeIncrementalPayloads(payloads)));
     }
 
     [Fact]
@@ -4873,6 +5053,56 @@ public class DeferTests : FusionTestBase
         [
             ("A", server1),
             ("B", server2)
+        ]);
+    }
+
+    private async Task<Gateway> CreateUserPreferencesGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+                preferences: String!
+            }
+            """);
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+            }
+            """);
+
+        var server3 = CreateSourceSchema(
+            "C",
+            """
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                customized(preferences: String! @require(field: "preferences")): String!
+            }
+            """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
         ]);
     }
 
