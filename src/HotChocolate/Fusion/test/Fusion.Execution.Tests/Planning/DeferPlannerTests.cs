@@ -3162,6 +3162,65 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_NestedDefer_Should_PlanOuterFetchOfObjectField_When_OuterGroupOnlySelectsNestedGroupBelowIt()
+    {
+        // arrange
+        var schema = ComposeOwnerSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_NestedDefer_Should_NotPlanOuterFetchOfObjectField_When_InitialResultSelectsFieldsOfIt()
+    {
+        // arrange
+        var schema = ComposeOwnerSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        name
+                    }
+                    ... @defer(label: "outer") {
+                        owner {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void Defer_Should_ThrowPlannerError_When_RequirementPathLiesOutsideDeferAnchor()
     {
         // arrange
@@ -3312,6 +3371,36 @@ public class DeferPlannerTests : FusionTestBase
         // assert
         Assert.Null(error);
     }
+
+    private static FusionSchemaDefinition ComposeOwnerSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                product: Product!
+            }
+
+            type Product {
+                id: ID!
+                owner: User!
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                total: Int!
+            }
+            """);
 
     private static FusionSchemaDefinition ComposeProductReviewSchema()
         => ComposeSchema(

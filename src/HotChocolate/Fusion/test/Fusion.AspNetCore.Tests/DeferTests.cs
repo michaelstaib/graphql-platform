@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HotChocolate.Execution;
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
@@ -4355,7 +4356,11 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
 
         var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
-        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query));
+        var coreData = MergeIncrementalPayloads(
+            await ExecuteWithCoreExecutorAsync(
+                query,
+                variables: null,
+                b => b.AddQueryType<ReviewLookupCore.Query>()));
         Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
         gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
@@ -4453,7 +4458,11 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
 
         var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
-        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query));
+        var coreData = MergeIncrementalPayloads(
+            await ExecuteWithCoreExecutorAsync(
+                query,
+                variables: null,
+                b => b.AddQueryType<ReviewLookupCore.Query>()));
         Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
         gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
@@ -4507,6 +4516,279 @@ public class DeferTests : FusionTestBase
               ]
             }
             """);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverParentObject_When_NestedGroupIsOnlySelectionUnderObjectField()
+    {
+        // arrange
+        using var gateway = await CreateObjectOwnerGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+        await AssertMatchesCoreAsync(result, query, b => b.AddQueryType<ObjectOwnerCore.Query>());
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverParentObject_When_OuterGroupHasOwnFieldsBesideNestedGroupOnlyObject()
+    {
+        // arrange
+        using var gateway = await CreateObjectOwnerGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        title
+                        owner {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+        await AssertMatchesCoreAsync(result, query, b => b.AddQueryType<ObjectOwnerCore.Query>());
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverParentObject_When_EnclosedGroupHasNoFieldsUnderObjectField()
+    {
+        // arrange
+        using var gateway = await CreateObjectOwnerGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner {
+                            ... @defer(label: "middle") {
+                                ... @defer(label: "inner") {
+                                    total
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+        await AssertMatchesCoreAsync(result, query, b => b.AddQueryType<ObjectOwnerCore.Query>());
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotDeliverParentObjectAgain_When_InitialResultSelectsObjectField()
+    {
+        // arrange
+        using var gateway = await CreateObjectOwnerGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        const string query =
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        name
+                    }
+                    ... @defer(label: "outer") {
+                        owner {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+        var request = new OperationRequest(query);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+        await AssertMatchesCoreAsync(result, query, b => b.AddQueryType<ObjectOwnerCore.Query>());
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverParentObjectAndNestedGroup_When_ObjectFieldIsIncluded()
+    {
+        // arrange
+        const string query =
+            """
+            query ($skip: Boolean!) {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner @skip(if: $skip) {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var payloads = await ExecuteObjectOwnerAndAssertMatchesCoreAsync(query, skip: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"product":{"id":"1"}},"pending":[{"id":"0","path":["product"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"1","path":["product","owner"],"label":"inner"}],"incremental":[{"id":"0","data":{"owner":{}}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"total":5000}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotStream_When_ObjectFieldWithOnlyNestedGroupIsSkipped()
+    {
+        // arrange
+        const string query =
+            """
+            query ($skip: Boolean!) {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner @skip(if: $skip) {
+                            ... @defer(label: "inner") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var payloads = await ExecuteObjectOwnerAndAssertMatchesCoreAsync(query, skip: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"product":{"id":"1"}},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverParentObjectWithoutNestedGroup_When_NestedGroupFieldIsSkipped()
+    {
+        // arrange
+        const string query =
+            """
+            query ($skip: Boolean!) {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner {
+                            ... @defer(label: "inner") {
+                                total @skip(if: $skip)
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var payloads = await ExecuteObjectOwnerAndAssertMatchesCoreAsync(query, skip: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"product":{"id":"1"}},"pending":[{"id":"0","path":["product"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","data":{"owner":{}}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"hasNext":false}
+            """
+        ]);
+    }
+
+    private async Task<List<string>> ExecuteObjectOwnerAndAssertMatchesCoreAsync(string query, bool skip)
+    {
+        using var gateway = await CreateObjectOwnerGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["skip"] = skip };
+
+        using var result = await client.PostAsync(
+            new OperationRequest(query, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var payloads = await ReadPayloadsAsync(result);
+        var coreData = MergeIncrementalPayloads(
+            await ExecuteWithCoreExecutorAsync(query, variables, b => b.AddQueryType<ObjectOwnerCore.Query>()));
+        Assert.True(JsonNode.DeepEquals(coreData, MergeIncrementalPayloads(payloads)));
+
+        return payloads;
     }
 
     private static OperationRequest CreateNestedMessageDeferRequest(bool outerEnabled, bool innerEnabled)
@@ -4732,15 +5014,41 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
-    private static async Task<List<string>> ExecuteWithCoreExecutorAsync(string query)
+    private static async Task AssertMatchesCoreAsync(
+        GraphQLHttpResponse response,
+        string query,
+        Action<IRequestExecutorBuilder> configure)
     {
-        var executor = await new ServiceCollection()
-            .AddGraphQL()
-            .AddQueryType<ReviewLookupCore.Query>()
-            .ModifyOptions(o => o.EnableDefer = true)
-            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(response));
+        var coreData = MergeIncrementalPayloads(
+            await ExecuteWithCoreExecutorAsync(query, variables: null, configure));
+        Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
+    }
 
-        var result = await executor.ExecuteAsync(query, TestContext.Current.CancellationToken);
+    private static async Task<List<string>> ExecuteWithCoreExecutorAsync(
+        string query,
+        IReadOnlyDictionary<string, object?>? variables,
+        Action<IRequestExecutorBuilder> configure)
+    {
+        var builder = new ServiceCollection()
+            .AddGraphQL()
+            .ModifyOptions(o => o.EnableDefer = true);
+        configure(builder);
+
+        var executor = await builder.BuildRequestExecutorAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var coreRequest = OperationRequestBuilder.New()
+            .SetDocument(query)
+            .SetVariableValues(variables)
+            .Build();
+
+        var result = await executor.ExecuteAsync(coreRequest, TestContext.Current.CancellationToken);
+        if (result is OperationResult single)
+        {
+            return [single.ToJson()];
+        }
+
         var stream = Assert.IsType<ResponseStream>(result);
         var payloads = new List<string>();
 
@@ -5550,6 +5858,84 @@ public class DeferTests : FusionTestBase
         public record Author([property: GraphQLType<NonNullType<IdType>>] string Id)
         {
             public int GetRating() => int.Parse(Id) * 100;
+        }
+    }
+
+    private async Task<Gateway> CreateObjectOwnerGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<ObjectOwnerSourceA.Query>());
+
+        var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<ObjectOwnerSourceB.Query>());
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private static class ObjectOwnerSourceA
+    {
+        public class Query
+        {
+            public Product GetProduct() => new(1);
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public string Title => $"Product {Id}";
+
+            public User Owner => new(2);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public string Name => $"User {Id}";
+        }
+    }
+
+    private static class ObjectOwnerSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Total => 5000;
+        }
+    }
+
+    private static class ObjectOwnerCore
+    {
+        public class Query
+        {
+            public Product GetProduct() => new(1);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public string Title => $"Product {Id}";
+
+            public User Owner => new(2);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public string Name => $"User {Id}";
+
+            public int Total => 5000;
         }
     }
 

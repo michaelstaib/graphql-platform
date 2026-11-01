@@ -12,6 +12,12 @@ namespace HotChocolate.Fusion.Planning;
 internal static class DeferOccurrenceCollector
 {
     /// <summary>
+    /// The response name of the placeholder occurrence that delivers a composite field
+    /// without selecting any of its fields. It is not a valid GraphQL name.
+    /// </summary>
+    internal const string PlaceholderResponseName = "$placeholder";
+
+    /// <summary>
     /// Collects leaf field occurrences from the given operation, optionally
     /// folding equivalent unlabeled nested <c>@defer</c> fragments into their
     /// parent delivery group.
@@ -31,6 +37,7 @@ internal static class DeferOccurrenceCollector
         bool inlineUnlabeledNestedDefers)
     {
         var occurrences = new List<FieldOccurrence>();
+        var compositeFields = new Dictionary<FieldLocation, List<DeliveryGroup?>>();
         CollectOccurrences(
             operation.SelectionSet.Selections,
             parentPath: [],
@@ -38,7 +45,9 @@ internal static class DeferOccurrenceCollector
             parentTypeCondition: null,
             byFragment,
             inlineUnlabeledNestedDefers,
-            occurrences);
+            occurrences,
+            compositeFields);
+        RemoveRedundantPlaceholders(occurrences, compositeFields);
         return occurrences;
     }
 
@@ -49,7 +58,8 @@ internal static class DeferOccurrenceCollector
         NamedTypeNode? parentTypeCondition,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment,
         bool inlineUnlabeledNestedDefers,
-        List<FieldOccurrence> occurrences)
+        List<FieldOccurrence> occurrences,
+        Dictionary<FieldLocation, List<DeliveryGroup?>> compositeFields)
     {
         foreach (var selection in selections)
         {
@@ -68,6 +78,18 @@ internal static class DeferOccurrenceCollector
                             fieldNode.Alias?.Value,
                             parentTypeCondition?.Name.Value));
 
+                    var location = new FieldLocation(childPath, string.Empty);
+
+                    if (!compositeFields.TryGetValue(location, out var groups))
+                    {
+                        groups = [];
+                        compositeFields[location] = groups;
+                    }
+
+                    groups.Add(enclosingDefer);
+
+                    var firstChildOccurrence = occurrences.Count;
+
                     CollectOccurrences(
                         childSelectionSet.Selections,
                         childPath,
@@ -75,7 +97,22 @@ internal static class DeferOccurrenceCollector
                         parentTypeCondition: null,
                         byFragment,
                         inlineUnlabeledNestedDefers,
-                        occurrences);
+                        occurrences,
+                        compositeFields);
+
+                    // Adds a placeholder occurrence for a composite field that has no fields of its own
+                    // in the enclosing group.
+                    if (enclosingDefer is not null
+                        && !HasOccurrenceInGroup(occurrences, firstChildOccurrence, enclosingDefer))
+                    {
+                        occurrences.Add(
+                            new FieldOccurrence(
+                                childPath,
+                                PlaceholderResponseName,
+                                DeferOperationRewriter.PlaceholderTypeNameField,
+                                enclosingDefer,
+                                TypeCondition: null));
+                    }
                 }
                 else
                 {
@@ -124,8 +161,57 @@ internal static class DeferOccurrenceCollector
                     inlineFragment.TypeCondition ?? parentTypeCondition,
                     byFragment,
                     inlineUnlabeledNestedDefers,
-                    occurrences);
+                    occurrences,
+                    compositeFields);
             }
         }
+    }
+
+    private static bool HasOccurrenceInGroup(
+        List<FieldOccurrence> occurrences,
+        int start,
+        DeliveryGroup deliveryGroup)
+    {
+        for (var i = start; i < occurrences.Count; i++)
+        {
+            if (ReferenceEquals(occurrences[i].EnclosingDeliveryGroup, deliveryGroup))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void RemoveRedundantPlaceholders(
+        List<FieldOccurrence> occurrences,
+        Dictionary<FieldLocation, List<DeliveryGroup?>> compositeFields)
+    {
+        occurrences.RemoveAll(occurrence =>
+            occurrence.ResponseName.Equals(PlaceholderResponseName, StringComparison.Ordinal)
+            && IsDeliveredByEnclosingScope(
+                compositeFields[new FieldLocation(occurrence.ParentPath, string.Empty)],
+                occurrence.EnclosingDeliveryGroup!));
+    }
+
+    private static bool IsDeliveredByEnclosingScope(List<DeliveryGroup?> groups, DeliveryGroup deliveryGroup)
+    {
+        foreach (var group in groups)
+        {
+            if (group is null)
+            {
+                return true;
+            }
+
+            for (var ancestor = deliveryGroup.Parent; ancestor is not null; ancestor = ancestor.Parent)
+            {
+                if (ReferenceEquals(ancestor, group))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }
