@@ -68,8 +68,8 @@ public sealed class OperationCompiler
         => Compile(id, hash, shortHash, operationDefinition, deliveryGroups: []);
 
     /// <summary>
-    /// Compiles the operation and registers the include conditions of the delivery groups, so
-    /// that the include flags of a request also cover them.
+    /// Compiles the operation and registers the <c>@defer(if:)</c>, <c>@include</c> and <c>@skip</c>
+    /// conditions of the delivery groups, so that the include flags of a request also cover them.
     /// </summary>
     /// <exception cref="ArgumentException">
     /// Thrown when a delivery group ID is negative.
@@ -188,7 +188,7 @@ public sealed class OperationCompiler
                 throw ThrowHelper.DeliveryGroupIdNegative(deliveryGroup.Id, nameof(deliveryGroups));
             }
 
-            if (!deliveryGroup.Conditions.IsDefaultOrEmpty)
+            if (deliveryGroup.HasIncludeConditions)
             {
                 conditionalGroupCount++;
             }
@@ -200,12 +200,20 @@ public sealed class OperationCompiler
 
         foreach (var deliveryGroup in deliveryGroups)
         {
-            if (deliveryGroup.Conditions.IsDefaultOrEmpty)
+            if (!deliveryGroup.HasIncludeConditions)
             {
                 continue;
             }
 
-            var groupIndices = ImmutableArray.CreateBuilder<int>(deliveryGroup.Conditions.Length);
+            var groupIndices = ImmutableArray.CreateBuilder<int>(
+                deliveryGroup.Conditions.Length + (deliveryGroup.IfVariable is null ? 0 : 1));
+
+            if (deliveryGroup.IfVariable is { } ifVariable)
+            {
+                var ifCondition = new IncludeCondition(skip: null, include: ifVariable);
+                includeConditions.Add(ifCondition);
+                groupIndices.Add(includeConditions.IndexOf(ifCondition));
+            }
 
             foreach (var condition in deliveryGroup.Conditions)
             {

@@ -151,6 +151,85 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
     }
 
     [Fact]
+    public void AreDeliveryGroupConditionsIncluded_Should_ReadFlags_When_GroupHasIfVariable()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var include = new IncludeCondition(skip: null, include: "x");
+        var ifGroup = new DeliveryGroup(null, null, 0) { Id = 0, IfVariable = "d" };
+        var ifAndIncludeGroup = new DeliveryGroup(null, null, 0) { Id = 1, IfVariable = "d", Conditions = [include] };
+        var sharedGroup = new DeliveryGroup(null, null, 0) { Id = 2, IfVariable = "x" };
+        var operationDefinition = ParseOperation("query($d: Boolean!, $x: Boolean!) { foo }");
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+        var operation = compiler.Compile(
+            "1",
+            "1",
+            "1",
+            operationDefinition,
+            [ifGroup, ifAndIncludeGroup, sharedGroup]);
+
+        // act
+        var enabled = operation.CreateIncludeConditionFlags(
+            CreateVariables(schema, new Dictionary<string, bool> { ["d"] = true, ["x"] = true }));
+        var deferDisabled = operation.CreateIncludeConditionFlags(
+            CreateVariables(schema, new Dictionary<string, bool> { ["d"] = false, ["x"] = true }));
+        var includeDisabled = operation.CreateIncludeConditionFlags(
+            CreateVariables(schema, new Dictionary<string, bool> { ["d"] = true, ["x"] = false }));
+
+        // assert
+        Assert.Equal(2, operation.IncludeConditionCount);
+        Assert.Equal(
+            [true, true, true],
+            [
+                operation.AreDeliveryGroupConditionsIncluded(ifGroup, enabled),
+                operation.AreDeliveryGroupConditionsIncluded(ifAndIncludeGroup, enabled),
+                operation.AreDeliveryGroupConditionsIncluded(sharedGroup, enabled)
+            ]);
+        Assert.Equal(
+            [false, false, true],
+            [
+                operation.AreDeliveryGroupConditionsIncluded(ifGroup, deferDisabled),
+                operation.AreDeliveryGroupConditionsIncluded(ifAndIncludeGroup, deferDisabled),
+                operation.AreDeliveryGroupConditionsIncluded(sharedGroup, deferDisabled)
+            ]);
+        Assert.Equal(
+            [true, false, false],
+            [
+                operation.AreDeliveryGroupConditionsIncluded(ifGroup, includeDisabled),
+                operation.AreDeliveryGroupConditionsIncluded(ifAndIncludeGroup, includeDisabled),
+                operation.AreDeliveryGroupConditionsIncluded(sharedGroup, includeDisabled)
+            ]);
+    }
+
+    [Fact]
+    public void Create_Should_ThrowArgumentException_When_GroupIfVariableWasNotCompiled()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var deliveryGroup = new DeliveryGroup(null, null, 0) { Id = 0, IfVariable = "d" };
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+        var operation = compiler.Compile("1", "1", "1", ParseOperation("query($d: Boolean!) { foo }"));
+
+        // act
+        var exception = Assert.Throws<ArgumentException>(
+            () => OperationPlan.Create(
+                "1",
+                operation,
+                rootNodes: [],
+                allNodes: [],
+                deliveryGroups: [deliveryGroup],
+                incrementalPlans: [],
+                searchSpace: 0,
+                expandedNodes: 0));
+
+        // assert
+        Assert.Equal(
+            "The include conditions of the delivery group with the ID '0' were not compiled into the operation. "
+            + "(Parameter 'deliveryGroups')",
+            exception.Message);
+    }
+
+    [Fact]
     public void AreDeliveryGroupConditionsIncluded_Should_ReadFlags_When_GroupIdsAreSparse()
     {
         // arrange

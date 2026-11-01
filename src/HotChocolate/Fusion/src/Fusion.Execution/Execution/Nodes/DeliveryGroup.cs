@@ -38,8 +38,7 @@ public sealed record DeliveryGroup(
 
     /// <summary>
     /// The variable name from <c>@defer(if: $var)</c>, or <c>null</c> when this
-    /// defer is unconditional. Runtime activation of this defer uses this variable
-    /// together with <see cref="DeferConditionIndex"/>.
+    /// defer is unconditional. The group is not delivered when the variable is <c>false</c>.
     /// </summary>
     public string? IfVariable { get; init; }
 
@@ -48,4 +47,10 @@ public sealed record DeliveryGroup(
     /// inline fragments, outermost first. The group is not delivered when any condition is false.
     /// </summary>
     internal ImmutableArray<IncludeCondition> Conditions { get; init; } = [];
+
+    /// <summary>
+    /// Determines whether the delivery group depends on a variable through <see cref="IfVariable"/>
+    /// or <see cref="Conditions"/>.
+    /// </summary>
+    internal bool HasIncludeConditions => IfVariable is not null || !Conditions.IsDefaultOrEmpty;
 }
