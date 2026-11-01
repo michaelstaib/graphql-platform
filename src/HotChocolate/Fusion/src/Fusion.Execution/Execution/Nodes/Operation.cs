@@ -296,13 +296,24 @@ public sealed class Operation : IOperation
     }
 
     /// <summary>
-    /// Determines whether all include conditions of a delivery group are set in the specified
-    /// include flags. The group is identified by its position in the delivery groups this
-    /// operation was compiled with.
+    /// Determines whether include conditions of the delivery group were compiled into this operation.
     /// </summary>
-    internal bool AreDeliveryGroupConditionsIncluded(int deliveryGroupIndex, ConditionFlags includeFlags)
+    internal bool HasDeliveryGroupConditions(DeliveryGroup deliveryGroup)
+        => (uint)deliveryGroup.Id < (uint)_deliveryGroupConditionIndices.Length
+            && !_deliveryGroupConditionIndices[deliveryGroup.Id].IsDefault;
+
+    /// <summary>
+    /// Determines whether all include conditions of the delivery group are set in the specified
+    /// include flags. A group whose conditions were not compiled into this operation counts as included.
+    /// </summary>
+    internal bool AreDeliveryGroupConditionsIncluded(DeliveryGroup deliveryGroup, ConditionFlags includeFlags)
     {
-        foreach (var index in _deliveryGroupConditionIndices[deliveryGroupIndex])
+        if (!HasDeliveryGroupConditions(deliveryGroup))
+        {
+            return true;
+        }
+
+        foreach (var index in _deliveryGroupConditionIndices[deliveryGroup.Id])
         {
             var isIncluded = index < 64
                 ? (includeFlags.Word0 & (1ul << index)) != 0

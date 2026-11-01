@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Planning;
@@ -169,7 +170,14 @@ public sealed class OperationCompiler
             return [];
         }
 
-        var indices = ImmutableArray.CreateBuilder<ImmutableArray<int>>(deliveryGroups.Length);
+        var maxId = -1;
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            maxId = Math.Max(maxId, deliveryGroup.Id);
+        }
+
+        var indicesById = new ImmutableArray<int>[maxId + 1];
 
         foreach (var deliveryGroup in deliveryGroups)
         {
@@ -181,10 +189,13 @@ public sealed class OperationCompiler
                 groupIndices.Add(includeConditions.IndexOf(condition));
             }
 
-            indices.Add(groupIndices.ToImmutable());
+            if (deliveryGroup.Id >= 0)
+            {
+                indicesById[deliveryGroup.Id] = groupIndices.MoveToImmutable();
+            }
         }
 
-        return indices.ToImmutable();
+        return ImmutableCollectionsMarshal.AsImmutableArray(indicesById);
     }
 
     internal SelectionSet CompileSelectionSet(

@@ -122,13 +122,10 @@ internal static partial class OperationPlanExecutor
             // conditions hold. An incremental plan is active if at least one of its
             // delivery groups is active.
             var activeDeliveryGroupIds = new HashSet<int>();
-            for (var i = 0; i < operationPlan.DeliveryGroups.Length; i++)
+            foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                var deliveryGroup = operationPlan.DeliveryGroups[i];
-
                 if (IsDeliveryGroupActive(
                     deliveryGroup,
-                    i,
                     variables,
                     operationPlan.Operation,
                     rootContext.IncludeConditionFlags))
@@ -798,7 +795,6 @@ internal static partial class OperationPlanExecutor
 
     private static bool IsDeliveryGroupActive(
         DeliveryGroup deliveryGroup,
-        int deliveryGroupIndex,
         IVariableValueCollection variables,
         Operation operation,
         ConditionFlags includeFlags)
@@ -817,7 +813,7 @@ internal static partial class OperationPlanExecutor
             }
         }
 
-        return operation.AreDeliveryGroupConditionsIncluded(deliveryGroupIndex, includeFlags);
+        return operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, includeFlags);
     }
 
     private static DeliveryGroup? GetEnabledDeliveryGroup(

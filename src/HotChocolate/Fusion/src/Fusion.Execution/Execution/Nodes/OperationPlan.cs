@@ -178,7 +178,10 @@ public sealed partial record OperationPlan : IOperationPlan
     /// <param name="searchSpace">A number specifying how many possible plans were considered during planning.</param>
     /// <param name="expandedNodes">The number of expanded nodes during planner search.</param>
     /// <returns>A new <see cref="OperationPlan"/> instance.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="id"/> is null or empty.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="id"/> is null or empty, or when the include conditions of a delivery
+    /// group were not compiled into <paramref name="operation"/>.
+    /// </exception>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="operation"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when node collections are invalid.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a delivery path cannot be resolved.</exception>
@@ -196,6 +199,7 @@ public sealed partial record OperationPlan : IOperationPlan
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentOutOfRangeException.ThrowIfLessThan(rootNodes.Length, 0);
         ArgumentOutOfRangeException.ThrowIfLessThan(allNodes.Length, 0);
+        EnsureDeliveryGroupConditionsAreCompiled(operation, deliveryGroups);
 
         return new OperationPlan(
             id, operation, rootNodes, allNodes, deliveryGroups, incrementalPlans, searchSpace, expandedNodes);
@@ -220,6 +224,9 @@ public sealed partial record OperationPlan : IOperationPlan
     /// <param name="searchSpace">A number specifying how many possible plans were considered during planning.</param>
     /// <param name="expandedNodes">The number of expanded nodes during planner search.</param>
     /// <returns>A new <see cref="OperationPlan"/> instance with a content-based identifier.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the include conditions of a delivery group were not compiled into <paramref name="operation"/>.
+    /// </exception>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="operation"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when node collections are invalid.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a delivery path cannot be resolved.</exception>
@@ -235,6 +242,7 @@ public sealed partial record OperationPlan : IOperationPlan
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentOutOfRangeException.ThrowIfLessThan(rootNodes.Length, 0);
         ArgumentOutOfRangeException.ThrowIfLessThan(allNodes.Length, 0);
+        EnsureDeliveryGroupConditionsAreCompiled(operation, deliveryGroups);
 
         using var buffer = new PooledArrayWriter(initialBufferSize: 4096);
         s_formatter.Format(buffer, operation, allNodes);
@@ -261,6 +269,24 @@ public sealed partial record OperationPlan : IOperationPlan
             incrementalPlans,
             searchSpace,
             expandedNodes);
+    }
+
+    private static void EnsureDeliveryGroupConditionsAreCompiled(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (!deliveryGroup.Conditions.IsDefaultOrEmpty && !operation.HasDeliveryGroupConditions(deliveryGroup))
+            {
+                throw ThrowHelper.DeliveryGroupConditionsNotCompiled(deliveryGroup.Id, nameof(deliveryGroups));
+            }
+        }
     }
 
     private static ExecutionNode?[] CreateNodeLookup(

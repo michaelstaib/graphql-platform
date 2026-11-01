@@ -20,9 +20,9 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
         var schema = CreateSchema();
         var include = new IncludeCondition(skip: null, include: "x");
         var skip = new IncludeCondition(skip: "y", include: null);
-        var includeGroup = new DeliveryGroup(null, null, 0) { Conditions = [include] };
-        var skipGroup = new DeliveryGroup(null, null, 0) { Conditions = [skip] };
-        var bothGroup = new DeliveryGroup(null, null, 0) { Conditions = [include, skip] };
+        var includeGroup = new DeliveryGroup(null, null, 0) { Id = 0, Conditions = [include] };
+        var skipGroup = new DeliveryGroup(null, null, 0) { Id = 1, Conditions = [skip] };
+        var bothGroup = new DeliveryGroup(null, null, 0) { Id = 2, Conditions = [include, skip] };
         var operationDefinition = ParseOperation("query($x: Boolean!, $y: Boolean!) { foo }");
         var compiler = new OperationCompiler(schema, _fieldMapPool);
         var operation = compiler.Compile(
@@ -38,9 +38,9 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
 
         // assert
         Assert.Equal(2, operation.IncludeConditionCount);
-        Assert.True(operation.AreDeliveryGroupConditionsIncluded(0, flags));
-        Assert.False(operation.AreDeliveryGroupConditionsIncluded(1, flags));
-        Assert.False(operation.AreDeliveryGroupConditionsIncluded(2, flags));
+        Assert.True(operation.AreDeliveryGroupConditionsIncluded(includeGroup, flags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(skipGroup, flags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(bothGroup, flags));
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
         const int conditionCount = 64;
         var schema = CreateSchema();
         var include = new IncludeCondition(skip: null, include: "x");
-        var deliveryGroup = new DeliveryGroup(null, null, 0) { Conditions = [include] };
+        var deliveryGroup = new DeliveryGroup(null, null, 0) { Id = 0, Conditions = [include] };
         var sourceText = new StringBuilder();
         sourceText.Append("query($x: Boolean! ");
 
@@ -91,8 +91,63 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
 
         // assert
         Assert.True(operation.HasWideIncludeFlags);
-        Assert.True(operation.AreDeliveryGroupConditionsIncluded(0, enabledFlags));
-        Assert.False(operation.AreDeliveryGroupConditionsIncluded(0, disabledFlags));
+        Assert.True(operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, enabledFlags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, disabledFlags));
+    }
+
+    [Fact]
+    public void AreDeliveryGroupConditionsIncluded_Should_ReturnTrue_When_GroupIsUnconditionalAndNotCompiled()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var deliveryGroup = new DeliveryGroup(null, null, 0) { Id = 0 };
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+        var operation = compiler.Compile("1", "1", "1", ParseOperation("query { foo }"));
+        var plan = OperationPlan.Create(
+            "1",
+            operation,
+            rootNodes: [],
+            allNodes: [],
+            deliveryGroups: [deliveryGroup],
+            incrementalPlans: [],
+            searchSpace: 0,
+            expandedNodes: 0);
+
+        // act
+        var flags = plan.Operation.CreateIncludeConditionFlags(CreateVariables(schema, []));
+        var isIncluded = plan.Operation.AreDeliveryGroupConditionsIncluded(plan.DeliveryGroups[0], flags);
+
+        // assert
+        Assert.True(isIncluded);
+    }
+
+    [Fact]
+    public void Create_Should_ThrowArgumentException_When_GroupConditionsWereNotCompiled()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var include = new IncludeCondition(skip: null, include: "x");
+        var deliveryGroup = new DeliveryGroup(null, null, 0) { Id = 0, Conditions = [include] };
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+        var operation = compiler.Compile("1", "1", "1", ParseOperation("query($x: Boolean!) { foo }"));
+
+        // act
+        var exception = Assert.Throws<ArgumentException>(
+            () => OperationPlan.Create(
+                "1",
+                operation,
+                rootNodes: [],
+                allNodes: [],
+                deliveryGroups: [deliveryGroup],
+                incrementalPlans: [],
+                searchSpace: 0,
+                expandedNodes: 0));
+
+        // assert
+        Assert.Equal(
+            "The include conditions of the delivery group with the ID '0' were not compiled into the operation. "
+            + "(Parameter 'deliveryGroups')",
+            exception.Message);
     }
 
     private static FusionSchemaDefinition CreateSchema()

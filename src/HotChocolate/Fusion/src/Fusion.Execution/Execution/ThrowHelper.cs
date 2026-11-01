@@ -97,6 +97,12 @@ internal static class ThrowHelper
     public static KeyNotFoundException DeliveryGroupNotFound(int deliveryGroupId)
         => new($"The delivery group with the ID '{deliveryGroupId}' was not found.");
 
+    public static ArgumentException DeliveryGroupConditionsNotCompiled(int deliveryGroupId, string paramName)
+        => new(
+            $"The include conditions of the delivery group with the ID '{deliveryGroupId}' "
+            + "were not compiled into the operation.",
+            paramName);
+
     public static InvalidOperationException DeliveryPathSegmentNotFound(string segmentName)
         => new($"Could not resolve selection path segment '{segmentName}'.");
 
