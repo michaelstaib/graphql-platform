@@ -145,9 +145,8 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
             var result = context.Result;
 
-            // transfer ownership of the request memory to the result so it is disposed when the
-            // result is disposed. On the error path the arena stays attached and the pool reset
-            // disposes it.
+            // transfer ownership of the request memory to the result so it is disposed with the result.
+            // On the error path the arena stays attached and ReturnWhenExecutionFinished decides its fate.
             memory = context.TryDetachMemory();
 
             if (result.IsStreamResult())
@@ -197,9 +196,8 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
     private void ReturnWhenExecutionFinished(PooledRequestContext context, MemoryArena? memory)
     {
-        // a null arena means the request never reached execution and the context is returned. An unsealed
-        // arena belongs to an execution that may still run and is abandoned with the context. A sealed arena
-        // is returned.
+        // returns the context to the pool unless the arena is present and unsealed, in which case the
+        // arena is disposed and the context is abandoned.
         if (memory is { IsSealed: false })
         {
             context.TryDetachMemory()?.Dispose();
