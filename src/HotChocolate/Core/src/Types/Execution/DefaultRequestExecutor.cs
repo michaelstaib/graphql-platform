@@ -199,8 +199,8 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
 
     private void ReturnWhenExecutionFinished(PooledRequestContext context, MemoryArena? memory)
     {
-        // an arena that is not sealed belongs to an execution that may still run, for example after
-        // an abort or a timeout, so the request context is abandoned together with the arena.
+        // an arena that is not sealed belongs to an execution that may still run, so the request
+        // context is abandoned together with the arena.
         if (memory is { IsSealed: false })
         {
             context.TryDetachMemory()?.Dispose();
