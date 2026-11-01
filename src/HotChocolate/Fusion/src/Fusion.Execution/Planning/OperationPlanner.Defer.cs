@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning.Partitioners;
@@ -76,7 +77,8 @@ public sealed partial class OperationPlanner
                             descriptor.Operation,
                             descriptor.Path,
                             out _,
-                            out var anchorType)
+                            out var anchorType,
+                            out _)
                                 ? anchorType.Name
                                 : _schema.GetOperationType(descriptor.Operation.Operation).Name;
 
@@ -140,6 +142,7 @@ public sealed partial class OperationPlanner
                 descriptor.Operation,
                 descriptor.Path,
                 out var anchorSelectionSet,
+                out _,
                 out _)
             && ContainsSelectedField(anchorSelectionSet);
     }
@@ -314,7 +317,8 @@ public sealed partial class OperationPlanner
                 deferredOperation,
                 descriptor.Path,
                 out var anchorSelectionSet,
-                out var anchorType))
+                out var anchorType,
+                out var anchorPath))
             {
                 throw new InvalidOperationException(
                     $"Unable to locate the defer anchor selection set at path '{descriptor.Path}' "
@@ -362,7 +366,7 @@ public sealed partial class OperationPlanner
                     index.GetId(anchorSelectionSet),
                     anchorSelectionSet,
                     anchorType,
-                    descriptor.Path);
+                    anchorPath);
 
                 var backlog = Backlog.Empty.Push(
                     new OperationWorkItem(OperationWorkItemKind.Lookup, anchorSet)
@@ -436,22 +440,126 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Walks <paramref name="operation"/>'s selection set from its root type to locate
-    /// the selection set at <paramref name="path"/> and resolves its GraphQL type. Used
-    /// to find the anchor selection set for a non-root-anchored incremental plan, whose
-    /// operation is a full path replica from <c>Query</c> down to the deferred fields.
+    /// the selection set at <paramref name="path"/> and resolves its GraphQL type. A field that
+    /// is selected under the type conditions of an abstract field is located through them, and
+    /// <paramref name="anchorPath"/> is <paramref name="path"/> with those type conditions included.
     /// </summary>
     private bool TryLocateIncrementalPlanAnchor(
         OperationDefinitionNode operation,
         SelectionPath path,
         out SelectionSetNode anchorSelectionSet,
-        out ITypeDefinition anchorType)
-        => TryLocateSelectionSetAtPath(
-            operation.SelectionSet,
-            _schema.GetOperationType(operation.Operation),
-            path,
-            startIndex: 0,
-            out anchorSelectionSet,
-            out anchorType);
+        out ITypeDefinition anchorType,
+        out SelectionPath anchorPath)
+    {
+        var currentSet = operation.SelectionSet;
+        ITypeDefinition currentType = _schema.GetOperationType(operation.Operation);
+        var currentPath = SelectionPath.Root;
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            var segment = path[i];
+
+            if (segment.Kind is not SelectionPathSegmentKind.Field
+                || !TryFindFieldNode(
+                    currentSet,
+                    currentType,
+                    segment.Name,
+                    currentPath,
+                    out var fieldNode,
+                    out var fieldType,
+                    out var fieldParentPath)
+                || fieldNode.SelectionSet is null)
+            {
+                anchorSelectionSet = null!;
+                anchorType = null!;
+                anchorPath = null!;
+                return false;
+            }
+
+            currentSet = fieldNode.SelectionSet;
+            currentType = fieldType;
+            currentPath = fieldParentPath.AppendField(segment.Name);
+        }
+
+        anchorSelectionSet = currentSet;
+        anchorType = currentType;
+        anchorPath = currentPath;
+        return true;
+    }
+
+    /// <summary>
+    /// Finds the field selected under <paramref name="responseName"/> in <paramref name="selectionSet"/>
+    /// or, when it is not selected directly, in its inline fragments, and resolves its named type and the
+    /// path of the selection set that directly contains it.
+    /// </summary>
+    private bool TryFindFieldNode(
+        SelectionSetNode selectionSet,
+        ITypeDefinition type,
+        string responseName,
+        SelectionPath path,
+        [NotNullWhen(true)] out FieldNode? fieldNode,
+        [NotNullWhen(true)] out ITypeDefinition? fieldType,
+        [NotNullWhen(true)] out SelectionPath? fieldParentPath)
+    {
+        if (TryResolveSelectedField(selectionSet, type, responseName, out fieldNode, out fieldType))
+        {
+            fieldParentPath = path;
+            return true;
+        }
+
+        if (fieldNode is not null)
+        {
+            fieldParentPath = null;
+            return false;
+        }
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is not InlineFragmentNode fragment)
+            {
+                continue;
+            }
+
+            var fragmentType = type;
+            var fragmentPath = path;
+
+            if (fragment.TypeCondition is { } typeCondition)
+            {
+                if (!_schema.Types.TryGetType(
+                    typeCondition.Name.Value,
+                    allowInaccessibleFields: true,
+                    out var conditionType))
+                {
+                    continue;
+                }
+
+                fragmentType = conditionType;
+                fragmentPath = path.AppendFragment(typeCondition.Name.Value);
+            }
+
+            if (TryFindFieldNode(
+                fragment.SelectionSet,
+                fragmentType,
+                responseName,
+                fragmentPath,
+                out fieldNode,
+                out fieldType,
+                out fieldParentPath))
+            {
+                return true;
+            }
+
+            if (fieldNode is not null)
+            {
+                return false;
+            }
+        }
+
+        fieldNode = null;
+        fieldType = null;
+        fieldParentPath = null;
+        return false;
+    }
 
     /// <summary>
     /// Determines whether <paramref name="path"/> is exactly the root's own
@@ -974,7 +1082,12 @@ public sealed partial class OperationPlanner
                 return false;
             }
 
-            if (!TryLocateIncrementalPlanAnchor(descriptor.Operation, descriptor.Path, out _, out var anchorType))
+            if (!TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out _,
+                out var anchorType,
+                out _))
             {
                 return false;
             }
@@ -2072,23 +2185,13 @@ public sealed partial class OperationPlanner
             switch (segment.Kind)
             {
                 case SelectionPathSegmentKind.Field:
-                    FieldNode? fieldNode = null;
-                    foreach (var selection in currentSet.Selections)
-                    {
-                        if (selection is FieldNode candidate
-                            && (candidate.Alias?.Value == segment.Name || candidate.Name.Value == segment.Name))
-                        {
-                            fieldNode = candidate;
-                            break;
-                        }
-                    }
-
-                    if (fieldNode?.SelectionSet is null
-                        || currentType is not FusionComplexTypeDefinition complexType
-                        || !complexType.Fields.TryGetField(
-                            fieldNode.Name.Value,
-                            allowInaccessibleFields: true,
-                            out var field))
+                    if (!TryResolveSelectedField(
+                            currentSet,
+                            currentType,
+                            segment.Name,
+                            out var fieldNode,
+                            out var fieldType)
+                        || fieldNode.SelectionSet is null)
                     {
                         targetSelectionSet = null!;
                         targetType = null!;
@@ -2096,7 +2199,7 @@ public sealed partial class OperationPlanner
                     }
 
                     currentSet = fieldNode.SelectionSet;
-                    currentType = field.Type.NamedType();
+                    currentType = fieldType;
                     break;
 
                 case SelectionPathSegmentKind.InlineFragment:
@@ -2135,6 +2238,45 @@ public sealed partial class OperationPlanner
 
         targetSelectionSet = currentSet;
         targetType = currentType;
+        return true;
+    }
+
+    /// <summary>
+    /// Finds the field selected directly in <paramref name="selectionSet"/> under <paramref name="responseName"/>
+    /// and resolves its named type on <paramref name="type"/>. <paramref name="fieldNode"/> is the selected field
+    /// even when its type does not resolve, and <c>null</c> when no field is selected under that response name.
+    /// </summary>
+    private static bool TryResolveSelectedField(
+        SelectionSetNode selectionSet,
+        ITypeDefinition type,
+        string responseName,
+        [NotNullWhen(true)] out FieldNode? fieldNode,
+        [NotNullWhen(true)] out ITypeDefinition? fieldType)
+    {
+        fieldNode = null;
+        fieldType = null;
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is FieldNode candidate
+                && (candidate.Alias?.Value == responseName || candidate.Name.Value == responseName))
+            {
+                fieldNode = candidate;
+                break;
+            }
+        }
+
+        if (fieldNode is null
+            || type is not FusionComplexTypeDefinition complexType
+            || !complexType.Fields.TryGetField(
+                fieldNode.Name.Value,
+                allowInaccessibleFields: true,
+                out var field))
+        {
+            return false;
+        }
+
+        fieldType = field.Type.NamedType();
         return true;
     }
 

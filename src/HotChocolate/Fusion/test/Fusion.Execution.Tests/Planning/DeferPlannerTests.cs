@@ -3340,6 +3340,112 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_PlanLookup_When_AnchorIsBelowInterfaceFieldTypeCondition()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerProfileSchema(isUnion: false);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            name
+                            profile {
+                                id
+                                ... @defer {
+                                    total
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookup_When_AnchorIsBelowUnionFieldTypeCondition()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerProfileSchema(isUnion: true);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            name
+                            profile {
+                                id
+                                ... @defer {
+                                    total
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupForEveryTypeCondition_When_AnchorIsBelowSiblingTypeConditions()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerProfileSchema(isUnion: true);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            profile {
+                                id
+                                ... @defer {
+                                    total
+                                }
+                            }
+                        }
+                        ... on Team {
+                            profile {
+                                id
+                                ... @defer {
+                                    total
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
@@ -3549,6 +3655,49 @@ public class DeferPlannerTests : FusionTestBase
             type Team @key(fields: "id") {
                 id: ID!
                 size: Int!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeAbstractOwnerProfileSchema(bool isUnion)
+        => ComposeSchema(
+            $$"""
+            # name: a
+            type Query {
+                product: Product!
+            }
+
+            type Product {
+                id: ID!
+                owner: Owner!
+            }
+
+            {{(isUnion ? "union Owner = User | Team" : "interface Owner { id: ID! }")}}
+
+            type User{{(isUnion ? "" : " implements Owner")}} {
+                id: ID!
+                name: String!
+                profile: Profile!
+            }
+
+            type Team{{(isUnion ? "" : " implements Owner")}} {
+                id: ID!
+                title: String!
+                profile: Profile!
+            }
+
+            type Profile @key(fields: "id") {
+                id: ID!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                profileById(id: ID!): Profile @lookup @internal
+            }
+
+            type Profile @key(fields: "id") {
+                id: ID!
+                total: Int!
             }
             """);
 }

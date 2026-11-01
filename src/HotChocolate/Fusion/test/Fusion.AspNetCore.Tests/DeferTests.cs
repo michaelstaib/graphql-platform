@@ -5669,6 +5669,213 @@ public class DeferTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_AnchorIsBelowInterfaceTypeCondition()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<InterfaceEntitySourceA.Query>()
+                .AddType<InterfaceEntitySourceA.Product>()
+                .AddType<InterfaceEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteAnchorBelowTypeConditionAsync(gateway);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_AnchorIsBelowUnionTypeCondition()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<UnionEntitySourceA.Query>()
+                .AddType<UnionEntitySourceA.Product>()
+                .AddType<UnionEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteAnchorBelowTypeConditionAsync(gateway);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    private static async Task<(
+        OperationRequest Request,
+        GraphQLHttpResponse Result,
+        JsonNode DeferredData,
+        JsonNode PlainData)> ExecuteAnchorBelowTypeConditionAsync(Gateway gateway)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "owner") {
+                                total
+                            }
+                        }
+                    }
+                    ... on Review {
+                        rating
+                    }
+                }
+            }
+            """);
+
+        var plainRequest = new OperationRequest(
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        rating
+                    }
+                }
+            }
+            """);
+
+        var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        await deferredResult.HttpResponseMessage.Content.LoadIntoBufferAsync();
+        var deferredData = MergeIncrementalPayloads(await ReadPayloadsAsync(deferredResult));
+
+        using var plainResult = await client.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var plainBody = await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        var plainData = JsonNode.Parse(plainBody)!["data"]!;
+
+        return (deferredRequest, deferredResult, deferredData, plainData);
+    }
+
+    private static class InterfaceEntitySourceA
+    {
+        public class Query
+        {
+            public IEntity[] GetEntities() => [new Product(1), new Review(2), new Product(3)];
+
+            [Lookup]
+            [Internal]
+            public Owner? GetOwnerById([ID] int id) => new(id);
+        }
+
+        [InterfaceType("Entity")]
+        public interface IEntity
+        {
+            [ID]
+            int Id { get; }
+        }
+
+        public record Product([property: ID] int Id) : IEntity
+        {
+            public Owner Owner => new(Id + 10);
+        }
+
+        public record Review([property: ID] int Id) : IEntity
+        {
+            public int Rating => 4;
+        }
+
+        public record Owner([property: ID] int Id)
+        {
+            public string Name => $"Owner {Id}";
+        }
+    }
+
+    private static class UnionEntitySourceA
+    {
+        public class Query
+        {
+            public IEntity[] GetEntities() => [new Product(1), new Review(2), new Product(3)];
+
+            [Lookup]
+            [Internal]
+            public Owner? GetOwnerById([ID] int id) => new(id);
+        }
+
+        [UnionType("Entity")]
+        public interface IEntity;
+
+        public record Product([property: ID] int Id) : IEntity
+        {
+            public Owner Owner => new(Id + 10);
+        }
+
+        public record Review([property: ID] int Id) : IEntity
+        {
+            public int Rating => 4;
+        }
+
+        public record Owner([property: ID] int Id)
+        {
+            public string Name => $"Owner {Id}";
+        }
+    }
+
+    private static class EntityOwnerSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Owner? GetOwnerById([ID] int id) => new(id);
+        }
+
+        public record Owner([property: ID] int Id)
+        {
+            public int Total => Id * 100;
+        }
+    }
+
     private static class UnionOwnerSourceA
     {
         public class Query
