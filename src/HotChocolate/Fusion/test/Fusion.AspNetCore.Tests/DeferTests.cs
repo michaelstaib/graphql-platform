@@ -2410,6 +2410,80 @@ public class DeferTests : FusionTestBase
         Assert.Equal(!skip, data.AsObject().ContainsKey("products"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchCoreResult_When_EnclosingFieldHasInclude(bool include)
+    {
+        // arrange
+        using var gateway = await CreateReviewLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["x"] = include };
+
+        const string query =
+            """
+            query ($x: Boolean!) {
+                products @include(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        using var result = await client.PostAsync(
+            new OperationRequest(query, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query, variables));
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
+        Assert.Equal(include, gatewayData.AsObject().ContainsKey("products"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchCoreResult_When_EnclosingFieldHasSkip(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateReviewLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["x"] = skip };
+
+        const string query =
+            """
+            query ($x: Boolean!) {
+                products @skip(if: $x) {
+                    id
+                    ... @defer {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        using var result = await client.PostAsync(
+            new OperationRequest(query, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query, variables));
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
+        Assert.Equal(!skip, gatewayData.AsObject().ContainsKey("products"));
+    }
+
     private static async Task<List<string>> ExecuteProductsDeferAsync(
         Gateway gateway,
         string query,
@@ -4773,7 +4847,7 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
 
         var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
-        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query));
+        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query, null));
         Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
         gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
@@ -4871,7 +4945,7 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
 
         var gatewayData = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
-        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query));
+        var coreData = MergeIncrementalPayloads(await ExecuteWithCoreExecutorAsync(query, null));
         Assert.True(JsonNode.DeepEquals(coreData, gatewayData));
         gatewayData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
@@ -5150,7 +5224,9 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
-    private static async Task<List<string>> ExecuteWithCoreExecutorAsync(string query)
+    private static async Task<List<string>> ExecuteWithCoreExecutorAsync(
+        string query,
+        Dictionary<string, object?>? variables)
     {
         var executor = await new ServiceCollection()
             .AddGraphQL()
@@ -5158,9 +5234,20 @@ public class DeferTests : FusionTestBase
             .ModifyOptions(o => o.EnableDefer = true)
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        var result = await executor.ExecuteAsync(query, TestContext.Current.CancellationToken);
-        var stream = Assert.IsType<ResponseStream>(result);
+        var request = OperationRequestBuilder.New()
+            .SetDocument(query)
+            .SetVariableValues(variables)
+            .Build();
+        var result = await executor.ExecuteAsync(request, TestContext.Current.CancellationToken);
         var payloads = new List<string>();
+
+        if (result is OperationResult single)
+        {
+            payloads.Add(single.ToJson());
+            return payloads;
+        }
+
+        var stream = Assert.IsType<ResponseStream>(result);
 
         await using (stream)
         {
