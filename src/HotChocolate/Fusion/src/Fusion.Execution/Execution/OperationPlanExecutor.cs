@@ -791,18 +791,29 @@ internal static partial class OperationPlanExecutor
 
     private static bool IsDeliveryGroupActive(DeliveryGroup deliveryGroup, IVariableValueCollection variables)
     {
-        if (deliveryGroup.IfVariable is null)
+        if (deliveryGroup.IfVariable is not null)
         {
-            return true;
+            if (!variables.TryGetValue<BooleanValueNode>(deliveryGroup.IfVariable, out var boolValue))
+            {
+                throw new InvalidOperationException(
+                    $"The variable {deliveryGroup.IfVariable} has an invalid value.");
+            }
+
+            if (!boolValue.Value)
+            {
+                return false;
+            }
         }
 
-        if (!variables.TryGetValue<BooleanValueNode>(deliveryGroup.IfVariable, out var boolValue))
+        foreach (var condition in deliveryGroup.Conditions)
         {
-            throw new InvalidOperationException(
-                $"The variable {deliveryGroup.IfVariable} has an invalid value.");
+            if (!condition.IsIncluded(variables))
+            {
+                return false;
+            }
         }
 
-        return boolValue.Value;
+        return true;
     }
 
     private static DeliveryGroup? GetEnabledDeliveryGroup(

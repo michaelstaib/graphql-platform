@@ -124,7 +124,8 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
             {
                 Id = deferId,
                 Path = path,
-                IfVariable = ifVariable
+                IfVariable = ifVariable,
+                Conditions = ParseIncludeConditions(groupElement)
             };
 
             ordered.Add((deliveryGroup, parentId));
@@ -1082,6 +1083,27 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
             Branches = branches,
             FallbackNodeId = fallbackNodeId
         };
+    }
+
+    private static ImmutableArray<IncludeCondition> ParseIncludeConditions(JsonElement groupElement)
+    {
+        var conditions = TryParseConditions(groupElement);
+
+        if (conditions.Length == 0)
+        {
+            return [];
+        }
+
+        var builder = ImmutableArray.CreateBuilder<IncludeCondition>(conditions.Length);
+
+        foreach (var condition in conditions)
+        {
+            builder.Add(condition.PassingValue
+                ? new IncludeCondition(skip: null, include: condition.VariableName)
+                : new IncludeCondition(skip: condition.VariableName, include: null));
+        }
+
+        return builder.MoveToImmutable();
     }
 
     private static ExecutionNodeCondition[] TryParseConditions(JsonElement nodeElement)

@@ -27,6 +27,9 @@ deliveryGroups:
     path: $.products
     label: inner
     parentId: 0
+    conditions:
+      - variable: $x
+        passingValue: true
 incrementalPlans:
   - deliveryGroupIds:
       - 0

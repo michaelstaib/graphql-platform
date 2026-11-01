@@ -30,6 +30,9 @@ nodes:
 deliveryGroups:
   - id: 0
     path: $.products
+    conditions:
+      - variable: $x
+        passingValue: true
 incrementalPlans:
   - deliveryGroupIds:
       - 0

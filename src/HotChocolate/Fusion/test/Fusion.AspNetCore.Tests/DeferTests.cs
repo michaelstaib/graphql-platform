@@ -1712,7 +1712,9 @@ public class DeferTests : FusionTestBase
 
         var initial = payloads[0].RootElement;
         Assert.True(initial.TryGetProperty("data", out var data));
-        Assert.StartsWith("User: ", data.GetProperty("user").GetProperty("name").GetString());
+        Assert.Equal(
+            "User: VXNlcjoyMDkyMTcyNjc2",
+            data.GetProperty("user").GetProperty("name").GetString());
 
         // Reviews should NOT be in the response since the fragment was skipped
         Assert.False(data.GetProperty("user").TryGetProperty("reviews", out _));
@@ -1974,6 +1976,237 @@ public class DeferTests : FusionTestBase
 
         // assert
         Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("reviews"));
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSinglePayload_When_DeferredFragmentIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitIncrementalPayloads_When_DeferredFragmentIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"score":123}},{"id":"0","subPath":[1],"data":{"score":123}},{"id":"0","subPath":[2],"data":{"score":123}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSinglePayload_When_FragmentEnclosingDeferIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        ... @defer {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitIncrementalPayloads_When_FragmentEnclosingDeferIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        ... @defer {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSingleOuterGroup_When_InnerGroupIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitBothGroups_When_InnerGroupIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","subPath":[0],"data":{"rating":123}},{"id":"1","subPath":[1],"data":{"rating":123}},{"id":"1","subPath":[2],"data":{"rating":123}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    private static async Task<List<string>> ExecuteProductsDeferAsync(
+        Gateway gateway,
+        string query,
+        bool x)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            new OperationRequest(query, variables: new Dictionary<string, object?> { ["x"] = x }),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        return await ReadPayloadsAsync(result);
     }
 
     private async Task<Gateway> CreateConditionalItemGatewayAsync()
