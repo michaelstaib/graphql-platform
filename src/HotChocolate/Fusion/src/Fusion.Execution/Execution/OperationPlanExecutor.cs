@@ -118,14 +118,17 @@ internal static partial class OperationPlanExecutor
             // incremental plans.
             var initialResult = rootContext.Complete(retainMemoryForDefer: true);
 
-            // Compute the active delivery groups (one per @defer occurrence whose
-            // @defer(if:) evaluates to true) and the incremental plans that will actually run.
-            // An incremental plan is active if at least one of its delivery groups is active.
+            // A delivery group is active when its @defer(if:) and its @include and @skip
+            // conditions hold. An incremental plan is active if at least one of its
+            // delivery groups is active.
             var activeDeliveryGroupIds = new HashSet<int>();
-            foreach (var deliveryGroup in operationPlan.DeliveryGroups)
+            for (var i = 0; i < operationPlan.DeliveryGroups.Length; i++)
             {
+                var deliveryGroup = operationPlan.DeliveryGroups[i];
+
                 if (IsDeliveryGroupActive(
                     deliveryGroup,
+                    i,
                     variables,
                     operationPlan.Operation,
                     rootContext.IncludeConditionFlags))
@@ -795,6 +798,7 @@ internal static partial class OperationPlanExecutor
 
     private static bool IsDeliveryGroupActive(
         DeliveryGroup deliveryGroup,
+        int deliveryGroupIndex,
         IVariableValueCollection variables,
         Operation operation,
         ConditionFlags includeFlags)
@@ -813,15 +817,7 @@ internal static partial class OperationPlanExecutor
             }
         }
 
-        foreach (var condition in deliveryGroup.Conditions)
-        {
-            if (!operation.IsIncluded(condition, includeFlags))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return operation.AreDeliveryGroupConditionsIncluded(deliveryGroupIndex, includeFlags);
     }
 
     private static DeliveryGroup? GetEnabledDeliveryGroup(

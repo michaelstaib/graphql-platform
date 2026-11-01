@@ -14,16 +14,23 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
         new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(new FieldMapPooledObjectPolicy());
 
     [Fact]
-    public void IsIncluded_Should_ReadIncludeFlags_When_ConditionComesFromDeliveryGroup()
+    public void AreDeliveryGroupConditionsIncluded_Should_ReadFlags_When_ConditionsComeFromGroups()
     {
         // arrange
         var schema = CreateSchema();
         var include = new IncludeCondition(skip: null, include: "x");
         var skip = new IncludeCondition(skip: "y", include: null);
-        var deliveryGroup = new DeliveryGroup(null, null, 0) { Conditions = [include, skip] };
+        var includeGroup = new DeliveryGroup(null, null, 0) { Conditions = [include] };
+        var skipGroup = new DeliveryGroup(null, null, 0) { Conditions = [skip] };
+        var bothGroup = new DeliveryGroup(null, null, 0) { Conditions = [include, skip] };
         var operationDefinition = ParseOperation("query($x: Boolean!, $y: Boolean!) { foo }");
         var compiler = new OperationCompiler(schema, _fieldMapPool);
-        var operation = compiler.Compile("1", "1", "1", operationDefinition, [deliveryGroup]);
+        var operation = compiler.Compile(
+            "1",
+            "1",
+            "1",
+            operationDefinition,
+            [includeGroup, skipGroup, bothGroup]);
 
         // act
         var variables = CreateVariables(schema, new Dictionary<string, bool> { ["x"] = true, ["y"] = true });
@@ -31,12 +38,13 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
 
         // assert
         Assert.Equal(2, operation.IncludeConditionCount);
-        Assert.True(operation.IsIncluded(include, flags));
-        Assert.False(operation.IsIncluded(skip, flags));
+        Assert.True(operation.AreDeliveryGroupConditionsIncluded(0, flags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(1, flags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(2, flags));
     }
 
     [Fact]
-    public void IsIncluded_Should_ReadOverflowFlags_When_DeliveryGroupConditionIsBeyondFirstWord()
+    public void AreDeliveryGroupConditionsIncluded_Should_ReadOverflow_When_ConditionIsBeyondFirstWord()
     {
         // arrange
         const int conditionCount = 64;
@@ -83,25 +91,8 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
 
         // assert
         Assert.True(operation.HasWideIncludeFlags);
-        Assert.True(operation.IsIncluded(include, enabledFlags));
-        Assert.False(operation.IsIncluded(include, disabledFlags));
-    }
-
-    [Fact]
-    public void IsIncluded_Should_Throw_When_ConditionWasNotCompiledIntoOperation()
-    {
-        // arrange
-        var schema = CreateSchema();
-        var operationDefinition = ParseOperation("query($x: Boolean!) { foo }");
-        var compiler = new OperationCompiler(schema, _fieldMapPool);
-        var operation = compiler.Compile("1", "1", "1", operationDefinition);
-
-        // act
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => operation.IsIncluded(new IncludeCondition(skip: null, include: "x"), new ConditionFlags(0)));
-
-        // assert
-        Assert.Equal("The include condition (skip: , include: x) is not part of the operation.", exception.Message);
+        Assert.True(operation.AreDeliveryGroupConditionsIncluded(0, enabledFlags));
+        Assert.False(operation.AreDeliveryGroupConditionsIncluded(0, disabledFlags));
     }
 
     private static FusionSchemaDefinition CreateSchema()

@@ -88,16 +88,7 @@ public sealed class OperationCompiler
         var deferConditions = new DeferConditionCollection(_maxAllowedDeferConditions);
         IncludeConditionVisitor.Instance.Visit(operationDefinition, includeConditions);
 
-        if (!deliveryGroups.IsDefaultOrEmpty)
-        {
-            foreach (var deliveryGroup in deliveryGroups)
-            {
-                foreach (var condition in deliveryGroup.Conditions)
-                {
-                    includeConditions.Add(condition);
-                }
-            }
-        }
+        var deliveryGroupConditionIndices = RegisterDeliveryGroupConditions(deliveryGroups, includeConditions);
 
         // Scans the operation for @defer fragments and creates one
         // DeliveryGroup object for each. Also fills deferConditions with any
@@ -158,6 +149,7 @@ public sealed class OperationCompiler
                 includeConditions,
                 deferConditions,
                 partitioning.ByFragment,
+                deliveryGroupConditionIndices,
                 hasIncrementalParts,
                 lastId,
                 compilationContext.ElementsById);
@@ -166,6 +158,33 @@ public sealed class OperationCompiler
         {
             _fieldsPool.Return(fields);
         }
+    }
+
+    private static ImmutableArray<ImmutableArray<int>> RegisterDeliveryGroupConditions(
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        IncludeConditionCollection includeConditions)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        var indices = ImmutableArray.CreateBuilder<ImmutableArray<int>>(deliveryGroups.Length);
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            var groupIndices = ImmutableArray.CreateBuilder<int>(deliveryGroup.Conditions.Length);
+
+            foreach (var condition in deliveryGroup.Conditions)
+            {
+                includeConditions.Add(condition);
+                groupIndices.Add(includeConditions.IndexOf(condition));
+            }
+
+            indices.Add(groupIndices.ToImmutable());
+        }
+
+        return indices.ToImmutable();
     }
 
     internal SelectionSet CompileSelectionSet(

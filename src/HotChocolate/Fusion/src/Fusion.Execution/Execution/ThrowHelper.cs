@@ -1,6 +1,5 @@
 using System.Text.Json;
 using HotChocolate.Execution;
-using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning;
 using HotChocolate.Fusion.Properties;
 using HotChocolate.Language;
@@ -192,11 +191,6 @@ internal static class ThrowHelper
                 .AddLocation(variableDefinition)
                 .Build());
     }
-
-    public static InvalidOperationException IncludeConditionNotCompiled(IncludeCondition condition)
-        => new(
-            $"The include condition (skip: {condition.Skip}, include: {condition.Include}) "
-            + "is not part of the operation.");
 
     public static GraphQLException DeferIfVariableIsNull(string variableName)
         => new(ErrorBuilder.New()

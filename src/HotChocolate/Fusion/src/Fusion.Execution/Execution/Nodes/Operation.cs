@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -22,6 +23,7 @@ public sealed class Operation : IOperation
     private readonly IncludeConditionCollection _includeConditions;
     private readonly DeferConditionCollection _deferConditions;
     private readonly IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> _deliveryGroupByFragment;
+    private readonly ImmutableArray<ImmutableArray<int>> _deliveryGroupConditionIndices;
     private readonly OperationFeatureCollection _features;
     private readonly bool _hasIncrementalParts;
     private object[] _elementsById;
@@ -39,6 +41,7 @@ public sealed class Operation : IOperation
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> deliveryGroupByFragment,
+        ImmutableArray<ImmutableArray<int>> deliveryGroupConditionIndices,
         bool hasIncrementalParts,
         int lastId,
         object[] elementsById)
@@ -67,6 +70,7 @@ public sealed class Operation : IOperation
         _includeConditions = includeConditions;
         _deferConditions = deferConditions;
         _deliveryGroupByFragment = deliveryGroupByFragment;
+        _deliveryGroupConditionIndices = deliveryGroupConditionIndices;
         _hasIncrementalParts = hasIncrementalParts;
         _lastId = lastId;
         _elementsById = elementsById;
@@ -292,21 +296,25 @@ public sealed class Operation : IOperation
     }
 
     /// <summary>
-    /// Determines whether the include <paramref name="condition"/> is set in the specified
-    /// include flags of this operation.
+    /// Determines whether all include conditions of a delivery group are set in the specified
+    /// include flags. The group is identified by its position in the delivery groups this
+    /// operation was compiled with.
     /// </summary>
-    internal bool IsIncluded(IncludeCondition condition, ConditionFlags includeFlags)
+    internal bool AreDeliveryGroupConditionsIncluded(int deliveryGroupIndex, ConditionFlags includeFlags)
     {
-        var index = _includeConditions.IndexOf(condition);
-
-        if (index < 0)
+        foreach (var index in _deliveryGroupConditionIndices[deliveryGroupIndex])
         {
-            throw ThrowHelper.IncludeConditionNotCompiled(condition);
+            var isIncluded = index < 64
+                ? (includeFlags.Word0 & (1ul << index)) != 0
+                : (includeFlags.Overflow![(index >> 6) - 1] & (1ul << (index & 63))) != 0;
+
+            if (!isIncluded)
+            {
+                return false;
+            }
         }
 
-        return index < 64
-            ? (includeFlags.Word0 & (1ul << index)) != 0
-            : (includeFlags.Overflow![(index >> 6) - 1] & (1ul << (index & 63))) != 0;
+        return true;
     }
 
     /// <summary>
