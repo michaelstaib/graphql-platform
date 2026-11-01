@@ -28,7 +28,7 @@ internal sealed partial class DeferExecutionCoordinator
     private ImmutableList<PendingResult>.Builder? _pendingBuilder;
     private ImmutableList<IIncrementalResult>.Builder? _incrementalBuilder;
     private ImmutableList<CompletedResult>.Builder? _completedBuilder;
-    private Queue<int>? _processQueue;
+    private Queue<(int BranchId, OperationResult Result)>? _processQueue;
     private volatile bool _hasBranches;
     private volatile bool _isComplete;
     private int _pendingBranches;
@@ -365,7 +365,7 @@ internal sealed partial class DeferExecutionCoordinator
             var pendingBuilder = _pendingBuilder ??= ImmutableList.CreateBuilder<PendingResult>();
             var incrementalBuilder = _incrementalBuilder ??= ImmutableList.CreateBuilder<IIncrementalResult>();
             var completedBuilder = _completedBuilder ??= ImmutableList.CreateBuilder<CompletedResult>();
-            var processQueue = _processQueue ??= new Queue<int>();
+            var processQueue = _processQueue ??= new Queue<(int BranchId, OperationResult Result)>();
 
             pendingBuilder.Clear();
             incrementalBuilder.Clear();
@@ -377,18 +377,20 @@ internal sealed partial class DeferExecutionCoordinator
                 AnnounceChildUnsafe(
                     childId,
                     result,
+                    result,
                     pendingBuilder,
                     incrementalBuilder,
                     completedBuilder,
                     processQueue);
             }
 
-            while (processQueue.TryDequeue(out var parentId))
+            while (processQueue.TryDequeue(out var parent))
             {
-                foreach (var grandchildId in GetChildrenUnsafe(parentId))
+                foreach (var grandchildId in GetChildrenUnsafe(parent.BranchId))
                 {
                     AnnounceChildUnsafe(
                         grandchildId,
+                        parent.Result,
                         result,
                         pendingBuilder,
                         incrementalBuilder,
@@ -459,15 +461,18 @@ internal sealed partial class DeferExecutionCoordinator
     /// </summary>
     private void AnnounceChildUnsafe(
         int childId,
+        OperationResult parentResult,
         OperationResult result,
         ImmutableList<PendingResult>.Builder pendingBuilder,
         ImmutableList<IIncrementalResult>.Builder incrementalBuilder,
         ImmutableList<CompletedResult>.Builder completedBuilder,
-        Queue<int> processQueue)
+        Queue<(int BranchId, OperationResult Result)> processQueue)
     {
         var child = _branchLookup[childId];
 
-        if (child.Kind is BranchKind.Stream && IsNulledUnsafe(child.Stream!.List))
+        if (child.Kind is BranchKind.Stream
+            ? IsNulledUnsafe(child.Stream!.List)
+            : IsNulledUnsafe(parentResult, child.Path))
         {
             DiscardBranchUnsafe(childId);
             return;
@@ -490,7 +495,7 @@ internal sealed partial class DeferExecutionCoordinator
                 result.RegisterForCleanup(itemsResult);
                 AddStreamItemsUnsafe(_branchLookup[itemsBranchId], itemsResult, incrementalBuilder, completedBuilder);
                 _delivered.Add(itemsBranchId);
-                processQueue.Enqueue(itemsBranchId);
+                processQueue.Enqueue((itemsBranchId, itemsResult));
             }
 
             TryAddStreamCompletionUnsafe(childId, completedBuilder);
@@ -501,7 +506,7 @@ internal sealed partial class DeferExecutionCoordinator
             AddCompletedBranch(childId, childResult, incrementalBuilder, completedBuilder);
             _delivered.Add(childId);
             _pendingBranches--;
-            processQueue.Enqueue(childId);
+            processQueue.Enqueue((childId, childResult));
         }
     }
 
@@ -598,6 +603,66 @@ internal sealed partial class DeferExecutionCoordinator
         return false;
     }
 
+    private static bool IsNulledUnsafe(OperationResult parentResult, Path path)
+    {
+        if (parentResult.Data is not { } data || data.IsValueNull)
+        {
+            return true;
+        }
+
+        return data.Value is ResultDocument document
+            && Resolve(document.Data, document.Data.Path.Length, path, out _) is Resolution.Nulled;
+    }
+
+    private static Resolution Resolve(ResultElement root, int rootLength, Path path, out ResultElement element)
+    {
+        if (path.Length <= rootLength)
+        {
+            element = root;
+            return root.IsNullOrInvalidated ? Resolution.Nulled : Resolution.Found;
+        }
+
+        var parentResolution = Resolve(root, rootLength, path.Parent, out var parent);
+
+        if (parentResolution is not Resolution.Found)
+        {
+            element = default;
+            return parentResolution;
+        }
+
+        var found = false;
+        element = default;
+
+        switch (path)
+        {
+            case NamePathSegment name when parent.ValueKind is JsonValueKind.Object:
+                foreach (var property in parent.EnumerateObject())
+                {
+                    if (property.NameEquals(name.Name))
+                    {
+                        element = property.Value;
+                        found = true;
+                        break;
+                    }
+                }
+
+                break;
+
+            case IndexerPathSegment indexer
+                when parent.ValueKind is JsonValueKind.Array && indexer.Index < parent.GetArrayLength():
+                element = parent[indexer.Index];
+                found = true;
+                break;
+        }
+
+        if (!found)
+        {
+            return Resolution.Missing;
+        }
+
+        return element.IsNullOrInvalidated ? Resolution.Nulled : Resolution.Found;
+    }
+
     private void DiscardBranchUnsafe(int branchId)
     {
         if (!_branchLookup.Remove(branchId, out var branch))
@@ -687,6 +752,13 @@ internal sealed partial class DeferExecutionCoordinator
     }
 
     private readonly record struct DeferredBranchKey(Path Path, DeferUsage? Group, int ParentBranchId);
+
+    private enum Resolution
+    {
+        Found,
+        Nulled,
+        Missing
+    }
 
     private enum BranchKind
     {
