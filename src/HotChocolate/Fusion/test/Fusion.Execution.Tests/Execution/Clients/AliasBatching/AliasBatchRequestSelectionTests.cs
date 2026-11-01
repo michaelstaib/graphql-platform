@@ -433,6 +433,7 @@ public sealed class AliasBatchRequestSelectionTests : FusionTestBase
                 variables,
                 variableIndex: -1,
                 _operationPlan,
+                includeConditionFlags: null,
                 cts,
                 new MemoryArena());
 

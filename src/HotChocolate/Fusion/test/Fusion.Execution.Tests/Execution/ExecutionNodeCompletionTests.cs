@@ -378,6 +378,7 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
                 VariableValueCollection.Empty,
                 variableIndex: -1,
                 plan,
+                includeConditionFlags: null,
                 cts,
                 new MemoryArena());
 

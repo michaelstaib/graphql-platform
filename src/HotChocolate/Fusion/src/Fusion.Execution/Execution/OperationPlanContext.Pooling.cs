@@ -27,11 +27,16 @@ public sealed partial class OperationPlanContext
         _executionState = new ExecutionState();
     }
 
+    /// <summary>
+    /// Prepares this context to execute <paramref name="operationPlan"/> with the given include flags,
+    /// or with include flags evaluated from <paramref name="variables"/> when they are <c>null</c>.
+    /// </summary>
     internal void Initialize(
         RequestContext requestContext,
         IVariableValueCollection variables,
         int variableIndex,
         IOperationPlan operationPlan,
+        ConditionFlags? includeConditionFlags,
         CancellationTokenSource cancellationTokenSource,
         MemoryArena? memory = null)
     {
@@ -74,7 +79,8 @@ public sealed partial class OperationPlanContext
                 break;
         }
 
-        IncludeConditionFlags = operationPlan.Operation.CreateIncludeConditionFlags(variables);
+        IncludeConditionFlags = includeConditionFlags
+            ?? operationPlan.Operation.CreateIncludeConditionFlags(variables);
         DeferConditionFlags = operationPlan.Operation.CreateDeferConditionFlags(variables);
         _collectTelemetry = requestContext.CollectOperationPlanTelemetry();
         _clientScope ??= requestContext.CreateClientScope();

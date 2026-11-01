@@ -324,6 +324,7 @@ public sealed class OperationPlanContextPoolingTests : FusionTestBase
                 variables ?? VariableValueCollection.Empty,
                 variableIndex: -1,
                 plan,
+                includeConditionFlags: null,
                 cancellationTokenSource,
                 memory);
 
