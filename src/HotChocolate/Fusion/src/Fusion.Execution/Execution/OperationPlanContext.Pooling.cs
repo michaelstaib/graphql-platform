@@ -34,6 +34,23 @@ public sealed partial class OperationPlanContext
         IOperationPlan operationPlan,
         CancellationTokenSource cancellationTokenSource,
         MemoryArena? memory = null)
+        => Initialize(
+            requestContext,
+            variables,
+            variableIndex,
+            operationPlan,
+            includeConditionFlags: null,
+            cancellationTokenSource,
+            memory);
+
+    internal void Initialize(
+        RequestContext requestContext,
+        IVariableValueCollection variables,
+        int variableIndex,
+        IOperationPlan operationPlan,
+        ConditionFlags? includeConditionFlags,
+        CancellationTokenSource cancellationTokenSource,
+        MemoryArena? memory)
     {
         _activeNodeSlotCount = 0;
         _usesDynamicSchemaNames = true;
@@ -74,7 +91,8 @@ public sealed partial class OperationPlanContext
                 break;
         }
 
-        IncludeConditionFlags = operationPlan.Operation.CreateIncludeConditionFlags(variables);
+        IncludeConditionFlags = includeConditionFlags
+            ?? operationPlan.Operation.CreateIncludeConditionFlags(variables);
         DeferConditionFlags = operationPlan.Operation.CreateDeferConditionFlags(variables);
         _collectTelemetry = requestContext.CollectOperationPlanTelemetry();
         _clientScope ??= requestContext.CreateClientScope();

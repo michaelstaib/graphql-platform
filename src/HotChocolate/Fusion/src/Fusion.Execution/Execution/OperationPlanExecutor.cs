@@ -130,7 +130,10 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
-            var excludedIncrementalPlans = FindExcludedIncrementalPlans(operationPlan, variables);
+            var excludedIncrementalPlans = FindExcludedIncrementalPlans(
+                operationPlan,
+                variables,
+                out var includeFlagsByPlan);
 
             var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(
                 operationPlan,
@@ -193,6 +196,7 @@ internal static partial class OperationPlanExecutor
                     activeDeliveryGroupIds,
                     deliveryGroupsByPlan,
                     excludedIncrementalPlans,
+                    includeFlagsByPlan,
                     silentDeliveryGroupIds,
                     rootContext,
                     cancellationToken),
@@ -223,6 +227,7 @@ internal static partial class OperationPlanExecutor
         HashSet<int> activeDeliveryGroupIds,
         Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> deliveryGroupsByPlan,
         HashSet<IncrementalPlan>? excludedIncrementalPlans,
+        Dictionary<IncrementalPlan, ConditionFlags>? includeFlagsByPlan,
         HashSet<int>? silentDeliveryGroupIds,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -325,6 +330,7 @@ internal static partial class OperationPlanExecutor
                     variables,
                     incrementalPlan,
                     deliveryGroups,
+                    includeFlagsByPlan,
                     rootContext.GetResultStoreForChildDefer(),
                     channel.Writer,
                     requestArena,
@@ -535,6 +541,7 @@ internal static partial class OperationPlanExecutor
                         variables,
                         candidate,
                         candidateGroups,
+                        includeFlagsByPlan,
                         parentStore,
                         channel.Writer,
                         requestArena,
@@ -682,6 +689,7 @@ internal static partial class OperationPlanExecutor
         IVariableValueCollection variables,
         IncrementalPlan incrementalPlan,
         ImmutableArray<DeliveryGroup> deliveryGroups,
+        Dictionary<IncrementalPlan, ConditionFlags>? includeFlagsByPlan,
         FetchResultStore parentResultStore,
         ChannelWriter<IncrementalPlanResult> completion,
         MemoryArena requestArena,
@@ -698,6 +706,15 @@ internal static partial class OperationPlanExecutor
 
         try
         {
+            // Plans that were checked for exclusion already evaluated their include flags.
+            ConditionFlags? includeFlags = null;
+
+            if (includeFlagsByPlan is not null
+                && includeFlagsByPlan.TryGetValue(incrementalPlan, out var evaluatedFlags))
+            {
+                includeFlags = evaluatedFlags;
+            }
+
             // Reuse the single request arena instead of minting a per-plan arena: the request
             // executor has already detached it from the request context, so it is supplied
             // explicitly here.
@@ -706,6 +723,7 @@ internal static partial class OperationPlanExecutor
                 variables,
                 variableIndex: -1,
                 incrementalPlan,
+                includeFlags,
                 executionCts,
                 requestArena);
 
@@ -939,9 +957,11 @@ internal static partial class OperationPlanExecutor
 
     private static HashSet<IncrementalPlan>? FindExcludedIncrementalPlans(
         OperationPlan operationPlan,
-        IVariableValueCollection variables)
+        IVariableValueCollection variables,
+        out Dictionary<IncrementalPlan, ConditionFlags>? includeFlagsByPlan)
     {
         HashSet<IncrementalPlan>? excludedIncrementalPlans = null;
+        includeFlagsByPlan = null;
 
         foreach (var incrementalPlan in operationPlan.IncrementalPlans)
         {
@@ -953,6 +973,7 @@ internal static partial class OperationPlanExecutor
             }
 
             var includeFlags = incrementalPlan.Operation.CreateIncludeConditionFlags(variables);
+            (includeFlagsByPlan ??= [])[incrementalPlan] = includeFlags;
             var included = false;
 
             foreach (var selection in selections)
