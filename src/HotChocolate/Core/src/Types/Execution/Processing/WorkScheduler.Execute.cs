@@ -39,14 +39,20 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
     /// Returns immediately if the branch has already completed or was never registered.
     /// </summary>
     public ValueTask WaitForCompletionAsync(int executionBranchId)
-        => WaitForBranchAsync(executionBranchId, _ct);
+    {
+        AssertNotPooled();
 
-    /// <summary>
-    /// Waits for all tasks in the specified execution branch to complete, also when the request was aborted.
-    /// Returns immediately if the branch has already completed or was never registered.
-    /// </summary>
-    public ValueTask WaitForSettlementAsync(int executionBranchId)
-        => WaitForBranchAsync(executionBranchId, CancellationToken.None);
+        Branch? branch;
+
+        lock (_sync)
+        {
+            _activeBranches.TryGetValue(executionBranchId, out branch);
+        }
+
+        return branch is not null
+            ? branch.WaitForCompletionAsync(_ct)
+            : ValueTask.CompletedTask;
+    }
 
     /// <summary>
     /// Marks the calling running task as waiting, so queued serial work and pending batches can run while it waits.
@@ -80,22 +86,6 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
         {
             _work.Unpark();
         }
-    }
-
-    private ValueTask WaitForBranchAsync(int executionBranchId, CancellationToken cancellationToken)
-    {
-        AssertNotPooled();
-
-        Branch? branch;
-
-        lock (_sync)
-        {
-            _activeBranches.TryGetValue(executionBranchId, out branch);
-        }
-
-        return branch is not null
-            ? branch.WaitForCompletionAsync(cancellationToken)
-            : ValueTask.CompletedTask;
     }
 
     private async Task ExecuteInternalAsync(IExecutionTask?[] buffer)
