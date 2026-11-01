@@ -134,7 +134,10 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
-            var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(operationPlan, activeDeliveryGroupIds);
+            var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(
+                operationPlan,
+                activeDeliveryGroupIds,
+                rootContext.IncludeConditionFlags);
 
             // Mark top-level active delivery groups as pending on the initial
             // result. A group whose enclosing groups are all disabled is top-level.
@@ -845,7 +848,8 @@ internal static partial class OperationPlanExecutor
 
     private static Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> ResolveDeliveryGroupsByPlan(
         OperationPlan operationPlan,
-        HashSet<int> activeDeliveryGroupIds)
+        HashSet<int> activeDeliveryGroupIds,
+        ConditionFlags includeFlags)
     {
         var deliveryGroupsByPlan = new Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>>(
             operationPlan.IncrementalPlans.Length);
@@ -866,6 +870,13 @@ internal static partial class OperationPlanExecutor
             if (allActive)
             {
                 deliveryGroupsByPlan[incrementalPlan] = incrementalPlan.DeliveryGroups;
+                continue;
+            }
+
+            // A plan whose groups are all excluded by @include or @skip delivers nothing and is not started.
+            if (AreAllDeliveryGroupsExcluded(operationPlan.Operation, incrementalPlan.DeliveryGroups, includeFlags))
+            {
+                deliveryGroupsByPlan[incrementalPlan] = [];
                 continue;
             }
 
@@ -909,6 +920,27 @@ internal static partial class OperationPlanExecutor
         }
 
         return deliveryGroupsByPlan;
+    }
+
+    private static bool AreAllDeliveryGroupsExcluded(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        ConditionFlags includeFlags)
+    {
+        if (deliveryGroups.IsEmpty)
+        {
+            return false;
+        }
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, includeFlags))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool ContainsDeliveryGroup(List<DeliveryGroup> deliveryGroups, int id)

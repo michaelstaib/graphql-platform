@@ -2229,6 +2229,43 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
+    [Theory]
+    [InlineData("@include(if: $x)", false)]
+    [InlineData("@skip(if: $x)", true)]
+    public async Task Defer_Should_NotSendSubgraphRequest_When_InnerGroupIsExcluded(string directive, bool x)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            $$"""
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        name
+                        ... @defer(label: "inner") {{directive}} {
+                            reviews { id }
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["x"] = x });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        // Schema B owns the reviews of the excluded group and receives no request.
+        var requestCounts = await GetRequestCountsAsync(gateway, result);
+        requestCounts.MatchInlineSnapshot("A: 2");
+    }
+
     private static async Task<List<string>> ExecuteProductsDeferAsync(
         Gateway gateway,
         string query,
