@@ -27,11 +27,9 @@ public class IncrementalEarlyDisposeTests
         var payloads = new List<string>();
 
         // act
-        await using (stream)
+        await using (var enumerator = stream.ReadResultsAsync()
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken))
         {
-            await using var enumerator = stream.ReadResultsAsync()
-                .GetAsyncEnumerator(TestContext.Current.CancellationToken);
-
             await ReadPayloadAsync(enumerator, payloads);
             await probe.Started("1").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
             await probe.Started("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
@@ -39,6 +37,7 @@ public class IncrementalEarlyDisposeTests
             await ReadPayloadAsync(enumerator, payloads);
         }
 
+        await stream.DisposeAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         await probe.Cancelled("2").Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
 
         // assert
