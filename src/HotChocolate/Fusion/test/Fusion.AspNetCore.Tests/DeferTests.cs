@@ -5352,6 +5352,154 @@ public class DeferTests : FusionTestBase
         public record TotalInput(int Raw, int Computed);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_NestedGroupRequiresDataBelowInterfaceTypedField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<InterfaceOwnerSourceA.Query>()
+                .AddType<InterfaceOwnerSourceA.User>()
+                .AddType<InterfaceOwnerSourceA.Team>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<InterfaceOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(
+            """
+            {
+                product {
+                    id
+                    ... @defer(label: "outer") {
+                        owner {
+                            __typename
+                            profile {
+                                id
+                                ... @defer(label: "inner") {
+                                    total
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        var plainRequest = new OperationRequest(
+            """
+            {
+                product {
+                    id
+                    owner {
+                        __typename
+                        profile {
+                            id
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var deferredData = MergeIncrementalPayloads(await ReadPayloadsAsync(deferredResult));
+
+        using var plainResult = await client.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var plainBody = await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        var plainData = JsonNode.Parse(plainBody)!["data"]!;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        deferredData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "product": {
+                "id": "1",
+                "owner": {
+                  "__typename": "User",
+                  "profile": {
+                    "id": "3",
+                    "total": 5000
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    private static class InterfaceOwnerSourceA
+    {
+        public class Query
+        {
+            public Product GetProduct() => new(1);
+
+            [Lookup]
+            [Internal]
+            public Profile? GetProfileById([ID] int id) => new(id);
+        }
+
+        public record Product([property: ID] int Id)
+        {
+            public IOwner Owner => new User(2);
+        }
+
+        public record Profile([property: ID] int Id)
+        {
+            public int Raw => 5;
+        }
+
+        public record User([property: ID] int Id) : IOwner
+        {
+            public Profile Profile => new(Id + 1);
+        }
+
+        public record Team([property: ID] int Id) : IOwner
+        {
+            public Profile Profile => new(Id + 2);
+        }
+
+        public interface IOwner
+        {
+            [ID]
+            int Id { get; }
+
+            Profile Profile { get; }
+        }
+    }
+
+    private static class InterfaceOwnerSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Profile? GetProfileById([ID] int id) => new(id);
+        }
+
+        public record Profile([property: ID] int Id)
+        {
+            public int GetTotal([Require("raw")] int raw) => raw * 1000;
+        }
+    }
+
     private static class NestedRequirementSourceA
     {
         public class Query
