@@ -1,0 +1,253 @@
+title: Defer_Should_DeliverParentObject_When_NestedGroupIsOnlySelectionUnderObjectField
+request:
+  document: |
+    {
+      product {
+        id
+        ... @defer(label: "outer") {
+          owner {
+            ... @defer(label: "inner") {
+              total
+            }
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 3,
+    "initial": {
+      "data": {
+        "product": {
+          "id": "1"
+        }
+      }
+    },
+    "pending": [
+      {
+        "id": "0",
+        "path": [
+          "product"
+        ],
+        "label": "outer"
+      },
+      {
+        "id": "1",
+        "path": [
+          "product",
+          "owner"
+        ],
+        "label": "inner"
+      }
+    ],
+    "incremental": [
+      {
+        "id": "0",
+        "path": [
+          "product"
+        ],
+        "data": {
+          "owner": {}
+        }
+      },
+      {
+        "id": "1",
+        "path": [
+          "product",
+          "owner"
+        ],
+        "data": {
+          "total": 5000
+        }
+      }
+    ],
+    "completed": [
+      {
+        "id": "0"
+      },
+      {
+        "id": "1"
+      }
+    ],
+    "final": {
+      "data": {
+        "product": {
+          "id": "1",
+          "owner": {
+            "total": 5000
+          }
+        }
+      }
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        product: Product!
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type Product {
+        id: ID!
+        title: String!
+        owner: User!
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_6721f486_1 {
+              product {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "product": {
+                    "id": "1"
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_1 {
+              product {
+                owner {
+                  id
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "product": {
+                    "owner": {
+                      "id": "2"
+                    }
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "2"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "total": 5000
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        {
+          product {
+            id
+          }
+        }
+      hash: dfe6d517a20509e2306552a778077817
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_6721f486_1 {
+          product {
+            id
+          }
+        }
+  deliveryGroups:
+    - id: 0
+      path: $.product
+      label: outer
+    - id: 1
+      path: $.product.owner
+      label: inner
+      parentId: 0
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+      parentNodeId: 1
+      nodes:
+        - id: 1
+          type: Operation
+          schema: A
+          operation: |
+            query Op_defer_1 {
+              product {
+                owner {
+                  id
+                }
+              }
+            }
+    - deliveryGroupIds:
+        - 1
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          source: $.userById
+          target: $.product.owner
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1

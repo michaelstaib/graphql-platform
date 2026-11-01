@@ -30,6 +30,11 @@ internal sealed class DeferOperationRewriter
 
     private readonly bool _inlineUnlabeledNestedDefers;
 
+    /// <summary>
+    /// Gets the synthetic <c>__typename</c> placeholder that keeps a selection set valid.
+    /// </summary>
+    internal static FieldNode PlaceholderTypeNameField => s_placeholderTypeNameField;
+
     internal DeferOperationRewriter(bool inlineUnlabeledNestedDefers = true)
     {
         _inlineUnlabeledNestedDefers = inlineUnlabeledNestedDefers;
