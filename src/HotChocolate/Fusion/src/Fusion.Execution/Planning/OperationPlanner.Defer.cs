@@ -466,14 +466,9 @@ public sealed partial class OperationPlanner
                     segment.Name,
                     currentPath,
                     out var fieldNode,
-                    out var fieldParentType,
+                    out var fieldType,
                     out var fieldParentPath)
-                || fieldNode.SelectionSet is null
-                || fieldParentType is not FusionComplexTypeDefinition complexType
-                || !complexType.Fields.TryGetField(
-                    fieldNode.Name.Value,
-                    allowInaccessibleFields: true,
-                    out var field))
+                || fieldNode.SelectionSet is null)
             {
                 anchorSelectionSet = null!;
                 anchorType = null!;
@@ -482,7 +477,7 @@ public sealed partial class OperationPlanner
             }
 
             currentSet = fieldNode.SelectionSet;
-            currentType = field.Type.NamedType();
+            currentType = fieldType;
             currentPath = fieldParentPath.AppendField(segment.Name);
         }
 
@@ -494,8 +489,8 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Finds the field selected under <paramref name="responseName"/> in <paramref name="selectionSet"/>
-    /// or, when it is not selected directly, in its inline fragments. Resolves the type and the path
-    /// of the selection set that directly contains the field.
+    /// or, when it is not selected directly, in its inline fragments, and resolves its named type and the
+    /// path of the selection set that directly contains it.
     /// </summary>
     private bool TryFindFieldNode(
         SelectionSetNode selectionSet,
@@ -503,19 +498,19 @@ public sealed partial class OperationPlanner
         string responseName,
         SelectionPath path,
         [NotNullWhen(true)] out FieldNode? fieldNode,
-        [NotNullWhen(true)] out ITypeDefinition? fieldParentType,
+        [NotNullWhen(true)] out ITypeDefinition? fieldType,
         [NotNullWhen(true)] out SelectionPath? fieldParentPath)
     {
-        foreach (var selection in selectionSet.Selections)
+        if (TryResolveSelectedField(selectionSet, type, responseName, out fieldNode, out fieldType))
         {
-            if (selection is FieldNode candidate
-                && (candidate.Alias?.Value == responseName || candidate.Name.Value == responseName))
-            {
-                fieldNode = candidate;
-                fieldParentType = type;
-                fieldParentPath = path;
-                return true;
-            }
+            fieldParentPath = path;
+            return true;
+        }
+
+        if (fieldNode is not null)
+        {
+            fieldParentPath = null;
+            return false;
         }
 
         foreach (var selection in selectionSet.Selections)
@@ -548,15 +543,20 @@ public sealed partial class OperationPlanner
                 responseName,
                 fragmentPath,
                 out fieldNode,
-                out fieldParentType,
+                out fieldType,
                 out fieldParentPath))
             {
                 return true;
             }
+
+            if (fieldNode is not null)
+            {
+                return false;
+            }
         }
 
         fieldNode = null;
-        fieldParentType = null;
+        fieldType = null;
         fieldParentPath = null;
         return false;
     }
@@ -2185,23 +2185,13 @@ public sealed partial class OperationPlanner
             switch (segment.Kind)
             {
                 case SelectionPathSegmentKind.Field:
-                    FieldNode? fieldNode = null;
-                    foreach (var selection in currentSet.Selections)
-                    {
-                        if (selection is FieldNode candidate
-                            && (candidate.Alias?.Value == segment.Name || candidate.Name.Value == segment.Name))
-                        {
-                            fieldNode = candidate;
-                            break;
-                        }
-                    }
-
-                    if (fieldNode?.SelectionSet is null
-                        || currentType is not FusionComplexTypeDefinition complexType
-                        || !complexType.Fields.TryGetField(
-                            fieldNode.Name.Value,
-                            allowInaccessibleFields: true,
-                            out var field))
+                    if (!TryResolveSelectedField(
+                            currentSet,
+                            currentType,
+                            segment.Name,
+                            out var fieldNode,
+                            out var fieldType)
+                        || fieldNode.SelectionSet is null)
                     {
                         targetSelectionSet = null!;
                         targetType = null!;
@@ -2209,7 +2199,7 @@ public sealed partial class OperationPlanner
                     }
 
                     currentSet = fieldNode.SelectionSet;
-                    currentType = field.Type.NamedType();
+                    currentType = fieldType;
                     break;
 
                 case SelectionPathSegmentKind.InlineFragment:
@@ -2248,6 +2238,45 @@ public sealed partial class OperationPlanner
 
         targetSelectionSet = currentSet;
         targetType = currentType;
+        return true;
+    }
+
+    /// <summary>
+    /// Finds the field selected directly in <paramref name="selectionSet"/> under <paramref name="responseName"/>
+    /// and resolves its named type on <paramref name="type"/>. <paramref name="fieldNode"/> is the selected field
+    /// even when its type does not resolve, and <c>null</c> when no field is selected under that response name.
+    /// </summary>
+    private static bool TryResolveSelectedField(
+        SelectionSetNode selectionSet,
+        ITypeDefinition type,
+        string responseName,
+        [NotNullWhen(true)] out FieldNode? fieldNode,
+        [NotNullWhen(true)] out ITypeDefinition? fieldType)
+    {
+        fieldNode = null;
+        fieldType = null;
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is FieldNode candidate
+                && (candidate.Alias?.Value == responseName || candidate.Name.Value == responseName))
+            {
+                fieldNode = candidate;
+                break;
+            }
+        }
+
+        if (fieldNode is null
+            || type is not FusionComplexTypeDefinition complexType
+            || !complexType.Fields.TryGetField(
+                fieldNode.Name.Value,
+                allowInaccessibleFields: true,
+                out var field))
+        {
+            return false;
+        }
+
+        fieldType = field.Type.NamedType();
         return true;
     }
 
