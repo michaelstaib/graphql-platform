@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Rewriters;
@@ -63,6 +64,18 @@ public sealed class OperationCompiler
         string hash,
         string shortHash,
         OperationDefinitionNode operationDefinition)
+        => Compile(id, hash, shortHash, operationDefinition, deliveryGroups: []);
+
+    /// <summary>
+    /// Compiles the operation and registers the include conditions of the delivery groups, so
+    /// that the include flags of a request also cover them.
+    /// </summary>
+    internal Operation Compile(
+        string id,
+        string hash,
+        string shortHash,
+        OperationDefinitionNode operationDefinition,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentNullException.ThrowIfNull(operationDefinition);
@@ -74,6 +87,17 @@ public sealed class OperationCompiler
         var includeConditions = new IncludeConditionCollection(_maxAllowedIncludeConditions);
         var deferConditions = new DeferConditionCollection(_maxAllowedDeferConditions);
         IncludeConditionVisitor.Instance.Visit(operationDefinition, includeConditions);
+
+        if (!deliveryGroups.IsDefaultOrEmpty)
+        {
+            foreach (var deliveryGroup in deliveryGroups)
+            {
+                foreach (var condition in deliveryGroup.Conditions)
+                {
+                    includeConditions.Add(condition);
+                }
+            }
+        }
 
         // Scans the operation for @defer fragments and creates one
         // DeliveryGroup object for each. Also fills deferConditions with any

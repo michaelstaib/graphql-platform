@@ -124,7 +124,11 @@ internal static partial class OperationPlanExecutor
             var activeDeliveryGroupIds = new HashSet<int>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (IsDeliveryGroupActive(deliveryGroup, variables))
+                if (IsDeliveryGroupActive(
+                    deliveryGroup,
+                    variables,
+                    operationPlan.Operation,
+                    rootContext.IncludeConditionFlags))
                 {
                     activeDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
@@ -789,7 +793,11 @@ internal static partial class OperationPlanExecutor
         }
     }
 
-    private static bool IsDeliveryGroupActive(DeliveryGroup deliveryGroup, IVariableValueCollection variables)
+    private static bool IsDeliveryGroupActive(
+        DeliveryGroup deliveryGroup,
+        IVariableValueCollection variables,
+        Operation operation,
+        ConditionFlags includeFlags)
     {
         if (deliveryGroup.IfVariable is not null)
         {
@@ -807,7 +815,7 @@ internal static partial class OperationPlanExecutor
 
         foreach (var condition in deliveryGroup.Conditions)
         {
-            if (!condition.IsIncluded(variables))
+            if (!operation.IsIncluded(condition, includeFlags))
             {
                 return false;
             }

@@ -292,6 +292,24 @@ public sealed class Operation : IOperation
     }
 
     /// <summary>
+    /// Determines whether the include <paramref name="condition"/> is set in the specified
+    /// include flags of this operation.
+    /// </summary>
+    internal bool IsIncluded(IncludeCondition condition, ConditionFlags includeFlags)
+    {
+        var index = _includeConditions.IndexOf(condition);
+
+        if (index < 0)
+        {
+            throw ThrowHelper.IncludeConditionNotCompiled(condition);
+        }
+
+        return index < 64
+            ? (includeFlags.Word0 & (1ul << index)) != 0
+            : (includeFlags.Overflow![(index >> 6) - 1] & (1ul << (index & 63))) != 0;
+    }
+
+    /// <summary>
     /// Creates the defer flags for the specified variable values.
     /// </summary>
     /// <param name="variables">

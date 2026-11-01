@@ -44,7 +44,17 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
         var expandedNodes = 0;
 
         var id = rootElement.GetProperty("id").GetString()!;
-        var operation = ParseOperation(rootElement.GetProperty("operation"));
+
+        var deliveryGroups = ImmutableArray<DeliveryGroup>.Empty;
+        var incrementalPlans = ImmutableArray<IncrementalPlan>.Empty;
+        var deliveryGroupMap = new Dictionary<int, DeliveryGroup>();
+
+        if (rootElement.TryGetProperty("deliveryGroups", out var deliveryGroupsElement))
+        {
+            deliveryGroups = ParseDeliveryGroups(deliveryGroupsElement, deliveryGroupMap);
+        }
+
+        var operation = ParseOperation(rootElement.GetProperty("operation"), deliveryGroups);
 
         if (rootElement.TryGetProperty("searchSpace", out var searchSpaceElement))
         {
@@ -57,15 +67,6 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
         }
 
         var nodes = ParseNodes(rootElement.GetProperty("nodes"), operation);
-
-        var deliveryGroups = ImmutableArray<DeliveryGroup>.Empty;
-        var incrementalPlans = ImmutableArray<IncrementalPlan>.Empty;
-        var deliveryGroupMap = new Dictionary<int, DeliveryGroup>();
-
-        if (rootElement.TryGetProperty("deliveryGroups", out var deliveryGroupsElement))
-        {
-            deliveryGroups = ParseDeliveryGroups(deliveryGroupsElement, deliveryGroupMap);
-        }
 
         if (rootElement.TryGetProperty("incrementalPlans", out var incrementalPlansElement))
         {
@@ -167,7 +168,9 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                 incrementalPlanDeliveryGroupsBuilder.Add(deliveryGroupMap[idElement.GetInt32()]);
             }
 
-            var incrementalPlanOperation = ParseOperation(incrementalPlanElement.GetProperty("operation"));
+            var incrementalPlanOperation = ParseOperation(
+                incrementalPlanElement.GetProperty("operation"),
+                deliveryGroups: []);
 
             var incrementalPlanNodes = incrementalPlanElement.TryGetProperty("nodes", out var incrementalPlanNodesElement)
                 ? ParseNodes(incrementalPlanNodesElement, incrementalPlanOperation)
@@ -222,7 +225,7 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
         return builder.ToImmutable();
     }
 
-    private Operation ParseOperation(JsonElement operationElement)
+    private Operation ParseOperation(JsonElement operationElement, ImmutableArray<DeliveryGroup> deliveryGroups)
     {
         var sourceText = operationElement.GetProperty("document").GetString()!;
         var id = operationElement.GetProperty("id").GetString()!;
@@ -244,7 +247,7 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
             throw ThrowHelper.SingleOperationRequired();
         }
 
-        return _operationCompiler.Compile(id, hash, shortHash, operationDefinition);
+        return _operationCompiler.Compile(id, hash, shortHash, operationDefinition, deliveryGroups);
     }
 
     private ImmutableArray<ExecutionNode> ParseNodes(JsonElement nodesElement, Operation operation)
