@@ -130,7 +130,17 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
-            var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(operationPlan, activeDeliveryGroupIds);
+            var excludedIncrementalPlans = FindExcludedIncrementalPlans(operationPlan, variables);
+
+            if (excludedIncrementalPlans is not null)
+            {
+                RemoveExcludedDeliveryGroups(operationPlan, excludedIncrementalPlans, activeDeliveryGroupIds);
+            }
+
+            var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(
+                operationPlan,
+                activeDeliveryGroupIds,
+                excludedIncrementalPlans);
 
             // Mark top-level active delivery groups as pending on the initial
             // result. A group whose enclosing groups are all disabled is top-level.
@@ -817,15 +827,85 @@ internal static partial class OperationPlanExecutor
         return deliveryGroup;
     }
 
+    private static HashSet<IncrementalPlan>? FindExcludedIncrementalPlans(
+        OperationPlan operationPlan,
+        IVariableValueCollection variables)
+    {
+        HashSet<IncrementalPlan>? excludedIncrementalPlans = null;
+
+        foreach (var incrementalPlan in operationPlan.IncrementalPlans)
+        {
+            var selections = incrementalPlan.ConditionalFieldSelections;
+
+            if (selections.IsDefaultOrEmpty)
+            {
+                continue;
+            }
+
+            var includeFlags = incrementalPlan.Operation.CreateIncludeConditionFlags(variables);
+            var included = false;
+
+            foreach (var selection in selections)
+            {
+                if (selection.IsIncluded(includeFlags))
+                {
+                    included = true;
+                    break;
+                }
+            }
+
+            if (!included)
+            {
+                (excludedIncrementalPlans ??= []).Add(incrementalPlan);
+            }
+        }
+
+        return excludedIncrementalPlans;
+    }
+
+    private static void RemoveExcludedDeliveryGroups(
+        OperationPlan operationPlan,
+        HashSet<IncrementalPlan> excludedIncrementalPlans,
+        HashSet<int> activeDeliveryGroupIds)
+    {
+        var excludedOnly = new HashSet<int>();
+        var delivering = new HashSet<int>();
+
+        foreach (var incrementalPlan in operationPlan.IncrementalPlans)
+        {
+            var target = excludedIncrementalPlans.Contains(incrementalPlan) ? excludedOnly : delivering;
+
+            foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)
+            {
+                target.Add(deliveryGroup.Id);
+            }
+        }
+
+        foreach (var deliveryGroupId in excludedOnly)
+        {
+            if (!delivering.Contains(deliveryGroupId))
+            {
+                activeDeliveryGroupIds.Remove(deliveryGroupId);
+            }
+        }
+    }
+
     private static Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> ResolveDeliveryGroupsByPlan(
         OperationPlan operationPlan,
-        HashSet<int> activeDeliveryGroupIds)
+        HashSet<int> activeDeliveryGroupIds,
+        HashSet<IncrementalPlan>? excludedIncrementalPlans)
     {
         var deliveryGroupsByPlan = new Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>>(
             operationPlan.IncrementalPlans.Length);
 
         foreach (var incrementalPlan in operationPlan.IncrementalPlans)
         {
+            if (excludedIncrementalPlans?.Contains(incrementalPlan) is true)
+            {
+                deliveryGroupsByPlan[incrementalPlan] = [];
+                continue;
+            }
+
             var allActive = true;
 
             foreach (var deliveryGroup in incrementalPlan.DeliveryGroups)

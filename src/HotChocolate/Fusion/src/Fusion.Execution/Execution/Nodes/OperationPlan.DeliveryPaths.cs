@@ -144,7 +144,7 @@ public sealed partial record OperationPlan
         return new DeliveryPath(path, pendingFieldCount);
     }
 
-    private static bool TryFindField(
+    internal static bool TryFindField(
         ISchemaDefinition schema,
         SelectionSetNode selectionSet,
         IOutputTypeDefinition typeContext,

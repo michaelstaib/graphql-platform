@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -1199,7 +1200,10 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Nested_Should_DeliverDeferredFields_When_InitialFieldIsExcludedByInclude()
     {
         // act
-        var payloads = await ExecuteConditionalNestedDeferAsync(includeName: false, skipEmail: false);
+        var payloads = await ExecuteConditionalDeferAsync(
+            NestedConditionalDeferQuery,
+            includeName: false,
+            skipEmail: false);
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -1220,7 +1224,45 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Nested_Should_DeliverInnerGroup_When_OuterGroupFieldIsExcludedBySkip()
     {
         // act
-        var payloads = await ExecuteConditionalNestedDeferAsync(includeName: true, skipEmail: true);
+        var payloads = await ExecuteConditionalDeferAsync(
+            NestedConditionalDeferQuery,
+            includeName: true,
+            skipEmail: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"1","path":["user"],"label":"inner"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_DeliverSiblingField_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // act
+        var payloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        phone
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -1229,10 +1271,95 @@ public class DeferTests : FusionTestBase
             {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"1","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{}}],"completed":[{"id":"0"}],"hasNext":true}
+            {"pending":[{"id":"1","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"phone":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
             {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_MatchNonDeferredResult_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // arrange
+        var nonDeferredPayloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    email @skip(if: $skipEmail)
+                    phone
+                    address
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
+
+        // act
+        var payloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        phone
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
+
+        // assert
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse(nonDeferredPayloads[0])!["data"],
+                MergeIncrementalPayloads(payloads)));
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_DeliverInnerGroupWithEnclosingGroup_When_MiddleGroupFieldIsExcludedBySkip()
+    {
+        // act
+        var payloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        name @include(if: $includeName)
+                        ... @defer(label: "middle") {
+                            email @skip(if: $skipEmail)
+                            ... @defer(label: "inner") {
+                                address
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"2","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"name":"User: VXNlcjoyMDc0ODIxMjU4"}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDc0ODIxMjU4"}}],"completed":[{"id":"2"}],"hasNext":false}
             """
         ]);
     }
@@ -4755,7 +4882,26 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
-    private async Task<List<string>> ExecuteConditionalNestedDeferAsync(bool includeName, bool skipEmail)
+    private const string NestedConditionalDeferQuery =
+        """
+        query($includeName: Boolean!, $skipEmail: Boolean!) {
+            user(id: "1") {
+                id
+                name @include(if: $includeName)
+                ... @defer(label: "outer") {
+                    email @skip(if: $skipEmail)
+                    ... @defer(label: "inner") {
+                        address
+                    }
+                }
+            }
+        }
+        """;
+
+    private async Task<List<string>> ExecuteConditionalDeferAsync(
+        [StringSyntax("graphql")] string query,
+        bool includeName,
+        bool skipEmail)
     {
         using var server1 = CreateSourceSchema(
             "A",
@@ -4780,6 +4926,7 @@ public class DeferTests : FusionTestBase
             type User @key(fields: "id") {
                 id: ID!
                 email: String!
+                phone: String!
                 address: String!
             }
             """);
@@ -4793,20 +4940,7 @@ public class DeferTests : FusionTestBase
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
 
         var request = new OperationRequest(
-            query: """
-            query($includeName: Boolean!, $skipEmail: Boolean!) {
-                user(id: "1") {
-                    id
-                    name @include(if: $includeName)
-                    ... @defer(label: "outer") {
-                        email @skip(if: $skipEmail)
-                        ... @defer(label: "inner") {
-                            address
-                        }
-                    }
-                }
-            }
-            """,
+            query: query,
             variables: new Dictionary<string, object?>
             {
                 ["includeName"] = includeName,

@@ -1,4 +1,7 @@
 using System.Collections.Immutable;
+using HotChocolate.Execution;
+using HotChocolate.Language;
+using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
 
@@ -54,6 +57,7 @@ public sealed class IncrementalPlan : IOperationPlan
             out var usesBatchNodes);
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
+        ConditionalFieldSelections = FindConditionalFieldSelections(operation, deliveryGroups);
     }
 
     /// <summary>
@@ -103,6 +107,13 @@ public sealed class IncrementalPlan : IOperationPlan
     /// Gets the highest plan node identifier that can be resolved by this plan.
     /// </summary>
     public int MaxNodeId => _nodesById.Length > 0 ? _nodesById.Length - 1 : 0;
+
+    /// <summary>
+    /// Gets the selections of the fields this plan delivers when every one of them depends on an
+    /// include condition. It is empty when the plan delivers any field unconditionally or when
+    /// its fields cannot be resolved to selections.
+    /// </summary>
+    internal ImmutableArray<Selection> ConditionalFieldSelections { get; }
 
     internal bool UsesDynamicSchemaNames { get; }
 
@@ -156,6 +167,153 @@ public sealed class IncrementalPlan : IOperationPlan
         }
 
         throw ThrowHelper.NodeNotFound(planNode.Id);
+    }
+
+    private static ImmutableArray<Selection> FindConditionalFieldSelections(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        var path = deliveryGroups[0].Path ?? SelectionPath.Root;
+
+        for (var i = 1; i < deliveryGroups.Length; i++)
+        {
+            if (!path.Equals(deliveryGroups[i].Path ?? SelectionPath.Root))
+            {
+                return [];
+            }
+        }
+
+        var syntaxSelectionSet = operation.Definition.SelectionSet;
+        var selectionSet = operation.RootSelectionSet;
+        IOutputTypeDefinition type = operation.RootType;
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            var segment = path[i];
+
+            if (segment.Kind is SelectionPathSegmentKind.Root)
+            {
+                continue;
+            }
+
+            if (segment.Kind is not SelectionPathSegmentKind.Field
+                || !OperationPlan.TryFindField(
+                    operation.Schema,
+                    syntaxSelectionSet,
+                    type,
+                    segment.Name,
+                    out var fieldNode,
+                    out var field)
+                || fieldNode.SelectionSet is null
+                || !selectionSet.TryGetSelection(segment.Name, out var selection)
+                || selection.IsLeaf
+                || selection.NamedType is not IObjectTypeDefinition)
+            {
+                return [];
+            }
+
+            syntaxSelectionSet = fieldNode.SelectionSet;
+            selectionSet = selection.GetSelectionSet()!;
+            type = field.Type.NamedType<IOutputTypeDefinition>();
+        }
+
+        var responseNames = new List<string>();
+
+        if (!TryCollectConditionalFields(syntaxSelectionSet, isConditional: false, responseNames)
+            || responseNames.Count == 0)
+        {
+            return [];
+        }
+
+        var selections = ImmutableArray.CreateBuilder<Selection>(responseNames.Count);
+
+        foreach (var responseName in responseNames)
+        {
+            if (!selectionSet.TryGetSelection(responseName, out var fieldSelection)
+                || !fieldSelection.IsConditional)
+            {
+                return [];
+            }
+
+            selections.Add(fieldSelection);
+        }
+
+        return selections.MoveToImmutable();
+    }
+
+    private static bool TryCollectConditionalFields(
+        SelectionSetNode selectionSet,
+        bool isConditional,
+        List<string> responseNames)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode field:
+                    if (IsRequirementMarker(field))
+                    {
+                        break;
+                    }
+
+                    if (!isConditional && !HasIncludeCondition(field.Directives))
+                    {
+                        return false;
+                    }
+
+                    responseNames.Add(field.Alias?.Value ?? field.Name.Value);
+                    break;
+
+                case InlineFragmentNode fragment:
+                    if (!TryCollectConditionalFields(
+                        fragment.SelectionSet,
+                        isConditional || HasIncludeCondition(fragment.Directives),
+                        responseNames))
+                    {
+                        return false;
+                    }
+
+                    break;
+
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsRequirementMarker(FieldNode field)
+    {
+        foreach (var directive in field.Directives)
+        {
+            if (directive.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)
+                || directive.Name.Value.Equals("fusion__empty", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasIncludeCondition(IReadOnlyList<DirectiveNode> directives)
+    {
+        foreach (var directive in directives)
+        {
+            if (directive.Name.Value.Equals(DirectiveNames.Skip.Name, StringComparison.Ordinal)
+                || directive.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ExecutionNode?[] CreateNodeLookup(
