@@ -169,18 +169,21 @@ internal sealed class OperationPolicyMiddleware
                 continue;
             }
 
-            if (!isSubscription && variableSets[i] is VariableValueCollection values)
+            if (variableSets[i] is not VariableValueCollection values)
             {
-                PolicyVariableValues.AddTo(values, policies.Variables, decisions, _booleanType);
-            }
-            else
-            {
+                values = VariableValueCollection.Copy(variableSets[i], policies.Variables.Length);
                 updatedVariableSets ??= [.. variableSets];
-                updatedVariableSets[i] = PolicyVariableValues.Create(
-                    variableSets[i],
-                    policies.Variables,
-                    decisions,
-                    _booleanType);
+                updatedVariableSets[i] = values;
+            }
+
+            foreach (var variable in policies.Variables)
+            {
+                values.Add(
+                    variable.Name,
+                    new VariableValue(
+                        variable.Name,
+                        _booleanType,
+                        variable.IsTrue(decisions) ? BooleanValueNode.True : BooleanValueNode.False));
             }
         }
 
