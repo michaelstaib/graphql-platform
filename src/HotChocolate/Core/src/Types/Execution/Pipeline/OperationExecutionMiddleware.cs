@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using HotChocolate.Buffers;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Processing;
@@ -74,6 +75,8 @@ internal sealed class OperationExecutionMiddleware
 
             using (_diagnosticEvents.ExecuteOperation(context))
             {
+                context.AttachMemory(new MemoryArena());
+
                 if (operation.Definition.Operation is OperationType.Subscription)
                 {
                     context.Result = await _subscriptionExecutor

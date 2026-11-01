@@ -48,44 +48,40 @@ internal sealed class ExecutionGroupTestHarness
 
         var executor = await ExecutionGroupTestSchema.CreateAsync(
             new ExecutionScript(),
-            builder => builder
-                .UseDefaultPipeline()
-                .UseRequest(
-                    (factoryContext, _) =>
+            builder => builder.UseField(
+                _ => context =>
+                {
+                    // the first field is the root field, it does not resolve, so no other field executes.
+                    try
                     {
-                        var contextFactory = factoryContext.Services
-                            .GetRequiredService<IFactory<OperationContextOwner>>();
+                        var requestContext =
+                            context.Services.GetRequiredService<IRequestContextAccessor>().RequestContext;
+                        var contextFactory =
+                            context.Services.GetRequiredService<IFactory<OperationContextOwner>>();
 
-                        return context =>
-                        {
-                            // the owner is abandoned, because tasks that were registered are never executed.
-                            var operationContext = contextFactory.Create().OperationContext;
+                        // the owner is abandoned, because tasks that were registered are never executed. The
+                        // operation context uses the memory arena that the operation execution attached to the request.
+                        var operationContext = contextFactory.Create().OperationContext;
 
-                            operationContext.Initialize(
-                                context,
-                                context.RequestServices,
-                                context.RequestServices.GetRequiredService<IBatchDispatcher>(),
-                                context.GetOperation(),
-                                context.VariableValues[0],
-                                rootValue: null,
-                                resolveQueryRootValue: () => null);
+                        operationContext.Initialize(
+                            requestContext,
+                            requestContext.RequestServices,
+                            requestContext.RequestServices.GetRequiredService<IBatchDispatcher>(),
+                            requestContext.GetOperation(),
+                            requestContext.VariableValues[0],
+                            rootValue: null,
+                            resolveQueryRootValue: () => null);
 
-                            try
-                            {
-                                outcome = test(new ExecutionGroupTestHarness(operationContext));
-                            }
-                            catch (Exception ex)
-                            {
-                                failure = ExceptionDispatchInfo.Capture(ex);
-                            }
+                        outcome = test(new ExecutionGroupTestHarness(operationContext));
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = ExceptionDispatchInfo.Capture(ex);
+                    }
 
-                            context.Result = OperationResult.FromError(
-                                ErrorBuilder.New().SetMessage("The test harness stops before execution.").Build());
-                            return ValueTask.CompletedTask;
-                        };
-                    },
-                    key: "ExecutionGroupTestHarness",
-                    before: WellKnownRequestMiddleware.OperationExecutionMiddleware));
+                    context.Result = null;
+                    return ValueTask.CompletedTask;
+                }));
 
         var request = OperationRequestBuilder.New()
             .SetDocument(query)
