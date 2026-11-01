@@ -103,6 +103,11 @@ internal static class ThrowHelper
             + "were not compiled into the operation.",
             paramName);
 
+    public static ArgumentException DeliveryGroupIdNegative(int deliveryGroupId, string paramName)
+        => new(
+            $"The delivery group ID '{deliveryGroupId}' is invalid. Delivery group IDs must be zero or greater.",
+            paramName);
+
     public static InvalidOperationException DeliveryPathSegmentNotFound(string segmentName)
         => new($"Could not resolve selection path segment '{segmentName}'.");
 
