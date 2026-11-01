@@ -16,6 +16,12 @@ internal sealed class DeferPartitioningResult(
     IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment)
 {
     /// <summary>
+    /// Gets the result of an operation without <c>@defer</c>.
+    /// </summary>
+    public static DeferPartitioningResult Empty { get; } =
+        new([], ImmutableDictionary<InlineFragmentNode, DeliveryGroup>.Empty);
+
+    /// <summary>
     /// Every <see cref="DeliveryGroup"/> discovered in the operation, in
     /// declaration order (depth-first, left-to-right as encountered).
     /// The array index equals each usage's <see cref="DeliveryGroup.Id"/>.
