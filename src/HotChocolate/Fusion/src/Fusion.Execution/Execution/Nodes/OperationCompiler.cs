@@ -86,7 +86,6 @@ public sealed class OperationCompiler
         var partitioning = DeferPartitioner.Partition(operationDefinition, deferConditions);
 
         var fields = _fieldsPool.Get();
-        fields.Clear();
 
         var compilationContext = new CompilationContext(new object[128]);
 
