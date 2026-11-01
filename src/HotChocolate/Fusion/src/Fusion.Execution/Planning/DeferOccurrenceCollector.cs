@@ -36,6 +36,7 @@ internal static class DeferOccurrenceCollector
             parentPath: [],
             enclosingDefer: null,
             parentTypeCondition: null,
+            FragmentConditions.Empty,
             byFragment,
             inlineUnlabeledNestedDefers,
             occurrences);
@@ -47,6 +48,7 @@ internal static class DeferOccurrenceCollector
         ImmutableArray<FieldPathSegment> parentPath,
         DeliveryGroup? enclosingDefer,
         NamedTypeNode? parentTypeCondition,
+        FragmentConditions parentConditions,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment,
         bool inlineUnlabeledNestedDefers,
         List<FieldOccurrence> occurrences)
@@ -59,20 +61,22 @@ internal static class DeferOccurrenceCollector
                 {
                     // Composite fields define the path for child leaves. Only
                     // leaf fields contribute to delivery group sets. The active
-                    // type condition is recorded on the segment so the composite
-                    // field can be re-wrapped in an inline fragment when it is
-                    // reconstructed under an abstract-typed parent field.
+                    // type condition and fragment conditions are recorded on the
+                    // segment so the composite field can be re-wrapped in inline
+                    // fragments when it is reconstructed.
                     var childPath = parentPath.Add(
                         new FieldPathSegment(
                             fieldNode.Name.Value,
                             fieldNode.Alias?.Value,
-                            parentTypeCondition?.Name.Value));
+                            parentTypeCondition?.Name.Value,
+                            parentConditions));
 
                     CollectOccurrences(
                         childSelectionSet.Selections,
                         childPath,
                         enclosingDefer,
                         parentTypeCondition: null,
+                        FragmentConditions.Empty,
                         byFragment,
                         inlineUnlabeledNestedDefers,
                         occurrences);
@@ -88,7 +92,8 @@ internal static class DeferOccurrenceCollector
                             fieldNode.Alias?.Value ?? fieldNode.Name.Value,
                             fieldNode,
                             enclosingDefer,
-                            parentTypeCondition));
+                            parentTypeCondition,
+                            parentConditions));
                 }
 
                 continue;
@@ -117,11 +122,16 @@ internal static class DeferOccurrenceCollector
                     }
                 }
 
+                var nestedConditions = IncludeCondition.TryCreate(inlineFragment, out var includeCondition)
+                    ? parentConditions.Add(includeCondition)
+                    : parentConditions;
+
                 CollectOccurrences(
                     inlineFragment.SelectionSet.Selections,
                     parentPath,
                     nestedDefer,
                     inlineFragment.TypeCondition ?? parentTypeCondition,
+                    nestedConditions,
                     byFragment,
                     inlineUnlabeledNestedDefers,
                     occurrences);

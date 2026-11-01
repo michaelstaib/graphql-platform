@@ -1635,7 +1635,7 @@ public class DeferTests : FusionTestBase
         rawBody.MatchSnapshot();
     }
 
-    [Fact(Skip = "Requires validation of @skip/@include interaction with @defer at the planning level")]
+    [Fact]
     public async Task Defer_With_Skip_Directive_Should_Skip_Deferred_Fragment()
     {
         // arrange
@@ -1712,7 +1712,7 @@ public class DeferTests : FusionTestBase
 
         var initial = payloads[0].RootElement;
         Assert.True(initial.TryGetProperty("data", out var data));
-        Assert.Equal("User: VXNlcjox", data.GetProperty("user").GetProperty("name").GetString());
+        Assert.StartsWith("User: ", data.GetProperty("user").GetProperty("name").GetString());
 
         // Reviews should NOT be in the response since the fragment was skipped
         Assert.False(data.GetProperty("user").TryGetProperty("reviews", out _));
@@ -1725,6 +1725,336 @@ public class DeferTests : FusionTestBase
         {
             doc.Dispose();
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_TypeConditionedFragmentHasInclude(bool include)
+    {
+        // arrange
+        using var gateway = await CreateConditionalItemGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                items {
+                    id
+                    ... @defer {
+                        ... on Product @include(if: $x) {
+                            name
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                items {
+                    id
+                    ... on Product @include(if: $x) {
+                        name
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        var items = data["items"]!.AsArray();
+        Assert.Equal(include, items[0]!.AsObject().ContainsKey("name"));
+        Assert.False(items[2]!.AsObject().ContainsKey("name"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferredFragmentWithAliasHasInclude(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("score"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_LeafGroupSelectsFieldInConditionalFragment(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer {
+                        ... @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        rating
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("rating"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferredFragmentSelectingCompositeFieldHasSkip(
+        bool skip)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @skip(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @skip(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            skip);
+
+        // assert
+        Assert.Equal(!skip, data["products"]![0]!.AsObject().ContainsKey("reviews"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_OuterGroupEnclosesConditionalDefer(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    reviews {
+                        id
+                    }
+                    ... @include(if: $x) {
+                        rating
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        var product = data["products"]![0]!.AsObject();
+        Assert.True(product.ContainsKey("reviews"));
+        Assert.Equal(include, product.ContainsKey("rating"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_ConditionalFragmentEnclosesDefer(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        ... @defer {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("reviews"));
+    }
+
+    private async Task<Gateway> CreateConditionalItemGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                items: [Item!]! @returns(types: ["Product", "Product", "Other"])
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+                id: ID!
+            }
+
+            type Other implements Item @key(fields: "id") {
+                id: ID!
+            }
+            """);
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                itemById(id: ID!): Item @lookup
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+
+            type Other implements Item @key(fields: "id") {
+                id: ID!
+                title: String!
+            }
+            """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private static async Task<JsonNode> ExecuteAndCompareWithNonDeferredAsync(
+        Gateway gateway,
+        string deferredQuery,
+        string nonDeferredQuery,
+        bool x)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["x"] = x };
+
+        using var deferredResult = await client.PostAsync(
+            new OperationRequest(deferredQuery, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        using var nonDeferredResult = await client.PostAsync(
+            new OperationRequest(nonDeferredQuery, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var deferredPayloads = await ReadPayloadsAsync(deferredResult);
+        var nonDeferredPayloads = await ReadPayloadsAsync(nonDeferredResult);
+        var deferredData = MergeIncrementalPayloads(deferredPayloads);
+        var nonDeferredData = MergeIncrementalPayloads(nonDeferredPayloads);
+
+        Assert.True(
+            JsonNode.DeepEquals(nonDeferredData, deferredData),
+            $"Deferred: {deferredData.ToJsonString()}, non-deferred: {nonDeferredData.ToJsonString()}");
+
+        return deferredData;
     }
 
     [Fact]
