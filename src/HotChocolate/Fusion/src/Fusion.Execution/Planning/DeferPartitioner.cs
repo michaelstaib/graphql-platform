@@ -76,7 +76,11 @@ internal static class DeferPartitioner
             {
                 var nested = parent;
 
-                if (DeferCondition.TryCreate(inline, out var deferCondition))
+                if (byFragment.TryGetValue(inline, out var existing))
+                {
+                    nested = existing;
+                }
+                else if (DeferCondition.TryCreate(inline, out var deferCondition))
                 {
                     deferConditions.Add(deferCondition);
                     var deferIndex = deferConditions.IndexOf(deferCondition);

@@ -1,0 +1,128 @@
+operation:
+  - document: |
+      {
+        product {
+          id
+          owner {
+            __typename
+            ... on User {
+              profile {
+                id
+              }
+            }
+            ... on Team {
+              profile {
+                id
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product {
+          id
+          owner {
+            __typename
+            ... on User {
+              profile {
+                id
+              }
+            }
+            ... on Team {
+              profile {
+                id
+              }
+            }
+          }
+        }
+      }
+deliveryGroups:
+  - id: 0
+    path: $.product.owner.profile
+    label: a
+  - id: 1
+    path: $.product.owner.profile
+    label: a
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 1
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            profileById(id: $__fusion_1_id) {
+              total
+            }
+          }
+        source: $.profileById
+        target: $.product.owner<User>.profile
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 2
+      - id: 2
+        type: Operation
+        schema: a
+        operation: |
+          query Op_defer_2 {
+            product {
+              owner {
+                __typename
+                ... on User {
+                  profile {
+                    id
+                  }
+                }
+              }
+            }
+          }
+  - deliveryGroupIds:
+      - 1
+    parentNodeId: 1
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            profileById(id: $__fusion_1_id) {
+              total
+            }
+          }
+        source: $.profileById
+        target: $.product.owner<Team>.profile
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 2
+      - id: 2
+        type: Operation
+        schema: a
+        operation: |
+          query Op_defer_2 {
+            product {
+              owner {
+                __typename
+                ... on Team {
+                  profile {
+                    id
+                  }
+                }
+              }
+            }
+          }
