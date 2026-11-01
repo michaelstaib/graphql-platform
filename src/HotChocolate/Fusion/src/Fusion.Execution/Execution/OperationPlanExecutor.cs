@@ -452,13 +452,20 @@ internal static partial class OperationPlanExecutor
                         payload.Incremental = incrementalResults;
                     }
 
-                    var failed = result.Errors.Count > 0 && (isExcludedPlan || payload.Incremental.Count == 0);
+                    // An excluded plan delivers no data, so its errors only fail the silent
+                    // groups it runs for. Groups that another plan delivers keep their result.
+                    var failedPlanDeliveryGroups = isExcludedPlan
+                        ? GetSilentDeliveryGroups(deliveryGroups, silentDeliveryGroupIds)
+                        : deliveryGroups;
+
+                    var failed = result.Errors.Count > 0
+                        && (isExcludedPlan ? !failedPlanDeliveryGroups.IsEmpty : payload.Incremental.Count == 0);
                     if (failed)
                     {
-                        MarkDeliveryGroupsFailed(deliveryGroups, result.Errors, ref failedDeliveryGroups);
+                        MarkDeliveryGroupsFailed(failedPlanDeliveryGroups, result.Errors, ref failedDeliveryGroups);
                         CompleteAnnouncedGroupsOfFailedSilentGroups(
                             operationPlan,
-                            deliveryGroups,
+                            failedPlanDeliveryGroups,
                             activeDeliveryGroupIds,
                             silentDeliveryGroupIds,
                             announcedDeliveryGroupIds,
@@ -473,7 +480,7 @@ internal static partial class OperationPlanExecutor
                         pendingCountByDeliveryGroup,
                         failedDeliveryGroups,
                         completed,
-                        errors: failed ? result.Errors : null);
+                        errors: failed && !isExcludedPlan ? result.Errors : null);
                 }
                 else
                 {
@@ -995,6 +1002,48 @@ internal static partial class OperationPlanExecutor
         }
 
         return silent;
+    }
+
+    private static ImmutableArray<DeliveryGroup> GetSilentDeliveryGroups(
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        HashSet<int>? silentDeliveryGroupIds)
+    {
+        if (silentDeliveryGroupIds is null)
+        {
+            return [];
+        }
+
+        var silentCount = 0;
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id))
+            {
+                silentCount++;
+            }
+        }
+
+        if (silentCount == deliveryGroups.Length)
+        {
+            return deliveryGroups;
+        }
+
+        if (silentCount == 0)
+        {
+            return [];
+        }
+
+        var builder = ImmutableArray.CreateBuilder<DeliveryGroup>(silentCount);
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id))
+            {
+                builder.Add(deliveryGroup);
+            }
+        }
+
+        return builder.MoveToImmutable();
     }
 
     private static Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> ResolveDeliveryGroupsByPlan(

@@ -10,6 +10,7 @@ using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Language;
+using HotChocolate.Resolvers;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
 using HotChocolate.Types.Composite;
@@ -1551,6 +1552,67 @@ public class DeferTests : FusionTestBase
             {"completed":[{"id":"2","errors":[{"message":"User lookup failed.","path":["user"]}]}],"hasNext":false}
             """
         ]);
+    }
+
+    [Fact]
+    public async Task Defer_Siblings_Should_CompleteSharedGroupWithoutErrors_When_ExcludedSharedPlanFails()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<FailingKeyLookupSourceA.Query>(),
+            services => services.AddSingleton<FailingKeyLookupSourceA.LookupCounter>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "a") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                    ... @defer(label: "b") {
+                        email @skip(if: $skipEmail)
+                        name
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
     [Fact]
@@ -5381,6 +5443,35 @@ public class DeferTests : FusionTestBase
                 if (counter.Next() == 3)
                 {
                     throw new GraphQLException("User lookup failed.");
+                }
+
+                return new User(id, "User " + id);
+            }
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id, string Name);
+
+        public sealed class LookupCounter
+        {
+            private int _count;
+
+            public int Next() => Interlocked.Increment(ref _count);
+        }
+    }
+
+    private static class FailingKeyLookupSourceA
+    {
+        public class Query
+        {
+            [Lookup]
+            public User? GetUser(
+                [GraphQLType<NonNullType<IdType>>] string id,
+                [Service] LookupCounter counter,
+                IResolverContext context)
+            {
+                if (!context.IsSelected("name") && counter.Next() == 2)
+                {
+                    throw new GraphQLException("User key lookup failed.");
                 }
 
                 return new User(id, "User " + id);
