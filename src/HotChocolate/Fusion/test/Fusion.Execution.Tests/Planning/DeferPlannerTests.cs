@@ -3446,6 +3446,152 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_PlanLookupForEveryTypeCondition_When_FragmentGroupSpansInterfaceBranches()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerProfileSchema(isUnion: false);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            profile {
+                                ...ProfileTotal
+                            }
+                        }
+                        ... on Team {
+                            profile {
+                                ...ProfileTotal
+                            }
+                        }
+                    }
+                }
+            }
+
+            fragment ProfileTotal on Profile {
+                id
+                ... @defer(label: "a") {
+                    total
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupForEveryTypeCondition_When_FragmentGroupSpansUnionBranches()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerProfileSchema(isUnion: true);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            profile {
+                                ...ProfileTotal
+                            }
+                        }
+                        ... on Team {
+                            profile {
+                                ...ProfileTotal
+                            }
+                        }
+                    }
+                }
+            }
+
+            fragment ProfileTotal on Profile {
+                id
+                ... @defer(label: "a") {
+                    total
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupForEveryTypeCondition_When_DeferredFragmentCoversTwoTypesOfInterfaceField()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerEntitySchema(isUnion: false);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... @defer(label: "a") {
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                score
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupForEveryTypeCondition_When_DeferredFragmentCoversTwoTypesOfUnionField()
+    {
+        // arrange
+        var schema = ComposeAbstractOwnerEntitySchema(isUnion: true);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... @defer(label: "a") {
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                score
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
@@ -3698,6 +3844,49 @@ public class DeferPlannerTests : FusionTestBase
             type Profile @key(fields: "id") {
                 id: ID!
                 total: Int!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeAbstractOwnerEntitySchema(bool isUnion)
+        => ComposeSchema(
+            $$"""
+            # name: a
+            type Query {
+                product: Product!
+            }
+
+            type Product {
+                id: ID!
+                owner: Owner!
+            }
+
+            {{(isUnion ? "union Owner = User | Team" : "interface Owner { id: ID! }")}}
+
+            type User{{(isUnion ? "" : " implements Owner")}} @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+
+            type Team{{(isUnion ? "" : " implements Owner")}} @key(fields: "id") {
+                id: ID!
+                title: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup @internal
+                teamById(id: ID!): Team @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                total: Int!
+            }
+
+            type Team @key(fields: "id") {
+                id: ID!
+                score: Int!
             }
             """);
 }

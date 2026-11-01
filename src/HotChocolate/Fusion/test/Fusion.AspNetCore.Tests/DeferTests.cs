@@ -5729,6 +5729,735 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_SiblingBranchesSpanTypeConditionsOfInterfaceField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedInterfaceEntitySourceA.Query>()
+                .AddType<OwnedInterfaceEntitySourceA.Product>()
+                .AddType<OwnedInterfaceEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "a") {
+                                total
+                            }
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "b") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_FragmentSpreadBranchesSpanTypeConditionsOfInterfaceField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedInterfaceEntitySourceA.Query>()
+                .AddType<OwnedInterfaceEntitySourceA.Product>()
+                .AddType<OwnedInterfaceEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            fragment OwnerTotal on Owner {
+                ... @defer(label: "a") {
+                    total
+                }
+            }
+
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            ...OwnerTotal
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            ...OwnerTotal
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_SiblingBranchesSpanTypeConditionsOfUnionField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedUnionEntitySourceA.Query>()
+                .AddType<OwnedUnionEntitySourceA.Product>()
+                .AddType<OwnedUnionEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "a") {
+                                total
+                            }
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "b") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_FragmentSpreadBranchesSpanTypeConditionsOfUnionField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedUnionEntitySourceA.Query>()
+                .AddType<OwnedUnionEntitySourceA.Product>()
+                .AddType<OwnedUnionEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            fragment OwnerTotal on Owner {
+                ... @defer(label: "a") {
+                    total
+                }
+            }
+
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            ...OwnerTotal
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            ...OwnerTotal
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        id
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        rating
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_HoistedFragmentSpanTypeConditionsOfInterfaceField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedInterfaceEntitySourceA.Query>()
+                .AddType<OwnedInterfaceEntitySourceA.Product>()
+                .AddType<OwnedInterfaceEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        owner {
+                            id
+                            name
+                        }
+                    }
+                    ... on Review {
+                        owner {
+                            id
+                            name
+                        }
+                    }
+                    ... @defer(label: "a") {
+                        ... on Product {
+                            owner {
+                                total
+                            }
+                        }
+                        ... on Review {
+                            owner {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_HoistedFragmentSpanTypeConditionsOfUnionField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedUnionEntitySourceA.Query>()
+                .AddType<OwnedUnionEntitySourceA.Product>()
+                .AddType<OwnedUnionEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        owner {
+                            id
+                            name
+                        }
+                    }
+                    ... on Review {
+                        owner {
+                            id
+                            name
+                        }
+                    }
+                    ... @defer(label: "a") {
+                        ... on Product {
+                            owner {
+                                total
+                            }
+                        }
+                        ... on Review {
+                            owner {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on Product {
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                    ... on Review {
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_SharedInterfaceSpanTypeConditionsOfInterfaceField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedInterfaceEntitySourceA.Query>()
+                .AddType<OwnedInterfaceEntitySourceA.IHasOwner>()
+                .AddType<OwnedInterfaceEntitySourceA.Product>()
+                .AddType<OwnedInterfaceEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on HasOwner {
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "a") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on HasOwner {
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_SharedInterfaceSpanTypeConditionsOfUnionField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<OwnedUnionEntitySourceA.Query>()
+                .AddType<OwnedUnionEntitySourceA.IHasOwner>()
+                .AddType<OwnedUnionEntitySourceA.Product>()
+                .AddType<OwnedUnionEntitySourceA.Review>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<EntityOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        var (request, result, deferredData, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            """
+            {
+                entities {
+                    __typename
+                    ... on HasOwner {
+                        owner {
+                            id
+                            name
+                            ... @defer(label: "a") {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                entities {
+                    __typename
+                    ... on HasOwner {
+                        owner {
+                            id
+                            name
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+        using var _ = result;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    private static async Task<(
+        OperationRequest Request,
+        GraphQLHttpResponse Result,
+        JsonNode DeferredData,
+        JsonNode PlainData)> ExecuteDeferredAndPlainAsync(
+        Gateway gateway,
+        string deferredQuery,
+        string plainQuery)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(deferredQuery);
+
+        var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        await deferredResult.HttpResponseMessage.Content.LoadIntoBufferAsync();
+        var deferredData = MergeIncrementalPayloads(await ReadPayloadsAsync(deferredResult));
+
+        using var plainResult = await client.PostAsync(
+            new OperationRequest(plainQuery),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var plainBody = await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        var plainData = JsonNode.Parse(plainBody)!["data"]!;
+
+        return (deferredRequest, deferredResult, deferredData, plainData);
+    }
+
+    private static class OwnedInterfaceEntitySourceA
+    {
+        public class Query
+        {
+            public IEntity[] GetEntities() => [new Product(1), new Review(2), new Product(3)];
+
+            [Lookup]
+            [Internal]
+            public Owner? GetOwnerById([ID] int id) => new(id);
+        }
+
+        [InterfaceType("Entity")]
+        public interface IEntity
+        {
+            [ID]
+            int Id { get; }
+        }
+
+        [InterfaceType("HasOwner")]
+        public interface IHasOwner
+        {
+            Owner Owner { get; }
+        }
+
+        public record Product([property: ID] int Id) : IEntity, IHasOwner
+        {
+            public Owner Owner => new(Id + 10);
+        }
+
+        public record Review([property: ID] int Id) : IEntity, IHasOwner
+        {
+            public int Rating => 4;
+
+            public Owner Owner => new(Id + 20);
+        }
+
+        public record Owner([property: ID] int Id)
+        {
+            public string Name => $"Owner {Id}";
+        }
+    }
+
+    private static class OwnedUnionEntitySourceA
+    {
+        public class Query
+        {
+            public IEntity[] GetEntities() => [new Product(1), new Review(2), new Product(3)];
+
+            [Lookup]
+            [Internal]
+            public Owner? GetOwnerById([ID] int id) => new(id);
+        }
+
+        [UnionType("Entity")]
+        public interface IEntity;
+
+        [InterfaceType("HasOwner")]
+        public interface IHasOwner
+        {
+            Owner Owner { get; }
+        }
+
+        public record Product([property: ID] int Id) : IEntity, IHasOwner
+        {
+            public Owner Owner => new(Id + 10);
+        }
+
+        public record Review([property: ID] int Id) : IEntity, IHasOwner
+        {
+            public int Rating => 4;
+
+            public Owner Owner => new(Id + 20);
+        }
+
+        public record Owner([property: ID] int Id)
+        {
+            public string Name => $"Owner {Id}";
+        }
+    }
+
     private static async Task<(
         OperationRequest Request,
         GraphQLHttpResponse Result,

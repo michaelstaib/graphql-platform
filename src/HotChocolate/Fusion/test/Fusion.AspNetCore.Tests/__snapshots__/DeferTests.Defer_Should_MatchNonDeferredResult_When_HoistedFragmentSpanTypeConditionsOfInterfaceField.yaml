@@ -1,0 +1,605 @@
+title: Defer_Should_MatchNonDeferredResult_When_HoistedFragmentSpanTypeConditionsOfInterfaceField
+request:
+  document: |
+    {
+      entities {
+        __typename
+        ... on Product {
+          owner {
+            id
+            name
+          }
+        }
+        ... on Review {
+          owner {
+            id
+            name
+          }
+        }
+        ... @defer(label: "a") {
+          ... on Product {
+            owner {
+              total
+            }
+          }
+          ... on Review {
+            owner {
+              total
+            }
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 3,
+    "initial": {
+      "data": {
+        "entities": [
+          {
+            "__typename": "Product",
+            "owner": {
+              "id": "11",
+              "name": "Owner 11"
+            }
+          },
+          {
+            "__typename": "Review",
+            "owner": {
+              "id": "22",
+              "name": "Owner 22"
+            }
+          },
+          {
+            "__typename": "Product",
+            "owner": {
+              "id": "13",
+              "name": "Owner 13"
+            }
+          }
+        ]
+      }
+    },
+    "pending": [
+      {
+        "id": "0",
+        "path": [
+          "entities"
+        ],
+        "label": "a"
+      },
+      {
+        "id": "1",
+        "path": [
+          "entities"
+        ],
+        "label": "a"
+      }
+    ],
+    "incremental": [
+      {
+        "id": "0",
+        "path": [
+          "entities"
+        ],
+        "subPath": [
+          0,
+          "owner"
+        ],
+        "data": {
+          "total": 1100
+        }
+      },
+      {
+        "id": "0",
+        "path": [
+          "entities"
+        ],
+        "subPath": [
+          2,
+          "owner"
+        ],
+        "data": {
+          "total": 1300
+        }
+      },
+      {
+        "id": "1",
+        "path": [
+          "entities"
+        ],
+        "subPath": [
+          1,
+          "owner"
+        ],
+        "data": {
+          "total": 2200
+        }
+      }
+    ],
+    "completed": [
+      {
+        "id": "0"
+      },
+      {
+        "id": "1"
+      }
+    ],
+    "final": {
+      "data": {
+        "entities": [
+          {
+            "__typename": "Product",
+            "owner": {
+              "id": "11",
+              "name": "Owner 11",
+              "total": 1100
+            }
+          },
+          {
+            "__typename": "Review",
+            "owner": {
+              "id": "22",
+              "name": "Owner 22",
+              "total": 2200
+            }
+          },
+          {
+            "__typename": "Product",
+            "owner": {
+              "id": "13",
+              "name": "Owner 13",
+              "total": 1300
+            }
+          }
+        ]
+      }
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        entities: [Entity!]!
+        ownerById(id: ID!): Owner @lookup @internal
+      }
+
+      type Owner @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+
+      type Product implements Entity {
+        id: ID!
+        owner: Owner!
+      }
+
+      type Review implements Entity {
+        id: ID!
+        rating: Int!
+        owner: Owner!
+      }
+
+      interface Entity {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_46e30e06_1 {
+              entities {
+                __typename
+                ... on Product {
+                  owner {
+                    id
+                    name
+                  }
+                }
+                ... on Review {
+                  owner {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "entities": [
+                    {
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "11",
+                        "name": "Owner 11"
+                      }
+                    },
+                    {
+                      "__typename": "Review",
+                      "owner": {
+                        "id": "22",
+                        "name": "Owner 22"
+                      }
+                    },
+                    {
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "13",
+                        "name": "Owner 13"
+                      }
+                    }
+                  ]
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_f9bd1c2d_1 {
+              entities {
+                __typename
+                ... on Product {
+                  owner {
+                    id
+                    name
+                  }
+                }
+                ... on Review {
+                  owner {
+                    id
+                    name
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "entities": [
+                    {
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "11",
+                        "name": "Owner 11"
+                      }
+                    },
+                    {
+                      "__typename": "Review",
+                      "owner": {
+                        "id": "22",
+                        "name": "Owner 22"
+                      }
+                    },
+                    {
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "13",
+                        "name": "Owner 13"
+                      }
+                    }
+                  ]
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_2 {
+              entities {
+                __typename
+                ... on Product {
+                  owner {
+                    id
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "entities": [
+                    {
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "11"
+                      }
+                    },
+                    {
+                      "__typename": "Review"
+                    },
+                    {
+                      "__typename": "Product",
+                      "owner": {
+                        "id": "13"
+                      }
+                    }
+                  ]
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_2 {
+              entities {
+                __typename
+                ... on Review {
+                  owner {
+                    id
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "entities": [
+                    {
+                      "__typename": "Product"
+                    },
+                    {
+                      "__typename": "Review",
+                      "owner": {
+                        "id": "22"
+                      }
+                    },
+                    {
+                      "__typename": "Product"
+                    }
+                  ]
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        ownerById(id: ID!): Owner @lookup @internal
+      }
+
+      type Owner @key(fields: "id") {
+        id: ID!
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_46e30e06_2($__fusion_1_id: ID!) {
+              ownerById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_1_id": "22"
+              },
+              {
+                "__fusion_1_id": "11"
+              },
+              {
+                "__fusion_1_id": "13"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "ownerById": {
+                    "total": 2200
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "ownerById": {
+                    "total": 1100
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "ownerById": {
+                    "total": 1300
+                  }
+                }
+              }
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              ownerById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_1_id": "11"
+              },
+              {
+                "__fusion_1_id": "13"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "ownerById": {
+                    "total": 1100
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "ownerById": {
+                    "total": 1300
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              ownerById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "22"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "ownerById": {
+                    "total": 2200
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        {
+          entities {
+            __typename
+            ... on Product {
+              owner {
+                id
+                name
+              }
+            }
+            ... on Review {
+              owner {
+                id
+                name
+              }
+            }
+          }
+        }
+      hash: 0fc60ba43a69f79dd695ef9452d99467
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_f9bd1c2d_1 {
+          entities {
+            __typename
+            ... on Product {
+              owner {
+                id
+                name
+              }
+            }
+            ... on Review {
+              owner {
+                id
+                name
+              }
+            }
+          }
+        }
+  deliveryGroups:
+    - id: 0
+      path: $.entities.owner
+      label: a
+    - id: 1
+      path: $.entities.owner
+      label: a
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+      parentNodeId: 1
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              ownerById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          source: $.ownerById
+          target: $.entities<Product>.owner
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - id: 2
+        - id: 2
+          type: Operation
+          schema: A
+          operation: |
+            query Op_defer_2 {
+              entities {
+                __typename
+                ... on Product {
+                  owner {
+                    id
+                  }
+                }
+              }
+            }
+    - deliveryGroupIds:
+        - 1
+      parentNodeId: 1
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              ownerById(id: $__fusion_1_id) {
+                total
+              }
+            }
+          source: $.ownerById
+          target: $.entities<Review>.owner
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - id: 2
+        - id: 2
+          type: Operation
+          schema: A
+          operation: |
+            query Op_defer_2 {
+              entities {
+                __typename
+                ... on Review {
+                  owner {
+                    id
+                  }
+                }
+              }
+            }

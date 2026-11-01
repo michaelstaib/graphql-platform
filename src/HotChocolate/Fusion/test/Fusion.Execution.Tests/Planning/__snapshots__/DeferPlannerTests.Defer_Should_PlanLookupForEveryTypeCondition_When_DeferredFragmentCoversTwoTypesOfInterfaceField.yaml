@@ -1,0 +1,90 @@
+operation:
+  - document: |
+      {
+        product {
+          id
+          owner {
+            __typename
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product {
+          id
+          owner {
+            __typename
+          }
+        }
+      }
+deliveryGroups:
+  - id: 0
+    path: $.product.owner
+    label: a
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 1
+    nodes:
+      - id: 2
+        type: Operation
+        schema: a
+        operation: |
+          query Op_defer_2 {
+            product {
+              owner {
+                __typename
+                ... on User {
+                  id
+                }
+                id
+              }
+            }
+          }
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              ... on User {
+                total
+              }
+            }
+          }
+        source: $.userById
+        target: $.product.owner<User>
+        batchingGroupId: 4
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 2
+      - id: 3
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_3($__fusion_2_id: ID!) {
+            teamById(id: $__fusion_2_id) {
+              ... on Team {
+                score
+              }
+            }
+          }
+        source: $.teamById
+        target: $.product.owner<Team>
+        batchingGroupId: 4
+        requirements:
+          - name: __fusion_2_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 2
