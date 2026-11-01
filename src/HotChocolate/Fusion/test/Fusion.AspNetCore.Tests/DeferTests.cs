@@ -5568,11 +5568,114 @@ public class DeferTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchNonDeferredResult_When_TypenameIsOnlySelectedInDeferAnchoredOnUnionTypedField()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<UnionOwnerSourceA.Query>()
+                .AddType<UnionOwnerSourceA.User>()
+                .AddType<UnionOwnerSourceA.Team>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<UnionOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var deferredRequest = new OperationRequest(
+            """
+            {
+                products {
+                    id
+                    owner {
+                        ... @defer(label: "owner") {
+                            __typename
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                size
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        var plainRequest = new OperationRequest(
+            """
+            {
+                products {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            total
+                        }
+                        ... on Team {
+                            size
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var deferredData = MergeIncrementalPayloads(await ReadPayloadsAsync(deferredResult));
+
+        using var plainResult = await client.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var plainBody = await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        var plainData = JsonNode.Parse(plainBody)!["data"]!;
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(plainData, deferredData));
+        deferredData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
+            """
+            {
+              "products": [
+                {
+                  "id": "1",
+                  "owner": {
+                    "__typename": "User",
+                    "total": 5000
+                  }
+                },
+                {
+                  "id": "2",
+                  "owner": {
+                    "__typename": "Team",
+                    "size": 7
+                  }
+                }
+              ]
+            }
+            """);
+    }
+
     private static class UnionOwnerSourceA
     {
         public class Query
         {
             public Product GetProduct() => new(1);
+
+            public Product[] GetProducts() => [new(1), new(2)];
 
             [Lookup]
             [Internal]
@@ -5585,7 +5688,7 @@ public class DeferTests : FusionTestBase
 
         public record Product([property: ID] int Id)
         {
-            public IOwner Owner => new User(2);
+            public IOwner Owner => Id == 1 ? new User(2) : new Team(3);
         }
 
         public record User([property: ID] int Id) : IOwner
