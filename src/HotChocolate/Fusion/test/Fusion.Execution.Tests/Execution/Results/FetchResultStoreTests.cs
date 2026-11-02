@@ -1195,7 +1195,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             Path(sourceItems.Id, ~0));
 
         // act
-        var result = target.ImportVariableValues([values], sourcePlan.Operation);
+        var result = target.ImportVariableValues([values], [], sourcePlan.Operation);
 
         // assert
         var entry = Assert.Single(result);
@@ -1253,7 +1253,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var exception = Assert.Throws<InvalidOperationException>(
-            () => target.ImportVariableValues([values], sourcePlan.Operation));
+            () => target.ImportVariableValues([values], [], sourcePlan.Operation));
 
         // assert
         Assert.Equal(
@@ -1315,7 +1315,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             Field("__fusion_1_id", new StringValueNode("2")));
 
         // act
-        target.ImportVariableValues([values], sourcePlan.Operation);
+        target.ImportVariableValues([values], [], sourcePlan.Operation);
 
         // assert
         var items = target.Result.Data.GetProperty("items");
@@ -1323,6 +1323,64 @@ public sealed class FetchResultStoreTests : FusionTestBase
         Assert.Equal(JsonValueKind.Undefined, items[0].ValueKind);
         Assert.Equal(JsonValueKind.Object, items[1].ValueKind);
         Assert.Equal(JsonValueKind.Undefined, items[1].GetProperty("related").ValueKind);
+    }
+
+    [Fact]
+    public void ImportVariableValues_Should_InitializeTargetObjects_When_PathIsUncovered()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              items: [Item!]!
+            }
+
+            type Item {
+              id: ID!
+              name: String
+            }
+            """);
+        var sourcePlan = PlanOperation(schema, "{ items { id } }");
+        var targetPlan = PlanOperation(schema, "{ items { name } }");
+        var sourceItems = sourcePlan.Operation.RootSelectionSet.Selections[0];
+
+        using var resultArena = new MemoryArena();
+        using var source = new FetchResultStore();
+        source.Initialize(
+            resultArena,
+            schema,
+            DefaultErrorHandler.Default,
+            sourcePlan.Operation,
+            ErrorHandlingMode.Propagate,
+            includeFlags: default,
+            deferFlags: default,
+            pathSegmentLocalPoolCapacity: 16);
+        using var target = new FetchResultStore();
+        target.Initialize(
+            resultArena,
+            schema,
+            DefaultErrorHandler.Default,
+            targetPlan.Operation,
+            ErrorHandlingMode.Propagate,
+            includeFlags: default,
+            deferFlags: default,
+            pathSegmentLocalPoolCapacity: 16);
+
+        var values = CreateVariableValues(
+            source,
+            Path(sourceItems.Id, ~0),
+            Field("__fusion_1_id", new StringValueNode("2")));
+
+        // act
+        target.ImportVariableValues([values], [Path(sourceItems.Id, ~2)], sourcePlan.Operation);
+
+        // assert
+        var items = target.Result.Data.GetProperty("items");
+        Assert.Equal(3, items.GetArrayLength());
+        Assert.Equal(JsonValueKind.Undefined, items[0].ValueKind);
+        Assert.Equal(JsonValueKind.Undefined, items[1].ValueKind);
+        Assert.Equal(JsonValueKind.Object, items[2].ValueKind);
     }
 
     [Fact]
@@ -1379,7 +1437,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             Field("__fusion_1_id", new StringValueNode("1")));
 
         // act
-        target.ImportVariableValues([values], sourcePlan.Operation);
+        target.ImportVariableValues([values], [], sourcePlan.Operation);
 
         // assert
         var item = target.Result.Data.GetProperty("item");

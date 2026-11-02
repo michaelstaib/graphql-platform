@@ -543,7 +543,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             // the requirement values come from the result store of a parent context
             var parentStore = CreateContext().GetResultStoreForChildDefer();
             var entry = parentStore.CreateVariableValueSets(CompactPath.Root, fields);
-            context.SetRequirements([entry], keys, _operationPlan.Operation);
+            context.SetRequirements([entry], [], keys, _operationPlan.Operation);
         }
 
         public void SetRequirements(
@@ -556,7 +556,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             // the requirement values come from the result store of a parent context
             var parentStore = CreateContext().GetResultStoreForChildDefer();
             var entry = parentStore.CreateVariableValueSets(parentPath, fields);
-            context.SetRequirements([entry], keys, parentOperation);
+            context.SetRequirements([entry], [], keys, parentOperation);
         }
 
         public async ValueTask DisposeAsync()

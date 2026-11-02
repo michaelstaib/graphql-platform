@@ -716,7 +716,9 @@ internal static partial class OperationPlanExecutor
             requestVariables: [],
             requirementSpan);
 
-        childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
+        var uncoveredTargetPaths = parentResultStore.GetUncoveredTargetPaths(anchor, parentValues);
+
+        childContext.SetRequirements(parentValues, uncoveredTargetPaths, keys, parentResultStore.Operation);
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)

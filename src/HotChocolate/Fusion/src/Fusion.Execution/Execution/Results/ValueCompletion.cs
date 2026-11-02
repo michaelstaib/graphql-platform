@@ -627,7 +627,7 @@ internal sealed class ValueCompletion
         return ApplyPocketedErrors(target);
     }
 
-    private static bool TryInitializeTargetObject(CompositeResultElement target)
+    internal static bool TryInitializeTargetObject(CompositeResultElement target)
     {
         if (!TryGetSelectionContext(target, out var selection, out var type)
             || type.NamedType() is not IComplexTypeDefinition complexType)

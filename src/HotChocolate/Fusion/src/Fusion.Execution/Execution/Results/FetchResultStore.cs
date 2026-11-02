@@ -3291,39 +3291,120 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Imports variable value sets of <paramref name="sourceOperation"/> into this store for a child
-    /// incremental plan. Result paths are mapped to the selections of this store's operation.
+    /// Gets the paths of the objects at <paramref name="selectionSet"/> that no entry of
+    /// <paramref name="variableValues"/> covers.
+    /// </summary>
+    internal ImmutableArray<CompactPath> GetUncoveredTargetPaths(
+        SelectionPath selectionSet,
+        ImmutableArray<VariableValues> variableValues)
+    {
+        ArgumentNullException.ThrowIfNull(selectionSet);
+
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (selectionSet.IsRoot)
+        {
+            return [];
+        }
+
+        variableValues = variableValues.IsDefault ? [] : variableValues;
+
+        lock (_lock)
+        {
+            var elements = CollectTargetElementsUnsafe(selectionSet);
+
+            if (elements.IsEmpty)
+            {
+                return [];
+            }
+
+            var coveredCount = 0;
+
+            foreach (var entry in variableValues)
+            {
+                coveredCount += 1 + entry.AdditionalPaths.AsSpan().Length;
+            }
+
+            if (coveredCount >= elements.Length)
+            {
+                return [];
+            }
+
+            var covered = new HashSet<CompactPath>();
+
+            foreach (var entry in variableValues)
+            {
+                covered.Add(entry.Path);
+
+                foreach (var additionalPath in entry.AdditionalPaths.AsSpan())
+                {
+                    covered.Add(additionalPath);
+                }
+            }
+
+            var uncovered = ImmutableArray.CreateBuilder<CompactPath>();
+
+            foreach (var element in elements)
+            {
+                var path = element.CompactPath;
+
+                if (!covered.Contains(path))
+                {
+                    uncovered.Add(path);
+                }
+            }
+
+            return uncovered.ToImmutable();
+        }
+    }
+
+    /// <summary>
+    /// Imports variable value sets of <paramref name="source"/> into this store for a child
+    /// incremental plan and initializes the objects at <paramref name="uncoveredTargetPaths"/>. Result
+    /// paths of both are mapped to the selections of this store's operation.
     /// </summary>
     internal ImmutableArray<VariableValues> ImportVariableValues(
         ImmutableArray<VariableValues> source,
+        ImmutableArray<CompactPath> uncoveredTargetPaths,
         Operation sourceOperation)
     {
         ArgumentNullException.ThrowIfNull(sourceOperation);
 
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (source.IsDefaultOrEmpty)
+        source = source.IsDefault ? [] : source;
+        uncoveredTargetPaths = uncoveredTargetPaths.IsDefault ? [] : uncoveredTargetPaths;
+
+        if (source.IsEmpty && uncoveredTargetPaths.IsEmpty)
         {
             return [];
         }
 
         var builder = ImmutableArray.CreateBuilder<VariableValues>(source.Length);
-
-        ImmutableArray<VariableValues> imported;
+        var targetPaths = ImmutableArray.CreateBuilder<VariableValues>(source.Length + uncoveredTargetPaths.Length);
+        var importedUncoveredPaths = new List<CompactPath>(uncoveredTargetPaths.Length);
 
         lock (_lock)
         {
             foreach (var entry in source)
             {
-                builder.Add(ImportVariableValuesEntryUnsafe(entry, sourceOperation));
+                var imported = ImportVariableValuesEntryUnsafe(entry, sourceOperation);
+                builder.Add(imported);
+                targetPaths.Add(imported);
             }
 
-            imported = builder.MoveToImmutable();
+            foreach (var uncoveredTargetPath in uncoveredTargetPaths)
+            {
+                var importedPath = ImportPath(uncoveredTargetPath, sourceOperation);
+                importedUncoveredPaths.Add(importedPath);
+                targetPaths.Add(new VariableValues(importedPath, JsonSegment.Empty));
+            }
         }
 
-        InitializeTargetPaths(imported);
+        InitializeTargetPaths(targetPaths.ToImmutable());
+        InitializeTargetObjects(importedUncoveredPaths);
 
-        return imported;
+        return builder.ToImmutable();
     }
 
     private VariableValues ImportVariableValuesEntryUnsafe(VariableValues source, Operation sourceOperation)
@@ -3836,6 +3917,23 @@ AddErrors_Next:
                 }
 
                 containers.Clear();
+            }
+        }
+    }
+
+    private void InitializeTargetObjects(List<CompactPath> paths)
+    {
+        lock (_lock)
+        {
+            foreach (var path in paths)
+            {
+                var target = GetStartResult(path);
+
+                if (target.ValueKind is JsonValueKind.Undefined
+                    && target.Type?.NamedType() is IObjectTypeDefinition)
+                {
+                    ValueCompletion.TryInitializeTargetObject(target);
+                }
             }
         }
     }
