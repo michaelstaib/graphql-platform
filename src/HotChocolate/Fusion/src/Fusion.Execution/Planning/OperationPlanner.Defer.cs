@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning.Partitioners;
@@ -83,6 +84,20 @@ public sealed partial class OperationPlanner
                         throw new DeferredMutationLookupRequiredException(descriptor.Path, anchorTypeName);
                     }
                 }
+            }
+
+            // A descriptor that selects only __typename needs no incremental plan: the field is
+            // made visible on the enclosing step, and its nested descriptors plan against the
+            // scope enclosing it.
+            if (rewrittenIncrementalPlan.IsEmpty
+                && TryServeTypeNameFromParent(descriptor, contextGraph.GetParentContext(descriptor), contextGraph))
+            {
+                if (descriptorsWithChildren.Contains(descriptor))
+                {
+                    contextGraph.RegisterTransparentDescriptor(descriptor);
+                }
+
+                continue;
             }
 
             // When every field this descriptor would deliver incrementally is already
@@ -319,6 +334,13 @@ public sealed partial class OperationPlanner
                 throw new InvalidOperationException(
                     $"Unable to locate the defer anchor selection set at path '{descriptor.Path}' "
                     + "inside the incremental plan operation.");
+            }
+
+            // Nothing to fetch: the anchor selects only __typename, which every source schema
+            // resolves, so no lookup is needed to produce it.
+            if (!isMutation && SelectsOnlyTypeName(anchorSelectionSet))
+            {
+                return new DeferIncrementalPlanResult([], null);
             }
 
             if (isMutation)
@@ -885,9 +907,7 @@ public sealed partial class OperationPlanner
 
         foreach (var step in parentContext.ParentSteps)
         {
-            if (step is not OperationPlanStep candidate
-                || !candidate.Target.IsParentOfOrSame(descriptor.Path)
-                || candidate.Conditions.Length != 0)
+            if (!TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate))
             {
                 continue;
             }
@@ -924,13 +944,7 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        if (!TryLocateSelectionSetAtPath(
-            GetStepEntitySelectionSet(parentStep),
-            GetStepEntityType(parentStep),
-            descriptor.Path,
-            parentStep.Target.Length,
-            out var parentTargetSelectionSet,
-            out _))
+        if (!TryLocateDeferRequirementTarget(parentStep, descriptor.Path, out var parentTargetSelectionSet, out _))
         {
             return false;
         }
@@ -995,7 +1009,101 @@ public sealed partial class OperationPlanner
             }
         }
 
-        var updatedTargetSelectionSet = MakeFieldsVisible(parentTargetSelectionSet, fieldNames);
+        MakeSelectionsVisibleInParentScope(
+            descriptor,
+            parentStep,
+            parentTargetSelectionSet,
+            parentContext,
+            contextGraph,
+            fieldNames.ConvertAll(static fieldName => (ISelectionNode)new FieldNode(fieldName)));
+
+        return true;
+    }
+
+    private bool TryServeTypeNameFromParent(
+        IncrementalPlanDescriptor descriptor,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph)
+    {
+        if (descriptor.Path.IsRoot
+            || descriptor.Operation.Operation != OperationType.Query
+            || !TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out var anchorSelectionSet,
+                out _)
+            || !SelectsOnlyTypeName(anchorSelectionSet))
+        {
+            return false;
+        }
+
+        foreach (var step in parentContext.ParentSteps)
+        {
+            if (TryGetUnconditionalEnclosingStep(step, descriptor.Path, out var candidate)
+                && TryLocateDeferRequirementTarget(candidate, descriptor.Path, out var parentTargetSelectionSet, out _))
+            {
+                MakeSelectionsVisibleInParentScope(
+                    descriptor,
+                    candidate,
+                    parentTargetSelectionSet,
+                    parentContext,
+                    contextGraph,
+                    anchorSelectionSet.Selections);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetUnconditionalEnclosingStep(
+        PlanStep step,
+        SelectionPath path,
+        [NotNullWhen(true)] out OperationPlanStep? enclosingStep)
+    {
+        if (step is OperationPlanStep candidate
+            && candidate.Target.IsParentOfOrSame(path)
+            && candidate.Conditions.Length == 0)
+        {
+            enclosingStep = candidate;
+            return true;
+        }
+
+        enclosingStep = null;
+        return false;
+    }
+
+    private static bool SelectsOnlyTypeName(SelectionSetNode selectionSet)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode { Directives.Count: 0 } field
+                    when field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal):
+                    break;
+
+                case InlineFragmentNode fragment when SelectsOnlyTypeName(fragment.SelectionSet):
+                    break;
+
+                default:
+                    return false;
+            }
+        }
+
+        return selectionSet.Selections.Count > 0;
+    }
+
+    private void MakeSelectionsVisibleInParentScope(
+        IncrementalPlanDescriptor descriptor,
+        OperationPlanStep parentStep,
+        SelectionSetNode parentTargetSelectionSet,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph,
+        IReadOnlyList<ISelectionNode> selections)
+    {
+        var updatedTargetSelectionSet = MakeSelectionsVisible(parentTargetSelectionSet, selections);
         var updatedParentStep = ReferenceEquals(updatedTargetSelectionSet, parentTargetSelectionSet)
             ? parentStep
             : WithEntitySelectionSet(
@@ -1017,7 +1125,7 @@ public sealed partial class OperationPlanner
         if (TryLocateInternalSelectionSetAtPath(
             updatedInternalOperation.SelectionSet, descriptor.Path, out var internalTargetSelectionSet))
         {
-            var updatedInternalTargetSelectionSet = MakeFieldsVisible(internalTargetSelectionSet, fieldNames);
+            var updatedInternalTargetSelectionSet = MakeSelectionsVisible(internalTargetSelectionSet, selections);
 
             if (!ReferenceEquals(updatedInternalTargetSelectionSet, internalTargetSelectionSet))
             {
@@ -1038,8 +1146,6 @@ public sealed partial class OperationPlanner
             contextGraph.UpdateDeferContext(
                 parentContext.OwnerDescriptor!, updatedParentSteps, updatedInternalOperation);
         }
-
-        return true;
     }
 
     /// <summary>
@@ -1135,26 +1241,28 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Returns a copy of <paramref name="selectionSet"/> where every field named in
-    /// <paramref name="fieldNames"/> is a plain, client-visible selection: an existing
+    /// Returns a copy of <paramref name="selectionSet"/> where every selection in
+    /// <paramref name="selections"/> is a plain, client-visible selection: an existing
     /// unaliased field has its <c>fusion__requirement</c> or <c>fusion__empty</c> marker
-    /// removed, and a field not yet selected is added.
+    /// removed, and a selection not yet present is added unchanged.
     /// </summary>
-    private static SelectionSetNode MakeFieldsVisible(SelectionSetNode selectionSet, List<string> fieldNames)
+    private static SelectionSetNode MakeSelectionsVisible(
+        SelectionSetNode selectionSet,
+        IReadOnlyList<ISelectionNode> selections)
     {
-        var selections = selectionSet.Selections;
+        var existingSelections = selectionSet.Selections;
 
-        var newSelections = new List<ISelectionNode>(selections.Count + fieldNames.Count);
+        var newSelections = new List<ISelectionNode>(existingSelections.Count + selections.Count);
         var present = new HashSet<string>(StringComparer.Ordinal);
         var changed = false;
 
-        foreach (var selection in selections)
+        foreach (var selection in existingSelections)
         {
             if (selection is FieldNode { Alias: null } field)
             {
                 present.Add(field.Name.Value);
 
-                if (fieldNames.Contains(field.Name.Value)
+                if (ContainsUnaliasedField(selections, field.Name.Value)
                     && (TryRemoveRequirementDirective(field.Directives, out var strippedDirectives)
                         || TryRemoveEmptyPlaceholderDirective(field.Directives, out strippedDirectives)))
                 {
@@ -1167,11 +1275,15 @@ public sealed partial class OperationPlanner
             newSelections.Add(selection);
         }
 
-        foreach (var fieldName in fieldNames)
+        foreach (var selection in selections)
         {
-            if (present.Add(fieldName))
+            var isNew = selection is FieldNode { Alias: null } unaliasedField
+                ? present.Add(unaliasedField.Name.Value)
+                : !newSelections.Contains(selection, SyntaxComparer.BySyntax);
+
+            if (isNew)
             {
-                newSelections.Add(new FieldNode(fieldName));
+                newSelections.Add(selection);
                 changed = true;
             }
         }
@@ -1179,9 +1291,23 @@ public sealed partial class OperationPlanner
         return changed ? new SelectionSetNode(newSelections) : selectionSet;
     }
 
+    private static bool ContainsUnaliasedField(IReadOnlyList<ISelectionNode> selections, string fieldName)
+    {
+        foreach (var selection in selections)
+        {
+            if (selection is FieldNode { Alias: null } field
+                && field.Name.Value.Equals(fieldName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Attempts to strip the synthetic <c>fusion__empty</c> placeholder marker from
-    /// <paramref name="directives"/>, used by <see cref="MakeFieldsVisible"/> to upgrade an
+    /// <paramref name="directives"/>, used by <see cref="MakeSelectionsVisible"/> to upgrade an
     /// existing placeholder <c>__typename</c> selection (kept only to satisfy an
     /// otherwise-empty selection set) into a plain, client-visible field.
     /// </summary>
