@@ -518,13 +518,14 @@ public sealed class Selection : ISelection, IFeatureProvider
 
     /// <summary>
     /// Evaluates the defer mask against word 0 of the request flags only.
-    /// This is the narrow fast path; callers must ensure the operation has at most
-    /// 64 defer conditions.
+    /// The selection is deferred when every occurrence of the field has an enabled
+    /// <c>@defer</c> in its chain of enclosing fragments; callers must ensure the
+    /// operation has at most 64 defer conditions.
     /// </summary>
     internal bool IsDeferredUnchecked(ulong deferFlags)
         => _deferMask != 0
             && (_deferMask & deferFlags) != 0
-            && (_deferUsage.Length < 2 || HasActiveDeferInEveryUsage(deferFlags, default));
+            && (_deferUsage.Length < 2 || GetPrimaryDeferUsage(deferFlags, default) is not null);
 
     /// <summary>
     /// Evaluates the defer mask against all words of the request flags.
@@ -538,7 +539,7 @@ public sealed class Selection : ISelection, IFeatureProvider
             return false;
         }
 
-        return _deferUsage.Length < 2 || HasActiveDeferInEveryUsage(deferFlags, wideDeferFlags);
+        return _deferUsage.Length < 2 || GetPrimaryDeferUsage(deferFlags, wideDeferFlags) is not null;
     }
 
     private bool MatchesDeferMask(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
@@ -566,27 +567,6 @@ public sealed class Selection : ISelection, IFeatureProvider
         }
 
         return false;
-    }
-
-    private bool HasActiveDeferInEveryUsage(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
-    {
-        for (var i = 0; i < _deferUsage.Length; i++)
-        {
-            var effective = _deferUsage[i];
-
-            while (effective is not null
-                && !IsConditionBitSet(deferFlags, wideDeferFlags, effective.DeferConditionIndex))
-            {
-                effective = effective.Parent;
-            }
-
-            if (effective is null)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
