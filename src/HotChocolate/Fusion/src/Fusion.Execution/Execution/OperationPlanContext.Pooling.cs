@@ -93,7 +93,8 @@ public sealed partial class OperationPlanContext
             requestContext.ErrorHandlingMode(),
             IncludeConditionFlags,
             DeferConditionFlags,
-            requestContext.Schema.GetOptions().PathSegmentLocalPoolCapacity);
+            requestContext.Schema.GetOptions().PathSegmentLocalPoolCapacity,
+            tracksFailedFetches: operationPlan is IncrementalPlan || !operationPlan.IncrementalPlans.IsEmpty);
 
         _executionState.Initialize(_collectTelemetry, cancellationTokenSource);
 

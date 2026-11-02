@@ -35,6 +35,7 @@ public sealed partial record OperationPlan : IOperationPlan
         DeliveryGroups = deliveryGroups;
         IncrementalPlans = incrementalPlans;
         _deliveryPaths = CreateDeliveryPaths(operation, deliveryGroups, incrementalPlans);
+        _keyFetches = CreateKeyFetches(allNodes, incrementalPlans);
         _nodesById = CreateNodeLookup(
             allNodes,
             out var usesDynamicSchemaNames,

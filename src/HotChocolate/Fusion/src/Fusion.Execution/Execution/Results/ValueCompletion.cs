@@ -324,6 +324,11 @@ internal sealed class ValueCompletion
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
 
+        if (_store.TracksFailedFetches)
+        {
+            _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
+        }
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             // A prior field's error may have propagated a null up to this target
@@ -591,6 +596,11 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
     {
+        if (_store.TracksFailedFetches)
+        {
+            _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
+        }
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             if (!target.TryGetProperty(responseName, out var fieldResult)
@@ -627,7 +637,7 @@ internal sealed class ValueCompletion
         return ApplyPocketedErrors(target);
     }
 
-    private static bool TryInitializeTargetObject(CompositeResultElement target)
+    internal static bool TryInitializeTargetObject(CompositeResultElement target)
     {
         if (!TryGetSelectionContext(target, out var selection, out var type)
             || type.NamedType() is not IComplexTypeDefinition complexType)

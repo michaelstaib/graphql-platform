@@ -5,7 +5,6 @@ using System.Threading.Channels;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
-using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
 using Microsoft.Extensions.DependencyInjection;
@@ -306,7 +305,8 @@ internal static partial class OperationPlanExecutor
                     variables,
                     incrementalPlan,
                     deliveryGroups,
-                    rootContext.GetResultStoreForChildDefer(),
+                    operationPlan,
+                    rootContext,
                     channel.Writer,
                     requestArena,
                     cancellationToken);
@@ -471,8 +471,7 @@ internal static partial class OperationPlanExecutor
 
                     // Nested plans resolve requirements from the immediate
                     // enclosing plan when available.
-                    var parentStore = scopeContext?.GetResultStoreForChildDefer()
-                        ?? rootContext.GetResultStoreForChildDefer();
+                    var parentContext = scopeContext ?? rootContext;
 
                     started.Add(candidate);
                     pendingIncrementalPlanCount++;
@@ -481,7 +480,8 @@ internal static partial class OperationPlanExecutor
                         variables,
                         candidate,
                         candidateGroups,
-                        parentStore,
+                        operationPlan,
+                        parentContext,
                         channel.Writer,
                         requestArena,
                         cancellationToken);
@@ -577,7 +577,8 @@ internal static partial class OperationPlanExecutor
         IVariableValueCollection variables,
         IncrementalPlan incrementalPlan,
         ImmutableArray<DeliveryGroup> deliveryGroups,
-        FetchResultStore parentResultStore,
+        OperationPlan operationPlan,
+        OperationPlanContext parentContext,
         ChannelWriter<IncrementalPlanResult> completion,
         MemoryArena requestArena,
         CancellationToken cancellationToken)
@@ -607,7 +608,7 @@ internal static partial class OperationPlanExecutor
             // Copy parent-scope requirements into the child context.
             try
             {
-                CollectIncrementalPlanRequirements(parentResultStore, incrementalPlan, context);
+                CollectIncrementalPlanRequirements(operationPlan, parentContext, incrementalPlan, context);
             }
             catch (InvalidOperationException ex)
             {
@@ -682,7 +683,8 @@ internal static partial class OperationPlanExecutor
     /// installs their values on the child context.
     /// </summary>
     private static void CollectIncrementalPlanRequirements(
-        FetchResultStore parentResultStore,
+        OperationPlan operationPlan,
+        OperationPlanContext parentContext,
         IncrementalPlan incrementalPlan,
         OperationPlanContext childContext)
     {
@@ -711,12 +713,19 @@ internal static partial class OperationPlanExecutor
             keys.Add(collected[i].Key);
         }
 
+        var parentResultStore = parentContext.GetResultStoreForChildDefer();
         var parentValues = parentResultStore.CreateVariableValueSets(
             anchor,
             requestVariables: [],
             requirementSpan);
 
-        childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
+        var uncoveredTargetPaths = parentResultStore.GetUncoveredTargetPaths(
+            anchor,
+            parentValues,
+            requirementSpan,
+            parentResultStore.HasFailedFetches ? operationPlan.GetKeyFetches(incrementalPlan) : []);
+
+        childContext.SetRequirements(parentValues, uncoveredTargetPaths, keys, parentResultStore.Operation);
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)

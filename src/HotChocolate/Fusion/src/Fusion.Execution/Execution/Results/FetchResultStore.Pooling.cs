@@ -19,7 +19,8 @@ internal sealed partial class FetchResultStore
         ErrorHandlingMode errorHandlingMode,
         ConditionFlags includeFlags,
         ConditionFlags deferFlags,
-        int pathSegmentLocalPoolCapacity)
+        int pathSegmentLocalPoolCapacity,
+        bool tracksFailedFetches)
     {
         ArgumentNullException.ThrowIfNull(arena);
         ArgumentNullException.ThrowIfNull(schema);
@@ -36,6 +37,7 @@ internal sealed partial class FetchResultStore
         _deferFlags = deferFlags.Word0;
         _wideIncludeFlags = includeFlags.Overflow;
         _wideDeferFlags = deferFlags.Overflow;
+        _tracksFailedFetches = tracksFailedFetches;
         _disposed = false;
 
         _pathPool ??= new PathSegmentLocalPool(pathSegmentLocalPoolCapacity);
@@ -95,6 +97,7 @@ internal sealed partial class FetchResultStore
 
         _errors?.Clear();
         _pocketedErrors?.Clear();
+        _failedFetches?.Clear();
 
         _valueCompletion.Initialize(_schema, _errorHandler, _errorHandlingMode);
 
@@ -145,6 +148,7 @@ internal sealed partial class FetchResultStore
         // clear errors
         _errors?.Clear();
         _pocketedErrors?.Clear();
+        _tracksFailedFetches = false;
 
         // drop the arena memory of the variable and leaf key writers
         _variableWriter.Release();
@@ -201,6 +205,15 @@ internal sealed partial class FetchResultStore
 
         // clear dictionaries/hashsets; drop oversized ones.
         TrimOrClear(ref _seenPaths, maxDictionaryRetainCapacity, ReferenceEqualityComparer.Instance);
+
+        if (_failedFetches?.Count > maxDictionaryRetainCapacity)
+        {
+            _failedFetches = null;
+        }
+        else
+        {
+            _failedFetches?.Clear();
+        }
 
         // null out per-request references
         _result = default!;

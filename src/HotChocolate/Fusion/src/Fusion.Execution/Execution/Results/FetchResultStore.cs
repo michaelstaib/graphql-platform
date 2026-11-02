@@ -97,6 +97,8 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
+    private HashSet<(CompactPath Path, ResultSelectionSet Fetch)>? _failedFetches;
+    private bool _tracksFailedFetches;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -624,6 +626,38 @@ AddErrors_Next:
     {
         _pocketedErrors ??= [];
         _pocketedErrors.TryAdd(path, error);
+    }
+
+    /// <summary>
+    /// Gets whether this store was initialized to track failed fetches.
+    /// </summary>
+    internal bool TracksFailedFetches => _tracksFailedFetches;
+
+    /// <summary>
+    /// Records that <paramref name="fetch"/> failed or returned <c>null</c> for the object at
+    /// <paramref name="path"/>.
+    /// </summary>
+    internal void RecordFailedFetch(CompactPath path, ResultSelectionSet fetch)
+    {
+        lock (_lock)
+        {
+            _failedFetches ??= [];
+            _failedFetches.Add((path, fetch));
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a fetch was recorded as failed for any object of this store.
+    /// </summary>
+    internal bool HasFailedFetches
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _failedFetches?.Count > 0;
+            }
+        }
     }
 
     internal bool HasPocketedErrors
@@ -3291,18 +3325,127 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Imports variable value sets of <paramref name="sourceOperation"/> into this store for a child
-    /// incremental plan. Result paths are mapped to the selections of this store's operation.
+    /// Gets the paths of the objects at <paramref name="selectionSet"/> that no entry of
+    /// <paramref name="variableValues"/> covers and whose key is <c>null</c> or was to be supplied by a
+    /// failed fetch of <paramref name="keyFetches"/>.
+    /// </summary>
+    internal ImmutableArray<CompactPath> GetUncoveredTargetPaths(
+        SelectionPath selectionSet,
+        ImmutableArray<VariableValues> variableValues,
+        ReadOnlySpan<OperationRequirement> requirements,
+        ReadOnlySpan<ResultSelectionSet> keyFetches)
+    {
+        ArgumentNullException.ThrowIfNull(selectionSet);
+
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (selectionSet.IsRoot)
+        {
+            return [];
+        }
+
+        variableValues = variableValues.IsDefault ? [] : variableValues;
+
+        lock (_lock)
+        {
+            var elements = CollectTargetElementsUnsafe(selectionSet);
+
+            if (elements.IsEmpty)
+            {
+                return [];
+            }
+
+            var coveredCount = 0;
+
+            foreach (var entry in variableValues)
+            {
+                coveredCount += 1 + entry.AdditionalPaths.AsSpan().Length;
+            }
+
+            if (coveredCount >= elements.Length)
+            {
+                return [];
+            }
+
+            var covered = new HashSet<CompactPath>();
+
+            foreach (var entry in variableValues)
+            {
+                covered.Add(entry.Path);
+
+                foreach (var additionalPath in entry.AdditionalPaths.AsSpan())
+                {
+                    covered.Add(additionalPath);
+                }
+            }
+
+            var uncovered = ImmutableArray.CreateBuilder<CompactPath>();
+
+            foreach (var element in elements)
+            {
+                var path = element.CompactPath;
+
+                if (!covered.Contains(path) && HasNullKeyUnsafe(element, path, requirements, keyFetches))
+                {
+                    uncovered.Add(path);
+                }
+            }
+
+            return uncovered.ToImmutable();
+        }
+    }
+
+    private bool HasNullKeyUnsafe(
+        CompositeResultElement element,
+        CompactPath path,
+        ReadOnlySpan<OperationRequirement> requirements,
+        ReadOnlySpan<ResultSelectionSet> keyFetches)
+    {
+        if (_failedFetches is not null)
+        {
+            foreach (var fetch in keyFetches)
+            {
+                if (_failedFetches.Contains((path, fetch)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (var requirement in requirements)
+        {
+            var lookupName = requirement.InternalAlias
+                ?? (requirement.Map as PathNode)?.PathSegment?.FieldName.Value;
+
+            if (lookupName is not null
+                && element.TryGetProperty(lookupName, out var value)
+                && value.ValueKind is JsonValueKind.Null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Imports variable value sets of <paramref name="source"/> into this store for a child
+    /// incremental plan and initializes the objects at <paramref name="uncoveredTargetPaths"/>. Result
+    /// paths of both are mapped to the selections of this store's operation.
     /// </summary>
     internal ImmutableArray<VariableValues> ImportVariableValues(
         ImmutableArray<VariableValues> source,
+        ImmutableArray<CompactPath> uncoveredTargetPaths,
         Operation sourceOperation)
     {
         ArgumentNullException.ThrowIfNull(sourceOperation);
 
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (source.IsDefaultOrEmpty)
+        source = source.IsDefault ? [] : source;
+        uncoveredTargetPaths = uncoveredTargetPaths.IsDefault ? [] : uncoveredTargetPaths;
+
+        if (source.IsEmpty && uncoveredTargetPaths.IsEmpty)
         {
             return [];
         }
@@ -3321,7 +3464,28 @@ AddErrors_Next:
             imported = builder.MoveToImmutable();
         }
 
-        InitializeTargetPaths(imported);
+        if (uncoveredTargetPaths.IsEmpty)
+        {
+            InitializeTargetPaths(imported);
+            return imported;
+        }
+
+        var targetPaths = ImmutableArray.CreateBuilder<VariableValues>(imported.Length + uncoveredTargetPaths.Length);
+        var importedUncoveredPaths = new CompactPath[uncoveredTargetPaths.Length];
+        targetPaths.AddRange(imported);
+
+        lock (_lock)
+        {
+            for (var i = 0; i < importedUncoveredPaths.Length; i++)
+            {
+                var importedPath = ImportPath(uncoveredTargetPaths[i], sourceOperation);
+                importedUncoveredPaths[i] = importedPath;
+                targetPaths.Add(new VariableValues(importedPath, JsonSegment.Empty));
+            }
+        }
+
+        InitializeTargetPaths(targetPaths.MoveToImmutable());
+        InitializeTargetObjects(importedUncoveredPaths);
 
         return imported;
     }
@@ -3836,6 +4000,23 @@ AddErrors_Next:
                 }
 
                 containers.Clear();
+            }
+        }
+    }
+
+    private void InitializeTargetObjects(CompactPath[] paths)
+    {
+        lock (_lock)
+        {
+            foreach (var path in paths)
+            {
+                var target = GetStartResult(path);
+
+                if (target.ValueKind is JsonValueKind.Undefined
+                    && target.Type?.NamedType() is IObjectTypeDefinition)
+                {
+                    ValueCompletion.TryInitializeTargetObject(target);
+                }
             }
         }
     }

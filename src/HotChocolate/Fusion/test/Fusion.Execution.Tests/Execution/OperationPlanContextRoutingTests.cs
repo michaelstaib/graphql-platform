@@ -21,6 +21,19 @@ namespace HotChocolate.Fusion.Execution;
 
 public sealed class OperationPlanContextRoutingTests : FusionTestBase
 {
+    [Fact]
+    public async Task Initialize_Should_NotTrackFailedFetches_When_PlanHasNoIncrementalPlans()
+    {
+        // arrange
+        await using var fixture = await RoutingTestFixture.CreateAsync();
+
+        // act
+        var store = fixture.CreateContext().GetResultStoreForChildDefer();
+
+        // assert
+        Assert.False(store.TracksFailedFetches);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -543,7 +556,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             // the requirement values come from the result store of a parent context
             var parentStore = CreateContext().GetResultStoreForChildDefer();
             var entry = parentStore.CreateVariableValueSets(CompactPath.Root, fields);
-            context.SetRequirements([entry], keys, _operationPlan.Operation);
+            context.SetRequirements([entry], [], keys, _operationPlan.Operation);
         }
 
         public void SetRequirements(
@@ -556,7 +569,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             // the requirement values come from the result store of a parent context
             var parentStore = CreateContext().GetResultStoreForChildDefer();
             var entry = parentStore.CreateVariableValueSets(parentPath, fields);
-            context.SetRequirements([entry], keys, parentOperation);
+            context.SetRequirements([entry], [], keys, parentOperation);
         }
 
         public async ValueTask DisposeAsync()
