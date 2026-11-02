@@ -3327,13 +3327,13 @@ AddErrors_Next:
     /// <summary>
     /// Gets the paths of the objects at <paramref name="selectionSet"/> that no entry of
     /// <paramref name="variableValues"/> covers and whose key is <c>null</c> or was to be supplied by a
-    /// failed fetch of <paramref name="keyFetches"/>. A <c>null</c> <paramref name="keyFetches"/> holds no fetch.
+    /// failed fetch of <paramref name="keyFetches"/>.
     /// </summary>
     internal ImmutableArray<CompactPath> GetUncoveredTargetPaths(
         SelectionPath selectionSet,
         ImmutableArray<VariableValues> variableValues,
         ReadOnlySpan<OperationRequirement> requirements,
-        HashSet<ResultSelectionSet>? keyFetches)
+        ReadOnlySpan<ResultSelectionSet> keyFetches)
     {
         ArgumentNullException.ThrowIfNull(selectionSet);
 
@@ -3399,9 +3399,9 @@ AddErrors_Next:
         CompositeResultElement element,
         CompactPath path,
         ReadOnlySpan<OperationRequirement> requirements,
-        HashSet<ResultSelectionSet>? keyFetches)
+        ReadOnlySpan<ResultSelectionSet> keyFetches)
     {
-        if (_failedFetches is not null && keyFetches is not null)
+        if (_failedFetches is not null)
         {
             foreach (var fetch in keyFetches)
             {

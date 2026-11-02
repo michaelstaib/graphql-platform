@@ -708,9 +708,8 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     /// <summary>
-    /// Sets parent-scope requirement values for this context, copied so they resolve without the enclosing
-    /// plan scope, and initializes the objects at <paramref name="uncoveredTargetPaths"/> that have no values.
-    /// The result paths belong to <paramref name="parentOperation"/>.
+    /// Copies parent-scope requirement values into this context and initializes the objects at
+    /// <paramref name="uncoveredTargetPaths"/>. The result paths belong to <paramref name="parentOperation"/>.
     /// </summary>
     internal void SetRequirements(
         ImmutableArray<VariableValues> parentValues,

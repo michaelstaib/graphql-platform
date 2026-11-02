@@ -305,6 +305,7 @@ internal static partial class OperationPlanExecutor
                     variables,
                     incrementalPlan,
                     deliveryGroups,
+                    operationPlan,
                     rootContext,
                     channel.Writer,
                     requestArena,
@@ -479,6 +480,7 @@ internal static partial class OperationPlanExecutor
                         variables,
                         candidate,
                         candidateGroups,
+                        operationPlan,
                         parentContext,
                         channel.Writer,
                         requestArena,
@@ -575,6 +577,7 @@ internal static partial class OperationPlanExecutor
         IVariableValueCollection variables,
         IncrementalPlan incrementalPlan,
         ImmutableArray<DeliveryGroup> deliveryGroups,
+        OperationPlan operationPlan,
         OperationPlanContext parentContext,
         ChannelWriter<IncrementalPlanResult> completion,
         MemoryArena requestArena,
@@ -605,7 +608,7 @@ internal static partial class OperationPlanExecutor
             // Copy parent-scope requirements into the child context.
             try
             {
-                CollectIncrementalPlanRequirements(parentContext, incrementalPlan, context);
+                CollectIncrementalPlanRequirements(operationPlan, parentContext, incrementalPlan, context);
             }
             catch (InvalidOperationException ex)
             {
@@ -680,6 +683,7 @@ internal static partial class OperationPlanExecutor
     /// installs their values on the child context.
     /// </summary>
     private static void CollectIncrementalPlanRequirements(
+        OperationPlan operationPlan,
         OperationPlanContext parentContext,
         IncrementalPlan incrementalPlan,
         OperationPlanContext childContext)
@@ -719,9 +723,7 @@ internal static partial class OperationPlanExecutor
             anchor,
             parentValues,
             requirementSpan,
-            parentResultStore.HasFailedFetches
-                ? CollectKeyFetches(parentContext.OperationPlan, incrementalPlan)
-                : null);
+            parentResultStore.HasFailedFetches ? operationPlan.GetKeyFetches(incrementalPlan) : []);
 
         childContext.SetRequirements(parentValues, uncoveredTargetPaths, keys, parentResultStore.Operation);
     }
@@ -767,108 +769,6 @@ internal static partial class OperationPlanExecutor
 
         return collected;
     }
-
-    /// <summary>
-    /// Collects the result selection sets of the fetches of <paramref name="parentPlan"/> that the
-    /// parent dependencies of <paramref name="incrementalPlan"/> rely on, directly or transitively.
-    /// </summary>
-    private static HashSet<ResultSelectionSet> CollectKeyFetches(
-        IOperationPlan parentPlan,
-        IncrementalPlan incrementalPlan)
-    {
-        var fetches = new HashSet<ResultSelectionSet>();
-        var visited = new HashSet<int>();
-
-        foreach (var node in incrementalPlan.AllNodes)
-        {
-            AddParentDependencies(node.ParentDependencies);
-
-            foreach (var operation in GetBatchOperations(node))
-            {
-                AddParentDependencies(operation.ParentDependencies);
-            }
-        }
-
-        return fetches;
-
-        void AddParentDependencies(ReadOnlySpan<int> parentDependencies)
-        {
-            foreach (var parentDependency in parentDependencies)
-            {
-                if (FindPlanNode(parentPlan, parentDependency) is { } planNode)
-                {
-                    AddKeyFetch(planNode, visited, fetches);
-                }
-            }
-        }
-    }
-
-    private static void AddKeyFetch(
-        IOperationPlanNode node,
-        HashSet<int> visited,
-        HashSet<ResultSelectionSet> fetches)
-    {
-        if (!visited.Add(node.Id))
-        {
-            return;
-        }
-
-        switch (node)
-        {
-            case OperationExecutionNode operation:
-                fetches.Add(operation.ResultSelectionSet);
-                break;
-
-            case ApolloOperationExecutionNode operation:
-                fetches.Add(operation.ResultSelectionSet);
-                break;
-
-            case OperationDefinition operation:
-                fetches.Add(operation.ResultSelectionSet);
-                break;
-        }
-
-        foreach (var dependency in node.Dependencies)
-        {
-            AddKeyFetch(dependency, visited, fetches);
-        }
-
-        foreach (var dependency in node.OptionalDependencies)
-        {
-            AddKeyFetch(dependency, visited, fetches);
-        }
-    }
-
-    private static IOperationPlanNode? FindPlanNode(IOperationPlan plan, int id)
-    {
-        foreach (var node in plan.AllNodes)
-        {
-            var operations = GetBatchOperations(node);
-
-            foreach (var operation in operations)
-            {
-                if (operation.Id == id)
-                {
-                    return operation;
-                }
-            }
-
-            if (operations.IsEmpty && node.Id == id)
-            {
-                return node;
-            }
-        }
-
-        return null;
-    }
-
-    private static ReadOnlySpan<OperationDefinition> GetBatchOperations(ExecutionNode node)
-        => node switch
-        {
-            OperationBatchExecutionNode batch => batch.Operations,
-            ApolloOperationBatchExecutionNode apolloBatch => apolloBatch.Operations,
-            _ => []
-        };
 
     private static void AppendRequirements(
         ReadOnlySpan<OperationRequirement> requirements,
