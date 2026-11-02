@@ -522,13 +522,26 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// 64 defer conditions.
     /// </summary>
     internal bool IsDeferredUnchecked(ulong deferFlags)
-        => _deferMask != 0 && (_deferMask & deferFlags) != 0;
+        => _deferMask != 0
+            && (_deferMask & deferFlags) != 0
+            && (_deferUsage.Length < 2 || HasActiveDeferInEveryUsage(deferFlags, default));
 
     /// <summary>
     /// Evaluates the defer mask against all words of the request flags.
-    /// The selection is deferred when any bit matches in any word.
+    /// The selection is deferred when every occurrence of the field has an enabled
+    /// <c>@defer</c> in its chain of enclosing fragments.
     /// </summary>
     internal bool IsDeferredWide(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    {
+        if (!MatchesDeferMask(deferFlags, wideDeferFlags))
+        {
+            return false;
+        }
+
+        return _deferUsage.Length < 2 || HasActiveDeferInEveryUsage(deferFlags, wideDeferFlags);
+    }
+
+    private bool MatchesDeferMask(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
         if ((_deferMask & deferFlags) != 0)
         {
@@ -553,6 +566,27 @@ public sealed class Selection : ISelection, IFeatureProvider
         }
 
         return false;
+    }
+
+    private bool HasActiveDeferInEveryUsage(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    {
+        for (var i = 0; i < _deferUsage.Length; i++)
+        {
+            var effective = _deferUsage[i];
+
+            while (effective is not null
+                && !IsConditionBitSet(deferFlags, wideDeferFlags, effective.DeferConditionIndex))
+            {
+                effective = effective.Parent;
+            }
+
+            if (effective is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
