@@ -97,7 +97,8 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
-    private HashSet<CompactPath>? _nullKeyTargets;
+    private HashSet<(CompactPath Path, ResultSelectionSet Fetch)>? _failedFetches;
+    private bool _tracksFailedFetches;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -628,15 +629,34 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Records that a fetch for the object at <paramref name="path"/> failed or returned <c>null</c>.
-    /// The mark applies to every key requirement of the object, not to a single field.
+    /// Records that <paramref name="fetch"/> failed or returned <c>null</c> for the object at
+    /// <paramref name="path"/>. Does nothing unless the store was initialized to track failed fetches.
     /// </summary>
-    internal void MarkNullKeyTarget(CompactPath path)
+    internal void RecordFailedFetch(CompactPath path, ResultSelectionSet fetch)
     {
+        if (!_tracksFailedFetches)
+        {
+            return;
+        }
+
         lock (_lock)
         {
-            _nullKeyTargets ??= [];
-            _nullKeyTargets.Add(path);
+            _failedFetches ??= [];
+            _failedFetches.Add((path, fetch));
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a fetch was recorded as failed for any object of this store.
+    /// </summary>
+    internal bool HasFailedFetches
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _failedFetches?.Count > 0;
+            }
         }
     }
 
@@ -3306,12 +3326,14 @@ AddErrors_Next:
 
     /// <summary>
     /// Gets the paths of the objects at <paramref name="selectionSet"/> that no entry of
-    /// <paramref name="variableValues"/> covers and whose key lookup resolved to <c>null</c>.
+    /// <paramref name="variableValues"/> covers and whose key is <c>null</c> or was to be supplied by a
+    /// failed fetch of <paramref name="keyFetches"/>. A <c>null</c> <paramref name="keyFetches"/> holds no fetch.
     /// </summary>
     internal ImmutableArray<CompactPath> GetUncoveredTargetPaths(
         SelectionPath selectionSet,
         ImmutableArray<VariableValues> variableValues,
-        ReadOnlySpan<OperationRequirement> requirements)
+        ReadOnlySpan<OperationRequirement> requirements,
+        HashSet<ResultSelectionSet>? keyFetches)
     {
         ArgumentNullException.ThrowIfNull(selectionSet);
 
@@ -3363,7 +3385,7 @@ AddErrors_Next:
             {
                 var path = element.CompactPath;
 
-                if (!covered.Contains(path) && HasNullKeyUnsafe(element, requirements))
+                if (!covered.Contains(path) && HasNullKeyUnsafe(element, path, requirements, keyFetches))
                 {
                     uncovered.Add(path);
                 }
@@ -3375,11 +3397,19 @@ AddErrors_Next:
 
     private bool HasNullKeyUnsafe(
         CompositeResultElement element,
-        ReadOnlySpan<OperationRequirement> requirements)
+        CompactPath path,
+        ReadOnlySpan<OperationRequirement> requirements,
+        HashSet<ResultSelectionSet>? keyFetches)
     {
-        if (_nullKeyTargets?.Contains(element.CompactPath) is true)
+        if (_failedFetches is not null && keyFetches is not null)
         {
-            return true;
+            foreach (var fetch in keyFetches)
+            {
+                if (_failedFetches.Contains((path, fetch)))
+                {
+                    return true;
+                }
+            }
         }
 
         foreach (var requirement in requirements)
@@ -3421,30 +3451,43 @@ AddErrors_Next:
         }
 
         var builder = ImmutableArray.CreateBuilder<VariableValues>(source.Length);
-        var targetPaths = ImmutableArray.CreateBuilder<VariableValues>(source.Length + uncoveredTargetPaths.Length);
-        var importedUncoveredPaths = new List<CompactPath>(uncoveredTargetPaths.Length);
+
+        ImmutableArray<VariableValues> imported;
 
         lock (_lock)
         {
             foreach (var entry in source)
             {
-                var imported = ImportVariableValuesEntryUnsafe(entry, sourceOperation);
-                builder.Add(imported);
-                targetPaths.Add(imported);
+                builder.Add(ImportVariableValuesEntryUnsafe(entry, sourceOperation));
             }
 
-            foreach (var uncoveredTargetPath in uncoveredTargetPaths)
+            imported = builder.MoveToImmutable();
+        }
+
+        if (uncoveredTargetPaths.IsEmpty)
+        {
+            InitializeTargetPaths(imported);
+            return imported;
+        }
+
+        var targetPaths = ImmutableArray.CreateBuilder<VariableValues>(imported.Length + uncoveredTargetPaths.Length);
+        var importedUncoveredPaths = new CompactPath[uncoveredTargetPaths.Length];
+        targetPaths.AddRange(imported);
+
+        lock (_lock)
+        {
+            for (var i = 0; i < importedUncoveredPaths.Length; i++)
             {
-                var importedPath = ImportPath(uncoveredTargetPath, sourceOperation);
-                importedUncoveredPaths.Add(importedPath);
+                var importedPath = ImportPath(uncoveredTargetPaths[i], sourceOperation);
+                importedUncoveredPaths[i] = importedPath;
                 targetPaths.Add(new VariableValues(importedPath, JsonSegment.Empty));
             }
         }
 
-        InitializeTargetPaths(targetPaths.ToImmutable());
+        InitializeTargetPaths(targetPaths.MoveToImmutable());
         InitializeTargetObjects(importedUncoveredPaths);
 
-        return builder.ToImmutable();
+        return imported;
     }
 
     private VariableValues ImportVariableValuesEntryUnsafe(VariableValues source, Operation sourceOperation)
@@ -3961,7 +4004,7 @@ AddErrors_Next:
         }
     }
 
-    private void InitializeTargetObjects(List<CompactPath> paths)
+    private void InitializeTargetObjects(CompactPath[] paths)
     {
         lock (_lock)
         {

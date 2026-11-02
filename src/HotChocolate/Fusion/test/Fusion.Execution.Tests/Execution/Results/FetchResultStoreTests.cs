@@ -72,7 +72,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var document = SourceResultDocument.Parse(
             sourceArena,
@@ -122,7 +123,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var results = new[]
         {
@@ -409,7 +411,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload =
             """{"data":{"aliasedFoos":[{"name":"one","aliasedSku":"sku-1"},{"aliasedId":"2","name":"two","aliasedSku":"sku-2"}]}}"""u8
@@ -488,7 +491,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload =
             """{"data":{"foo":{"id":"1"},"sibling":"sibling"}}"""u8
@@ -931,7 +935,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload = Encoding.UTF8.GetBytes(
             $$"""{"data":{"color":"{{enumValue}}","broken":null},"errors":[{"message":"boom","path":["broken"]}]}""");
@@ -1071,7 +1076,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload =
             """{"data":{"aliasedFoo":{"id":"1","aliasedValue":"value"}}}"""u8.ToArray();
@@ -1125,7 +1131,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         store.AddError(ErrorBuilder.New().SetMessage("event 1").Build());
         Assert.Collection(
@@ -1175,7 +1182,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         using var target = new FetchResultStore();
         target.Initialize(
             resultArena,
@@ -1185,7 +1193,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var values = WithAdditionalPaths(
             CreateVariableValues(
@@ -1234,7 +1243,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         using var target = new FetchResultStore();
         target.Initialize(
             resultArena,
@@ -1244,7 +1254,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var values = CreateVariableValues(
             source,
@@ -1297,7 +1308,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         using var target = new FetchResultStore();
         target.Initialize(
             resultArena,
@@ -1307,7 +1319,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var values = CreateVariableValues(
             source,
@@ -1355,7 +1368,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         using var target = new FetchResultStore();
         target.Initialize(
             resultArena,
@@ -1365,7 +1379,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var values = CreateVariableValues(
             source,
@@ -1384,25 +1399,14 @@ public sealed class FetchResultStoreTests : FusionTestBase
     }
 
     [Fact]
-    public void GetUncoveredTargetPaths_Should_ReturnOnlyNullOrMarkedKeys_When_ElementsHaveNoVariableValues()
+    public void GetUncoveredTargetPaths_Should_ReturnNullKeysAndFailedKeyFetches_When_ElementsHaveNoVariableValues()
     {
         // arrange
-        var schema = ComposeSchema(
-            """
-            # name: test
-            type Query {
-              foos: [Foo!]!
-            }
-
-            type Foo {
-              key: String
-              name: String
-            }
-            """);
+        var schema = CreateFooSchema();
 
         using var resultArena = new MemoryArena();
         using var sourceArena = new MemoryArena();
-        using var store = CreateLiveStore(
+        using var store = CreateStore(
             schema,
             "{ foos { __fusion_internal_key: key name } }",
             """
@@ -1413,7 +1417,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
               {"name":"d"}]}}
             """,
             resultArena,
-            sourceArena);
+            sourceArena,
+            tracksFailedFetches: true);
 
         var requirement = new OperationRequirement(
             "__fusion_1_key",
@@ -1424,16 +1429,134 @@ public sealed class FetchResultStoreTests : FusionTestBase
         var foos = store.Result.Data.GetProperty("foos");
         var foosPath = SelectionPath.Root.AppendField("foos");
         var covered = store.CreateVariableValueSets(foosPath, [], [requirement]);
-        store.MarkNullKeyTarget(foos[3].CompactPath);
+        var keyFetch = CreateFetch(schema, "{ key }");
+        store.RecordFailedFetch(foos[2].CompactPath, CreateFetch(schema, "{ name }"));
+        store.RecordFailedFetch(foos[3].CompactPath, keyFetch);
 
         // act
-        var result = store.GetUncoveredTargetPaths(foosPath, covered, [requirement]);
+        var result = store.GetUncoveredTargetPaths(foosPath, covered, [requirement], [keyFetch]);
 
         // assert
         Assert.Collection(
             result,
             path => Assert.Equal(foos[0].CompactPath, path),
             path => Assert.Equal(foos[3].CompactPath, path));
+    }
+
+    [Fact]
+    public void GetUncoveredTargetPaths_Should_ReturnOnlyNullKeys_When_KeyFetchesAreNull()
+    {
+        // arrange
+        var schema = CreateFooSchema();
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateStore(
+            schema,
+            "{ foos { __fusion_internal_key: key name } }",
+            """{"data":{"foos":[{"__fusion_internal_key":null,"name":"a"},{"name":"b"}]}}""",
+            resultArena,
+            sourceArena,
+            tracksFailedFetches: true);
+
+        var requirement = new OperationRequirement(
+            "__fusion_1_key",
+            new NonNullTypeNode(new NamedTypeNode("String")),
+            SelectionPath.Root,
+            new FieldSelectionMapParser("key").Parse(),
+            "__fusion_internal_key");
+        var foos = store.Result.Data.GetProperty("foos");
+        var foosPath = SelectionPath.Root.AppendField("foos");
+        store.RecordFailedFetch(foos[1].CompactPath, CreateFetch(schema, "{ key }"));
+
+        // act
+        var result = store.GetUncoveredTargetPaths(foosPath, [], [requirement], keyFetches: null);
+
+        // assert
+        Assert.Equal(foos[0].CompactPath, Assert.Single(result));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AddErrors_Should_RecordFailedFetchOnlyWhenTracked_When_FetchFails(bool tracksFailedFetches)
+    {
+        // arrange
+        var schema = CreateFooSchema();
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateStore(
+            schema,
+            "{ foos { name } }",
+            """{"data":{"foos":[{"name":"a"}]}}""",
+            resultArena,
+            sourceArena,
+            tracksFailedFetches);
+        var path = store.Result.Data.GetProperty("foos")[0].CompactPath;
+        var error = ErrorBuilder.New().SetMessage("failed").Build();
+
+        // act
+        store.AddErrors(error, CreateFetch(schema, "{ name }"), [path]);
+
+        // assert
+        Assert.Equal(tracksFailedFetches, store.HasFailedFetches);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AddPartialResults_Should_RecordFailedFetchOnlyWhenTracked_When_SourceIsNull(bool tracksFailedFetches)
+    {
+        // arrange
+        var schema = CreateFooSchema();
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateStore(
+            schema,
+            "{ foos { name } }",
+            """{"data":{"foos":[{"name":"a"}]}}""",
+            resultArena,
+            sourceArena,
+            tracksFailedFetches);
+        var payload = "null"u8.ToArray();
+        var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
+
+        // act
+        store.AddPartialResults(document, CreateFetch(schema, "{ foos }"));
+
+        // assert
+        Assert.Equal(tracksFailedFetches, store.HasFailedFetches);
+    }
+
+    [Fact]
+    public void Clean_Should_StopTrackingAndClearFailedFetches_When_StoreReturnsToPool()
+    {
+        // arrange
+        var schema = CreateFooSchema();
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateStore(
+            schema,
+            "{ foos { name } }",
+            """{"data":{"foos":[{"name":"a"}]}}""",
+            resultArena,
+            sourceArena,
+            tracksFailedFetches: true);
+        var fetch = CreateFetch(schema, "{ name }");
+        var path = store.Result.Data.GetProperty("foos")[0].CompactPath;
+        store.RecordFailedFetch(path, fetch);
+
+        // act
+        store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
+        var hasFailedFetchesAfterClean = store.HasFailedFetches;
+        store.RecordFailedFetch(path, fetch);
+
+        // assert
+        Assert.False(hasFailedFetchesAfterClean);
+        Assert.False(store.HasFailedFetches);
     }
 
     [Fact]
@@ -1472,7 +1595,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         using var target = new FetchResultStore();
         target.Initialize(
             resultArena,
@@ -1482,7 +1606,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var values = CreateVariableValues(
             source,
@@ -2532,7 +2657,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
                 ErrorHandlingMode.Propagate,
                 includeFlags: default,
                 deferFlags: default,
-                pathSegmentLocalPoolCapacity: 16);
+                pathSegmentLocalPoolCapacity: 16,
+                tracksFailedFetches: false);
 
             var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
             store.AddPartialResults(
@@ -2589,7 +2715,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
                 errorHandlingMode,
                 includeFlags: default,
                 deferFlags: default,
-                pathSegmentLocalPoolCapacity: 16);
+                pathSegmentLocalPoolCapacity: 16,
+                tracksFailedFetches: false);
 
             var payload = """{"data":{"sibling":"ok","tags":["a",null]}}"""u8.ToArray();
             var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
@@ -3813,7 +3940,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         AddKeyResults(store, node, sourceArena, count: 1);
         store.CreateVariableValueSets(SelectionPath.Root.AppendField("foos"), [], [requirement]);
 
@@ -3873,7 +4001,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         AddKeyResults(store, node, sourceArena, count: 1);
         store.CreateVariableValueSets(SelectionPath.Root.AppendField("foos"), [], [requirement]);
         store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
@@ -3887,7 +4016,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         // 40 keys of 32 bytes need a second arena segment
         AddKeyResults(store, node, sourceArena, count: 40);
@@ -3938,7 +4068,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         AddKeyResults(store, node, sourceArena, count: 1);
         var requestValues = store.CreateVariableValueSets(
             SelectionPath.Root.AppendField("foos"),
@@ -4788,12 +4919,44 @@ public sealed class FetchResultStoreTests : FusionTestBase
         Assert.Equal(expected, RenderData(store));
     }
 
+    private static FusionSchemaDefinition CreateFooSchema()
+        => ComposeSchema(
+            """
+            # name: test
+            type Query {
+              foos: [Foo!]!
+            }
+
+            type Foo {
+              key: String
+              name: String
+            }
+            """);
+
+    private static ResultSelectionSet CreateFetch(FusionSchemaDefinition schema, string selectionSet)
+        => ResultSelectionSet.Create(
+            Utf8GraphQLParser.Parse(selectionSet)
+                .Definitions
+                .OfType<OperationDefinitionNode>()
+                .Single()
+                .SelectionSet,
+            schema);
+
     private static FetchResultStore CreateLiveStore(
         FusionSchemaDefinition schema,
         string operationText,
         string payloadJson,
         MemoryArena resultArena,
         MemoryArena sourceArena)
+        => CreateStore(schema, operationText, payloadJson, resultArena, sourceArena, tracksFailedFetches: false);
+
+    private static FetchResultStore CreateStore(
+        FusionSchemaDefinition schema,
+        string operationText,
+        string payloadJson,
+        MemoryArena resultArena,
+        MemoryArena sourceArena,
+        bool tracksFailedFetches)
     {
         var plan = PlanOperation(schema, operationText);
         var node = Assert.IsType<OperationExecutionNode>(Assert.Single(plan.RootNodes));
@@ -4806,7 +4969,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches);
 
         var payload = Encoding.UTF8.GetBytes(payloadJson);
         var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
@@ -4851,7 +5015,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         // 16 keys of 600 KB fill several arena pages with variables and leaf keys; the key of a
         // duplicate last target takes the last pages, which only the leaf key writer holds
@@ -4948,7 +5113,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         resultSelectionSet = node.ResultSelectionSet;
         return store;
     }
@@ -5063,7 +5229,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
     private static VariableValues CreateVariableValues(
         FetchResultStore store,
@@ -5304,7 +5471,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var document = store.Result;
         var field = document.Data.GetProperty("field");

@@ -35,9 +35,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
 
         // assert
-        var payloads = await ReadPayloadsAsync(result);
         Assert.Equal(1, KeyHopCalls.FirstHopLookups);
         Assert.Equal(0, KeyHopCalls.FinalLookups);
         payloads.MatchInlineSnapshots(
@@ -75,9 +75,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
 
         // assert
-        var payloads = await ReadPayloadsAsync(result);
         Assert.Equal(3, KeyHopCalls.FirstHopLookups);
         Assert.Equal(2, KeyHopCalls.FinalLookups);
         payloads.MatchInlineSnapshots(
@@ -115,9 +115,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
 
         // assert
-        var payloads = await ReadPayloadsAsync(result);
         payloads.MatchInlineSnapshots(
         [
             """
@@ -153,9 +153,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
 
         // assert
-        var payloads = await ReadPayloadsAsync(result);
         payloads.MatchInlineSnapshots(
         [
             """
@@ -191,9 +191,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
 
         // assert
-        var payloads = await ReadPayloadsAsync(result);
         payloads.MatchInlineSnapshots(
         [
             """
@@ -230,9 +230,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
 
         // assert
-        var payloads = await ReadPayloadsAsync(result);
         Assert.Equal(1, KeyHopCalls.MutationCalls);
         Assert.Equal(1, KeyHopCalls.FirstHopLookups);
         payloads.MatchInlineSnapshots(
@@ -337,6 +337,8 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
 
         // assert
         Assert.Equal(3, KeyHopCalls.FirstHopLookups);
+        Assert.Equal(3, KeyHopCalls.SecondHopLookups);
+        Assert.Equal(2, KeyHopCalls.FinalLookups);
         payloads.MatchInlineSnapshots(
         [
             """
@@ -361,6 +363,8 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
 
         // assert
         Assert.Equal(3, KeyHopCalls.FirstHopLookups);
+        Assert.Equal(2, KeyHopCalls.SecondHopLookups);
+        Assert.Equal(2, KeyHopCalls.FinalLookups);
         payloads.MatchInlineSnapshots(
         [
             """
@@ -504,7 +508,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
     }
 
     [Theory]
-    [MemberData(nameof(ParityCases))]
+    [MemberData(nameof(KeyHopCases))]
     public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullOrThrows(
         bool twoHops,
         string failingHop,
@@ -517,27 +521,14 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         var (deferred, reference) = CreateOperations(shape, key);
 
         // act
-        KeyHopCalls.Reset(failingHop);
-        var deferredPayloads = await ExecuteAsync(client, deferred);
-        var deferredMutationCalls = KeyHopCalls.MutationCalls;
-
-        KeyHopCalls.Reset(failingHop);
-        var referencePayloads = await ExecuteAsync(client, reference);
+        var comparison = await CompareAsync(client, failingHop, deferred, reference);
 
         // assert
-        var deferredResult = MergePayloads(deferredPayloads);
-        var referenceResult = MergePayloads(referencePayloads);
-        Assert.Equal(referenceResult.Data, deferredResult.Data);
-        Assert.Equal(referenceResult.ErrorCount, deferredResult.ErrorCount);
-        Assert.Equal(shape.StartsWith("mutation", StringComparison.Ordinal) ? 1 : 0, deferredMutationCalls);
-        Assert.False(deferredPayloads[^1]["hasNext"]!.GetValue<bool>());
-        Assert.Equal(
-            deferredPayloads.SelectMany(p => p["pending"]?.AsArray() ?? []).Select(p => p!["id"]!.ToString()),
-            deferredPayloads.SelectMany(p => p["completed"]?.AsArray() ?? []).Select(p => p!["id"]!.ToString()));
+        AssertMatchesReference(comparison, shape);
     }
 
     [Theory]
-    [MemberData(nameof(PublicKeyCases))]
+    [MemberData(nameof(KeyHopCases))]
     public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullOrThrowsForPublicKey(
         bool twoHops,
         string failingHop,
@@ -550,22 +541,183 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         var (deferred, reference) = CreatePublicKeyOperations(shape, key);
 
         // act
-        KeyHopCalls.Reset(failingHop);
-        var deferredPayloads = await ExecuteAsync(client, deferred);
-        var deferredMutationCalls = KeyHopCalls.MutationCalls;
-        var deferredHopLookups = KeyHopCalls.FirstHopLookups;
-
-        KeyHopCalls.Reset(failingHop);
-        var referencePayloads = await ExecuteAsync(client, reference);
+        var comparison = await CompareAsync(client, failingHop, deferred, reference);
 
         // assert
-        var deferredResult = MergePayloads(deferredPayloads);
-        var referenceResult = MergePayloads(referencePayloads);
-        Assert.Equal(referenceResult.Data, deferredResult.Data);
-        Assert.Equal(referenceResult.ErrorCount, deferredResult.ErrorCount);
-        Assert.Equal(CollectErrorPaths(referencePayloads), CollectErrorPaths(deferredPayloads));
-        Assert.Equal(KeyHopCalls.FirstHopLookups, deferredHopLookups);
-        Assert.Equal(shape.StartsWith("mutation", StringComparison.Ordinal) ? 1 : 0, deferredMutationCalls);
+        AssertMatchesReference(comparison, shape);
+    }
+
+    [Theory]
+    [InlineData(99)]
+    [InlineData(98)]
+    public async Task Defer_Should_NullNonNullDeferredField_When_KeyHopReturnsNullOrThrowsForMiddleListItem(int key)
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var comparison = await CompareAsync(
+            client,
+            KeyHopCalls.FirstHop,
+            $"{{ users(ids: [2, {key}, 3]) {{ name ... @defer {{ must }} }} }}",
+            $"{{ users(ids: [2, {key}, 3]) {{ name must }} }}");
+
+        // assert
+        Assert.Equal(comparison.Reference, comparison.Deferred);
+        Assert.Equal(0, comparison.Deferred.ErrorCount);
+        Assert.Equal(
+            $$"""
+            {"users":[{"name":"User 2","must":20},{"name":"User {{key}}","must":null},{"name":"User 3","must":30}]}
+            """,
+            comparison.Deferred.Data);
+    }
+
+    [Theory]
+    [InlineData(99)]
+    [InlineData(98)]
+    public async Task Defer_Should_NullNonNullDeferredField_When_KeyHopReturnsNullOrThrowsForSingleObject(int key)
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var comparison = await CompareAsync(
+            client,
+            KeyHopCalls.FirstHop,
+            $"{{ current(id: {key}) {{ user {{ ... @defer {{ must }} }} }} }}",
+            $"{{ current(id: {key}) {{ user {{ must }} }} }}");
+
+        // assert
+        Assert.Equal(comparison.Reference, comparison.Deferred);
+        Assert.Equal(0, comparison.Deferred.ErrorCount);
+        Assert.Equal("""{"current":{"user":{"must":null}}}""", comparison.Deferred.Data);
+    }
+
+    [Fact]
+    public async Task Defer_Should_OmitDeferredFields_When_UnrelatedFetchThrowsForObjectAndKeyHopNeverRan()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateUnrelatedSourceGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "{ current(id: 96) { user { rating ... @defer { name total } } } }");
+
+        // assert
+        Assert.Equal(0, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"errors":[{"message":"The unrelated source failed.","path":["current","user","rating"]}],"data":{"current":{"user":{"rating":null}}},"pending":[{"id":"0","path":["current","user"]}],"hasNext":true}
+            """,
+            """
+            {"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_OmitDeferredFields_When_UnrelatedFetchThrowsForListItemAndKeyHopNeverRan()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateUnrelatedSourceGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "{ users(ids: [2, 96, 3]) { rating ... @defer { name total } } }");
+
+        // assert
+        Assert.Equal(0, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"errors":[{"message":"The unrelated source failed.","path":["users",1,"rating"]}],"data":{"users":[{"rating":2},{"rating":null},{"rating":3}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ResolveDeferredField_When_UnrelatedFetchThrowsAndKeyHopSucceeds()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateUnrelatedSourceGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "{ users(ids: [2, 96, 3]) { name rating ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(3, KeyHopCalls.FinalLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"errors":[{"message":"The unrelated source failed.","path":["users",1,"rating"]}],"data":{"users":[{"name":"User 2","rating":2},{"name":"User 96","rating":null},{"name":"User 3","rating":3}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"total":200}},{"id":"0","subPath":[1],"data":{"total":9600}},{"id":"0","subPath":[2],"data":{"total":300}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportKeyError_When_FirstKeyHopThrowsForPublicKeyOfTwoHops()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops: true);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var comparison = await CompareAsync(
+            client,
+            KeyHopCalls.FirstHop,
+            "{ users(ids: [2, 98, 3]) { name code ... @defer { total } } }",
+            "{ users(ids: [2, 98, 3]) { name code total } }");
+
+        // assert
+        Assert.Equal(comparison.Reference, comparison.Deferred);
+        Assert.Equal("users,1,code", comparison.Deferred.ErrorPaths);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullNestedDeferredField_When_KeyHopInEnclosingDeferThrows()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var comparison = await CompareAsync(
+            client,
+            KeyHopCalls.FirstHop,
+            """
+            {
+                users(ids: [2, 98, 3]) {
+                    name
+                    ... @defer(label: "a") {
+                        sku
+                        ... @defer(label: "b") {
+                            total
+                        }
+                    }
+                }
+            }
+            """,
+            "{ users(ids: [2, 98, 3]) { name sku total } }");
+
+        // assert
+        Assert.Equal(comparison.Reference.Data, comparison.Deferred.Data);
+        comparison.Deferred.Data.MatchInlineSnapshot(
+            """
+            {"users":[{"name":"User 2","sku":"sku-2","total":200},{"name":"User 98","sku":null,"total":null},{"name":"User 3","sku":"sku-3","total":300}]}
+            """);
     }
 
     [Fact]
@@ -580,10 +732,11 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         var payloads = await ExecuteAsync(
             client,
             "{ users(ids: [2, 98, 3]) { name sku ... @defer { total } } }");
+        var merged = MergePayloads(payloads);
 
         // assert
         Assert.Equal(3, KeyHopCalls.FirstHopLookups);
-        MergePayloads(payloads).Data.MatchInlineSnapshot(
+        merged.Data.MatchInlineSnapshot(
             """
             {"users":[{"name":"User 2","sku":"sku-2","total":200},{"name":"User 98","sku":null,"total":null},{"name":"User 3","sku":"sku-3","total":300}]}
             """);
@@ -602,37 +755,15 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         var payloads = await ExecuteAsync(
             client,
             "{ current(id: 98) { user { sku ... @defer { total } } } }");
+        var merged = MergePayloads(payloads);
 
         // assert
         Assert.Equal(1, KeyHopCalls.FirstHopLookups);
-        MergePayloads(payloads).Data.MatchInlineSnapshot(
+        merged.Data.MatchInlineSnapshot(
             """
             {"current":{"user":{"sku":null,"total":null}}}
             """);
         Assert.Equal(["current,user,sku"], CollectErrorPaths(payloads));
-    }
-
-    public static TheoryData<bool, string, int, string> PublicKeyCases()
-    {
-        var cases = new TheoryData<bool, string, int, string>();
-
-        foreach (var (twoHops, failingHop) in new[]
-        {
-            (false, KeyHopCalls.FirstHop),
-            (true, KeyHopCalls.FirstHop),
-            (true, KeyHopCalls.SecondHop)
-        })
-        {
-            foreach (var key in new[] { 99, 98 })
-            {
-                foreach (var shape in new[] { "query-object", "query-list", "mutation-object", "mutation-list" })
-                {
-                    cases.Add(twoHops, failingHop, key, shape);
-                }
-            }
-        }
-
-        return cases;
     }
 
     private static (string Deferred, string Reference) CreatePublicKeyOperations(string shape, int key)
@@ -691,7 +822,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         }
     }
 
-    public static TheoryData<bool, string, int, string> ParityCases()
+    public static TheoryData<bool, string, int, string> KeyHopCases()
     {
         var cases = new TheoryData<bool, string, int, string>();
 
@@ -739,6 +870,55 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null)
         };
+
+    private static async Task<Comparison> CompareAsync(
+        GraphQLHttpClient client,
+        string failingHop,
+        string deferred,
+        string reference)
+    {
+        KeyHopCalls.Reset(failingHop);
+        var deferredPayloads = await ExecuteAsync(client, deferred);
+        var deferredRun = CreateHopRun(deferredPayloads);
+        var delivery = new Delivery(
+            KeyHopCalls.MutationCalls,
+            deferredPayloads[^1]["hasNext"]?.GetValue<bool>() ?? false,
+            CollectGroupIds(deferredPayloads, "pending"),
+            CollectGroupIds(deferredPayloads, "completed"));
+
+        KeyHopCalls.Reset(failingHop);
+        var referenceRun = CreateHopRun(await ExecuteAsync(client, reference));
+
+        return new Comparison(deferredRun, referenceRun, delivery);
+    }
+
+    private static void AssertMatchesReference(Comparison comparison, string shape)
+    {
+        Assert.Equal(comparison.Reference, comparison.Deferred);
+        Assert.Equal(shape.StartsWith("mutation", StringComparison.Ordinal) ? 1 : 0, comparison.Delivery.MutationCalls);
+        Assert.False(comparison.Delivery.HasNext);
+        Assert.Equal(comparison.Delivery.PendingIds, comparison.Delivery.CompletedIds);
+    }
+
+    private static HopRun CreateHopRun(List<JsonObject> payloads)
+    {
+        var merged = MergePayloads(payloads);
+        return new HopRun(
+            merged.Data,
+            merged.ErrorCount,
+            string.Join("|", CollectErrorPaths(payloads).Order(StringComparer.Ordinal)),
+            KeyHopCalls.FirstHopLookups,
+            KeyHopCalls.SecondHopLookups,
+            KeyHopCalls.FinalLookups);
+    }
+
+    private static string CollectGroupIds(List<JsonObject> payloads, string property)
+        => string.Join(
+            ",",
+            payloads
+                .SelectMany(p => p[property]?.AsArray() ?? [])
+                .Select(p => p!["id"]!.ToString())
+                .Order(StringComparer.Ordinal));
 
     private static async Task<List<JsonObject>> ExecuteAsync(GraphQLHttpClient client, string document)
     {
@@ -848,6 +1028,33 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         ]);
     }
 
+    private async Task<Gateway> CreateUnrelatedSourceGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<KeyHopSourceA.Query>().AddMutationType<KeyHopSourceA.Mutation>());
+
+        var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<KeyHopSourceB.Query>());
+
+        var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<KeyHopSourceC.Query>());
+
+        var server4 = CreateSourceSchema(
+            "E",
+            b => b.AddQueryType<KeyHopSourceE.Query>());
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3),
+            ("E", server4)
+        ]);
+    }
+
     private async Task<Gateway> CreateGatewayAsync(bool twoHops)
     {
         var server1 = CreateSourceSchema(
@@ -897,6 +1104,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
 
         private static int s_mutationCalls;
         private static int s_firstHopLookups;
+        private static int s_secondHopLookups;
         private static int s_finalLookups;
 
         public static string FailingHop { get; private set; } = FirstHop;
@@ -905,6 +1113,8 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
 
         public static int FirstHopLookups => Volatile.Read(ref s_firstHopLookups);
 
+        public static int SecondHopLookups => Volatile.Read(ref s_secondHopLookups);
+
         public static int FinalLookups => Volatile.Read(ref s_finalLookups);
 
         public static void Reset(string failingHop)
@@ -912,12 +1122,15 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             FailingHop = failingHop;
             Volatile.Write(ref s_mutationCalls, 0);
             Volatile.Write(ref s_firstHopLookups, 0);
+            Volatile.Write(ref s_secondHopLookups, 0);
             Volatile.Write(ref s_finalLookups, 0);
         }
 
         public static void CountMutation() => Interlocked.Increment(ref s_mutationCalls);
 
         public static void CountFirstHopLookup() => Interlocked.Increment(ref s_firstHopLookups);
+
+        public static void CountSecondHopLookup() => Interlocked.Increment(ref s_secondHopLookups);
 
         public static void CountFinalLookup() => Interlocked.Increment(ref s_finalLookups);
 
@@ -1048,6 +1261,8 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         public record User([property: Shareable] string? Sku)
         {
             public int? Total => int.Parse(Sku![4..]) * 100;
+
+            public int Must => int.Parse(Sku![4..]) * 10;
         }
     }
 
@@ -1087,7 +1302,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         public record User([property: ID] int Id)
         {
             [Shareable]
-            public string Code => $"code-{Id}";
+            public string? Code => $"code-{Id}";
         }
     }
 
@@ -1099,6 +1314,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             [Internal]
             public User? GetUserByCode(string code)
             {
+                KeyHopCalls.CountSecondHopLookup();
                 var id = int.Parse(code[5..]);
                 return KeyHopCalls.Resolve(KeyHopCalls.SecondHop, id, () => new User(code));
             }
@@ -1111,5 +1327,33 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         }
     }
 
+    private static class KeyHopSourceE
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id)
+                => id == 96 ? throw new GraphQLException("The unrelated source failed.") : new User(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int? Rating => Id;
+        }
+    }
+
     private sealed record Outcome(string? Data, int ErrorCount, int FirstHopLookups);
+
+    private sealed record HopRun(
+        string? Data,
+        int ErrorCount,
+        string ErrorPaths,
+        int FirstHopLookups,
+        int SecondHopLookups,
+        int FinalLookups);
+
+    private sealed record Delivery(int MutationCalls, bool HasNext, string PendingIds, string CompletedIds);
+
+    private sealed record Comparison(HopRun Deferred, HopRun Reference, Delivery Delivery);
 }

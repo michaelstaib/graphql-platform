@@ -344,7 +344,8 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload = """{"data":{"foos":[{"id":"1","bar":{"y":"v"}}]}}"""u8.ToArray();
         var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
@@ -427,7 +428,8 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload = """{"data":{"foos":[{"__fusion_internal_id":"1"}]}}"""u8.ToArray();
         var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
@@ -3219,7 +3221,8 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload = Encoding.UTF8.GetBytes(payloadJson);
         var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
@@ -3349,7 +3352,8 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
 
         var payload = Encoding.UTF8.GetBytes(payloadJson);
         var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
@@ -3380,7 +3384,8 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             ErrorHandlingMode.Propagate,
             includeFlags: default,
             deferFlags: default,
-            pathSegmentLocalPoolCapacity: 16);
+            pathSegmentLocalPoolCapacity: 16,
+            tracksFailedFetches: false);
         return store;
     }
 

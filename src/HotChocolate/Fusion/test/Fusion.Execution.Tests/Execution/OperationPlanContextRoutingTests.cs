@@ -21,6 +21,21 @@ namespace HotChocolate.Fusion.Execution;
 
 public sealed class OperationPlanContextRoutingTests : FusionTestBase
 {
+    [Fact]
+    public async Task Initialize_Should_NotTrackFailedFetches_When_PlanHasNoIncrementalPlans()
+    {
+        // arrange
+        await using var fixture = await RoutingTestFixture.CreateAsync();
+        var store = fixture.CreateContext().GetResultStoreForChildDefer();
+        var node = Assert.IsType<OperationExecutionNode>(fixture.GetRootNode());
+
+        // act
+        store.RecordFailedFetch(CompactPath.Root, node.ResultSelectionSet);
+
+        // assert
+        Assert.False(store.HasFailedFetches);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

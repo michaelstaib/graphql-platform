@@ -5,7 +5,6 @@ using System.Threading.Channels;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
-using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
 using Microsoft.Extensions.DependencyInjection;
@@ -306,7 +305,7 @@ internal static partial class OperationPlanExecutor
                     variables,
                     incrementalPlan,
                     deliveryGroups,
-                    rootContext.GetResultStoreForChildDefer(),
+                    rootContext,
                     channel.Writer,
                     requestArena,
                     cancellationToken);
@@ -471,8 +470,7 @@ internal static partial class OperationPlanExecutor
 
                     // Nested plans resolve requirements from the immediate
                     // enclosing plan when available.
-                    var parentStore = scopeContext?.GetResultStoreForChildDefer()
-                        ?? rootContext.GetResultStoreForChildDefer();
+                    var parentContext = scopeContext ?? rootContext;
 
                     started.Add(candidate);
                     pendingIncrementalPlanCount++;
@@ -481,7 +479,7 @@ internal static partial class OperationPlanExecutor
                         variables,
                         candidate,
                         candidateGroups,
-                        parentStore,
+                        parentContext,
                         channel.Writer,
                         requestArena,
                         cancellationToken);
@@ -577,7 +575,7 @@ internal static partial class OperationPlanExecutor
         IVariableValueCollection variables,
         IncrementalPlan incrementalPlan,
         ImmutableArray<DeliveryGroup> deliveryGroups,
-        FetchResultStore parentResultStore,
+        OperationPlanContext parentContext,
         ChannelWriter<IncrementalPlanResult> completion,
         MemoryArena requestArena,
         CancellationToken cancellationToken)
@@ -607,7 +605,7 @@ internal static partial class OperationPlanExecutor
             // Copy parent-scope requirements into the child context.
             try
             {
-                CollectIncrementalPlanRequirements(parentResultStore, incrementalPlan, context);
+                CollectIncrementalPlanRequirements(parentContext, incrementalPlan, context);
             }
             catch (InvalidOperationException ex)
             {
@@ -682,7 +680,7 @@ internal static partial class OperationPlanExecutor
     /// installs their values on the child context.
     /// </summary>
     private static void CollectIncrementalPlanRequirements(
-        FetchResultStore parentResultStore,
+        OperationPlanContext parentContext,
         IncrementalPlan incrementalPlan,
         OperationPlanContext childContext)
     {
@@ -711,6 +709,7 @@ internal static partial class OperationPlanExecutor
             keys.Add(collected[i].Key);
         }
 
+        var parentResultStore = parentContext.GetResultStoreForChildDefer();
         var parentValues = parentResultStore.CreateVariableValueSets(
             anchor,
             requestVariables: [],
@@ -719,7 +718,10 @@ internal static partial class OperationPlanExecutor
         var uncoveredTargetPaths = parentResultStore.GetUncoveredTargetPaths(
             anchor,
             parentValues,
-            requirementSpan);
+            requirementSpan,
+            parentResultStore.HasFailedFetches
+                ? CollectKeyFetches(parentContext.OperationPlan, incrementalPlan)
+                : null);
 
         childContext.SetRequirements(parentValues, uncoveredTargetPaths, keys, parentResultStore.Operation);
     }
@@ -765,6 +767,108 @@ internal static partial class OperationPlanExecutor
 
         return collected;
     }
+
+    /// <summary>
+    /// Collects the result selection sets of the fetches of <paramref name="parentPlan"/> that the
+    /// parent dependencies of <paramref name="incrementalPlan"/> rely on, directly or transitively.
+    /// </summary>
+    private static HashSet<ResultSelectionSet> CollectKeyFetches(
+        IOperationPlan parentPlan,
+        IncrementalPlan incrementalPlan)
+    {
+        var fetches = new HashSet<ResultSelectionSet>();
+        var visited = new HashSet<int>();
+
+        foreach (var node in incrementalPlan.AllNodes)
+        {
+            AddParentDependencies(node.ParentDependencies);
+
+            foreach (var operation in GetBatchOperations(node))
+            {
+                AddParentDependencies(operation.ParentDependencies);
+            }
+        }
+
+        return fetches;
+
+        void AddParentDependencies(ReadOnlySpan<int> parentDependencies)
+        {
+            foreach (var parentDependency in parentDependencies)
+            {
+                if (FindPlanNode(parentPlan, parentDependency) is { } planNode)
+                {
+                    AddKeyFetch(planNode, visited, fetches);
+                }
+            }
+        }
+    }
+
+    private static void AddKeyFetch(
+        IOperationPlanNode node,
+        HashSet<int> visited,
+        HashSet<ResultSelectionSet> fetches)
+    {
+        if (!visited.Add(node.Id))
+        {
+            return;
+        }
+
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                fetches.Add(operation.ResultSelectionSet);
+                break;
+
+            case ApolloOperationExecutionNode operation:
+                fetches.Add(operation.ResultSelectionSet);
+                break;
+
+            case OperationDefinition operation:
+                fetches.Add(operation.ResultSelectionSet);
+                break;
+        }
+
+        foreach (var dependency in node.Dependencies)
+        {
+            AddKeyFetch(dependency, visited, fetches);
+        }
+
+        foreach (var dependency in node.OptionalDependencies)
+        {
+            AddKeyFetch(dependency, visited, fetches);
+        }
+    }
+
+    private static IOperationPlanNode? FindPlanNode(IOperationPlan plan, int id)
+    {
+        foreach (var node in plan.AllNodes)
+        {
+            var operations = GetBatchOperations(node);
+
+            foreach (var operation in operations)
+            {
+                if (operation.Id == id)
+                {
+                    return operation;
+                }
+            }
+
+            if (operations.IsEmpty && node.Id == id)
+            {
+                return node;
+            }
+        }
+
+        return null;
+    }
+
+    private static ReadOnlySpan<OperationDefinition> GetBatchOperations(ExecutionNode node)
+        => node switch
+        {
+            OperationBatchExecutionNode batch => batch.Operations,
+            ApolloOperationBatchExecutionNode apolloBatch => apolloBatch.Operations,
+            _ => []
+        };
 
     private static void AppendRequirements(
         ReadOnlySpan<OperationRequirement> requirements,

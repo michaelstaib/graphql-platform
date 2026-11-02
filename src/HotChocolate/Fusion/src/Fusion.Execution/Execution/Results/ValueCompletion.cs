@@ -324,7 +324,7 @@ internal sealed class ValueCompletion
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
 
-        _store.MarkNullKeyTarget(target.CompactPath);
+        _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -337,12 +337,8 @@ internal sealed class ValueCompletion
                 return true;
             }
 
-            if (!target.TryGetProperty(responseName, out var fieldResult))
-            {
-                continue;
-            }
-
-            if (fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult)
+                || fieldResult.IsInternal)
             {
                 continue;
             }
@@ -597,23 +593,13 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
     {
-        var isMarked = false;
+        _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            if (!target.TryGetProperty(responseName, out var fieldResult))
+            if (!target.TryGetProperty(responseName, out var fieldResult)
+                || fieldResult.IsInternal)
             {
-                continue;
-            }
-
-            if (fieldResult.IsInternal)
-            {
-                if (!isMarked)
-                {
-                    _store.MarkNullKeyTarget(target.CompactPath);
-                    isMarked = true;
-                }
-
                 continue;
             }
 
