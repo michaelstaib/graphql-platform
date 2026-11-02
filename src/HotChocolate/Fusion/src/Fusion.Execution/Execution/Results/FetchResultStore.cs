@@ -629,16 +629,16 @@ AddErrors_Next:
     }
 
     /// <summary>
+    /// Gets whether this store was initialized to track failed fetches.
+    /// </summary>
+    internal bool TracksFailedFetches => _tracksFailedFetches;
+
+    /// <summary>
     /// Records that <paramref name="fetch"/> failed or returned <c>null</c> for the object at
-    /// <paramref name="path"/>. Does nothing unless the store was initialized to track failed fetches.
+    /// <paramref name="path"/>.
     /// </summary>
     internal void RecordFailedFetch(CompactPath path, ResultSelectionSet fetch)
     {
-        if (!_tracksFailedFetches)
-        {
-            return;
-        }
-
         lock (_lock)
         {
             _failedFetches ??= [];

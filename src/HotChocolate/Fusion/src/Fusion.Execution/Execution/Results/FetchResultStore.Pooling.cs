@@ -148,7 +148,6 @@ internal sealed partial class FetchResultStore
         // clear errors
         _errors?.Clear();
         _pocketedErrors?.Clear();
-        _failedFetches?.Clear();
         _tracksFailedFetches = false;
 
         // drop the arena memory of the variable and leaf key writers
@@ -206,6 +205,15 @@ internal sealed partial class FetchResultStore
 
         // clear dictionaries/hashsets; drop oversized ones.
         TrimOrClear(ref _seenPaths, maxDictionaryRetainCapacity, ReferenceEqualityComparer.Instance);
+
+        if (_failedFetches?.Count > maxDictionaryRetainCapacity)
+        {
+            _failedFetches = null;
+        }
+        else
+        {
+            _failedFetches?.Clear();
+        }
 
         // null out per-request references
         _result = default!;

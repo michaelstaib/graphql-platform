@@ -26,14 +26,12 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
     {
         // arrange
         await using var fixture = await RoutingTestFixture.CreateAsync();
-        var store = fixture.CreateContext().GetResultStoreForChildDefer();
-        var node = Assert.IsType<OperationExecutionNode>(fixture.GetRootNode());
 
         // act
-        store.RecordFailedFetch(CompactPath.Root, node.ResultSelectionSet);
+        var store = fixture.CreateContext().GetResultStoreForChildDefer();
 
         // assert
-        Assert.False(store.HasFailedFetches);
+        Assert.False(store.TracksFailedFetches);
     }
 
     [Theory]

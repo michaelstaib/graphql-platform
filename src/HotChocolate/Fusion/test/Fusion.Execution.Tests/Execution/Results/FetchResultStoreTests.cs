@@ -1444,7 +1444,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
     }
 
     [Fact]
-    public void GetUncoveredTargetPaths_Should_ReturnOnlyNullKeys_When_KeyFetchesAreNull()
+    public void GetUncoveredTargetPaths_Should_ReturnOnlyNullKeys_When_KeyFetchesAreEmpty()
     {
         // arrange
         var schema = CreateFooSchema();
@@ -1470,7 +1470,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
         store.RecordFailedFetch(foos[1].CompactPath, CreateFetch(schema, "{ key }"));
 
         // act
-        var result = store.GetUncoveredTargetPaths(foosPath, [], [requirement], keyFetches: null);
+        var result = store.GetUncoveredTargetPaths(foosPath, [], [requirement], keyFetches: []);
 
         // assert
         Assert.Equal(foos[0].CompactPath, Assert.Single(result));
@@ -1530,6 +1530,95 @@ public sealed class FetchResultStoreTests : FusionTestBase
         Assert.Equal(tracksFailedFetches, store.HasFailedFetches);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AddPartialResults_Should_RentPathOnlyWhenTracked_When_LookupReturnsNull(bool tracksFailedFetches)
+    {
+        // arrange
+        var schema = CreateFooSchema();
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateStore(
+            schema,
+            "{ foos { name } }",
+            """{"data":{"foos":[{"name":"a"}]}}""",
+            resultArena,
+            sourceArena,
+            tracksFailedFetches);
+        var target = store.Result.Data.GetProperty("foos")[0].CompactPath.Detach();
+        var fetch = CreateFetch(schema, "{ name }");
+
+        // act
+        var rented = AddNullLookupAndCountRentedPaths(store, target, fetch, sourceArena);
+
+        // assert
+        Assert.Equal(tracksFailedFetches ? 1 : 0, rented);
+    }
+
+    [Fact]
+    public void AddPartialResults_Should_NotRentPaths_When_UntrackedSubscriptionEventsHaveNullLookups()
+    {
+        // arrange
+        var schema = CreateFooSchema();
+        var plan = PlanOperation(schema, "{ foos { name } }");
+        var root = Assert.IsType<OperationExecutionNode>(Assert.Single(plan.RootNodes));
+        var fetch = CreateFetch(schema, "{ name }");
+        var payload = """{"data":{"foos":[{"name":"a"}]}}"""u8.ToArray();
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateStore(
+            schema,
+            "{ foos { name } }",
+            """{"data":{"foos":[{"name":"a"}]}}""",
+            resultArena,
+            sourceArena,
+            tracksFailedFetches: false);
+        var rented = 0;
+
+        // act
+        for (var i = 0; i < 100; i++)
+        {
+            var memoryOwners = store.MemoryOwners.ToArray();
+            store.MemoryOwners.Clear();
+            Array.ForEach(memoryOwners, memory => memory.Dispose());
+            store.Reset(new MemoryArena());
+            var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
+            store.AddPartialResults(
+                SelectionPath.Root,
+                [new SourceSchemaResult(CompactPath.Root, document)],
+                root.ResultSelectionSet,
+                containsErrors: false);
+            var target = store.Result.Data.GetProperty("foos")[0].CompactPath.Detach();
+            rented += AddNullLookupAndCountRentedPaths(store, target, fetch, sourceArena);
+        }
+
+        // assert
+        Assert.Equal(0, rented);
+    }
+
+    private static int AddNullLookupAndCountRentedPaths(
+        FetchResultStore store,
+        CompactPath target,
+        ResultSelectionSet fetch,
+        MemoryArena sourceArena)
+    {
+        var payload = """{"data":null}"""u8.ToArray();
+        var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
+        var ownedBefore = store.PathPool.OwnedCount;
+        var freeBefore = store.PathPool.FreeCount;
+
+        store.AddPartialResults(
+            SelectionPath.Root,
+            [new SourceSchemaResult(target, document)],
+            fetch,
+            containsErrors: false);
+
+        return store.PathPool.OwnedCount - ownedBefore + freeBefore - store.PathPool.FreeCount;
+    }
+
     [Fact]
     public void Clean_Should_StopTrackingAndClearFailedFetches_When_StoreReturnsToPool()
     {
@@ -1551,12 +1640,10 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
-        var hasFailedFetchesAfterClean = store.HasFailedFetches;
-        store.RecordFailedFetch(path, fetch);
 
         // assert
-        Assert.False(hasFailedFetchesAfterClean);
         Assert.False(store.HasFailedFetches);
+        Assert.False(store.TracksFailedFetches);
     }
 
     [Fact]

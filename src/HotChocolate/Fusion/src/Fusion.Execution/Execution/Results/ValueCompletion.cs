@@ -324,7 +324,10 @@ internal sealed class ValueCompletion
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
 
-        _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
+        if (_store.TracksFailedFetches)
+        {
+            _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
+        }
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -593,7 +596,10 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
     {
-        _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
+        if (_store.TracksFailedFetches)
+        {
+            _store.RecordFailedFetch(target.CompactPath, resultSelectionSet);
+        }
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
