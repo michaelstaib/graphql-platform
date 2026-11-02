@@ -68,8 +68,8 @@ public sealed class OperationCompiler
         => Compile(id, hash, shortHash, operationDefinition, deliveryGroups: []);
 
     /// <summary>
-    /// Compiles the operation and registers the include conditions of the delivery groups, so
-    /// that the include flags of a request also cover them.
+    /// Compiles the operation and registers the <c>@defer(if:)</c>, <c>@include</c> and <c>@skip</c>
+    /// conditions of the delivery groups, so that the include flags of a request also cover them.
     /// </summary>
     /// <exception cref="ArgumentException">
     /// Thrown when a delivery group ID is negative.
@@ -95,7 +95,8 @@ public sealed class OperationCompiler
         var deliveryGroupIds = RegisterDeliveryGroupConditions(
             deliveryGroups,
             includeConditions,
-            out var deliveryGroupConditionIndices);
+            out var deliveryGroupConditionIndices,
+            out var deliveryGroupDeferIfIndices);
 
         // Scans the operation for @defer fragments and creates one
         // DeliveryGroup object for each. Also fills deferConditions with any
@@ -158,6 +159,7 @@ public sealed class OperationCompiler
                 partitioning.ByFragment,
                 deliveryGroupIds,
                 deliveryGroupConditionIndices,
+                deliveryGroupDeferIfIndices,
                 hasIncrementalParts,
                 lastId,
                 compilationContext.ElementsById);
@@ -171,11 +173,13 @@ public sealed class OperationCompiler
     private static ImmutableArray<int> RegisterDeliveryGroupConditions(
         ImmutableArray<DeliveryGroup> deliveryGroups,
         IncludeConditionCollection includeConditions,
-        out ImmutableArray<ImmutableArray<int>> conditionIndices)
+        out ImmutableArray<ImmutableArray<int>> conditionIndices,
+        out ImmutableArray<int> deferIfIndices)
     {
         if (deliveryGroups.IsDefaultOrEmpty)
         {
             conditionIndices = [];
+            deferIfIndices = [];
             return [];
         }
 
@@ -188,24 +192,31 @@ public sealed class OperationCompiler
                 throw ThrowHelper.DeliveryGroupIdNegative(deliveryGroup.Id, nameof(deliveryGroups));
             }
 
-            if (!deliveryGroup.Conditions.IsDefaultOrEmpty)
+            if (deliveryGroup.HasIncludeConditions)
             {
                 conditionalGroupCount++;
             }
         }
 
-        var ids = new int[conditionalGroupCount];
-        var indices = new ImmutableArray<int>[conditionalGroupCount];
+        var entries = new (int Id, ImmutableArray<int> Indices, int DeferIfIndex)[conditionalGroupCount];
         var position = 0;
 
         foreach (var deliveryGroup in deliveryGroups)
         {
-            if (deliveryGroup.Conditions.IsDefaultOrEmpty)
+            if (!deliveryGroup.HasIncludeConditions)
             {
                 continue;
             }
 
             var groupIndices = ImmutableArray.CreateBuilder<int>(deliveryGroup.Conditions.Length);
+            var deferIfIndex = -1;
+
+            if (deliveryGroup.IfVariable is { } ifVariable)
+            {
+                var ifCondition = new IncludeCondition(skip: null, include: ifVariable);
+                includeConditions.Add(ifCondition);
+                deferIfIndex = includeConditions.IndexOf(ifCondition);
+            }
 
             foreach (var condition in deliveryGroup.Conditions)
             {
@@ -213,15 +224,25 @@ public sealed class OperationCompiler
                 groupIndices.Add(includeConditions.IndexOf(condition));
             }
 
-            ids[position] = deliveryGroup.Id;
-            indices[position] = groupIndices.MoveToImmutable();
-            position++;
+            entries[position++] = (deliveryGroup.Id, groupIndices.MoveToImmutable(), deferIfIndex);
         }
 
         // The ids are sorted so that the operation can look up a group by its id with a binary search.
-        Array.Sort(ids, indices);
+        Array.Sort(entries, static (a, b) => a.Id.CompareTo(b.Id));
+
+        var ids = new int[conditionalGroupCount];
+        var indices = new ImmutableArray<int>[conditionalGroupCount];
+        var ifIndices = new int[conditionalGroupCount];
+
+        for (var i = 0; i < entries.Length; i++)
+        {
+            ids[i] = entries[i].Id;
+            indices[i] = entries[i].Indices;
+            ifIndices[i] = entries[i].DeferIfIndex;
+        }
 
         conditionIndices = ImmutableCollectionsMarshal.AsImmutableArray(indices);
+        deferIfIndices = ImmutableCollectionsMarshal.AsImmutableArray(ifIndices);
         return ImmutableCollectionsMarshal.AsImmutableArray(ids);
     }
 

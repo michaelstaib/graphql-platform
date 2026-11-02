@@ -124,10 +124,8 @@ internal static partial class OperationPlanExecutor
             var activeDeliveryGroupIds = new HashSet<int>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (IsDeliveryGroupActive(
+                if (operationPlan.Operation.AreDeliveryGroupConditionsIncluded(
                     deliveryGroup,
-                    variables,
-                    operationPlan.Operation,
                     rootContext.IncludeConditionFlags))
                 {
                     activeDeliveryGroupIds.Add(deliveryGroup.Id);
@@ -811,29 +809,6 @@ internal static partial class OperationPlanExecutor
         }
     }
 
-    private static bool IsDeliveryGroupActive(
-        DeliveryGroup deliveryGroup,
-        IVariableValueCollection variables,
-        Operation operation,
-        ConditionFlags includeFlags)
-    {
-        if (deliveryGroup.IfVariable is not null)
-        {
-            if (!variables.TryGetValue<BooleanValueNode>(deliveryGroup.IfVariable, out var boolValue))
-            {
-                throw new InvalidOperationException(
-                    $"The variable {deliveryGroup.IfVariable} has an invalid value.");
-            }
-
-            if (!boolValue.Value)
-            {
-                return false;
-            }
-        }
-
-        return operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, includeFlags);
-    }
-
     private static DeliveryGroup? GetEnabledDeliveryGroup(
         DeliveryGroup? deliveryGroup,
         HashSet<int> activeDeliveryGroupIds)
@@ -934,7 +909,7 @@ internal static partial class OperationPlanExecutor
 
         foreach (var deliveryGroup in deliveryGroups)
         {
-            if (operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, includeFlags))
+            if (!operation.IsDeliveryGroupExcluded(deliveryGroup, includeFlags))
             {
                 return false;
             }

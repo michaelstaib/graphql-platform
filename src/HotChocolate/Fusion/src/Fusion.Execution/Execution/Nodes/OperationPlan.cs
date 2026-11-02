@@ -282,7 +282,7 @@ public sealed partial record OperationPlan : IOperationPlan
 
         foreach (var deliveryGroup in deliveryGroups)
         {
-            if (!deliveryGroup.Conditions.IsDefaultOrEmpty && !operation.HasDeliveryGroupConditions(deliveryGroup))
+            if (deliveryGroup.HasIncludeConditions && !operation.HasDeliveryGroupConditions(deliveryGroup))
             {
                 throw ThrowHelper.DeliveryGroupConditionsNotCompiled(deliveryGroup.Id, nameof(deliveryGroups));
             }
