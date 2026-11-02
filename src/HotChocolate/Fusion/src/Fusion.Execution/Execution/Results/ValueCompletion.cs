@@ -554,7 +554,9 @@ internal sealed class ValueCompletion
         // "not found" state (e.g. a lookup that resolved to null), so each
         // selected field is completed with its own nullability semantics
         // instead of surfacing an unexpected execution error.
-        if (sourceValueKind is JsonValueKind.Null && error is null)
+        if (sourceValueKind is JsonValueKind.Null
+            && error is null
+            && (target.ValueKind is not JsonValueKind.Undefined || TryInitializeTargetObject(target)))
         {
             return CompleteNullSource(source, target, resultSelectionSet);
         }
