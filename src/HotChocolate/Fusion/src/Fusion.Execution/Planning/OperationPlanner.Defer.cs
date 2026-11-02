@@ -529,6 +529,44 @@ public sealed partial class OperationPlanner
         ParentPlanContext parentContext,
         PlanContextGraph contextGraph)
     {
+        var rewrittenIncrementalPlan = RouteDeferRequirements(
+            descriptor,
+            incrementalPlanSteps,
+            parentContext,
+            contextGraph,
+            isOuterScopePass: false);
+
+        // A nested plan runs against the result of an outer scope when the plans in between
+        // are inactive, so every outer scope it can run against supplies the requirements too.
+        if (parentContext.OwnerDescriptor is not null
+            && !ReferenceEquals(rewrittenIncrementalPlan, incrementalPlanSteps))
+        {
+            for (var outerScope = contextGraph.GetEnclosingScope(parentContext);
+                outerScope is not null;
+                outerScope = contextGraph.GetEnclosingScope(outerScope))
+            {
+                if (IsPossibleRequirementSource(descriptor, outerScope))
+                {
+                    RouteDeferRequirements(
+                        descriptor,
+                        incrementalPlanSteps,
+                        outerScope,
+                        contextGraph,
+                        isOuterScopePass: true);
+                }
+            }
+        }
+
+        return rewrittenIncrementalPlan;
+    }
+
+    private ImmutableList<PlanStep> RouteDeferRequirements(
+        IncrementalPlanDescriptor descriptor,
+        ImmutableList<PlanStep> incrementalPlanSteps,
+        ParentPlanContext parentContext,
+        PlanContextGraph contextGraph,
+        bool isOuterScopePass)
+    {
         if (incrementalPlanSteps.Count < 2)
         {
             return incrementalPlanSteps;
@@ -693,6 +731,11 @@ public sealed partial class OperationPlanner
                             scopeState,
                             out var keyStepId))
                         {
+                            if (isOuterScopePass)
+                            {
+                                break;
+                            }
+
                             throw CreateDeferredMutationLookupRequiredException(descriptor);
                         }
 
@@ -748,7 +791,12 @@ public sealed partial class OperationPlanner
                     // This scope cannot serve the requirement. Escalate to
                     // the next enclosing scope and retry. At root exhaustion
                     // the loop exits with resolved=false.
-                    walkScope = contextGraph.GetEnclosingScope(walkScope);
+                    walkScope = isOuterScopePass ? null : contextGraph.GetEnclosingScope(walkScope);
+                }
+
+                if (!resolved && isOuterScopePass)
+                {
+                    continue;
                 }
 
                 if (!resolved)
@@ -824,6 +872,17 @@ public sealed partial class OperationPlanner
         if (lifted.Count == 0)
         {
             return incrementalPlanSteps;
+        }
+
+        // A lifted step now also feeds this incremental plan, so it must run whenever the
+        // deferred consumer runs and not only when the field is part of the enclosing plan.
+        foreach (var entry in lifted)
+        {
+            var consumerConditions = incrementalPlanSteps.ById(entry.DownstreamStepId) is OperationPlanStep consumer
+                ? consumer.Conditions
+                : [];
+
+            RelaxLiftedStepConditions(entry.Scope, entry.ParentStepId, consumerConditions);
         }
 
         // A promoted step runs in the enclosing scope, so the parent-scope step that supplies
@@ -1484,6 +1543,63 @@ public sealed partial class OperationPlanner
                     i,
                     provider with { Dependents = provider.Dependents.Add(dependentStepId) });
                 return;
+            }
+        }
+    }
+
+    private static bool IsPossibleRequirementSource(IncrementalPlanDescriptor descriptor, ParentPlanContext scope)
+    {
+        var unconditionalPlans = 0;
+
+        for (var current = descriptor;
+            current is not null && !ReferenceEquals(current, scope.OwnerDescriptor);
+            current = current.Parent)
+        {
+            if (current.DeliveryGroupSet.Any(group => group.IfVariable is null))
+            {
+                unconditionalPlans++;
+            }
+        }
+
+        return unconditionalPlans <= 1;
+    }
+
+    private static void RelaxLiftedStepConditions(
+        ScopeState scopeState,
+        int liftedStepId,
+        ExecutionNodeCondition[] consumerConditions)
+    {
+        var visited = new HashSet<int>();
+        var pending = new Stack<int>();
+        pending.Push(liftedStepId);
+
+        while (pending.TryPop(out var stepId))
+        {
+            if (!visited.Add(stepId))
+            {
+                continue;
+            }
+
+            for (var i = 0; i < scopeState.Steps.Count; i++)
+            {
+                if (scopeState.Steps[i] is not OperationPlanStep step)
+                {
+                    continue;
+                }
+
+                if (step.Dependents.Contains(stepId))
+                {
+                    pending.Push(step.Id);
+                }
+                else if (step.Id == stepId)
+                {
+                    var shared = step.Conditions.Where(consumerConditions.Contains).ToArray();
+
+                    if (shared.Length != step.Conditions.Length)
+                    {
+                        scopeState.Steps = scopeState.Steps.SetItem(i, step with { Conditions = shared });
+                    }
+                }
             }
         }
     }

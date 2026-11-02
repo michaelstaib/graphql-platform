@@ -1,0 +1,176 @@
+operation:
+  - document: |
+      mutation($outer: Boolean!, $inner: Boolean!) {
+        create {
+          user {
+            id @fusion__requirement
+            sku @fusion__requirement
+            ... @skip(if: $outer) {
+              name
+              total @skip(if: $inner)
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      mutation Op_123456789101112_1($outer: Boolean!, $inner: Boolean!) {
+        create {
+          user {
+            ... @skip(if: $outer) {
+              ... @skip(if: $inner) {
+                id
+              }
+              id
+            }
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - outer
+      - inner
+  - id: 2
+    type: Operation
+    schema: e
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          name
+        }
+      }
+    source: $.userById
+    target: $.create.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $outer
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_sku: String!) {
+        userBySku(sku: $__fusion_2_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    target: $.create.user
+    requirements:
+      - name: __fusion_2_sku
+        selectionMap: >-
+          sku
+    conditions:
+      - variable: $outer
+        passingValue: false
+      - variable: $inner
+        passingValue: false
+    dependencies:
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          sku
+        }
+      }
+    source: $.userById
+    target: $.create.user
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.create.user
+    label: outer
+    ifVariable: $outer
+  - id: 1
+    path: $.create.user
+    label: inner
+    ifVariable: $inner
+    parentId: 0
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 2
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: e
+        operation: |
+          query Op_defer_2($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              name
+              id
+            }
+          }
+        source: $.userById
+        target: $.create.user
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+      - id: 2
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_3($__fusion_2_id: ID!) {
+            userById(id: $__fusion_2_id) {
+              sku
+            }
+          }
+        source: $.userById
+        target: $.create.user
+        requirements:
+          - name: __fusion_2_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 1
+  - deliveryGroupIds:
+      - 1
+    parentNodeId: 1
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_1_sku: String!) {
+            userBySku(sku: $__fusion_1_sku) {
+              total
+            }
+          }
+        source: $.userBySku
+        target: $.create.user
+        requirements:
+          - name: __fusion_1_sku
+            selectionMap: >-
+              sku
+        dependencies:
+          - parentNodeId: 2

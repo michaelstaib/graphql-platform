@@ -1,0 +1,116 @@
+operation:
+  - document: |
+      mutation($defer: Boolean!) {
+        create {
+          user {
+            id @fusion__requirement
+            sku @fusion__requirement
+            code @fusion__requirement
+            total @skip(if: $defer)
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 4
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      mutation Op_123456789101112_1($defer: Boolean!) {
+        create {
+          user {
+            ... @skip(if: $defer) {
+              id
+            }
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - defer
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_sku: String!) {
+        userBySku(sku: $__fusion_1_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    target: $.create.user
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    conditions:
+      - variable: $defer
+        passingValue: false
+    dependencies:
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_3($__fusion_2_code: String!) {
+        userByCode(code: $__fusion_2_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.create.user
+    requirements:
+      - name: __fusion_2_code
+        selectionMap: >-
+          code
+    dependencies:
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          code
+        }
+      }
+    source: $.userById
+    target: $.create.user
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.create.user
+    ifVariable: $defer
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 2
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_1_sku: String!) {
+            userBySku(sku: $__fusion_1_sku) {
+              total
+            }
+          }
+        source: $.userBySku
+        target: $.create.user
+        requirements:
+          - name: __fusion_1_sku
+            selectionMap: >-
+              sku
+        dependencies:
+          - parentNodeId: 3
