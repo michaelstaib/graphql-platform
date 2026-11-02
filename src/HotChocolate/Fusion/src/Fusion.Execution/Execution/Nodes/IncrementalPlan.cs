@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using HotChocolate.Execution;
+using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
 
@@ -54,6 +56,7 @@ public sealed class IncrementalPlan : IOperationPlan
             out var usesBatchNodes);
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
+        ConditionalFieldSelections = FindConditionalFieldSelections(operation, deliveryGroups);
     }
 
     /// <summary>
@@ -103,6 +106,13 @@ public sealed class IncrementalPlan : IOperationPlan
     /// Gets the highest plan node identifier that can be resolved by this plan.
     /// </summary>
     public int MaxNodeId => _nodesById.Length > 0 ? _nodesById.Length - 1 : 0;
+
+    /// <summary>
+    /// Gets the selections of the fields this plan delivers when every one of them depends on an
+    /// include condition. It is empty when the plan delivers any field unconditionally or when
+    /// its fields cannot be resolved to selections.
+    /// </summary>
+    internal ImmutableArray<Selection> ConditionalFieldSelections { get; }
 
     internal bool UsesDynamicSchemaNames { get; }
 
@@ -156,6 +166,67 @@ public sealed class IncrementalPlan : IOperationPlan
         }
 
         throw ThrowHelper.NodeNotFound(planNode.Id);
+    }
+
+    private static ImmutableArray<Selection> FindConditionalFieldSelections(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        var path = deliveryGroups[0].Path ?? SelectionPath.Root;
+
+        for (var i = 1; i < deliveryGroups.Length; i++)
+        {
+            if (!path.Equals(deliveryGroups[i].Path ?? SelectionPath.Root))
+            {
+                return [];
+            }
+        }
+
+        var selectionSet = operation.RootSelectionSet;
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            var segment = path[i];
+
+            if (segment.Kind is SelectionPathSegmentKind.Root)
+            {
+                continue;
+            }
+
+            if (segment.Kind is not SelectionPathSegmentKind.Field
+                || !selectionSet.TryGetSelection(segment.Name, out var selection)
+                || selection.IsLeaf
+                || selection.NamedType is not IObjectTypeDefinition)
+            {
+                return [];
+            }
+
+            selectionSet = selection.GetSelectionSet()!;
+        }
+
+        var selections = ImmutableArray.CreateBuilder<Selection>();
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection.IsInternal)
+            {
+                continue;
+            }
+
+            if (!selection.IsConditional)
+            {
+                return [];
+            }
+
+            selections.Add(selection);
+        }
+
+        return selections.ToImmutable();
     }
 
     private static ExecutionNode?[] CreateNodeLookup(

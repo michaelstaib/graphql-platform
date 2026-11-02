@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,7 @@ using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Language;
+using HotChocolate.Resolvers;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
 using HotChocolate.Types.Composite;
@@ -1199,7 +1201,10 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Nested_Should_DeliverDeferredFields_When_InitialFieldIsExcludedByInclude()
     {
         // act
-        var payloads = await ExecuteConditionalNestedDeferAsync(includeName: false, skipEmail: false);
+        var payloads = await ExecuteConditionalDeferAsync(
+            NestedConditionalDeferQuery,
+            includeName: false,
+            skipEmail: false);
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -1220,7 +1225,45 @@ public class DeferTests : FusionTestBase
     public async Task Defer_Nested_Should_DeliverInnerGroup_When_OuterGroupFieldIsExcludedBySkip()
     {
         // act
-        var payloads = await ExecuteConditionalNestedDeferAsync(includeName: true, skipEmail: true);
+        var payloads = await ExecuteConditionalDeferAsync(
+            NestedConditionalDeferQuery,
+            includeName: true,
+            skipEmail: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"1","path":["user"],"label":"inner"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_DeliverSiblingField_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // act
+        var payloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        phone
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -1229,12 +1272,347 @@ public class DeferTests : FusionTestBase
             {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
             """,
             """
-            {"pending":[{"id":"1","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{}}],"completed":[{"id":"0"}],"hasNext":true}
+            {"pending":[{"id":"1","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"phone":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"}],"hasNext":true}
             """,
             """
             {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
             """
         ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_MatchNonDeferredResult_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // arrange
+        var nonDeferredPayloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    email @skip(if: $skipEmail)
+                    phone
+                    address
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
+
+        // act
+        var payloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        phone
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
+
+        // assert
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse(nonDeferredPayloads[0])!["data"],
+                MergeIncrementalPayloads(payloads)));
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_DeliverInnerRequirement_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+                preferences: String!
+            }
+            """);
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+            }
+            """);
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            """
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                customized(preferences: String! @require(field: "preferences")): String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var nonDeferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    name
+                    email @skip(if: $skipEmail)
+                    customized
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        var deferredRequest = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            customized
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        // act
+        using var nonDeferredResult = await client.PostAsync(
+            nonDeferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var deferredResult = await client.PostAsync(
+            deferredRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var nonDeferredPayloads = await ReadPayloadsAsync(nonDeferredResult);
+        var payloads = await ReadPayloadsAsync(deferredResult);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"1","path":["user"],"label":"inner"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"customized":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse(nonDeferredPayloads[0])!["data"],
+                MergeIncrementalPayloads(payloads)));
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_DeliverInnerGroupWithEnclosingGroup_When_MiddleGroupFieldIsExcludedBySkip()
+    {
+        // act
+        var payloads = await ExecuteConditionalDeferAsync(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        name @include(if: $includeName)
+                        ... @defer(label: "middle") {
+                            email @skip(if: $skipEmail)
+                            ... @defer(label: "inner") {
+                                address
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            includeName: true,
+            skipEmail: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"2","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"name":"User: VXNlcjoyMDc0ODIxMjU4"}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_CompleteAnnouncedInnerGroupWithErrors_When_SilentMiddlePlanFails()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<FailingUserLookupSourceA.Query>(),
+            services => services.AddSingleton<FailingUserLookupSourceA.LookupCounter>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        name @include(if: $includeName)
+                        ... @defer(label: "middle") {
+                            email @skip(if: $skipEmail)
+                            ... @defer(label: "inner") {
+                                address
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?>
+            {
+                ["includeName"] = true,
+                ["skipEmail"] = true
+            });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var payloads = await ReadPayloadsAsync(result);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"1"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"2","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"name":"User 1"}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"completed":[{"id":"2","errors":[{"message":"User lookup failed.","path":["user"]}]}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Siblings_Should_CompleteSharedGroupWithoutErrors_When_ExcludedSharedPlanFails()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<FailingKeyLookupSourceA.Query>(),
+            services => services.AddSingleton<FailingKeyLookupSourceA.LookupCounter>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query($skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "a") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                    ... @defer(label: "b") {
+                        email @skip(if: $skipEmail)
+                        name
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipEmail"] = true });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
     [Fact]
@@ -4755,7 +5133,26 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
-    private async Task<List<string>> ExecuteConditionalNestedDeferAsync(bool includeName, bool skipEmail)
+    private const string NestedConditionalDeferQuery =
+        """
+        query($includeName: Boolean!, $skipEmail: Boolean!) {
+            user(id: "1") {
+                id
+                name @include(if: $includeName)
+                ... @defer(label: "outer") {
+                    email @skip(if: $skipEmail)
+                    ... @defer(label: "inner") {
+                        address
+                    }
+                }
+            }
+        }
+        """;
+
+    private async Task<List<string>> ExecuteConditionalDeferAsync(
+        [StringSyntax("graphql")] string query,
+        bool includeName,
+        bool skipEmail)
     {
         using var server1 = CreateSourceSchema(
             "A",
@@ -4780,6 +5177,7 @@ public class DeferTests : FusionTestBase
             type User @key(fields: "id") {
                 id: ID!
                 email: String!
+                phone: String!
                 address: String!
             }
             """);
@@ -4793,20 +5191,7 @@ public class DeferTests : FusionTestBase
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
 
         var request = new OperationRequest(
-            query: """
-            query($includeName: Boolean!, $skipEmail: Boolean!) {
-                user(id: "1") {
-                    id
-                    name @include(if: $includeName)
-                    ... @defer(label: "outer") {
-                        email @skip(if: $skipEmail)
-                        ... @defer(label: "inner") {
-                            address
-                        }
-                    }
-                }
-            }
-            """,
+            query: query,
             variables: new Dictionary<string, object?>
             {
                 ["includeName"] = includeName,
@@ -5045,6 +5430,61 @@ public class DeferTests : FusionTestBase
             await sequence.WaitForTurnAsync(sequence.IndexOf(body), cancellationToken);
 
             return await _invoker!.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private static class FailingUserLookupSourceA
+    {
+        public class Query
+        {
+            [Lookup]
+            public User? GetUser([GraphQLType<NonNullType<IdType>>] string id, [Service] LookupCounter counter)
+            {
+                if (counter.Next() == 3)
+                {
+                    throw new GraphQLException("User lookup failed.");
+                }
+
+                return new User(id, "User " + id);
+            }
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id, string Name);
+
+        public sealed class LookupCounter
+        {
+            private int _count;
+
+            public int Next() => Interlocked.Increment(ref _count);
+        }
+    }
+
+    private static class FailingKeyLookupSourceA
+    {
+        public class Query
+        {
+            [Lookup]
+            public User? GetUser(
+                [GraphQLType<NonNullType<IdType>>] string id,
+                [Service] LookupCounter counter,
+                IResolverContext context)
+            {
+                if (!context.IsSelected("name") && counter.Next() == 2)
+                {
+                    throw new GraphQLException("User key lookup failed.");
+                }
+
+                return new User(id, "User " + id);
+            }
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id, string Name);
+
+        public sealed class LookupCounter
+        {
+            private int _count;
+
+            public int Next() => Interlocked.Increment(ref _count);
         }
     }
 
