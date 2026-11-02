@@ -602,6 +602,12 @@ internal sealed class ValueCompletion
             }
 
             var selection = fieldResult.AssertSelection();
+
+            if (selection.Field.IsIntrospectionField)
+            {
+                continue;
+            }
+
             var childSet = resultSelectionSet.TryGetChild(selection.ResponseName);
 
             if (!TryCompleteValue(

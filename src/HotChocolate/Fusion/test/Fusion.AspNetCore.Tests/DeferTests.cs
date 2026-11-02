@@ -5519,6 +5519,290 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_TypeNameInFragmentAndLookupReturnsNullForFirstListItem()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                users(ids: [99, 2, 3]) {
+                    name
+                        ... @defer {
+                            __typename
+                            total
+                        }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 99"},{"name":"User 2"},{"name":"User 3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"__typename":"User","total":null}},{"id":"0","subPath":[1],"data":{"__typename":"User","total":200}},{"id":"0","subPath":[2],"data":{"__typename":"User","total":300}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NullField_When_TypeNameInFragmentAndLookupReturnsNullForFirstListItem()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                users(ids: [99, 2, 3]) {
+                    name
+                        __typename
+                        total
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 99","__typename":"User","total":null},{"name":"User 2","__typename":"User","total":200},{"name":"User 3","__typename":"User","total":300}]}}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_TypeNameInFragmentAndLookupReturnsNullForMiddleListItem()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                users(ids: [2, 99, 3]) {
+                    name
+                        ... @defer {
+                            __typename
+                            total
+                        }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 2"},{"name":"User 99"},{"name":"User 3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"__typename":"User","total":200}},{"id":"0","subPath":[1],"data":{"__typename":"User","total":null}},{"id":"0","subPath":[2],"data":{"__typename":"User","total":300}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NullField_When_TypeNameInFragmentAndLookupReturnsNullForMiddleListItem()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                users(ids: [2, 99, 3]) {
+                    name
+                        __typename
+                        total
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 2","__typename":"User","total":200},{"name":"User 99","__typename":"User","total":null},{"name":"User 3","__typename":"User","total":300}]}}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_TypeNameInFragmentAndLookupReturnsNullForLastListItem()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                users(ids: [2, 3, 99]) {
+                    name
+                        ... @defer {
+                            __typename
+                            total
+                        }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 2"},{"name":"User 3"},{"name":"User 99"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"__typename":"User","total":200}},{"id":"0","subPath":[1],"data":{"__typename":"User","total":300}},{"id":"0","subPath":[2],"data":{"__typename":"User","total":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NullField_When_TypeNameInFragmentAndLookupReturnsNullForLastListItem()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                users(ids: [2, 3, 99]) {
+                    name
+                        __typename
+                        total
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 2","__typename":"User","total":200},{"name":"User 3","__typename":"User","total":300},{"name":"User 99","__typename":"User","total":null}]}}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_TypeNameInFragmentAndLookupReturnsNullForSingleObject()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                one(id: 99) {
+                    name
+                        ... @defer {
+                            __typename
+                            total
+                        }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"one":{"name":"User 99"}},"pending":[{"id":"0","path":["one"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","data":{"__typename":"User","total":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NullField_When_TypeNameInFragmentAndLookupReturnsNullForSingleObject()
+    {
+        // arrange
+        using var gateway = await CreateNullLookupGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            {
+                one(id: 99) {
+                    name
+                        __typename
+                        total
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var payloads = await ReadPayloadsAsync(result);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"one":{"name":"User 99","__typename":"User","total":null}}}
+            """
+        ]);
+    }
+
     private async Task<Gateway> CreateNullLookupGatewayAsync()
     {
         var server1 = CreateSourceSchema(
@@ -6252,6 +6536,8 @@ public class DeferTests : FusionTestBase
             public User[] GetStrictUsers(int[] ids) => ids.Select(id => new User(id)).ToArray();
 
             public User GetUser(int[] friendIds) => new(1) { FriendIds = friendIds };
+
+            public User? GetOne(int id) => new(id);
 
             [Lookup]
             [Internal]
