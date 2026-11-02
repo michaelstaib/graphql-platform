@@ -161,6 +161,9 @@ public class DeferMutationTests : FusionTestBase
                     }
                 }
             }
+
+            cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, true, true);
+            cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, false, false);
         }
 
         return cases;
@@ -193,6 +196,26 @@ public class DeferMutationTests : FusionTestBase
                     }
                     """,
                     variables: new Dictionary<string, object?> { ["d"] = outer }),
+                plain);
+        }
+
+        if (shape is ConditionShape.AnchorAboveEntity)
+        {
+            return (
+                new OperationRequest(
+                    """
+                    query($a: Boolean!, $b: Boolean!) {
+                        current {
+                            ... @defer(if: $a, label: "outer") {
+                                user {
+                                    name
+                                    ... @defer(if: $b, label: "inner") { total }
+                                }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["a"] = outer, ["b"] = inner }),
                 plain);
         }
 
@@ -598,7 +621,8 @@ public class DeferMutationTests : FusionTestBase
         Single,
         OuterAndInner,
         OuterOnly,
-        InnerOnly
+        InnerOnly,
+        AnchorAboveEntity
     }
 
     public enum MutationShape

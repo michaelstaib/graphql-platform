@@ -746,6 +746,7 @@ public sealed partial class OperationPlanner
 
                     // When no existing parent-scope step can supply the
                     // requirement, add a dedicated step to the enclosing scope.
+                    var stepsBeforePromotion = scopeState.Steps;
                     var (stepsAfterPromotion, newStepId, promotedIncrementalPlanStepId) =
                         PlanCrossSubgraphDeferRequirement(
                             sourceRequirement,
@@ -769,6 +770,12 @@ public sealed partial class OperationPlanner
                                 promotedTargetType,
                                 resolver.Rewrite(sourceRequirement.Map, promotedTargetType)))
                         {
+                            if (isOuterScopePass)
+                            {
+                                scopeState.Steps = stepsBeforePromotion;
+                                break;
+                            }
+
                             throw CreateUnsatisfiableDeferRequirementException(
                                 producers[0],
                                 requirement,

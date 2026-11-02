@@ -87,6 +87,55 @@ public class DeferMutationPlannerTests : FusionTestBase
         Assert.Equal(expectedNodes, DescribeNodes(plan));
     }
 
+    [Theory]
+    [InlineData(
+        Topology.DirectKey,
+        MutationShape.AnchorAboveEntityOuterOnly,
+        "Query/a,Query/e | Query/a,Query/e | Query/b")]
+    [InlineData(Topology.DirectKey, MutationShape.AnchorAboveEntityInnerOnly, "Query/a | Query/a,Query/e | Query/b")]
+    [InlineData(
+        Topology.DirectKey,
+        MutationShape.AnchorAboveEntityBoth,
+        "Query/a,Query/e,Query/b | Query/a,Query/e | Query/b")]
+    [InlineData(
+        Topology.OneHopKey,
+        MutationShape.AnchorAboveEntityOuterOnly,
+        "Query/a,Query/e | Query/a,Query/e,Query/c | Query/b")]
+    [InlineData(
+        Topology.OneHopKey,
+        MutationShape.AnchorAboveEntityInnerOnly,
+        "Query/a | Query/a,Query/e,Query/c | Query/b")]
+    [InlineData(
+        Topology.OneHopKey,
+        MutationShape.AnchorAboveEntityBoth,
+        "Query/a,Query/e,Query/b,Query/c | Query/a,Query/e,Query/c | Query/b")]
+    [InlineData(
+        Topology.TwoHopKey,
+        MutationShape.AnchorAboveEntityOuterOnly,
+        "Query/a,Query/e | Query/a,Query/e,Query/d,Query/c | Query/b")]
+    [InlineData(
+        Topology.TwoHopKey,
+        MutationShape.AnchorAboveEntityInnerOnly,
+        "Query/a | Query/a,Query/e,Query/d,Query/c | Query/b")]
+    [InlineData(
+        Topology.TwoHopKey,
+        MutationShape.AnchorAboveEntityBoth,
+        "Query/a,Query/e,Query/b,Query/d,Query/c | Query/a,Query/e,Query/d,Query/c | Query/b")]
+    public void Defer_Should_PlanQuery_When_OuterDeferIsAnchoredAboveEntityWithKeyRequirement(
+        Topology topology,
+        MutationShape shape,
+        string expectedNodes)
+    {
+        // arrange
+        var schema = ComposeTopology(topology);
+
+        // act
+        var plan = PlanOperation(schema, GetOperation(shape));
+
+        // assert
+        Assert.Equal(expectedNodes, DescribeNodes(plan));
+    }
+
     [Fact]
     public void Defer_Should_ProduceOneMutationNodeInMainPlan_When_NestedDeferNeedsKeyOfOuterGroup()
     {
@@ -452,6 +501,45 @@ public class DeferMutationPlannerTests : FusionTestBase
                     }
                 }
                 """,
+            MutationShape.AnchorAboveEntityOuterOnly =>
+                """
+                query($a: Boolean!) {
+                    current {
+                        ... @defer(if: $a, label: "outer") {
+                            user {
+                                name
+                                ... @defer(label: "inner") { total }
+                            }
+                        }
+                    }
+                }
+                """,
+            MutationShape.AnchorAboveEntityInnerOnly =>
+                """
+                query($b: Boolean!) {
+                    current {
+                        ... @defer(label: "outer") {
+                            user {
+                                name
+                                ... @defer(if: $b, label: "inner") { total }
+                            }
+                        }
+                    }
+                }
+                """,
+            MutationShape.AnchorAboveEntityBoth =>
+                """
+                query($a: Boolean!, $b: Boolean!) {
+                    current {
+                        ... @defer(if: $a, label: "outer") {
+                            user {
+                                name
+                                ... @defer(if: $b, label: "inner") { total }
+                            }
+                        }
+                    }
+                }
+                """,
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 
@@ -470,6 +558,7 @@ public class DeferMutationPlannerTests : FusionTestBase
             # name: a
             type Query {
                 ping: String
+                current: CreateResult!
             }
 
             type Mutation {
@@ -625,6 +714,9 @@ public class DeferMutationPlannerTests : FusionTestBase
         ListField,
         AnchorOnMutationResult,
         RootDefer,
-        ThreeLevels
+        ThreeLevels,
+        AnchorAboveEntityOuterOnly,
+        AnchorAboveEntityInnerOnly,
+        AnchorAboveEntityBoth
     }
 }
