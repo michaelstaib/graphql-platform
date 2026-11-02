@@ -25,6 +25,7 @@ public sealed class Operation : IOperation
     private readonly IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> _deliveryGroupByFragment;
     private readonly ImmutableArray<int> _deliveryGroupIds;
     private readonly ImmutableArray<ImmutableArray<int>> _deliveryGroupConditionIndices;
+    private readonly ImmutableArray<int> _deliveryGroupDeferIfIndices;
     private readonly OperationFeatureCollection _features;
     private readonly bool _hasIncrementalParts;
     private object[] _elementsById;
@@ -44,6 +45,7 @@ public sealed class Operation : IOperation
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> deliveryGroupByFragment,
         ImmutableArray<int> deliveryGroupIds,
         ImmutableArray<ImmutableArray<int>> deliveryGroupConditionIndices,
+        ImmutableArray<int> deliveryGroupDeferIfIndices,
         bool hasIncrementalParts,
         int lastId,
         object[] elementsById)
@@ -74,6 +76,7 @@ public sealed class Operation : IOperation
         _deliveryGroupByFragment = deliveryGroupByFragment;
         _deliveryGroupIds = deliveryGroupIds;
         _deliveryGroupConditionIndices = deliveryGroupConditionIndices;
+        _deliveryGroupDeferIfIndices = deliveryGroupDeferIfIndices;
         _hasIncrementalParts = hasIncrementalParts;
         _lastId = lastId;
         _elementsById = elementsById;
@@ -305,8 +308,9 @@ public sealed class Operation : IOperation
         => _deliveryGroupIds.BinarySearch(deliveryGroup.Id) >= 0;
 
     /// <summary>
-    /// Determines whether all include conditions of the delivery group are set in the specified
-    /// include flags. A group whose conditions were not compiled into this operation counts as included.
+    /// Determines whether the <c>@defer(if:)</c>, <c>@include</c> and <c>@skip</c> conditions of the delivery
+    /// group are set in the specified include flags. A group whose conditions were not compiled into this
+    /// operation counts as included.
     /// </summary>
     internal bool AreDeliveryGroupConditionsIncluded(DeliveryGroup deliveryGroup, ConditionFlags includeFlags)
     {
@@ -317,13 +321,28 @@ public sealed class Operation : IOperation
             return true;
         }
 
-        foreach (var index in _deliveryGroupConditionIndices[position])
-        {
-            var isIncluded = index < 64
-                ? (includeFlags.Word0 & (1ul << index)) != 0
-                : (includeFlags.Overflow![(index >> 6) - 1] & (1ul << (index & 63))) != 0;
+        var deferIfIndex = _deliveryGroupDeferIfIndices[position];
 
-            if (!isIncluded)
+        return (deferIfIndex < 0 || IsConditionSet(includeFlags, deferIfIndex))
+            && AreConditionsSet(includeFlags, _deliveryGroupConditionIndices[position]);
+    }
+
+    /// <summary>
+    /// Determines whether the <c>@include</c> and <c>@skip</c> conditions of the delivery group exclude it
+    /// in the specified include flags. A group disabled only through <c>@defer(if:)</c> is not excluded.
+    /// </summary>
+    internal bool IsDeliveryGroupExcluded(DeliveryGroup deliveryGroup, ConditionFlags includeFlags)
+    {
+        var position = _deliveryGroupIds.BinarySearch(deliveryGroup.Id);
+
+        return position >= 0 && !AreConditionsSet(includeFlags, _deliveryGroupConditionIndices[position]);
+    }
+
+    private static bool AreConditionsSet(ConditionFlags includeFlags, ImmutableArray<int> indices)
+    {
+        foreach (var index in indices)
+        {
+            if (!IsConditionSet(includeFlags, index))
             {
                 return false;
             }
@@ -331,6 +350,11 @@ public sealed class Operation : IOperation
 
         return true;
     }
+
+    private static bool IsConditionSet(ConditionFlags includeFlags, int index)
+        => index < 64
+            ? (includeFlags.Word0 & (1ul << index)) != 0
+            : (includeFlags.Overflow![(index >> 6) - 1] & (1ul << (index & 63))) != 0;
 
     /// <summary>
     /// Creates the defer flags for the specified variable values.

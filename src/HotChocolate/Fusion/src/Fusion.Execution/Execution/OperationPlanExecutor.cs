@@ -909,7 +909,7 @@ internal static partial class OperationPlanExecutor
 
         foreach (var deliveryGroup in deliveryGroups)
         {
-            if (operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, includeFlags))
+            if (!operation.IsDeliveryGroupExcluded(deliveryGroup, includeFlags))
             {
                 return false;
             }

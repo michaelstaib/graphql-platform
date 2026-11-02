@@ -202,6 +202,60 @@ public class DeliveryGroupIncludeConditionTests : FusionTestBase
     }
 
     [Fact]
+    public void IsDeliveryGroupExcluded_Should_IgnoreDeferIf_When_GroupHasIfVariable()
+    {
+        // arrange
+        var schema = CreateSchema();
+        var include = new IncludeCondition(skip: null, include: "x");
+        var ifGroup = new DeliveryGroup(null, null, 0) { Id = 0, IfVariable = "d" };
+        var ifAndIncludeGroup = new DeliveryGroup(null, null, 0) { Id = 1, IfVariable = "d", Conditions = [include] };
+        var sharedGroup = new DeliveryGroup(null, null, 0) { Id = 2, IfVariable = "x" };
+        var unconditionalGroup = new DeliveryGroup(null, null, 0) { Id = 3 };
+        var operationDefinition = ParseOperation("query($d: Boolean!, $x: Boolean!) { foo }");
+        var compiler = new OperationCompiler(schema, _fieldMapPool);
+        var operation = compiler.Compile(
+            "1",
+            "1",
+            "1",
+            operationDefinition,
+            [ifGroup, ifAndIncludeGroup, sharedGroup, unconditionalGroup]);
+
+        // act
+        var enabled = operation.CreateIncludeConditionFlags(
+            CreateVariables(schema, new Dictionary<string, bool> { ["d"] = true, ["x"] = true }));
+        var deferDisabled = operation.CreateIncludeConditionFlags(
+            CreateVariables(schema, new Dictionary<string, bool> { ["d"] = false, ["x"] = true }));
+        var includeDisabled = operation.CreateIncludeConditionFlags(
+            CreateVariables(schema, new Dictionary<string, bool> { ["d"] = true, ["x"] = false }));
+
+        // assert
+        Assert.Equal(
+            [false, false, false, false],
+            [
+                operation.IsDeliveryGroupExcluded(ifGroup, enabled),
+                operation.IsDeliveryGroupExcluded(ifAndIncludeGroup, enabled),
+                operation.IsDeliveryGroupExcluded(sharedGroup, enabled),
+                operation.IsDeliveryGroupExcluded(unconditionalGroup, enabled)
+            ]);
+        Assert.Equal(
+            [false, false, false, false],
+            [
+                operation.IsDeliveryGroupExcluded(ifGroup, deferDisabled),
+                operation.IsDeliveryGroupExcluded(ifAndIncludeGroup, deferDisabled),
+                operation.IsDeliveryGroupExcluded(sharedGroup, deferDisabled),
+                operation.IsDeliveryGroupExcluded(unconditionalGroup, deferDisabled)
+            ]);
+        Assert.Equal(
+            [false, true, false, false],
+            [
+                operation.IsDeliveryGroupExcluded(ifGroup, includeDisabled),
+                operation.IsDeliveryGroupExcluded(ifAndIncludeGroup, includeDisabled),
+                operation.IsDeliveryGroupExcluded(sharedGroup, includeDisabled),
+                operation.IsDeliveryGroupExcluded(unconditionalGroup, includeDisabled)
+            ]);
+    }
+
+    [Fact]
     public void Create_Should_ThrowArgumentException_When_GroupIfVariableWasNotCompiled()
     {
         // arrange
