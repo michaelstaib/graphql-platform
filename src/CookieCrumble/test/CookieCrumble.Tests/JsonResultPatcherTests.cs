@@ -5,6 +5,9 @@ using System.Text.Json;
 using CookieCrumble.HotChocolate;
 using CookieCrumble.HotChocolate.Formatters;
 using CookieCrumble.Xunit3;
+using HotChocolate.Collections.Immutable;
+using HotChocolate.Execution;
+using HotChocolate.Text.Json;
 using HotChocolate.Transport.Http;
 
 namespace CookieCrumble;
@@ -491,6 +494,189 @@ public class JsonResultPatcherTests
         Assert.Equal(expected, actual);
     }
 
+    [Fact]
+    public void Format_Should_Throw_When_ScopeRejectsOverlapsAndDeferredResultOverlaps()
+    {
+        // arrange
+        var stream = CreateDeferredResultStream();
+        using var scope = IncrementalDeliveryChecks.RejectOverlappingPositions();
+        var buffer = new ArrayBufferWriter<byte>();
+
+        // act
+        var exception = Assert.Throws<AggregateException>(
+            () => SnapshotValueFormatters.ExecutionResult.Format(buffer, stream));
+
+        // assert
+        exception.InnerException!.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.child (object)");
+    }
+
+    [Fact]
+    public void Format_Should_Throw_When_ScopeRejectsOverlapsAndStableDeferredResultOverlaps()
+    {
+        // arrange
+        var stream = CreateDeferredResultStream();
+        using var scope = IncrementalDeliveryChecks.RejectOverlappingPositions();
+        var buffer = new ArrayBufferWriter<byte>();
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => SnapshotValueFormatters.ExecutionResultStable.Format(buffer, stream));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.child (object)");
+    }
+
+    [Fact]
+    public void Format_Should_Throw_When_ScopeRejectsOverlapsAndMultipartResponseOverlaps()
+    {
+        // arrange
+        using var response = CreateMultipartResponse();
+        using var scope = IncrementalDeliveryChecks.RejectOverlappingPositions();
+        var buffer = new ArrayBufferWriter<byte>();
+
+        // act
+        var exception = Assert.Throws<AggregateException>(
+            () => SnapshotValueFormatters.GraphQLHttp.Format(buffer, response));
+
+        // assert
+        exception.InnerException!.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.child (object)");
+    }
+
+    [Fact]
+    public void Format_Should_Throw_When_ScopeRejectsOverlapsAndStableMultipartResponseOverlaps()
+    {
+        // arrange
+        using var response = CreateMultipartResponse();
+        using var scope = IncrementalDeliveryChecks.RejectOverlappingPositions();
+        var buffer = new ArrayBufferWriter<byte>();
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => SnapshotValueFormatters.GraphQLHttpStable.Format(buffer, response));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.child (object)");
+    }
+
+    [Fact]
+    public void Format_Should_WriteEnvelope_When_NoScopeRejectsOverlapsAndDeferredResultOverlaps()
+    {
+        // arrange
+        var stream = CreateDeferredResultStream();
+        var buffer = new ArrayBufferWriter<byte>();
+
+        // act
+        SnapshotValueFormatters.ExecutionResult.Format(buffer, stream);
+
+        // assert
+        Encoding.UTF8.GetString(buffer.WrittenSpan).TrimEnd().MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "node": {
+                  "child": {
+                    "id": "1"
+                  }
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "node"
+                  ]
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "0",
+                  "data": {
+                    "child": {
+                      "name": "a"
+                    }
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """);
+    }
+
+    private static ResponseStream CreateDeferredResultStream()
+    {
+        var initial = new OperationResult(
+            CreateData(
+                new Dictionary<string, object?>
+                {
+                    ["node"] = new Dictionary<string, object?>
+                    {
+                        ["child"] = new Dictionary<string, object?> { ["id"] = "1" }
+                    }
+                }))
+        {
+            Pending = [new PendingResult(0, global::HotChocolate.Path.Root.Append("node"))],
+            HasNext = true
+        };
+
+        var incremental = new OperationResult(
+            ImmutableOrderedDictionary<string, object?>.Empty.Add("__placeholder", true))
+        {
+            Incremental = [
+                new IncrementalObjectResult(
+                    0,
+                    data: CreateData(
+                        new Dictionary<string, object?>
+                        {
+                            ["child"] = new Dictionary<string, object?> { ["name"] = "a" }
+                        }))
+            ],
+            Completed = [new CompletedResult(0)],
+            HasNext = false,
+            Extensions = []
+        };
+
+        return new ResponseStream(() => ReadAsync(initial, incremental), ExecutionResultKind.DeferredResult);
+    }
+
+    private static async IAsyncEnumerable<OperationResult> ReadAsync(params OperationResult[] results)
+    {
+        foreach (var result in results)
+        {
+            yield return result;
+            await Task.Yield();
+        }
+    }
+
+    private static OperationResultData CreateData(object value)
+        => new(value, isValueNull: false, new ValueFormatter(value), memoryHolder: null);
+
+    private static GraphQLHttpResponse CreateMultipartResponse()
+    {
+        const string body =
+            "---\r\n"
+            + "Content-Type: application/json\r\n\r\n"
+            + "{\"data\":{\"node\":{\"child\":{\"id\":\"1\"}}},"
+            + "\"pending\":[{\"id\":\"0\",\"path\":[\"node\"]}],\"hasNext\":true}\r\n"
+            + "---\r\n"
+            + "Content-Type: application/json\r\n\r\n"
+            + "{\"incremental\":[{\"id\":\"0\",\"data\":{\"child\":{\"name\":\"a\"}}}],"
+            + "\"completed\":[{\"id\":\"0\"}],\"hasNext\":false}\r\n"
+            + "-----\r\n";
+
+        var message = new HttpResponseMessage { Content = new StringContent(body, Encoding.UTF8) };
+        message.Content.Headers.ContentType = MediaTypeHeaderValue.Parse("multipart/mixed; boundary=\"-\"");
+        return new GraphQLHttpResponse(message);
+    }
+
     private static string FormatStable()
     {
         using var response = CreateJsonLinesResponse();
@@ -540,5 +726,11 @@ public class JsonResultPatcherTests
                 document.Dispose();
             }
         }
+    }
+
+    private sealed class ValueFormatter(object value) : IRawJsonFormatter
+    {
+        public void WriteDataTo(JsonWriter jsonWriter)
+            => JsonValueFormatter.WriteValue(jsonWriter, value, new JsonSerializerOptions());
     }
 }
