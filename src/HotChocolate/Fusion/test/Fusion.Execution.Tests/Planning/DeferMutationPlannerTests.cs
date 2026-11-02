@@ -176,6 +176,19 @@ public class DeferMutationPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_KeepEnclosingSkipOnKeyStep_When_DeferConditionSkipsConsumer()
+    {
+        // arrange
+        var schema = ComposeTopology(Topology.OneHopKey);
+
+        // act
+        var plan = PlanOperation(schema, GetOperation(MutationShape.EnclosingSkip));
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void Defer_Should_RunKeyStepsWithoutCondition_When_TwoHopKeyIsSkippedByDeferCondition()
     {
         // arrange
@@ -401,6 +414,19 @@ public class DeferMutationPlannerTests : FusionTestBase
                     create {
                         user {
                             ... @defer(if: $defer) { total }
+                        }
+                    }
+                }
+                """,
+            MutationShape.EnclosingSkip =>
+                """
+                mutation($defer: Boolean!, $skip: Boolean!) {
+                    create {
+                        user {
+                            name
+                            ... @skip(if: $skip) {
+                                ... @defer(if: $defer) { total }
+                            }
                         }
                     }
                 }
@@ -708,6 +734,7 @@ public class DeferMutationPlannerTests : FusionTestBase
         IfVariable,
         InnerIfVariable,
         SingleIfVariable,
+        EnclosingSkip,
         OuterIfVariable,
         OuterAndInnerIfVariables,
         TwoRootFields,

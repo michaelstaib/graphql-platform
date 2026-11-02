@@ -164,6 +164,19 @@ public class DeferMutationTests : FusionTestBase
 
             cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, true, true);
             cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, false, false);
+            cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, false, true);
+        }
+
+        foreach (var topology in new[] { Topology.OneHopKey, Topology.TwoHopKey })
+        {
+            foreach (var kind in new[] { OperationKind.Mutation, OperationKind.Query })
+            {
+                foreach (var condition in new[] { true, false })
+                {
+                    cases.Add(topology, kind, ConditionShape.EnclosingSkip, condition, true);
+                    cases.Add(topology, kind, ConditionShape.EnclosingInclude, condition, true);
+                }
+            }
         }
 
         return cases;
@@ -197,6 +210,39 @@ public class DeferMutationTests : FusionTestBase
                     """,
                     variables: new Dictionary<string, object?> { ["d"] = outer }),
                 plain);
+        }
+
+        if (shape is ConditionShape.EnclosingSkip or ConditionShape.EnclosingInclude)
+        {
+            var directive = shape is ConditionShape.EnclosingSkip ? "skip" : "include";
+
+            return (
+                new OperationRequest(
+                    $$"""
+                    {{keyword}}($c: Boolean!, $d: Boolean!) {
+                        {{root}} {
+                            user {
+                                name
+                                ... @{{directive}}(if: $c) {
+                                    ... @defer(if: $d) { total }
+                                }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["c"] = outer, ["d"] = inner }),
+                new OperationRequest(
+                    $$"""
+                    {{keyword}}($c: Boolean!) {
+                        {{root}} {
+                            user {
+                                name
+                                ... @{{directive}}(if: $c) { total }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["c"] = outer }));
         }
 
         if (shape is ConditionShape.AnchorAboveEntity)
@@ -622,7 +668,9 @@ public class DeferMutationTests : FusionTestBase
         OuterAndInner,
         OuterOnly,
         InnerOnly,
-        AnchorAboveEntity
+        AnchorAboveEntity,
+        EnclosingSkip,
+        EnclosingInclude
     }
 
     public enum MutationShape

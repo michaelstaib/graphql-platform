@@ -883,13 +883,26 @@ public sealed partial class OperationPlanner
 
         // A lifted step now also feeds this incremental plan, so it must run whenever the
         // deferred consumer runs and not only when the field is part of the enclosing plan.
+        var deferIfVariables = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var current = descriptor; current is not null; current = current.Parent)
+        {
+            foreach (var group in current.DeliveryGroupSet)
+            {
+                if (group.IfVariable is { } ifVariable)
+                {
+                    deferIfVariables.Add(ifVariable);
+                }
+            }
+        }
+
         foreach (var entry in lifted)
         {
             var consumerConditions = incrementalPlanSteps.ById(entry.DownstreamStepId) is OperationPlanStep consumer
                 ? consumer.Conditions
                 : [];
 
-            RelaxLiftedStepConditions(entry.Scope, entry.ParentStepId, consumerConditions);
+            RelaxLiftedStepConditions(entry.Scope, entry.ParentStepId, consumerConditions, deferIfVariables);
         }
 
         // A promoted step runs in the enclosing scope, so the parent-scope step that supplies
@@ -1574,7 +1587,8 @@ public sealed partial class OperationPlanner
     private static void RelaxLiftedStepConditions(
         ScopeState scopeState,
         int liftedStepId,
-        ExecutionNodeCondition[] consumerConditions)
+        ExecutionNodeCondition[] consumerConditions,
+        HashSet<string> deferIfVariables)
     {
         var visited = new HashSet<int>();
         var pending = new Stack<int>();
@@ -1600,11 +1614,15 @@ public sealed partial class OperationPlanner
                 }
                 else if (step.Id == stepId)
                 {
-                    var shared = step.Conditions.Where(consumerConditions.Contains).ToArray();
+                    var kept = step.Conditions
+                        .Where(condition => condition.PassingValue
+                            || !deferIfVariables.Contains(condition.VariableName)
+                            || consumerConditions.Contains(condition))
+                        .ToArray();
 
-                    if (shared.Length != step.Conditions.Length)
+                    if (kept.Length != step.Conditions.Length)
                     {
-                        scopeState.Steps = scopeState.Steps.SetItem(i, step with { Conditions = shared });
+                        scopeState.Steps = scopeState.Steps.SetItem(i, step with { Conditions = kept });
                     }
                 }
             }
