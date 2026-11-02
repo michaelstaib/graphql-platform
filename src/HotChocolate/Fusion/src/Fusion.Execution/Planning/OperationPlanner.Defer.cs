@@ -63,27 +63,7 @@ public sealed partial class OperationPlanner
                 parentContext,
                 contextGraph);
 
-            // A mutation-typed step surviving ApplyDeferRequirementsToParent carries real
-            // deferred output of its own, meaning the only way to have produced it was to
-            // invoke the mutation's root field a second time inside this incremental plan.
-            if (descriptor.Operation.Operation != OperationType.Query)
-            {
-                foreach (var step in rewrittenIncrementalPlan)
-                {
-                    if (step is OperationPlanStep { Definition.Operation: OperationType.Mutation })
-                    {
-                        var anchorTypeName = TryLocateIncrementalPlanAnchor(
-                            descriptor.Operation,
-                            descriptor.Path,
-                            out _,
-                            out var anchorType)
-                                ? anchorType.Name
-                                : _schema.GetOperationType(descriptor.Operation.Operation).Name;
-
-                        throw new DeferredMutationLookupRequiredException(descriptor.Path, anchorTypeName);
-                    }
-                }
-            }
+            EnsureNoMutationStepInIncrementalPlan(descriptor, rewrittenIncrementalPlan);
 
             // When every field this descriptor would deliver incrementally is already
             // available from the enclosing scope (the anchor's own key fields, or a field
@@ -114,6 +94,42 @@ public sealed partial class OperationPlanner
         }
 
         return routingStates.ToImmutable();
+    }
+
+    /// <summary>
+    /// Throws when <paramref name="incrementalPlanSteps"/> of a mutation operation contain a mutation root
+    /// field, because an incremental plan never invokes the mutation again.
+    /// </summary>
+    internal void EnsureNoMutationStepInIncrementalPlan(
+        IncrementalPlanDescriptor descriptor,
+        ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        if (descriptor.Operation.Operation == OperationType.Query)
+        {
+            return;
+        }
+
+        foreach (var step in incrementalPlanSteps)
+        {
+            if (step is OperationPlanStep { Definition.Operation: OperationType.Mutation })
+            {
+                throw CreateDeferredMutationLookupRequiredException(descriptor);
+            }
+        }
+    }
+
+    private DeferredMutationLookupRequiredException CreateDeferredMutationLookupRequiredException(
+        IncrementalPlanDescriptor descriptor)
+    {
+        var anchorTypeName = TryLocateIncrementalPlanAnchor(
+            descriptor.Operation,
+            descriptor.Path,
+            out _,
+            out var anchorType)
+                ? anchorType.Name
+                : _schema.GetOperationType(descriptor.Operation.Operation).Name;
+
+        return new DeferredMutationLookupRequiredException(descriptor.Path, anchorTypeName);
     }
 
     /// <summary>
@@ -196,6 +212,9 @@ public sealed partial class OperationPlanner
             // Use the registered scope state because nested descriptors may
             // have added parent-scope requirements.
             var finalSteps = contextGraph.GetRegisteredSteps(descriptor);
+
+            EnsureNoMutationStepInIncrementalPlan(descriptor, finalSteps);
+
             var registeredInternalOp = contextGraph.GetRegisteredInternalOperation(descriptor);
 
             var (rootNodes, allNodes) = BuildDeferredExecutionNodes(
@@ -628,6 +647,11 @@ public sealed partial class OperationPlanner
                         : null)
                     ?? producers[0].SchemaName!;
 
+                var providerIsMutation = TryFindDeferRequirementProvider(
+                        incrementalPlanSteps,
+                        sourceStep ?? downstreamStep,
+                        sourceRequirement)
+                    is { Definition.Operation: OperationType.Mutation };
                 var resolved = false;
                 var walkScope = parentContext;
 
@@ -656,6 +680,25 @@ public sealed partial class OperationPlanner
                     if (isPartiallyResolvable)
                     {
                         return incrementalPlanSteps;
+                    }
+
+                    // A nested incremental plan reads its requirements from the result of its
+                    // direct parent only. The mutation result is not part of that result, so
+                    // the key has to be selected by a step of the parent plan itself.
+                    if (providerIsMutation && walkScope.OwnerDescriptor is not null)
+                    {
+                        if (!TryInlineDeferRequirementInAnyStep(
+                            sourceRequirement,
+                            resolver,
+                            scopeState,
+                            out var keyStepId))
+                        {
+                            throw CreateDeferredMutationLookupRequiredException(descriptor);
+                        }
+
+                        lifted.Add(new LiftedDeferRequirement(requirement, downstreamStepId, keyStepId, scopeState));
+                        resolved = true;
+                        break;
                     }
 
                     // When no existing parent-scope step can supply the
@@ -761,28 +804,7 @@ public sealed partial class OperationPlanner
                 }
 
                 var scopeState = ScopeStateFor(parentContext);
-                var resolvedParentStepId = (int?)null;
-
-                foreach (var candidateSchema in scopeState.Steps
-                    .OfType<OperationPlanStep>()
-                    .Select(candidate => candidate.SchemaName)
-                    .Where(schemaName => schemaName is not null)
-                    .Distinct(StringComparer.Ordinal))
-                {
-                    if (TryInlineDeferRequirementInScope(
-                        requirement,
-                        candidateSchema!,
-                        resolver,
-                        scopeState,
-                        out var parentStepId,
-                        out _))
-                    {
-                        resolvedParentStepId = parentStepId;
-                        break;
-                    }
-                }
-
-                if (resolvedParentStepId is not { } resolvedId)
+                if (!TryInlineDeferRequirementInAnyStep(requirement, resolver, scopeState, out var resolvedId))
                 {
                     // The immediate parent scope cannot serve it either; fall back to
                     // the existing in-plan chaining onto providerStep.
@@ -1424,6 +1446,34 @@ public sealed partial class OperationPlanner
         return false;
     }
 
+    private bool TryInlineDeferRequirementInAnyStep(
+        OperationRequirement requirement,
+        ValueSelectionToSelectionSetRewriter resolver,
+        ScopeState scopeState,
+        out int parentStepId)
+    {
+        foreach (var candidateSchema in scopeState.Steps
+            .OfType<OperationPlanStep>()
+            .Select(candidate => candidate.SchemaName)
+            .Where(schemaName => schemaName is not null)
+            .Distinct(StringComparer.Ordinal))
+        {
+            if (TryInlineDeferRequirementInScope(
+                requirement,
+                candidateSchema!,
+                resolver,
+                scopeState,
+                out parentStepId,
+                out _))
+            {
+                return true;
+            }
+        }
+
+        parentStepId = 0;
+        return false;
+    }
+
     private static void AddParentStepDependent(ScopeState scopeState, int providerStepId, int dependentStepId)
     {
         for (var i = 0; i < scopeState.Steps.Count; i++)
@@ -1562,7 +1612,9 @@ public sealed partial class OperationPlanner
             return (parentSteps, null, null);
         }
 
-        if (providerStep.SchemaName is null)
+        // A mutation-typed provider is the seed that re-invokes the mutation root field, so
+        // promoting it would run the mutation a second time inside the enclosing scope.
+        if (providerStep.SchemaName is null || providerStep.Definition.Operation is OperationType.Mutation)
         {
             return (parentSteps, null, null);
         }
