@@ -60,6 +60,35 @@ public class DeferMutationTests : FusionTestBase
             $"Deferred: {deferredOutcome.Data}, plain: {plainOutcome.Data}");
     }
 
+    [Theory]
+    [MemberData(nameof(DeferConditionCases))]
+    public async Task Defer_Should_MergeToNonDeferredData_When_DeferConditionsVaryWithKeyRequirement(
+        Topology topology,
+        OperationKind kind,
+        ConditionShape shape,
+        bool outer,
+        bool inner)
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(topology);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var (deferred, plain) = GetConditionRequests(kind, shape, outer, inner);
+
+        // act
+        MutationSource.Reset();
+        var deferredOutcome = await ExecuteAsync(client, deferred);
+        MutationSource.Reset();
+        var plainOutcome = await ExecuteAsync(client, plain);
+
+        // assert
+        // only the mutation root field is counted, the query root field is not
+        Assert.Equal(kind is OperationKind.Mutation ? 1 : 0, deferredOutcome.CreateCalls);
+        Assert.Null(deferredOutcome.Errors);
+        Assert.True(
+            JsonNode.DeepEquals(plainOutcome.Data, deferredOutcome.Data),
+            $"Deferred: {deferredOutcome.Data}, plain: {plainOutcome.Data}");
+    }
+
     [Fact]
     public async Task Defer_Should_MergeToNonDeferredData_When_NestedDeferNeedsTwoHopKey()
     {
@@ -108,6 +137,165 @@ public class DeferMutationTests : FusionTestBase
             """
             [{"message":"Unexpected Execution Error"}]
             """);
+    }
+
+    public static TheoryData<Topology, OperationKind, ConditionShape, bool, bool> DeferConditionCases()
+    {
+        var cases = new TheoryData<Topology, OperationKind, ConditionShape, bool, bool>();
+
+        foreach (var topology in new[] { Topology.DirectKey, Topology.OneHopKey, Topology.TwoHopKey })
+        {
+            foreach (var kind in new[] { OperationKind.Mutation, OperationKind.Query })
+            {
+                cases.Add(topology, kind, ConditionShape.Single, true, true);
+                cases.Add(topology, kind, ConditionShape.Single, false, false);
+
+                foreach (var outer in new[] { true, false })
+                {
+                    cases.Add(topology, kind, ConditionShape.OuterOnly, outer, false);
+                    cases.Add(topology, kind, ConditionShape.InnerOnly, false, outer);
+
+                    foreach (var inner in new[] { true, false })
+                    {
+                        cases.Add(topology, kind, ConditionShape.OuterAndInner, outer, inner);
+                    }
+                }
+            }
+
+            cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, true, true);
+            cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, false, false);
+            cases.Add(topology, OperationKind.Query, ConditionShape.AnchorAboveEntity, false, true);
+        }
+
+        foreach (var topology in new[] { Topology.OneHopKey, Topology.TwoHopKey })
+        {
+            foreach (var kind in new[] { OperationKind.Mutation, OperationKind.Query })
+            {
+                foreach (var condition in new[] { true, false })
+                {
+                    cases.Add(topology, kind, ConditionShape.EnclosingSkip, condition, true);
+                    cases.Add(topology, kind, ConditionShape.EnclosingInclude, condition, true);
+                }
+            }
+        }
+
+        return cases;
+    }
+
+    private static (OperationRequest Deferred, OperationRequest Plain) GetConditionRequests(
+        OperationKind kind,
+        ConditionShape shape,
+        bool outer,
+        bool inner)
+    {
+        var (keyword, root) = kind is OperationKind.Mutation
+            ? ("mutation", "create")
+            : ("query", "current");
+
+        var plain = new OperationRequest($"{keyword} {{ {root} {{ user {{ name total }} }} }}");
+
+        if (shape is ConditionShape.Single)
+        {
+            return (
+                new OperationRequest(
+                    $$"""
+                    {{keyword}}($d: Boolean! = true) {
+                        {{root}} {
+                            user {
+                                name
+                                ... @defer(if: $d) { total }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["d"] = outer }),
+                plain);
+        }
+
+        if (shape is ConditionShape.EnclosingSkip or ConditionShape.EnclosingInclude)
+        {
+            var directive = shape is ConditionShape.EnclosingSkip ? "skip" : "include";
+
+            return (
+                new OperationRequest(
+                    $$"""
+                    {{keyword}}($c: Boolean!, $d: Boolean!) {
+                        {{root}} {
+                            user {
+                                name
+                                ... @{{directive}}(if: $c) {
+                                    ... @defer(if: $d) { total }
+                                }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["c"] = outer, ["d"] = inner }),
+                new OperationRequest(
+                    $$"""
+                    {{keyword}}($c: Boolean!) {
+                        {{root}} {
+                            user {
+                                name
+                                ... @{{directive}}(if: $c) { total }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["c"] = outer }));
+        }
+
+        if (shape is ConditionShape.AnchorAboveEntity)
+        {
+            return (
+                new OperationRequest(
+                    """
+                    query($a: Boolean!, $b: Boolean!) {
+                        current {
+                            ... @defer(if: $a, label: "outer") {
+                                user {
+                                    name
+                                    ... @defer(if: $b, label: "inner") { total }
+                                }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["a"] = outer, ["b"] = inner }),
+                plain);
+        }
+
+        var outerArguments = shape is ConditionShape.InnerOnly ? "" : "if: $a, ";
+        var innerArguments = shape is ConditionShape.OuterOnly ? "" : "if: $b, ";
+        var variableDefinitions = shape switch
+        {
+            ConditionShape.OuterOnly => "$a: Boolean!",
+            ConditionShape.InnerOnly => "$b: Boolean!",
+            _ => "$a: Boolean!, $b: Boolean!"
+        };
+        var variables = shape switch
+        {
+            ConditionShape.OuterOnly => new Dictionary<string, object?> { ["a"] = outer },
+            ConditionShape.InnerOnly => new Dictionary<string, object?> { ["b"] = inner },
+            _ => new Dictionary<string, object?> { ["a"] = outer, ["b"] = inner }
+        };
+
+        return (
+            new OperationRequest(
+                $$"""
+                {{keyword}}({{variableDefinitions}}) {
+                    {{root}} {
+                        user {
+                            ... @defer({{outerArguments}}label: "outer") {
+                                name
+                                ... @defer({{innerArguments}}label: "inner") { total }
+                            }
+                        }
+                    }
+                }
+                """,
+                variables: variables),
+            plain);
     }
 
     private static (OperationRequest Deferred, OperationRequest Plain, int RootFields) GetRequests(
@@ -468,6 +656,23 @@ public class DeferMutationTests : FusionTestBase
         NameOnMutationSubgraph
     }
 
+    public enum OperationKind
+    {
+        Mutation,
+        Query
+    }
+
+    public enum ConditionShape
+    {
+        Single,
+        OuterAndInner,
+        OuterOnly,
+        InnerOnly,
+        AnchorAboveEntity,
+        EnclosingSkip,
+        EnclosingInclude
+    }
+
     public enum MutationShape
     {
         Nested,
@@ -498,6 +703,8 @@ public class DeferMutationTests : FusionTestBase
         public class Query
         {
             public string GetPing() => "pong";
+
+            public CreateResult GetCurrent() => new(new User(1));
 
             [Lookup]
             [Internal]
