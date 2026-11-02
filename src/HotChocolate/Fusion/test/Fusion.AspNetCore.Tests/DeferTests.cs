@@ -5371,6 +5371,166 @@ public class DeferTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
+    [Fact]
+    public async Task Defer_Should_DeliverDeferredField_When_MutationAnchorNeedsOneHopKey()
+    {
+        // arrange
+        MutationKeyChainSourceA.Reset();
+
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<MutationKeyChainSourceA.Query>()
+                .AddMutationType<MutationKeyChainSourceA.Mutation>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<MutationKeyChainSourceB.Query>());
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<MutationKeyChainSourceC.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            mutation {
+                create {
+                    user {
+                        ... @defer {
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(1, MutationKeyChainSourceA.CreateCalls);
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverDeferredField_When_MutationAnchorNeedsTwoHopKey()
+    {
+        // arrange
+        MutationKeyChainSourceA.Reset();
+
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<MutationKeyChainSourceA.Query>()
+                .AddMutationType<MutationKeyChainSourceA.Mutation>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<MutationKeyChainSourceB.Query>());
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<MutationKeyChainSourceCCode.Query>());
+
+        using var server4 = CreateSourceSchema(
+            "D",
+            b => b.AddQueryType<MutationKeyChainSourceD.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3),
+            ("D", server4)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            mutation {
+                create {
+                    user {
+                        ... @defer {
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(1, MutationKeyChainSourceA.CreateCalls);
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverDeferredField_When_QueryAnchorNeedsOneHopKey()
+    {
+        // arrange
+        MutationKeyChainSourceA.Reset();
+
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<MutationKeyChainSourceA.Query>()
+                .AddMutationType<MutationKeyChainSourceA.Mutation>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<MutationKeyChainSourceB.Query>());
+
+        using var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<MutationKeyChainSourceC.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                current {
+                    user {
+                        ... @defer {
+                            total
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
     private static class NestedLookupSourceA
     {
         public class Query
@@ -5526,5 +5686,99 @@ public class DeferTests : FusionTestBase
         }
 
         public record OwnerInput(int Raw, int Computed);
+    }
+
+    private static class MutationKeyChainSourceA
+    {
+        private static int s_createCalls;
+
+        public static int CreateCalls => Volatile.Read(ref s_createCalls);
+
+        public static void Reset() => Volatile.Write(ref s_createCalls, 0);
+
+        public class Query
+        {
+            public CreateResult GetCurrent() => new(new User(1));
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public class Mutation
+        {
+            public CreateResult Create()
+            {
+                Interlocked.Increment(ref s_createCalls);
+                return new CreateResult(new User(1));
+            }
+        }
+
+        public record CreateResult(User User);
+
+        public record User([property: ID] int Id);
+    }
+
+    private static class MutationKeyChainSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserBySku(string sku) => new(sku);
+        }
+
+        public record User([property: Shareable] string Sku)
+        {
+            public int Total => 42;
+        }
+    }
+
+    private static class MutationKeyChainSourceC
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Sku => $"sku-{Id}";
+        }
+    }
+
+    private static class MutationKeyChainSourceCCode
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Code => $"code-{Id}";
+        }
+    }
+
+    private static class MutationKeyChainSourceD
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserByCode(string code) => new(code);
+        }
+
+        public record User([property: Shareable] string Code)
+        {
+            [Shareable]
+            public string Sku => $"sku-{Code}";
+        }
     }
 }
