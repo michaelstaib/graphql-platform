@@ -324,6 +324,8 @@ internal sealed class ValueCompletion
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
 
+        _store.MarkNullKeyTarget(target.CompactPath);
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             // A prior field's error may have propagated a null up to this target
@@ -342,7 +344,6 @@ internal sealed class ValueCompletion
 
             if (fieldResult.IsInternal)
             {
-                _store.MarkNullKeyTarget(target.CompactPath);
                 continue;
             }
 
@@ -596,6 +597,8 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
     {
+        var isMarked = false;
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             if (!target.TryGetProperty(responseName, out var fieldResult))
@@ -605,7 +608,12 @@ internal sealed class ValueCompletion
 
             if (fieldResult.IsInternal)
             {
-                _store.MarkNullKeyTarget(target.CompactPath);
+                if (!isMarked)
+                {
+                    _store.MarkNullKeyTarget(target.CompactPath);
+                    isMarked = true;
+                }
+
                 continue;
             }
 

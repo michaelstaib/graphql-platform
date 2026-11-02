@@ -627,6 +627,10 @@ AddErrors_Next:
         _pocketedErrors.TryAdd(path, error);
     }
 
+    /// <summary>
+    /// Records that a fetch for the object at <paramref name="path"/> failed or returned <c>null</c>.
+    /// The mark applies to every key requirement of the object, not to a single field.
+    /// </summary>
     internal void MarkNullKeyTarget(CompactPath path)
     {
         lock (_lock)

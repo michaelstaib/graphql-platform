@@ -536,6 +536,161 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             deferredPayloads.SelectMany(p => p["completed"]?.AsArray() ?? []).Select(p => p!["id"]!.ToString()));
     }
 
+    [Theory]
+    [MemberData(nameof(PublicKeyCases))]
+    public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullOrThrowsForPublicKey(
+        bool twoHops,
+        string failingHop,
+        int key,
+        string shape)
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var (deferred, reference) = CreatePublicKeyOperations(shape, key);
+
+        // act
+        KeyHopCalls.Reset(failingHop);
+        var deferredPayloads = await ExecuteAsync(client, deferred);
+        var deferredMutationCalls = KeyHopCalls.MutationCalls;
+        var deferredHopLookups = KeyHopCalls.FirstHopLookups;
+
+        KeyHopCalls.Reset(failingHop);
+        var referencePayloads = await ExecuteAsync(client, reference);
+
+        // assert
+        var deferredResult = MergePayloads(deferredPayloads);
+        var referenceResult = MergePayloads(referencePayloads);
+        Assert.Equal(referenceResult.Data, deferredResult.Data);
+        Assert.Equal(referenceResult.ErrorCount, deferredResult.ErrorCount);
+        Assert.Equal(CollectErrorPaths(referencePayloads), CollectErrorPaths(deferredPayloads));
+        Assert.Equal(KeyHopCalls.FirstHopLookups, deferredHopLookups);
+        Assert.Equal(shape.StartsWith("mutation", StringComparison.Ordinal) ? 1 : 0, deferredMutationCalls);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportKeyError_When_KeyHopThrowsForPublicKeyOfMiddleListItem()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await ExecuteAsync(
+            client,
+            "{ users(ids: [2, 98, 3]) { name sku ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(3, KeyHopCalls.FirstHopLookups);
+        MergePayloads(payloads).Data.MatchInlineSnapshot(
+            """
+            {"users":[{"name":"User 2","sku":"sku-2","total":200},{"name":"User 98","sku":null,"total":null},{"name":"User 3","sku":"sku-3","total":300}]}
+            """);
+        Assert.Equal(["users,1,sku"], CollectErrorPaths(payloads));
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportKeyError_When_KeyHopThrowsForPublicKeyOfSingleObject()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await ExecuteAsync(
+            client,
+            "{ current(id: 98) { user { sku ... @defer { total } } } }");
+
+        // assert
+        Assert.Equal(1, KeyHopCalls.FirstHopLookups);
+        MergePayloads(payloads).Data.MatchInlineSnapshot(
+            """
+            {"current":{"user":{"sku":null,"total":null}}}
+            """);
+        Assert.Equal(["current,user,sku"], CollectErrorPaths(payloads));
+    }
+
+    public static TheoryData<bool, string, int, string> PublicKeyCases()
+    {
+        var cases = new TheoryData<bool, string, int, string>();
+
+        foreach (var (twoHops, failingHop) in new[]
+        {
+            (false, KeyHopCalls.FirstHop),
+            (true, KeyHopCalls.FirstHop),
+            (true, KeyHopCalls.SecondHop)
+        })
+        {
+            foreach (var key in new[] { 99, 98 })
+            {
+                foreach (var shape in new[] { "query-object", "query-list", "mutation-object", "mutation-list" })
+                {
+                    cases.Add(twoHops, failingHop, key, shape);
+                }
+            }
+        }
+
+        return cases;
+    }
+
+    private static (string Deferred, string Reference) CreatePublicKeyOperations(string shape, int key)
+        => shape switch
+        {
+            "query-object" =>
+            (
+                $"{{ current(id: {key}) {{ user {{ sku ... @defer {{ total }} }} }} }}",
+                $"{{ current(id: {key}) {{ user {{ sku total }} }} }}"
+            ),
+            "query-list" =>
+            (
+                $"{{ users(ids: [2, {key}, 3]) {{ name sku ... @defer {{ total }} }} }}",
+                $"{{ users(ids: [2, {key}, 3]) {{ name sku total }} }}"
+            ),
+            "mutation-object" =>
+            (
+                $"mutation {{ create(id: {key}) {{ user {{ sku ... @defer {{ total }} }} }} }}",
+                $"mutation {{ create(id: {key}) {{ user {{ sku total }} }} }}"
+            ),
+            "mutation-list" =>
+            (
+                $"mutation {{ createMany(ids: [2, {key}, 3]) {{ name sku ... @defer {{ total }} }} }}",
+                $"mutation {{ createMany(ids: [2, {key}, 3]) {{ name sku total }} }}"
+            ),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null)
+        };
+
+    private static List<string> CollectErrorPaths(List<JsonObject> payloads)
+    {
+        var paths = new List<string>();
+
+        foreach (var payload in payloads)
+        {
+            AddErrorPaths(payload["errors"]);
+
+            foreach (var incremental in payload["incremental"]?.AsArray() ?? [])
+            {
+                AddErrorPaths(incremental!["errors"]);
+            }
+
+            foreach (var completed in payload["completed"]?.AsArray() ?? [])
+            {
+                AddErrorPaths(completed!["errors"]);
+            }
+        }
+
+        return paths;
+
+        void AddErrorPaths(JsonNode? errors)
+        {
+            foreach (var error in errors?.AsArray() ?? [])
+            {
+                paths.Add(string.Join(",", error!["path"]?.AsArray() ?? []));
+            }
+        }
+    }
+
     public static TheoryData<bool, string, int, string> ParityCases()
     {
         var cases = new TheoryData<bool, string, int, string>();
@@ -890,9 +1045,9 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             }
         }
 
-        public record User([property: Shareable] string Sku)
+        public record User([property: Shareable] string? Sku)
         {
-            public int? Total => int.Parse(Sku[4..]) * 100;
+            public int? Total => int.Parse(Sku![4..]) * 100;
         }
     }
 
@@ -912,7 +1067,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         public record User([property: ID] int Id)
         {
             [Shareable]
-            public string Sku => $"sku-{Id}";
+            public string? Sku => $"sku-{Id}";
         }
     }
 
@@ -952,7 +1107,7 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         public record User([property: Shareable] string Code)
         {
             [Shareable]
-            public string Sku => $"sku-{Code[5..]}";
+            public string? Sku => $"sku-{Code[5..]}";
         }
     }
 
