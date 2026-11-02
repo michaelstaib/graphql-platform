@@ -8,7 +8,15 @@ public sealed partial class ResultDocument : IRawJsonFormatter
     public void WriteDataTo(JsonWriter jsonWriter)
     {
         var formatter = new RawJsonFormatter(this, jsonWriter);
-        formatter.Write();
+
+        if (_listCursor is { } listCursor)
+        {
+            formatter.WriteValue(listCursor, _metaDb.Get(listCursor));
+        }
+        else
+        {
+            formatter.Write();
+        }
     }
 
     internal readonly ref struct RawJsonFormatter(ResultDocument document, JsonWriter writer)
