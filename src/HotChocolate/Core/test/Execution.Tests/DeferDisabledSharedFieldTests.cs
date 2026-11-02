@@ -277,13 +277,105 @@ public class DeferDisabledSharedFieldTests
         Assert.Equal(plain, merged);
     }
 
+    [Fact]
+    public async Task Defer_Should_CompleteStream_When_OuterDeferIsDisabledAndInnerDeferIsNot()
+    {
+        // arrange
+        var gates = new Gates();
+        gates.X.SetResult();
+
+        var executor = await new ServiceCollection()
+            .AddSingleton(gates)
+            .AddGraphQL()
+            .AddQueryType<Query>()
+            .ModifyOptions(o => o.EnableDefer = true)
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var payloads = new List<string>();
+
+        // act
+        var result = await executor.ExecuteAsync(
+            OperationRequestBuilder
+                .New()
+                .SetDocument(
+                    """
+                    query ($e: Boolean!) {
+                        a {
+                            ... @defer(if: $e) { ... @defer { y } x }
+                            ... @defer { x }
+                        }
+                    }
+                    """)
+                .SetVariableValues(new Dictionary<string, object?> { ["e"] = false })
+                .Build(),
+            cts.Token);
+
+        await using (var stream = Assert.IsType<ResponseStream>(result))
+        {
+            var read = Task.Run(
+                async () =>
+                {
+                    await foreach (var payload in stream.ReadResultsAsync())
+                    {
+                        await using var cleanup = payload;
+                        payloads.Add(payload.ToJson());
+                        gates.Y.TrySetResult();
+                    }
+                },
+                CancellationToken.None);
+
+            await read.WaitAsync(cts.Token);
+        }
+
+        // assert
+        payloads.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "data": {
+                    "a": {
+                      "x": "x 1"
+                    }
+                  },
+                  "pending": [
+                    {
+                      "id": "2",
+                      "path": [
+                        "a"
+                      ]
+                    }
+                  ],
+                  "hasNext": true
+                }
+                """,
+                """
+                {
+                  "incremental": [
+                    {
+                      "id": "2",
+                      "data": {
+                        "y": "y 1"
+                      }
+                    }
+                  ],
+                  "completed": [
+                    {
+                      "id": "2"
+                    }
+                  ],
+                  "hasNext": false
+                }
+                """
+            ]);
+        Assert.Equal("""{"a":{"x":"x 1","y":"y 1"}}""", Merge(payloads).ToJsonString());
+    }
+
     private static async Task<(List<string> Payloads, string Merged, string Plain)> ExecuteAsync(
         string query,
         bool enabled)
     {
         // arrange
-        // x waits for the initial payload and y for the payloads that do not depend on it, so
-        // the order of the deferred payloads does not depend on timing.
+        // x waits for the initial payload and y for the earlier payloads, so order is fixed.
         var gates = new Gates();
 
         if (!enabled)
