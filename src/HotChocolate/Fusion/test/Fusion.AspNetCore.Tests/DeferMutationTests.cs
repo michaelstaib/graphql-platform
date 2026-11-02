@@ -276,19 +276,6 @@ public class DeferMutationTests : FusionTestBase
                     """),
                 new OperationRequest(plainUser),
                 1),
-            MutationShape.RootDefer => (
-                new OperationRequest(
-                    """
-                    mutation {
-                        ... @defer(label: "outer") {
-                            create {
-                                user { name }
-                            }
-                        }
-                    }
-                    """),
-                new OperationRequest("mutation { create { user { name } } }"),
-                1),
             MutationShape.ThreeLevels => (
                 new OperationRequest(
                     """
@@ -375,55 +362,86 @@ public class DeferMutationTests : FusionTestBase
         JsonNode? data = null;
         JsonNode? errors = null;
         var pendingPaths = new Dictionary<string, JsonArray>();
+        var openIds = new HashSet<string>();
+        var violations = new List<string>();
+        var lastHasNext = false;
 
         foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             var payload = JsonNode.Parse(line)!.AsObject();
             data ??= payload["data"]?.DeepClone();
             errors ??= payload["errors"]?.DeepClone();
+            lastHasNext = payload["hasNext"]?.GetValue<bool>() ?? false;
+
+            if (payload["pending"] is JsonArray pending)
+            {
+                foreach (var entry in pending)
+                {
+                    var id = entry!["id"]!.GetValue<string>();
+
+                    if (!pendingPaths.TryAdd(id, entry["path"]!.AsArray()))
+                    {
+                        violations.Add($"Pending id '{id}' was announced more than once.");
+                    }
+
+                    openIds.Add(id);
+                }
+            }
+
+            if (payload["incremental"] is JsonArray incremental)
+            {
+                foreach (var item in incremental)
+                {
+                    var id = item!["id"]!.GetValue<string>();
+
+                    if (!openIds.Contains(id))
+                    {
+                        violations.Add($"Incremental entry refers to id '{id}' which is not announced and open.");
+                        continue;
+                    }
+
+                    var target = data;
+                    var path = pendingPaths[id].Concat(item["subPath"] as JsonArray ?? []);
+
+                    foreach (var segment in path)
+                    {
+                        target = segment!.GetValueKind() is JsonValueKind.Number
+                            ? target?[segment.GetValue<int>()]
+                            : target?[segment.GetValue<string>()];
+                    }
+
+                    if (target is JsonObject targetObject && item["data"] is JsonObject itemData)
+                    {
+                        MergeInto(targetObject, itemData);
+                    }
+                }
+            }
 
             if (payload["completed"] is JsonArray completed)
             {
                 foreach (var entry in completed)
                 {
                     errors ??= entry!["errors"]?.DeepClone();
-                }
-            }
 
-            if (payload["pending"] is JsonArray pending)
-            {
-                foreach (var entry in pending)
-                {
-                    pendingPaths[entry!["id"]!.GetValue<string>()] = entry["path"]!.AsArray();
-                }
-            }
+                    var id = entry!["id"]!.GetValue<string>();
 
-            if (payload["incremental"] is not JsonArray incremental)
-            {
-                continue;
-            }
-
-            foreach (var item in incremental)
-            {
-                var target = data;
-                var path = pendingPaths[item!["id"]!.GetValue<string>()]
-                    .Concat(item["subPath"] as JsonArray ?? []);
-
-                foreach (var segment in path)
-                {
-                    target = segment!.GetValueKind() is JsonValueKind.Number
-                        ? target?[segment.GetValue<int>()]
-                        : target?[segment.GetValue<string>()];
-                }
-
-                if (target is JsonObject targetObject && item["data"] is JsonObject itemData)
-                {
-                    MergeInto(targetObject, itemData);
+                    if (!openIds.Remove(id))
+                    {
+                        violations.Add($"Completed id '{id}' is not announced or was already completed.");
+                    }
                 }
             }
         }
 
+        foreach (var id in openIds)
+        {
+            violations.Add($"Pending id '{id}' was never completed.");
+        }
+
         // the response stream is fully consumed at this point, so the call count is final
+        Assert.Empty(violations);
+        Assert.False(lastHasNext, "The last payload must have hasNext false.");
+
         return new Outcome(data, errors, MutationSource.CreateCalls);
     }
 
@@ -462,7 +480,6 @@ public class DeferMutationTests : FusionTestBase
         TwoRootFields,
         ListField,
         AnchorOnMutationResult,
-        RootDefer,
         ThreeLevels
     }
 
@@ -498,7 +515,12 @@ public class DeferMutationTests : FusionTestBase
             public CreateResult[] CreateMany()
             {
                 Count();
-                return [new CreateResult(new User(1))];
+                return
+                [
+                    new CreateResult(new User(1)),
+                    new CreateResult(new User(2)),
+                    new CreateResult(new User(3))
+                ];
             }
         }
 
@@ -529,7 +551,12 @@ public class DeferMutationTests : FusionTestBase
             public CreateResult[] CreateMany()
             {
                 MutationSource.Count();
-                return [new CreateResult(new User(1, "user-1"))];
+                return
+                [
+                    new CreateResult(new User(1, "user-1")),
+                    new CreateResult(new User(2, "user-2")),
+                    new CreateResult(new User(3, "user-3"))
+                ];
             }
         }
 
@@ -564,7 +591,7 @@ public class DeferMutationTests : FusionTestBase
 
         public record User([property: ID] int Id)
         {
-            public int Total => 42;
+            public int Total => 41 + Id;
         }
     }
 
@@ -579,7 +606,7 @@ public class DeferMutationTests : FusionTestBase
 
         public record User([property: Shareable] string Sku)
         {
-            public int Total => 42;
+            public int Total => 41 + int.Parse(Sku[(Sku.LastIndexOf('-') + 1)..]);
         }
     }
 

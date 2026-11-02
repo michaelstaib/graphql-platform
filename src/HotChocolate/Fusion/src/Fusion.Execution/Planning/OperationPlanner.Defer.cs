@@ -98,7 +98,7 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Throws when <paramref name="incrementalPlanSteps"/> of a mutation operation contain a mutation root
-    /// field, because an incremental plan never invokes the mutation again.
+    /// field.
     /// </summary>
     internal void EnsureNoMutationStepInIncrementalPlan(
         IncrementalPlanDescriptor descriptor,
