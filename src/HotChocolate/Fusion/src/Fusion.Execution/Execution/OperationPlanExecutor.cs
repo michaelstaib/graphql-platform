@@ -716,7 +716,10 @@ internal static partial class OperationPlanExecutor
             requestVariables: [],
             requirementSpan);
 
-        var uncoveredTargetPaths = parentResultStore.GetUncoveredTargetPaths(anchor, parentValues);
+        var uncoveredTargetPaths = parentResultStore.GetUncoveredTargetPaths(
+            anchor,
+            parentValues,
+            requirementSpan);
 
         childContext.SetRequirements(parentValues, uncoveredTargetPaths, keys, parentResultStore.Operation);
     }

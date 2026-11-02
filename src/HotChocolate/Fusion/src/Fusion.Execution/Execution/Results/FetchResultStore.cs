@@ -97,6 +97,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
+    private HashSet<CompactPath>? _nullKeyTargets;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -624,6 +625,15 @@ AddErrors_Next:
     {
         _pocketedErrors ??= [];
         _pocketedErrors.TryAdd(path, error);
+    }
+
+    internal void MarkNullKeyTarget(CompactPath path)
+    {
+        lock (_lock)
+        {
+            _nullKeyTargets ??= [];
+            _nullKeyTargets.Add(path);
+        }
     }
 
     internal bool HasPocketedErrors
@@ -3292,11 +3302,12 @@ AddErrors_Next:
 
     /// <summary>
     /// Gets the paths of the objects at <paramref name="selectionSet"/> that no entry of
-    /// <paramref name="variableValues"/> covers.
+    /// <paramref name="variableValues"/> covers and whose key lookup resolved to <c>null</c>.
     /// </summary>
     internal ImmutableArray<CompactPath> GetUncoveredTargetPaths(
         SelectionPath selectionSet,
-        ImmutableArray<VariableValues> variableValues)
+        ImmutableArray<VariableValues> variableValues,
+        ReadOnlySpan<OperationRequirement> requirements)
     {
         ArgumentNullException.ThrowIfNull(selectionSet);
 
@@ -3348,7 +3359,7 @@ AddErrors_Next:
             {
                 var path = element.CompactPath;
 
-                if (!covered.Contains(path))
+                if (!covered.Contains(path) && HasNullKeyUnsafe(element, requirements))
                 {
                     uncovered.Add(path);
                 }
@@ -3356,6 +3367,31 @@ AddErrors_Next:
 
             return uncovered.ToImmutable();
         }
+    }
+
+    private bool HasNullKeyUnsafe(
+        CompositeResultElement element,
+        ReadOnlySpan<OperationRequirement> requirements)
+    {
+        if (_nullKeyTargets?.Contains(element.CompactPath) is true)
+        {
+            return true;
+        }
+
+        foreach (var requirement in requirements)
+        {
+            var lookupName = requirement.InternalAlias
+                ?? (requirement.Map as PathNode)?.PathSegment?.FieldName.Value;
+
+            if (lookupName is not null
+                && element.TryGetProperty(lookupName, out var value)
+                && value.ValueKind is JsonValueKind.Null)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

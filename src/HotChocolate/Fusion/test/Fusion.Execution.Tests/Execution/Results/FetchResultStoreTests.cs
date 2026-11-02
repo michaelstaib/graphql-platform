@@ -1384,6 +1384,59 @@ public sealed class FetchResultStoreTests : FusionTestBase
     }
 
     [Fact]
+    public void GetUncoveredTargetPaths_Should_ReturnOnlyNullOrMarkedKeys_When_ElementsHaveNoVariableValues()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              foos: [Foo!]!
+            }
+
+            type Foo {
+              key: String
+              name: String
+            }
+            """);
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = CreateLiveStore(
+            schema,
+            "{ foos { __fusion_internal_key: key name } }",
+            """
+            {"data":{"foos":[
+              {"__fusion_internal_key":null,"name":"a"},
+              {"__fusion_internal_key":"k","name":"b"},
+              {"name":"c"},
+              {"name":"d"}]}}
+            """,
+            resultArena,
+            sourceArena);
+
+        var requirement = new OperationRequirement(
+            "__fusion_1_key",
+            new NonNullTypeNode(new NamedTypeNode("String")),
+            SelectionPath.Root,
+            new FieldSelectionMapParser("key").Parse(),
+            "__fusion_internal_key");
+        var foos = store.Result.Data.GetProperty("foos");
+        var foosPath = SelectionPath.Root.AppendField("foos");
+        var covered = store.CreateVariableValueSets(foosPath, [], [requirement]);
+        store.MarkNullKeyTarget(foos[3].CompactPath);
+
+        // act
+        var result = store.GetUncoveredTargetPaths(foosPath, covered, [requirement]);
+
+        // assert
+        Assert.Collection(
+            result,
+            path => Assert.Equal(foos[0].CompactPath, path),
+            path => Assert.Equal(foos[3].CompactPath, path));
+    }
+
+    [Fact]
     public void ImportVariableValues_Should_InitializeIntermediateObjects_When_ImportedPathEndsBelowRootObject()
     {
         // arrange

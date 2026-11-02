@@ -246,6 +246,263 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         ]);
     }
 
+    [Fact(Skip = "planner: the promoted hop node lacks the dependency on its key supplier")]
+    public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsValueForSingleObject()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var deferred = await RunAsync(
+            client,
+            "{ current(id: 2) { user { ... @defer { name total } } } }",
+            KeyHopCalls.FirstHop);
+        var reference = await RunAsync(
+            client,
+            "{ current(id: 2) { user { name total } } }",
+            KeyHopCalls.FirstHop);
+
+        // assert
+        Assert.Equal(reference.Data, deferred.Data);
+        Assert.Equal(reference.ErrorCount, deferred.ErrorCount);
+        Assert.Equal(1, deferred.FirstHopLookups);
+        deferred.Data.MatchInlineSnapshot(
+            """
+            {"current":{"user":{"name":"User 2","total":200}}}
+            """);
+    }
+
+    [Fact(Skip = "planner: the promoted hop node lacks the dependency on its key supplier")]
+    public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullForMiddleListItemWithDeferredName()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var deferred = await RunAsync(
+            client,
+            "{ users(ids: [2, 99, 3]) { ... @defer { name total } } }",
+            KeyHopCalls.FirstHop);
+        var reference = await RunAsync(
+            client,
+            "{ users(ids: [2, 99, 3]) { name total } }",
+            KeyHopCalls.FirstHop);
+
+        // assert
+        Assert.Equal(reference.Data, deferred.Data);
+        Assert.Equal(reference.ErrorCount, deferred.ErrorCount);
+        Assert.Equal(3, deferred.FirstHopLookups);
+        deferred.Data.MatchInlineSnapshot(
+            """
+            {"users":[{"name":"User 2","total":200},{"name":"User 99","total":null},{"name":"User 3","total":300}]}
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_KeyHopThrowsForSingleObject()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateGatewayAsync(twoHops: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "{ current(id: 98) { user { ... @defer { total } } } }");
+
+        // assert
+        Assert.Equal(1, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"current":{"user":{}}},"pending":[{"id":"0","path":["current","user"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","data":{"total":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_SecondKeyHopThrowsForMiddleListItem()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.SecondHop);
+        using var gateway = await CreateGatewayAsync(twoHops: true);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "{ users(ids: [2, 98, 3]) { name ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(3, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 2"},{"name":"User 98"},{"name":"User 3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"total":200}},{"id":"0","subPath":[1],"data":{"total":null}},{"id":"0","subPath":[2],"data":{"total":300}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_FirstKeyHopThrowsForMiddleListItemOfTwoHops()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateGatewayAsync(twoHops: true);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "{ users(ids: [2, 98, 3]) { name ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(3, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"name":"User 2"},{"name":"User 98"},{"name":"User 3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"total":200}},{"id":"0","subPath":[1],"data":{"total":null}},{"id":"0","subPath":[2],"data":{"total":300}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_KeyHopReturnsNullInMutationOfDirectSchema()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateDirectGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "mutation { create(id: 99) { name ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(1, KeyHopCalls.MutationCalls);
+        Assert.Equal(1, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"create":{"name":"User 99"}},"pending":[{"id":"0","path":["create"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","data":{"total":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_KeyHopThrowsInMutationOfDirectSchema()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateDirectGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(client, "mutation { create(id: 98) { name ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(1, KeyHopCalls.MutationCalls);
+        Assert.Equal(1, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"create":{"name":"User 98"}},"pending":[{"id":"0","path":["create"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","data":{"total":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullDeferredField_When_KeyHopReturnsNullInMutationListOfDirectSchema()
+    {
+        // arrange
+        KeyHopCalls.Reset(failingHop: KeyHopCalls.FirstHop);
+        using var gateway = await CreateDirectGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var payloads = await PostAsync(
+            client,
+            "mutation { createMany(ids: [2, 99, 3]) { name ... @defer { total } } }");
+
+        // assert
+        Assert.Equal(1, KeyHopCalls.MutationCalls);
+        Assert.Equal(3, KeyHopCalls.FirstHopLookups);
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"createMany":[{"name":"User 2"},{"name":"User 99"},{"name":"User 3"}]},"pending":[{"id":"0","path":["createMany"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"total":200}},{"id":"0","subPath":[1],"data":{"total":null}},{"id":"0","subPath":[2],"data":{"total":300}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact(Skip = "planner: No plan was found for the @defer fragment")]
+    public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullForObjectOfDirectSchema()
+    {
+        // arrange
+        using var gateway = await CreateDirectGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var deferred = await RunAsync(
+            client,
+            "{ current(id: 99) { name ... @defer { total } } }",
+            KeyHopCalls.FirstHop);
+        var reference = await RunAsync(
+            client,
+            "{ current(id: 99) { name total } }",
+            KeyHopCalls.FirstHop);
+
+        // assert
+        Assert.Equal(reference.Data, deferred.Data);
+        Assert.Equal(reference.ErrorCount, deferred.ErrorCount);
+        Assert.Equal(1, deferred.FirstHopLookups);
+        deferred.Data.MatchInlineSnapshot(
+            """
+            {"current":{"name":"User 99","total":null}}
+            """);
+    }
+
+    [Fact(Skip = "planner: No plan was found for the @defer fragment")]
+    public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullForMiddleListItemOfDirectSchema()
+    {
+        // arrange
+        using var gateway = await CreateDirectGatewayAsync();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        var deferred = await RunAsync(
+            client,
+            "{ users(ids: [2, 99, 3]) { name ... @defer { total } } }",
+            KeyHopCalls.FirstHop);
+        var reference = await RunAsync(
+            client,
+            "{ users(ids: [2, 99, 3]) { name total } }",
+            KeyHopCalls.FirstHop);
+
+        // assert
+        Assert.Equal(reference.Data, deferred.Data);
+        Assert.Equal(reference.ErrorCount, deferred.ErrorCount);
+        Assert.Equal(3, deferred.FirstHopLookups);
+        deferred.Data.MatchInlineSnapshot(
+            """
+            {"users":[{"name":"User 2","total":200},{"name":"User 99","total":null},{"name":"User 3","total":300}]}
+            """);
+    }
+
     [Theory]
     [MemberData(nameof(ParityCases))]
     public async Task Defer_Should_MatchNonDeferredResult_When_KeyHopReturnsNullOrThrows(
@@ -266,14 +523,13 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
 
         KeyHopCalls.Reset(failingHop);
         var referencePayloads = await ExecuteAsync(client, reference);
-        var referenceMutationCalls = KeyHopCalls.MutationCalls;
 
         // assert
         var deferredResult = MergePayloads(deferredPayloads);
         var referenceResult = MergePayloads(referencePayloads);
         Assert.Equal(referenceResult.Data, deferredResult.Data);
         Assert.Equal(referenceResult.ErrorCount, deferredResult.ErrorCount);
-        Assert.Equal(referenceMutationCalls, deferredMutationCalls);
+        Assert.Equal(shape.StartsWith("mutation", StringComparison.Ordinal) ? 1 : 0, deferredMutationCalls);
         Assert.False(deferredPayloads[^1]["hasNext"]!.GetValue<bool>());
         Assert.Equal(
             deferredPayloads.SelectMany(p => p["pending"]?.AsArray() ?? []).Select(p => p!["id"]!.ToString()),
@@ -336,7 +592,18 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
 
-        var body = await result.HttpResponseMessage.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        return await ParsePayloadsAsync(result);
+    }
+
+    private static async Task<List<string>> ReadPayloadsAsync(GraphQLHttpResponse response)
+    {
+        var payloads = await ParsePayloadsAsync(response);
+        return payloads.Select(p => p.ToJsonString()).ToList();
+    }
+
+    private static async Task<List<JsonObject>> ParsePayloadsAsync(GraphQLHttpResponse response)
+    {
+        var body = await response.HttpResponseMessage.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         var payloads = new List<JsonObject>();
 
         foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -344,21 +611,6 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             var payload = JsonNode.Parse(line)!.AsObject();
             payload.Remove("extensions");
             payloads.Add(payload);
-        }
-
-        return payloads;
-    }
-
-    private static async Task<List<string>> ReadPayloadsAsync(GraphQLHttpResponse response)
-    {
-        var body = await response.HttpResponseMessage.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        var payloads = new List<string>();
-
-        foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var payload = JsonNode.Parse(line)!.AsObject();
-            payload.Remove("extensions");
-            payloads.Add(payload.ToJsonString());
         }
 
         return payloads;
@@ -404,6 +656,41 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
         }
 
         return (data?.ToJsonString(), errorCount);
+    }
+
+    private static async Task<List<string>> PostAsync(GraphQLHttpClient client, string document)
+    {
+        var payloads = await ExecuteAsync(client, document);
+        return payloads.Select(p => p.ToJsonString()).ToList();
+    }
+
+    private static async Task<Outcome> RunAsync(GraphQLHttpClient client, string document, string failingHop)
+    {
+        KeyHopCalls.Reset(failingHop);
+        var merged = MergePayloads(await ExecuteAsync(client, document));
+        return new Outcome(merged.Data, merged.ErrorCount, KeyHopCalls.FirstHopLookups);
+    }
+
+    private async Task<Gateway> CreateDirectGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<KeyHopDirectSourceA.Query>().AddMutationType<KeyHopDirectSourceA.Mutation>());
+
+        var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<KeyHopSourceB.Query>());
+
+        var server3 = CreateSourceSchema(
+            "C",
+            b => b.AddQueryType<KeyHopDirectSourceC.Query>());
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2),
+            ("C", server3)
+        ]);
     }
 
     private async Task<Gateway> CreateGatewayAsync(bool twoHops)
@@ -493,6 +780,64 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
                 98 => throw new GraphQLException("The key hop failed."),
                 _ => create()
             };
+        }
+    }
+
+    private static class KeyHopDirectSourceA
+    {
+        public class Query
+        {
+            public User GetCurrent(int id) => new(id);
+
+            public User[] GetUsers(int[] ids) => ids.Select(id => new User(id)).ToArray();
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public class Mutation
+        {
+            public User Create(int id)
+            {
+                KeyHopCalls.CountMutation();
+                return new User(id);
+            }
+
+            public User[] CreateMany(int[] ids)
+            {
+                KeyHopCalls.CountMutation();
+                return ids.Select(id => new User(id)).ToArray();
+            }
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public string Name => $"User {Id}";
+        }
+    }
+
+    private static class KeyHopDirectSourceC
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id)
+            {
+                KeyHopCalls.CountFirstHopLookup();
+                return KeyHopCalls.Resolve(KeyHopCalls.FirstHop, id, () => new User(id));
+            }
+
+            [Lookup]
+            [Internal]
+            public User? GetUserBySku(string sku) => new(int.Parse(sku[4..]));
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Sku => $"sku-{Id}";
         }
     }
 
@@ -610,4 +955,6 @@ public sealed class DeferKeyHopNullTests : FusionTestBase
             public string Sku => $"sku-{Code[5..]}";
         }
     }
+
+    private sealed record Outcome(string? Data, int ErrorCount, int FirstHopLookups);
 }

@@ -335,9 +335,14 @@ internal sealed class ValueCompletion
                 return true;
             }
 
-            if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult))
             {
+                continue;
+            }
+
+            if (fieldResult.IsInternal)
+            {
+                _store.MarkNullKeyTarget(target.CompactPath);
                 continue;
             }
 
@@ -593,9 +598,14 @@ internal sealed class ValueCompletion
     {
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult))
             {
+                continue;
+            }
+
+            if (fieldResult.IsInternal)
+            {
+                _store.MarkNullKeyTarget(target.CompactPath);
                 continue;
             }
 
