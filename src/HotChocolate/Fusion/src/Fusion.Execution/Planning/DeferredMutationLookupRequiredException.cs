@@ -4,8 +4,8 @@ using static HotChocolate.Fusion.Properties.FusionExecutionResources;
 namespace HotChocolate.Fusion.Planning;
 
 /// <summary>
-/// Thrown when a <c>@defer</c>d fragment is anchored on a mutation result whose
-/// anchor type has no lookup in the composite schema.
+/// Thrown when the fields of a <c>@defer</c>d fragment anchored on a mutation result
+/// cannot be planned without running the mutation root field again.
 /// </summary>
 public sealed class DeferredMutationLookupRequiredException : Exception
 {
@@ -33,7 +33,7 @@ public sealed class DeferredMutationLookupRequiredException : Exception
     public SelectionPath Path { get; }
 
     /// <summary>
-    /// Gets the name of the anchor type that has no lookup.
+    /// Gets the name of the anchor type of the deferred fragment.
     /// </summary>
     public string TypeName { get; }
 }
