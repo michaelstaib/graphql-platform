@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Execution;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
@@ -41,4 +42,10 @@ public sealed record DeliveryGroup(
     /// together with <see cref="DeferConditionIndex"/>.
     /// </summary>
     public string? IfVariable { get; init; }
+
+    /// <summary>
+    /// The <c>@skip</c> and <c>@include</c> conditions of the deferred fragment and its enclosing
+    /// inline fragments, outermost first. The group is not delivered when any condition is false.
+    /// </summary>
+    internal ImmutableArray<IncludeCondition> Conditions { get; init; } = [];
 }

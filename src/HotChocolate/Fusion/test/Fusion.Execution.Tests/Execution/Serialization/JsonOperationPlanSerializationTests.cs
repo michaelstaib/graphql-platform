@@ -1138,6 +1138,77 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
     }
 
     [Fact]
+    public void Parse_Plan_Preserves_DeliveryGroup_Conditions_When_DeferredFragmentsHaveIncludeAndSkip()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+            }
+            """);
+
+        var originalPlan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!, $y: Boolean!) {
+                user(id: "1") {
+                    name
+                    ... @include(if: $x) {
+                        ... @defer(label: "contact") @skip(if: $y) {
+                            email
+                        }
+                    }
+                }
+            }
+            """);
+
+        using var buffer = new PooledArrayWriter();
+        var formatter = new JsonOperationPlanFormatter(
+            new JsonWriterOptions
+            {
+                Indented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+        formatter.Format(buffer, originalPlan);
+
+        // act
+        var compiler = new OperationCompiler(
+            schema,
+            new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
+                new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
+        var parser = new JsonOperationPlanParser(compiler);
+        var parsedPlan = parser.Parse(buffer.WrittenMemory);
+
+        // assert
+        Encoding.UTF8.GetString(buffer.WrittenSpan).MatchSnapshot();
+        Assert.Equal(
+            [
+                new IncludeCondition(skip: null, include: "x"),
+                new IncludeCondition(skip: "y", include: null)
+            ],
+            Assert.Single(parsedPlan.DeliveryGroups).Conditions);
+    }
+
+    [Fact]
     public void Parse_Plan_Preserves_NoParentNodeId_When_RootPlanHasNoExecutionNode()
     {
         // arrange

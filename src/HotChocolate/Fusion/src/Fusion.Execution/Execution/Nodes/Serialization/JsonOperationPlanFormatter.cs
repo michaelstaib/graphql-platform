@@ -28,7 +28,7 @@ public sealed class JsonOperationPlanFormatter(JsonWriterOptions? options = null
     /// <summary>
     /// The version of the operation plan JSON format written by this formatter.
     /// </summary>
-    private const string FormatVersion = "1.2.0";
+    private const string FormatVersion = "1.3.0";
 
     private readonly JsonWriterOptions _writerOptions = options ?? new JsonWriterOptions
     {
@@ -246,7 +246,50 @@ public sealed class JsonOperationPlanFormatter(JsonWriterOptions? options = null
             jsonWriter.WriteNumberValue(deliveryGroup.Parent.Id);
         }
 
+        WriteIncludeConditions(jsonWriter, deliveryGroup.Conditions);
+
         jsonWriter.WriteEndObject();
+    }
+
+    private static void WriteIncludeConditions(
+        JsonWriter jsonWriter,
+        ImmutableArray<IncludeCondition> conditions)
+    {
+        if (conditions.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        jsonWriter.WritePropertyName("conditions");
+        jsonWriter.WriteStartArray();
+
+        foreach (var condition in conditions)
+        {
+            if (condition.Skip is not null)
+            {
+                WriteCondition(jsonWriter, condition.Skip, passingValue: false);
+            }
+
+            if (condition.Include is not null)
+            {
+                WriteCondition(jsonWriter, condition.Include, passingValue: true);
+            }
+        }
+
+        jsonWriter.WriteEndArray();
+
+        static void WriteCondition(JsonWriter jsonWriter, string variableName, bool passingValue)
+        {
+            jsonWriter.WriteStartObject();
+
+            jsonWriter.WritePropertyName("variable");
+            jsonWriter.WriteStringValue("$" + variableName);
+
+            jsonWriter.WritePropertyName("passingValue");
+            jsonWriter.WriteBooleanValue(passingValue);
+
+            jsonWriter.WriteEndObject();
+        }
     }
 
     private static void WriteIncrementalPlans(

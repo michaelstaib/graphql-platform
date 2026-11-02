@@ -118,13 +118,17 @@ internal static partial class OperationPlanExecutor
             // incremental plans.
             var initialResult = rootContext.Complete(retainMemoryForDefer: true);
 
-            // Compute the active delivery groups (one per @defer occurrence whose
-            // @defer(if:) evaluates to true) and the incremental plans that will actually run.
-            // An incremental plan is active if at least one of its delivery groups is active.
+            // A delivery group is active when its @defer(if:) and its @include and @skip
+            // conditions hold. An incremental plan is active if at least one of its
+            // delivery groups is active.
             var activeDeliveryGroupIds = new HashSet<int>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (IsDeliveryGroupActive(deliveryGroup, variables))
+                if (IsDeliveryGroupActive(
+                    deliveryGroup,
+                    variables,
+                    operationPlan.Operation,
+                    rootContext.IncludeConditionFlags))
                 {
                     activeDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
@@ -789,20 +793,27 @@ internal static partial class OperationPlanExecutor
         }
     }
 
-    private static bool IsDeliveryGroupActive(DeliveryGroup deliveryGroup, IVariableValueCollection variables)
+    private static bool IsDeliveryGroupActive(
+        DeliveryGroup deliveryGroup,
+        IVariableValueCollection variables,
+        Operation operation,
+        ConditionFlags includeFlags)
     {
-        if (deliveryGroup.IfVariable is null)
+        if (deliveryGroup.IfVariable is not null)
         {
-            return true;
+            if (!variables.TryGetValue<BooleanValueNode>(deliveryGroup.IfVariable, out var boolValue))
+            {
+                throw new InvalidOperationException(
+                    $"The variable {deliveryGroup.IfVariable} has an invalid value.");
+            }
+
+            if (!boolValue.Value)
+            {
+                return false;
+            }
         }
 
-        if (!variables.TryGetValue<BooleanValueNode>(deliveryGroup.IfVariable, out var boolValue))
-        {
-            throw new InvalidOperationException(
-                $"The variable {deliveryGroup.IfVariable} has an invalid value.");
-        }
-
-        return boolValue.Value;
+        return operation.AreDeliveryGroupConditionsIncluded(deliveryGroup, includeFlags);
     }
 
     private static DeliveryGroup? GetEnabledDeliveryGroup(
