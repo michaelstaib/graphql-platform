@@ -146,6 +146,14 @@ internal static partial class OperationPlanExecutor
                 ? null
                 : FindSilentDeliveryGroups(deliveryGroupsByPlan, excludedIncrementalPlans);
 
+            var skippedIncrementalPlans = excludedIncrementalPlans is null
+                ? null
+                : FindSkippedIncrementalPlans(
+                    operationPlan,
+                    deliveryGroupsByPlan,
+                    activeDeliveryGroupIds,
+                    excludedIncrementalPlans);
+
             // Mark top-level active delivery groups as pending on the initial
             // result. A group whose enclosing groups are all disabled or silent is top-level.
             // Nested delivery groups are marked pending after their enclosing
@@ -199,6 +207,7 @@ internal static partial class OperationPlanExecutor
                     activeDeliveryGroupIds,
                     deliveryGroupsByPlan,
                     excludedIncrementalPlans,
+                    skippedIncrementalPlans,
                     silentDeliveryGroupIds,
                     rootContext,
                     cancellationToken),
@@ -229,6 +238,7 @@ internal static partial class OperationPlanExecutor
         HashSet<int> activeDeliveryGroupIds,
         Dictionary<IncrementalPlan, ResolvedIncrementalPlan> deliveryGroupsByPlan,
         HashSet<IncrementalPlan>? excludedIncrementalPlans,
+        HashSet<IncrementalPlan>? skippedIncrementalPlans,
         HashSet<int>? silentDeliveryGroupIds,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -333,6 +343,7 @@ internal static partial class OperationPlanExecutor
                     incrementalPlan,
                     deliveryGroups,
                     resolvedPlan.IncludeFlags,
+                    skippedIncrementalPlans?.Contains(incrementalPlan) is true,
                     rootContext.GetResultStoreForChildDefer(),
                     channel.Writer,
                     requestArena,
@@ -545,6 +556,7 @@ internal static partial class OperationPlanExecutor
                         candidate,
                         candidateGroups,
                         resolvedCandidate.IncludeFlags,
+                        skippedIncrementalPlans?.Contains(candidate) is true,
                         parentStore,
                         channel.Writer,
                         requestArena,
@@ -685,7 +697,7 @@ internal static partial class OperationPlanExecutor
 
     /// <summary>
     /// Starts an incremental plan and publishes completion to the channel.
-    /// Plans without execution nodes complete without running work.
+    /// Plans without execution nodes and skipped plans complete without running work.
     /// </summary>
     private static void BeginIncrementalPlan(
         RequestContext requestContext,
@@ -693,12 +705,13 @@ internal static partial class OperationPlanExecutor
         IncrementalPlan incrementalPlan,
         ImmutableArray<DeliveryGroup> deliveryGroups,
         ConditionFlags? includeFlags,
+        bool skipExecution,
         FetchResultStore parentResultStore,
         ChannelWriter<IncrementalPlanResult> completion,
         MemoryArena requestArena,
         CancellationToken cancellationToken)
     {
-        if (incrementalPlan.AllNodes.IsEmpty)
+        if (skipExecution || incrementalPlan.AllNodes.IsEmpty)
         {
             completion.TryWrite(new IncrementalPlanResult(incrementalPlan, deliveryGroups, null, null, null));
             return;
@@ -986,6 +999,113 @@ internal static partial class OperationPlanExecutor
         }
 
         return excludedIncrementalPlans;
+    }
+
+    /// <summary>
+    /// Finds the excluded incremental plans whose result no started nested plan reads, so they
+    /// complete without running.
+    /// </summary>
+    private static HashSet<IncrementalPlan>? FindSkippedIncrementalPlans(
+        OperationPlan operationPlan,
+        Dictionary<IncrementalPlan, ResolvedIncrementalPlan> deliveryGroupsByPlan,
+        HashSet<int> activeDeliveryGroupIds,
+        HashSet<IncrementalPlan> excludedIncrementalPlans)
+    {
+        var skipped = new HashSet<IncrementalPlan>(excludedIncrementalPlans);
+        var changed = true;
+
+        while (changed && skipped.Count > 0)
+        {
+            changed = false;
+
+            foreach (var nestedPlan in operationPlan.IncrementalPlans)
+            {
+                var nestedGroups = deliveryGroupsByPlan[nestedPlan].DeliveryGroups;
+
+                if (nestedGroups.IsEmpty
+                    || skipped.Contains(nestedPlan)
+                    || !HasParentScopeRequirements(nestedPlan))
+                {
+                    continue;
+                }
+
+                // The enclosing plans are the ones delivering the closest enclosing group that
+                // any plan delivers. A group without a plan hands its own enclosing scope on.
+                for (var enclosing = GetEnabledDeliveryGroup(nestedGroups[0].Parent, activeDeliveryGroupIds);
+                    enclosing is not null;
+                    enclosing = GetEnabledDeliveryGroup(enclosing.Parent, activeDeliveryGroupIds))
+                {
+                    var delivered = false;
+
+                    foreach (var enclosingPlan in operationPlan.IncrementalPlans)
+                    {
+                        if (!deliveryGroupsByPlan[enclosingPlan].DeliveryGroups.Contains(enclosing))
+                        {
+                            continue;
+                        }
+
+                        delivered = true;
+                        changed |= skipped.Remove(enclosingPlan);
+                    }
+
+                    if (delivered)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return skipped.Count > 0 ? skipped : null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if a node of the incremental plan reads requirements from the enclosing plan scope.
+    /// </summary>
+    private static bool HasParentScopeRequirements(IncrementalPlan incrementalPlan)
+    {
+        foreach (var node in incrementalPlan.AllNodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode op
+                    when !op.ParentDependencies.IsEmpty && !op.Requirements.IsEmpty:
+                    return true;
+
+                case ApolloOperationExecutionNode apolloOp
+                    when !apolloOp.ParentDependencies.IsEmpty && !apolloOp.Requirements.IsEmpty:
+                    return true;
+
+                case OperationBatchExecutionNode batch:
+                    if (HasParentScopeRequirements(batch.Operations))
+                    {
+                        return true;
+                    }
+                    break;
+
+                case ApolloOperationBatchExecutionNode apolloBatch:
+                    if (HasParentScopeRequirements(apolloBatch.Operations))
+                    {
+                        return true;
+                    }
+                    break;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasParentScopeRequirements(ReadOnlySpan<OperationDefinition> definitions)
+    {
+        foreach (var definition in definitions)
+        {
+            if (!definition.ParentDependencies.IsEmpty && !definition.Requirements.IsEmpty)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static HashSet<int> FindSilentDeliveryGroups(
