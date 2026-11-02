@@ -70,14 +70,47 @@ internal sealed class ExecutionResultSnapshotValueFormatter
         IResponseStream stream)
     {
         var accumulator = new StreamAccumulator();
+        var patcher = IncrementalDeliveryChecks.RejectsOverlappingPositions
+            ? new JsonResultPatcher(rejectOverlappingPositions: true)
+            : null;
+        var retained = new List<JsonDocument>();
 
-        // StreamAccumulator deep-clones every element it retains, so each parsed
-        // document is only needed for the duration of its AddPayload call and can be
-        // disposed immediately afterwards.
-        await foreach (var result in stream.ReadResultsAsync().ConfigureAwait(false))
+        try
         {
-            using var document = JsonDocument.Parse(result.ToJson());
-            accumulator.AddPayload(document.RootElement);
+            // StreamAccumulator deep-clones every element it retains, so each parsed
+            // document is disposed right after its AddPayload call unless the overlap
+            // check is active, which keeps the documents alive until the check ran.
+            await foreach (var result in stream.ReadResultsAsync().ConfigureAwait(false))
+            {
+                var document = JsonDocument.Parse(result.ToJson());
+                accumulator.AddPayload(document.RootElement);
+
+                if (patcher is null)
+                {
+                    document.Dispose();
+                    continue;
+                }
+
+                retained.Add(document);
+
+                if (retained.Count == 1)
+                {
+                    patcher.SetResponse(document);
+                }
+                else
+                {
+                    patcher.ApplyPatch(document);
+                }
+            }
+
+            patcher?.ThrowIfOverlapping();
+        }
+        finally
+        {
+            foreach (var document in retained)
+            {
+                document.Dispose();
+            }
         }
 
         await using var writer = new Utf8JsonWriter(snapshot, IndentedWriterOptions);
@@ -319,12 +352,7 @@ internal sealed class JsonResultPatcher(bool rejectOverlappingPositions)
                 "You must first set the initial response before you can apply patches.");
         }
 
-        if (rejectOverlappingPositions && _overlaps.Count > 0)
-        {
-            throw new InvalidOperationException(
-                "Incremental payloads delivered a response position more than once: "
-                + string.Join(", ", _overlaps));
-        }
+        ThrowIfOverlapping();
 
         using var writer = new Utf8JsonWriter(snapshot, new JsonWriterOptions { Indented = true });
 
@@ -335,6 +363,16 @@ internal sealed class JsonResultPatcher(bool rejectOverlappingPositions)
 
         _json.WriteTo(writer);
         writer.Flush();
+    }
+
+    internal void ThrowIfOverlapping()
+    {
+        if (rejectOverlappingPositions && _overlaps.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Incremental payloads delivered a response position more than once: "
+                + string.Join(", ", _overlaps));
+        }
     }
 
     private void ProcessPayload(JsonElement root)

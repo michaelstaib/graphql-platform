@@ -11,7 +11,8 @@ public static class IncrementalDeliveryChecks
 
     /// <summary>
     /// Makes snapshot formatting fail when incremental payloads deliver the same response position more than once.
-    /// The check applies to the calling test until the returned scope is disposed.
+    /// The check covers the IExecutionResult formatters and the multipart and JSON-lines GraphQLHttpResponse
+    /// formatters, and applies to the calling test until the returned scope is disposed.
     /// </summary>
     public static IDisposable RejectOverlappingPositions()
     {
