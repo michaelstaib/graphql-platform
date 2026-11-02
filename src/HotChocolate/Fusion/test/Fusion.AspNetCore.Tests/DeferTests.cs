@@ -1718,6 +1718,15 @@ public class DeferTests : FusionTestBase
 
         // assert
         requestCounts.MatchInlineSnapshot("A: 2, C: 1");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"1","path":["user"],"label":"inner"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"customized":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
         Assert.True(
             JsonNode.DeepEquals(
                 JsonNode.Parse(nonDeferredPayloads[0])!["data"],
@@ -1789,6 +1798,15 @@ public class DeferTests : FusionTestBase
 
         // assert
         requestCounts.MatchInlineSnapshot("A: 3, B: 1");
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"2","path":["user"],"label":"inner"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"2","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"2"}],"hasNext":false}
+            """
+        ]);
         Assert.True(
             JsonNode.DeepEquals(
                 JsonNode.Parse(nonDeferredPayloads[0])!["data"],

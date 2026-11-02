@@ -1024,7 +1024,7 @@ internal static partial class OperationPlanExecutor
 
                 if (nestedGroups.IsEmpty
                     || skipped.Contains(nestedPlan)
-                    || CollectParentScopeRequirements(nestedPlan).Count == 0)
+                    || !HasParentScopeRequirements(nestedPlan))
                 {
                     continue;
                 }
@@ -1057,6 +1057,55 @@ internal static partial class OperationPlanExecutor
         }
 
         return skipped.Count > 0 ? skipped : null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if a node of the incremental plan reads requirements from the enclosing plan scope.
+    /// </summary>
+    private static bool HasParentScopeRequirements(IncrementalPlan incrementalPlan)
+    {
+        foreach (var node in incrementalPlan.AllNodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode op
+                    when !op.ParentDependencies.IsEmpty && !op.Requirements.IsEmpty:
+                    return true;
+
+                case ApolloOperationExecutionNode apolloOp
+                    when !apolloOp.ParentDependencies.IsEmpty && !apolloOp.Requirements.IsEmpty:
+                    return true;
+
+                case OperationBatchExecutionNode batch:
+                    if (HasParentScopeRequirements(batch.Operations))
+                    {
+                        return true;
+                    }
+                    break;
+
+                case ApolloOperationBatchExecutionNode apolloBatch:
+                    if (HasParentScopeRequirements(apolloBatch.Operations))
+                    {
+                        return true;
+                    }
+                    break;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasParentScopeRequirements(ReadOnlySpan<OperationDefinition> definitions)
+    {
+        foreach (var definition in definitions)
+        {
+            if (!definition.ParentDependencies.IsEmpty && !definition.Requirements.IsEmpty)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static HashSet<int> FindSilentDeliveryGroups(
