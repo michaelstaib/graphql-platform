@@ -5419,8 +5419,8 @@ public class DeferTests : FusionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(1, MutationKeyChainSourceA.CreateCalls);
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+        Assert.Equal(1, MutationKeyChainSourceA.CreateCalls);
     }
 
     [Fact]
@@ -5476,8 +5476,8 @@ public class DeferTests : FusionTestBase
             TestContext.Current.CancellationToken);
 
         // assert
-        Assert.Equal(1, MutationKeyChainSourceA.CreateCalls);
         await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+        Assert.Equal(1, MutationKeyChainSourceA.CreateCalls);
     }
 
     [Fact]

@@ -671,18 +671,22 @@ public sealed partial class OperationPlanner
                     {
                         scopeState.Steps = stepsAfterPromotion;
 
-                        if (stepsAfterPromotion.ById(resolvedStepId) is OperationPlanStep promotedStep
-                            && TryLocateDeferRequirementTarget(
+                        if (stepsAfterPromotion.ById(resolvedStepId) is not OperationPlanStep promotedStep
+                            || !TryLocateDeferRequirementTarget(
                                 promotedStep,
                                 sourceRequirement.Path,
                                 out _,
-                                out var promotedTargetType))
-                        {
-                            MirrorDeferRequirementIntoInternalOperation(
+                                out var promotedTargetType)
+                            || !TryMirrorDeferRequirementIntoInternalOperation(
                                 scopeState,
                                 sourceRequirement.Path,
                                 promotedTargetType,
-                                resolver.Rewrite(sourceRequirement.Map, promotedTargetType));
+                                resolver.Rewrite(sourceRequirement.Map, promotedTargetType)))
+                        {
+                            throw CreateUnsatisfiableDeferRequirementException(
+                                producers[0],
+                                requirement,
+                                "a promoted step could not be mirrored into the enclosing operation");
                         }
 
                         lifted.Add(
@@ -1407,7 +1411,7 @@ public sealed partial class OperationPlanner
 
             scopeState.Steps = scopeState.Steps.SetItem(i, updatedParentStep);
 
-            MirrorDeferRequirementIntoInternalOperation(
+            TryMirrorDeferRequirementIntoInternalOperation(
                 scopeState,
                 requirement.Path,
                 targetType,
@@ -1439,7 +1443,7 @@ public sealed partial class OperationPlanner
     /// <paramref name="path"/> so the compiled Operation (and the runtime composite result
     /// document bound to it) carries the fields a parent-scope step supplies to a deferred step.
     /// </summary>
-    private void MirrorDeferRequirementIntoInternalOperation(
+    private bool TryMirrorDeferRequirementIntoInternalOperation(
         ScopeState scopeState,
         SelectionPath path,
         ITypeDefinition targetType,
@@ -1450,7 +1454,7 @@ public sealed partial class OperationPlanner
             path,
             out var internalTargetSelectionSet))
         {
-            return;
+            return false;
         }
 
         var overallIndex = SelectionSetIndexer.Create(scopeState.InternalOperation).ToBuilder();
@@ -1461,6 +1465,7 @@ public sealed partial class OperationPlanner
             targetType,
             overallTargetId,
             selections);
+        return true;
     }
 
     /// <summary>
