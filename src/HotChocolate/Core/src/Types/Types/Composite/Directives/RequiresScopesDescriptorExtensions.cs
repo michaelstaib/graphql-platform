@@ -31,14 +31,10 @@ public static class RequiresScopesDescriptorExtensions
         ArgumentNullException.ThrowIfNull(scopes);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<RequiresScopes>(
+        global::HotChocolate.Types.Composite.RequiresScopes.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes),
-            static directive => directive.Scopes,
-            static groups => new RequiresScopes(groups));
+            scopes);
         return descriptor;
     }
 
@@ -68,14 +64,10 @@ public static class RequiresScopesDescriptorExtensions
         ArgumentNullException.ThrowIfNull(scopes);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<RequiresScopes>(
+        global::HotChocolate.Types.Composite.RequiresScopes.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes),
-            static directive => directive.Scopes,
-            static groups => new RequiresScopes(groups));
+            scopes);
         return descriptor;
     }
 
@@ -105,14 +97,10 @@ public static class RequiresScopesDescriptorExtensions
         ArgumentNullException.ThrowIfNull(scopes);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<RequiresScopes>(
+        global::HotChocolate.Types.Composite.RequiresScopes.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes),
-            static directive => directive.Scopes,
-            static groups => new RequiresScopes(groups));
+            scopes);
         return descriptor;
     }
 
@@ -142,14 +130,10 @@ public static class RequiresScopesDescriptorExtensions
         ArgumentNullException.ThrowIfNull(scopes);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<RequiresScopes>(
+        global::HotChocolate.Types.Composite.RequiresScopes.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes),
-            static directive => directive.Scopes,
-            static groups => new RequiresScopes(groups));
+            scopes);
         return descriptor;
     }
 
@@ -179,14 +163,10 @@ public static class RequiresScopesDescriptorExtensions
         ArgumentNullException.ThrowIfNull(scopes);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<RequiresScopes>(
+        global::HotChocolate.Types.Composite.RequiresScopes.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes),
-            static directive => directive.Scopes,
-            static groups => new RequiresScopes(groups));
+            scopes);
         return descriptor;
     }
 
@@ -216,14 +196,10 @@ public static class RequiresScopesDescriptorExtensions
         ArgumentNullException.ThrowIfNull(scopes);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<RequiresScopes>(
+        global::HotChocolate.Types.Composite.RequiresScopes.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes),
-            static directive => directive.Scopes,
-            static groups => new RequiresScopes(groups));
+            scopes);
         return descriptor;
     }
 }

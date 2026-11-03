@@ -1,3 +1,8 @@
+using HotChocolate.Internal;
+using HotChocolate.Types.Descriptors;
+using HotChocolate.Types.Descriptors.Configurations;
+using HotChocolate.Utilities;
+
 namespace HotChocolate.Types.Composite;
 
 /// <summary>
@@ -30,10 +35,7 @@ public sealed class RequiresScopes
     /// </param>
     public RequiresScopes(IReadOnlyList<IReadOnlyList<string>> scopes)
     {
-        Scopes = AuthorizationGroups.Canonicalize(
-            DirectiveNames.RequiresScopes.Name,
-            scopes,
-            nameof(scopes));
+        Scopes = Canonicalize(scopes);
     }
 
     /// <summary>
@@ -44,7 +46,103 @@ public sealed class RequiresScopes
     [GraphQLType<NonNullType<ListType<NonNullType<ListType<NonNullType<StringType>>>>>>]
     public IReadOnlyList<IReadOnlyList<string>> Scopes { get; }
 
+    internal static void AddGroup(
+        IDirectiveConfigurationProvider configuration,
+        ITypeInspector typeInspector,
+        string[] scopes)
+    {
+        ArgumentNullException.ThrowIfNull(scopes);
+
+        var group = CreateGroup(scopes, nameof(scopes));
+        var groups = new List<IReadOnlyList<string>>();
+
+        for (var i = configuration.Directives.Count - 1; i >= 0; i--)
+        {
+            if (configuration.Directives[i].Value is RequiresScopes existing)
+            {
+                groups.AddRange(existing.Scopes);
+                configuration.Directives.RemoveAt(i);
+            }
+        }
+
+        groups.Add(group);
+        configuration.AddDirective(new RequiresScopes(groups), typeInspector);
+    }
+
     /// <inheritdoc />
     public override string ToString()
         => $"{Name}(scopes: [{string.Join(", ", Scopes.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
+
+    private static IReadOnlyList<IReadOnlyList<string>> Canonicalize(
+        IReadOnlyList<IReadOnlyList<string>> scopes)
+    {
+        ArgumentNullException.ThrowIfNull(scopes);
+
+        var result = new List<IReadOnlyList<string>>();
+
+        foreach (var group in scopes)
+        {
+            var canonical = CreateGroup(group, nameof(scopes));
+
+            if (!result.Exists(existing => existing.SequenceEqual(canonical)))
+            {
+                result.Add(canonical);
+            }
+        }
+
+        if (result.Count == 0)
+        {
+            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
+                DirectiveNames.RequiresScopes.Name,
+                nameof(scopes));
+        }
+
+        result.Sort(CompareGroups);
+        return result;
+    }
+
+    private static IReadOnlyList<string> CreateGroup(IEnumerable<string> values, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        var set = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var scope in values)
+        {
+            if (string.IsNullOrEmpty(scope))
+            {
+                throw ThrowHelper.AuthorizationDirective_ValueIsEmpty(
+                    DirectiveNames.RequiresScopes.Name,
+                    paramName);
+            }
+
+            set.Add(scope);
+        }
+
+        if (set.Count == 0)
+        {
+            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
+                DirectiveNames.RequiresScopes.Name,
+                paramName);
+        }
+
+        return [.. set];
+    }
+
+    private static int CompareGroups(IReadOnlyList<string> x, IReadOnlyList<string> y)
+    {
+        var length = Math.Min(x.Count, y.Count);
+
+        for (var i = 0; i < length; i++)
+        {
+            var result = string.CompareOrdinal(x[i], y[i]);
+
+            if (result != 0)
+            {
+                return result;
+            }
+        }
+
+        return x.Count.CompareTo(y.Count);
+    }
 }

@@ -1,3 +1,8 @@
+using HotChocolate.Internal;
+using HotChocolate.Types.Descriptors;
+using HotChocolate.Types.Descriptors.Configurations;
+using HotChocolate.Utilities;
+
 namespace HotChocolate.Types.Composite;
 
 /// <summary>
@@ -30,10 +35,7 @@ public sealed class Policy
     /// </param>
     public Policy(IReadOnlyList<IReadOnlyList<string>> policies)
     {
-        Policies = AuthorizationGroups.Canonicalize(
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies));
+        Policies = Canonicalize(policies);
     }
 
     /// <summary>
@@ -44,7 +46,103 @@ public sealed class Policy
     [GraphQLType<NonNullType<ListType<NonNullType<ListType<NonNullType<StringType>>>>>>]
     public IReadOnlyList<IReadOnlyList<string>> Policies { get; }
 
+    internal static void AddGroup(
+        IDirectiveConfigurationProvider configuration,
+        ITypeInspector typeInspector,
+        string[] policies)
+    {
+        ArgumentNullException.ThrowIfNull(policies);
+
+        var group = CreateGroup(policies, nameof(policies));
+        var groups = new List<IReadOnlyList<string>>();
+
+        for (var i = configuration.Directives.Count - 1; i >= 0; i--)
+        {
+            if (configuration.Directives[i].Value is Policy existing)
+            {
+                groups.AddRange(existing.Policies);
+                configuration.Directives.RemoveAt(i);
+            }
+        }
+
+        groups.Add(group);
+        configuration.AddDirective(new Policy(groups), typeInspector);
+    }
+
     /// <inheritdoc />
     public override string ToString()
         => $"{Name}(policies: [{string.Join(", ", Policies.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
+
+    private static IReadOnlyList<IReadOnlyList<string>> Canonicalize(
+        IReadOnlyList<IReadOnlyList<string>> policies)
+    {
+        ArgumentNullException.ThrowIfNull(policies);
+
+        var result = new List<IReadOnlyList<string>>();
+
+        foreach (var group in policies)
+        {
+            var canonical = CreateGroup(group, nameof(policies));
+
+            if (!result.Exists(existing => existing.SequenceEqual(canonical)))
+            {
+                result.Add(canonical);
+            }
+        }
+
+        if (result.Count == 0)
+        {
+            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
+                DirectiveNames.Policy.Name,
+                nameof(policies));
+        }
+
+        result.Sort(CompareGroups);
+        return result;
+    }
+
+    private static IReadOnlyList<string> CreateGroup(IEnumerable<string> values, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        var set = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var policy in values)
+        {
+            if (string.IsNullOrEmpty(policy))
+            {
+                throw ThrowHelper.AuthorizationDirective_ValueIsEmpty(
+                    DirectiveNames.Policy.Name,
+                    paramName);
+            }
+
+            set.Add(policy);
+        }
+
+        if (set.Count == 0)
+        {
+            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
+                DirectiveNames.Policy.Name,
+                paramName);
+        }
+
+        return [.. set];
+    }
+
+    private static int CompareGroups(IReadOnlyList<string> x, IReadOnlyList<string> y)
+    {
+        var length = Math.Min(x.Count, y.Count);
+
+        for (var i = 0; i < length; i++)
+        {
+            var result = string.CompareOrdinal(x[i], y[i]);
+
+            if (result != 0)
+            {
+                return result;
+            }
+        }
+
+        return x.Count.CompareTo(y.Count);
+    }
 }
