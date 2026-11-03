@@ -15,9 +15,6 @@ public class DeferMutationPlannerTests : FusionTestBase
     [InlineData(Topology.DirectKey, MutationShape.Sibling, "Mutation/a | Query/e | Query/b")]
     [InlineData(Topology.DirectKey, MutationShape.NamedFragments, "Mutation/a | Query/e | Query/b")]
     [InlineData(Topology.DirectKey, MutationShape.IfVariable, "Mutation/a,Query/e,Query/b | Query/e | Query/b")]
-    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariable, "Mutation/a | Query/e | Query/b")]
-    [InlineData(Topology.DirectKey, MutationShape.OuterIfVariable, "Mutation/a,Query/e | Query/e | Query/b")]
-    [InlineData(Topology.DirectKey, MutationShape.TwoIfVariables, "Mutation/a,Query/e,Query/b | Query/e | Query/b")]
     [InlineData(Topology.DirectKey, MutationShape.TwoRootFields, "Mutation/a,Mutation/a | Query/e | Query/b | Query/e")]
     [InlineData(Topology.DirectKey, MutationShape.ListField, "Mutation/a | Query/e | Query/b")]
     [InlineData(Topology.OneHopKey, MutationShape.Nested, "Mutation/a | Query/e,Query/c | Query/b")]
@@ -94,6 +91,9 @@ public class DeferMutationPlannerTests : FusionTestBase
     [InlineData(Topology.OneHopKey, MutationShape.OuterIfVariable, "$.create.user")]
     [InlineData(Topology.OneHopKey, MutationShape.TwoIfVariables, "$.create.user")]
     [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariable, "$.create.user")]
+    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariable, "$.create.user")]
+    [InlineData(Topology.DirectKey, MutationShape.OuterIfVariable, "$.create.user")]
+    [InlineData(Topology.DirectKey, MutationShape.TwoIfVariables, "$.create.user")]
     [InlineData(Topology.DirectKey, MutationShape.RootDefer, "$")]
     [InlineData(Topology.DirectKey, MutationShape.ThreeLevels, "$.create.user")]
     [InlineData(Topology.NameOnMutationSubgraph, MutationShape.Nested, "$.create.user")]
@@ -118,7 +118,7 @@ public class DeferMutationPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Defer_Should_RefuseShape_When_IfVariableCanMoveNestedDeferAwayFromItsKey()
+    public void Defer_Should_RefuseShape_When_NestedDeferChainHasConditionedGroup()
     {
         // arrange
         var schema = ComposeTopology(Topology.OneHopKey);
@@ -129,9 +129,9 @@ public class DeferMutationPlannerTests : FusionTestBase
 
         // assert
         Assert.Equal(
-            "The @defer fragment at path '$.create.user' cannot be planned: an if variable can move the deferred "
-            + "fields on anchor type 'User' out of the enclosing @defer whose result holds their key, and the key "
-            + "cannot be read from the mutation result instead.",
+            "The @defer fragment at path '$.create.user' cannot be planned: the deferred fields on anchor type "
+            + "'User' are nested in a chain of @defer fragments where an if variable, @include or @skip condition "
+            + "can disable a fragment of the chain, and a mutation cannot deliver them without losing fields.",
             error.Message);
     }
 
