@@ -4,6 +4,7 @@ operation:
         product(id: "1") {
           name
           id @fusion__requirement
+          productSku @fusion__requirement
         }
       }
     hash: 123456789101112
@@ -35,6 +36,8 @@ nodes:
       - name: __fusion_4_id
         selectionMap: >-
           id
+    dependencies:
+      - id: 1
 deliveryGroups:
   - id: 0
     path: $.product
@@ -100,6 +103,8 @@ incrementalPlans:
           - name: __fusion_4_id
             selectionMap: >-
               id
+        dependencies:
+          - id: 2
   - deliveryGroupIds:
       - 1
     parentNodeId: 1

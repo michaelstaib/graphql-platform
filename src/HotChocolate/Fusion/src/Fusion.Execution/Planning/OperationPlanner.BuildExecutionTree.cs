@@ -3490,7 +3490,7 @@ public sealed partial class OperationPlanner
                     break;
 
                 case InlineFragmentNode { TypeCondition: null } untypedFragment:
-                    var conditions = ExtractConditions(untypedFragment.Directives);
+                    var conditions = SkipIncludeConditions.Extract(untypedFragment.Directives);
                     var restoreCount = ancestorConditions.Count;
 
                     if (conditions is not null)
@@ -3519,7 +3519,7 @@ public sealed partial class OperationPlanner
             IReadOnlyList<DirectiveNode> directives)
         {
             var conditionSet = new HashSet<ExecutionNodeCondition>(ancestorConditions);
-            var conditions = ExtractConditions(directives);
+            var conditions = SkipIncludeConditions.Extract(directives);
 
             if (conditions is not null)
             {
@@ -3600,7 +3600,7 @@ public sealed partial class OperationPlanner
         HashSet<ExecutionNodeCondition> commonConditions,
         [NotNullWhen(true)] out List<DirectiveNode>? newDirectives)
     {
-        var conditions = ExtractConditions(directives);
+        var conditions = SkipIncludeConditions.Extract(directives);
 
         if (conditions is null)
         {

@@ -2574,7 +2574,7 @@ public sealed partial class OperationPlanner
         {
             foreach (var fragment in nodeField.ParentFragments)
             {
-                var fragmentConditions = ExtractConditions(fragment.Directives);
+                var fragmentConditions = SkipIncludeConditions.Extract(fragment.Directives);
 
                 if (fragmentConditions is not null)
                 {
@@ -2583,7 +2583,7 @@ public sealed partial class OperationPlanner
             }
         }
 
-        var nodeFieldConditions = ExtractConditions(nodeField.Field.Directives);
+        var nodeFieldConditions = SkipIncludeConditions.Extract(nodeField.Field.Directives);
 
         if (nodeFieldConditions is not null)
         {
@@ -2591,37 +2591,6 @@ public sealed partial class OperationPlanner
         }
 
         return conditions.ToArray();
-    }
-
-    private static List<ExecutionNodeCondition>? ExtractConditions(IReadOnlyList<DirectiveNode> directives)
-    {
-        List<ExecutionNodeCondition>? conditions = null;
-
-        foreach (var directive in directives)
-        {
-            var passingValue = directive.Name.Value switch
-            {
-                "skip" => false,
-                "include" => true,
-                _ => (bool?)null
-            };
-
-            if (passingValue.HasValue)
-            {
-                var ifArgument = directive.Arguments[0];
-                var condition = new ExecutionNodeCondition
-                {
-                    VariableName = ((VariableNode)ifArgument.Value).Name.Value,
-                    PassingValue = passingValue.Value,
-                    Directive = directive
-                };
-
-                conditions ??= [];
-                conditions.Add(condition);
-            }
-        }
-
-        return conditions;
     }
 
     private static List<ArgumentNode> GetLookupArguments(Lookup lookup, string requirementKey)
