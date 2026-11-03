@@ -1,0 +1,64 @@
+operation:
+  - document: |
+      query($x: Boolean!) {
+        products {
+          id
+          id @fusion__requirement
+          ... @include(if: $x) {
+            __typename @fusion__empty
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($x: Boolean!) {
+        products {
+          id
+          ... @include(if: $x) {
+            __typename
+          }
+        }
+      }
+    forwardedVariables:
+      - x
+deliveryGroups:
+  - id: 0
+    path: $.products
+    conditions:
+      - variable: $x
+        passingValue: true
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 1
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            productRatingById(id: $__fusion_1_id) {
+              score: rating
+            }
+          }
+        source: $.productRatingById
+        target: $.products
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        conditions:
+          - variable: $x
+            passingValue: true
+        dependencies:
+          - parentNodeId: 1

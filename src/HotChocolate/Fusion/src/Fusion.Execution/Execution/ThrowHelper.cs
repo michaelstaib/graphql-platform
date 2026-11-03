@@ -32,6 +32,17 @@ internal static class ThrowHelper
     public static InvalidOperationException DeferredPlanNotFound(SelectionPath path)
         => new($"No plan was found for the @defer fragment at path '{path}'.");
 
+    public static DeferredMutationLookupRequiredException DeferredMutationConditionedDeferChain(
+        SelectionPath path,
+        string typeName)
+        => new(
+            path,
+            typeName,
+            string.Format(
+                FusionExecutionResources.DeferredMutationLookupRequiredException_ConditionedDeferChain,
+                path,
+                typeName));
+
     public static InvalidOperationException LookupTargetPathsReleased()
         => new("The paths of lookup targets can only be created while their result document is in use.");
 
@@ -96,6 +107,17 @@ internal static class ThrowHelper
 
     public static KeyNotFoundException DeliveryGroupNotFound(int deliveryGroupId)
         => new($"The delivery group with the ID '{deliveryGroupId}' was not found.");
+
+    public static ArgumentException DeliveryGroupConditionsNotCompiled(int deliveryGroupId, string paramName)
+        => new(
+            $"The include conditions of the delivery group with the ID '{deliveryGroupId}' "
+            + "were not compiled into the operation.",
+            paramName);
+
+    public static ArgumentException DeliveryGroupIdNegative(int deliveryGroupId, string paramName)
+        => new(
+            $"The delivery group ID '{deliveryGroupId}' is invalid. Delivery group IDs must be zero or greater.",
+            paramName);
 
     public static InvalidOperationException DeliveryPathSegmentNotFound(string segmentName)
         => new($"Could not resolve selection path segment '{segmentName}'.");

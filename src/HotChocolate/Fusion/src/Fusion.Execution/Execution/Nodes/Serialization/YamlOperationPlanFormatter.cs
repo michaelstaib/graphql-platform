@@ -117,6 +117,36 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
             writer.WriteLine("parentId: {0}", deliveryGroup.Parent.Id);
         }
 
+        if (!deliveryGroup.Conditions.IsDefaultOrEmpty)
+        {
+            writer.WriteLine("conditions:");
+            writer.Indent();
+
+            foreach (var condition in deliveryGroup.Conditions)
+            {
+                if (condition.Skip is not null)
+                {
+                    WriteIncludeCondition(condition.Skip, passingValue: false, writer);
+                }
+
+                if (condition.Include is not null)
+                {
+                    WriteIncludeCondition(condition.Include, passingValue: true, writer);
+                }
+            }
+
+            writer.Unindent();
+        }
+
+        writer.Unindent();
+    }
+
+    private static void WriteIncludeCondition(string variableName, bool passingValue, CodeWriter writer)
+    {
+        writer.WriteLine("- variable: {0}", "$" + variableName);
+        writer.Indent();
+
+        writer.WriteLine("passingValue: {0}", passingValue ? "true" : "false");
         writer.Unindent();
     }
 

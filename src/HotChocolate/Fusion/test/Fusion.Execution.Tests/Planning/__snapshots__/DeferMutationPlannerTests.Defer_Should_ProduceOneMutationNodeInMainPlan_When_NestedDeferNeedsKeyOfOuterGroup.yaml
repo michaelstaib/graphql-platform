@@ -1,0 +1,85 @@
+operation:
+  - document: |
+      mutation {
+        create {
+          user {
+            __typename @fusion__empty
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      mutation Op_123456789101112_1 {
+        create {
+          user {
+            id
+          }
+        }
+      }
+deliveryGroups:
+  - id: 0
+    path: $.create.user
+    label: outer
+  - id: 1
+    path: $.create.user
+    label: inner
+    parentId: 0
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 1
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: e
+        operation: |
+          query Op_defer_2($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              name
+              id
+            }
+          }
+        source: $.userById
+        target: $.create.user
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+  - deliveryGroupIds:
+      - 1
+    parentNodeId: 1
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              total
+            }
+          }
+        source: $.userById
+        target: $.create.user
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1

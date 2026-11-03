@@ -2740,10 +2740,10 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Defer_ProviderServesTwoRequirements_Should_KeepEdge_When_OnlyOneIsRerouted()
+    public void Defer_ProviderServesTwoRequirements_Should_ServeBothInPlan_When_OnlyOneCanBeRerouted()
     {
         // arrange
-        // currencyCode also lives on accounts and reroutes to the parent; regionCode does not.
+        // currencyCode also lives on accounts and could reroute to the parent; regionCode cannot.
         var schema = ComposeSchema(
             """
             # name: accounts
@@ -3370,6 +3370,219 @@ public class DeferPlannerTests : FusionTestBase
             }
 
             type Author @key(fields: "id") {
+                id: ID!
+                rating: Int!
+            }
+            """);
+
+    [Fact]
+    public void Defer_Should_PlanLeafGroupWithCondition_When_FragmentHasInclude()
+    {
+        // arrange
+        var schema = ComposeConditionalDeferSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer {
+                        ... @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_CarryInclude_When_DeferredFragmentHasInclude()
+    {
+        // arrange
+        var schema = ComposeConditionalDeferSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_CarrySkip_When_DeferredFragmentSelectsCompositeField()
+    {
+        // arrange
+        var schema = ComposeConditionalDeferSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @skip(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_CarryInclude_When_TypeConditionedFragmentSelectsFieldOfImplementation()
+    {
+        // arrange
+        var schema = ComposeConditionalItemSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                items {
+                    id
+                    ... @defer {
+                        ... on Product @include(if: $x) {
+                            name
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_CarryInclude_When_OuterGroupEnclosesConditionalDefer()
+    {
+        // arrange
+        var schema = ComposeConditionalDeferSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    private static FusionSchemaDefinition ComposeConditionalItemSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                items: [Item!]!
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+                id: ID!
+            }
+
+            type Other implements Item @key(fields: "id") {
+                id: ID!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                itemById(id: ID!): Item @lookup
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+
+            type Other implements Item @key(fields: "id") {
+                id: ID!
+                title: String!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeConditionalDeferSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                products: [Product!]!
+                productNameById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                productById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                reviews: [Review!]!
+            }
+
+            type Review {
+                id: ID!
+            }
+            """,
+            """
+            # name: c
+            type Query {
+                productRatingById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
                 id: ID!
                 rating: Int!
             }
