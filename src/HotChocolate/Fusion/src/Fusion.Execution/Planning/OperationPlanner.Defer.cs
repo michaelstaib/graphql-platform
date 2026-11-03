@@ -133,9 +133,10 @@ public sealed partial class OperationPlanner
                 : _schema.GetOperationType(descriptor.Operation.Operation).Name;
 
     /// <summary>
-    /// Throws when a <c>@defer</c> of a mutation operation is nested inside another <c>@defer</c> and the
-    /// enclosing groups of its incremental plan have an <c>if</c> variable, <c>@include</c> or <c>@skip</c>
-    /// condition, unless one condition on one variable, with one polarity, conditions every one of them.
+    /// Throws when an incremental plan of a mutation operation delivers fields of nested <c>@defer</c> groups
+    /// and an <c>if</c> variable, <c>@include</c> or <c>@skip</c> condition can disable some of the groups it
+    /// serves or their enclosing groups, unless one condition on one variable, with one polarity, conditions
+    /// every one of them.
     /// </summary>
     private void EnsureMutationHasNoConditionedDeferChain(
         OperationDefinitionNode operation,
@@ -149,20 +150,21 @@ public sealed partial class OperationPlanner
 
         foreach (var deliveryGroup in partitioning.AllDeliveryGroups)
         {
-            EnsureDeliveryGroupsAreNotConditionedChain(operation, [deliveryGroup]);
+            EnsureDeliveryGroupsAreNotConditionedChain(operation, partitioning, [deliveryGroup]);
         }
 
         foreach (var descriptor in descriptors)
         {
-            EnsureDeliveryGroupsAreNotConditionedChain(operation, descriptor.DeliveryGroupSet);
+            EnsureDeliveryGroupsAreNotConditionedChain(operation, partitioning, descriptor.DeliveryGroupSet);
         }
     }
 
     private void EnsureDeliveryGroupsAreNotConditionedChain(
         OperationDefinitionNode operation,
+        DeferPartitioningResult partitioning,
         ImmutableArray<DeliveryGroup> deliveryGroups)
     {
-        if (!IsConditionedChain(deliveryGroups, out var outermost))
+        if (!IsConditionedChain(partitioning, deliveryGroups, out var outermost))
         {
             return;
         }
@@ -176,6 +178,7 @@ public sealed partial class OperationPlanner
     }
 
     private static bool IsConditionedChain(
+        DeferPartitioningResult partitioning,
         ImmutableArray<DeliveryGroup> deliveryGroups,
         [NotNullWhen(true)] out DeliveryGroup? outermost)
     {
@@ -183,18 +186,11 @@ public sealed partial class OperationPlanner
         var hasMultipleVariables = false;
         var hasConditionedGroup = false;
         var hasUnconditionalGroup = false;
-        outermost = null;
-        DeliveryGroup? nestedOutermost = null;
 
         foreach (var deliveryGroup in deliveryGroups)
         {
             for (var current = deliveryGroup; current is not null; current = current.Parent)
             {
-                if (current.Parent is null && deliveryGroup.Parent is not null)
-                {
-                    nestedOutermost ??= current;
-                }
-
                 if (current.IfVariable is null && current.Conditions.IsEmpty)
                 {
                     hasUnconditionalGroup = true;
@@ -212,11 +208,12 @@ public sealed partial class OperationPlanner
             }
         }
 
-        outermost = nestedOutermost;
+        // The groups nest when one of them has an enclosing group or encloses another group.
+        outermost = hasConditionedGroup && (hasUnconditionalGroup || hasMultipleVariables)
+            ? FindOutermostOfNestedGroup(partitioning, deliveryGroups)
+            : null;
 
-        return nestedOutermost is not null
-            && hasConditionedGroup
-            && (hasUnconditionalGroup || hasMultipleVariables);
+        return outermost is not null;
 
         void Track(string? variable, bool enables)
         {
@@ -241,6 +238,35 @@ public sealed partial class OperationPlanner
                 hasMultipleVariables = true;
             }
         }
+    }
+
+    private static DeliveryGroup? FindOutermostOfNestedGroup(
+        DeferPartitioningResult partitioning,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        foreach (var candidate in partitioning.AllDeliveryGroups)
+        {
+            if (candidate.Parent is null)
+            {
+                continue;
+            }
+
+            var isServed = false;
+            var outermost = candidate;
+
+            for (var current = candidate; current is not null; current = current.Parent)
+            {
+                isServed |= deliveryGroups.Contains(current);
+                outermost = current;
+            }
+
+            if (isServed)
+            {
+                return outermost;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
