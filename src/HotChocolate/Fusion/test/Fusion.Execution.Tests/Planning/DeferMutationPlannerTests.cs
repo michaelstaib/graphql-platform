@@ -156,6 +156,59 @@ public class DeferMutationPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_RefuseShape_When_OneIncrementalPlanServesConditionedAndUnconditionedSiblingChains()
+    {
+        // arrange
+        var schema = ComposeTopology(Topology.OneHopKey);
+        const string operation =
+            """
+            mutation($a: Boolean!) {
+                create {
+                    user {
+                        ... @defer @include(if: $a) { name ... @defer(if: $a) { total } }
+                        ... @defer { name ... @defer { total } }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var error = Assert.Throws<DeferredMutationLookupRequiredException>(
+            () => PlanOperation(schema, operation));
+
+        // assert
+        Assert.Equal(
+            "The @defer fragment at path '$.create.user' cannot be planned: the deferred fields on anchor type "
+            + "'User' are nested in a chain of @defer fragments where an if variable, @include or @skip condition "
+            + "can disable a fragment of the chain, and a mutation cannot deliver them without losing fields.",
+            error.Message);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanShape_When_SiblingChainsAreAllConditionedOnOneVariable()
+    {
+        // arrange
+        var schema = ComposeTopology(Topology.OneHopKey);
+        const string operation =
+            """
+            mutation($a: Boolean!) {
+                create {
+                    user {
+                        ... @defer(if: $a) { name ... @defer(if: $a) { total } }
+                        ... @defer(if: $a) { name ... @defer(if: $a) { total } }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var plan = PlanOperation(schema, operation);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureNoMutationStepInIncrementalPlan_Should_Throw_When_IncrementalPlanHoldsMutationStep()
     {
         // arrange

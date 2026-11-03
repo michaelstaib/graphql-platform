@@ -1,0 +1,196 @@
+operation:
+  - document: |
+      mutation($a: Boolean!) {
+        create {
+          user {
+            id @fusion__requirement
+            sku @fusion__requirement
+            ... @skip(if: $a) {
+              name
+              total
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      mutation Op_123456789101112_1($a: Boolean!) {
+        create {
+          user {
+            ... @skip(if: $a) {
+              ... @skip(if: $a) {
+                id
+              }
+              id
+            }
+            ... @skip(if: $a) {
+              ... @skip(if: $a) {
+                id
+              }
+              id
+            }
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - a
+  - id: 4
+    type: OperationBatch
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          sku
+        }
+      }
+    source: $.userById
+    targets:
+      - $.create.user
+      - $.create.user
+    batchingGroupId: 9
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 8
+    type: Operation
+    schema: c
+    operation: |
+      query Op_defer_4($__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          sku
+        }
+      }
+    source: $.userById
+    target: $.create.user
+    batchingGroupId: 9
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 2
+    type: OperationBatch
+    schema: e
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          name
+        }
+      }
+    source: $.userById
+    targets:
+      - $.create.user
+      - $.create.user
+    batchingGroupId: 10
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: OperationBatch
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_sku: String!) {
+        userBySku(sku: $__fusion_2_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    targets:
+      - $.create.user
+      - $.create.user
+    batchingGroupId: 11
+    requirements:
+      - name: __fusion_2_sku
+        selectionMap: >-
+          sku
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 4
+deliveryGroups:
+  - id: 0
+    path: $.create.user
+    ifVariable: $a
+  - id: 1
+    path: $.create.user
+    ifVariable: $a
+    parentId: 0
+  - id: 2
+    path: $.create.user
+    ifVariable: $a
+  - id: 3
+    path: $.create.user
+    ifVariable: $a
+    parentId: 2
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+      - 2
+    parentNodeId: 1
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_1_sku: String!) {
+            userBySku(sku: $__fusion_1_sku) {
+              total
+            }
+          }
+        source: $.userBySku
+        target: $.create.user
+        requirements:
+          - name: __fusion_1_sku
+            selectionMap: >-
+              sku
+        dependencies:
+          - parentNodeId: 8
+      - id: 2
+        type: Operation
+        schema: e
+        operation: |
+          query Op_defer_3($__fusion_2_id: ID!) {
+            userById(id: $__fusion_2_id) {
+              name
+            }
+          }
+        source: $.userById
+        target: $.create.user
+        requirements:
+          - name: __fusion_2_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
