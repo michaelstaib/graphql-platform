@@ -534,6 +534,7 @@ public sealed partial class OperationPlanner
 
         var clientFieldNames = CollectClientFieldNames(descriptor);
         producers = KeepClientOutputOfProducers(descriptor, producers, clientFieldNames, ref incrementalPlanSteps);
+        producers = RemoveProducersFedInPlan(producers, incrementalPlanSteps);
 
         if (producers.IsEmpty)
         {
@@ -1882,8 +1883,8 @@ public sealed partial class OperationPlanner
     /// Keeps every client-visible field of <paramref name="descriptor"/> that only a step in
     /// <paramref name="producers"/> selects: the field moves, with its <c>@include</c> and <c>@skip</c>
     /// conditions and those of its enclosing inline fragments, to a dependent lookup of that producer
-    /// whose schema resolves it, and a producer whose field no dependent can take is not a producer.
-    /// A producer selects only leaf fields at the anchor, so no composite field needs to move.
+    /// whose schema resolves it, preferring a dependent that is not itself a producer. A producer whose
+    /// field no dependent can take is not a producer, and neither is a producer that takes such a field.
     /// </summary>
     /// <returns>
     /// The producers that select no client-visible field the rest of the incremental plan lacks.
@@ -1921,6 +1922,7 @@ public sealed partial class OperationPlanner
                 descriptor.Path,
                 clientFieldNames,
                 producerIds,
+                keptProducerIds,
                 ref incrementalPlanSteps))
             {
                 keptProducerIds.Add(producer.Id);
@@ -1938,6 +1940,7 @@ public sealed partial class OperationPlanner
             SelectionPath anchorPath,
             HashSet<string> clientFieldNames,
             HashSet<int> producerIds,
+            HashSet<int> keptProducerIds,
             ref ImmutableList<PlanStep> incrementalPlanSteps)
         {
             var allKept = true;
@@ -1953,6 +1956,7 @@ public sealed partial class OperationPlanner
                         anchorPath,
                         clientFieldNames,
                         producerIds,
+                        keptProducerIds,
                         ref incrementalPlanSteps);
                     continue;
                 }
@@ -1971,13 +1975,34 @@ public sealed partial class OperationPlanner
                     continue;
                 }
 
-                allKept &= TryMoveFieldToDependent(
+                if (TryMoveFieldToDependent(
                     producer,
                     field,
                     enclosingFragments,
                     anchorPath,
                     producerIds,
-                    ref incrementalPlanSteps);
+                    allowProducer: false,
+                    ref incrementalPlanSteps,
+                    out _))
+                {
+                    continue;
+                }
+
+                if (TryMoveFieldToDependent(
+                    producer,
+                    field,
+                    enclosingFragments,
+                    anchorPath,
+                    producerIds,
+                    allowProducer: true,
+                    ref incrementalPlanSteps,
+                    out var receivingStepId))
+                {
+                    keptProducerIds.Add(receivingStepId);
+                    continue;
+                }
+
+                allKept = false;
             }
 
             return allKept;
@@ -2026,8 +2051,9 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Adds <paramref name="field"/>, inside copies of <paramref name="enclosingFragments"/>, to the
     /// first dependent lookup of <paramref name="producer"/> at <paramref name="anchorPath"/> whose
-    /// source schema resolves it without requirements. Only the <c>@include</c> and <c>@skip</c>
-    /// directives of the field and of the fragments are kept.
+    /// source schema resolves it without requirements, and that is in <paramref name="producerIds"/>
+    /// exactly when <paramref name="allowProducer"/> is <c>true</c>. Only the <c>@include</c> and
+    /// <c>@skip</c> directives of the field and of the fragments are kept.
     /// </summary>
     private static bool TryMoveFieldToDependent(
         OperationPlanStep producer,
@@ -2035,11 +2061,13 @@ public sealed partial class OperationPlanner
         ImmutableArray<InlineFragmentNode> enclosingFragments,
         SelectionPath anchorPath,
         HashSet<int> producerIds,
-        ref ImmutableList<PlanStep> incrementalPlanSteps)
+        bool allowProducer,
+        ref ImmutableList<PlanStep> incrementalPlanSteps,
+        out int receivingStepId)
     {
         foreach (var dependentStepId in producer.Dependents)
         {
-            if (producerIds.Contains(dependentStepId)
+            if (producerIds.Contains(dependentStepId) != allowProducer
                 || incrementalPlanSteps.ById(dependentStepId) is not OperationPlanStep dependent
                 || dependent.Lookup is null
                 || dependent.SchemaName is not { } schemaName
@@ -2074,9 +2102,11 @@ public sealed partial class OperationPlanner
             incrementalPlanSteps = incrementalPlanSteps.SetItem(
                 incrementalPlanSteps.IndexOf(dependent),
                 updatedDependent);
+            receivingStepId = dependentStepId;
             return true;
         }
 
+        receivingStepId = 0;
         return false;
 
         static IReadOnlyList<DirectiveNode> KeepConditionDirectives(IReadOnlyList<DirectiveNode> directives)
@@ -2085,6 +2115,46 @@ public sealed partial class OperationPlanner
                     directive => directive.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal)
                         || directive.Name.Value.Equals(DirectiveNames.Skip.Name, StringComparison.Ordinal))
                 .ToArray();
+    }
+
+    /// <summary>
+    /// Removes from <paramref name="producers"/> every producer that depends, directly or through
+    /// other producers, on an incremental-plan step that is not a producer.
+    /// </summary>
+    private static ImmutableArray<OperationPlanStep> RemoveProducersFedInPlan(
+        ImmutableArray<OperationPlanStep> producers,
+        ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        var producerIds = new HashSet<int>();
+        foreach (var producer in producers)
+        {
+            producerIds.Add(producer.Id);
+        }
+
+        bool removed;
+
+        do
+        {
+            removed = false;
+
+            foreach (var step in incrementalPlanSteps)
+            {
+                if (step is not OperationPlanStep provider || producerIds.Contains(provider.Id))
+                {
+                    continue;
+                }
+
+                foreach (var dependentStepId in provider.Dependents)
+                {
+                    removed |= producerIds.Remove(dependentStepId);
+                }
+            }
+        }
+        while (removed);
+
+        return producerIds.Count == producers.Length
+            ? producers
+            : producers.RemoveAll(producer => !producerIds.Contains(producer.Id));
     }
 
     /// <summary>
