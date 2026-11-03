@@ -39,7 +39,7 @@ public class DeferKeyHopTests : FusionTestBase
                                 var row = new TheoryDataRow<Topology, OperationForm, DeferShape, bool?, bool?>(
                                     topology, form, shape, a, b)
                                 {
-                                    Skip = GetSkipReason(topology, form, shape, a)
+                                    Skip = GetSkipReason(topology, shape, a)
                                 };
                                 data.Add(row);
                             }
@@ -134,9 +134,11 @@ public class DeferKeyHopTests : FusionTestBase
     }
 
     private static bool IsRefusedUnderMutation(DeferShape shape)
-        => shape is DeferShape.InnerSkippedAndIncludedKey or DeferShape.InnerKeyUnderTwoVariables;
+        => shape is DeferShape.InnerSkippedAndIncludedKey
+            or DeferShape.InnerKeyUnderTwoVariables
+            or DeferShape.AliasedKeyAndHopField;
 
-    private static string? GetSkipReason(Topology topology, OperationForm form, DeferShape shape, bool? a)
+    private static string? GetSkipReason(Topology topology, DeferShape shape, bool? a)
         => (shape, a) switch
         {
             (DeferShape.ConditionalNestedChain, false) =>
@@ -145,8 +147,6 @@ public class DeferKeyHopTests : FusionTestBase
                 "The unconditional group delivers total again after the initial payload.",
             (DeferShape.NestedIncludedKeyAndHopField, false) when topology is not Topology.DirectKey =>
                 "The enclosing group loses its fields when the nested group behind a key hop is excluded.",
-            (DeferShape.AliasedKeyAndHopField, _) when form is OperationForm.Mutation =>
-                "A deferred group with an aliased key field cannot be planned under a mutation.",
             _ => null
         };
 
