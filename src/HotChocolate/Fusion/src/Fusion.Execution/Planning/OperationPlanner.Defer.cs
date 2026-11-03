@@ -135,7 +135,7 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Throws when a <c>@defer</c> of a mutation operation is nested inside another <c>@defer</c> and its chain
     /// of enclosing groups has an <c>if</c> variable, <c>@include</c> or <c>@skip</c> condition, unless one
-    /// variable conditions every group of the chain.
+    /// condition on one variable, with one polarity, conditions every group of the chain.
     /// </summary>
     private void EnsureMutationHasNoConditionedDeferChain(
         OperationDefinitionNode operation,
@@ -181,22 +181,29 @@ public sealed partial class OperationPlanner
             }
 
             hasConditionedGroup = true;
-            Track(current.IfVariable);
+            Track(current.IfVariable, enables: true);
 
             foreach (var condition in current.Conditions)
             {
-                Track(condition.Skip);
-                Track(condition.Include);
+                Track(condition.Skip, enables: false);
+                Track(condition.Include, enables: true);
             }
         }
 
         return hasConditionedGroup && (hasUnconditionalGroup || hasMultipleVariables);
 
-        void Track(string? variable)
+        void Track(string? variable, bool enables)
         {
             if (variable is null)
             {
                 return;
+            }
+
+            // @skip(if: $a) disables a group when @include(if: $a) and @defer(if: $a) enable it, so the
+            // skip condition is a different condition than the other two on the same variable.
+            if (!enables)
+            {
+                variable = "!" + variable;
             }
 
             if (sharedVariable is null)
