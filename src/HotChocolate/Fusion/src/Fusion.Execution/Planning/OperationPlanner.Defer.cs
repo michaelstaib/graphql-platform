@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning.Partitioners;
@@ -856,11 +857,17 @@ public sealed partial class OperationPlanner
                 }
             }
 
-            // A promoted step that cannot be fed in the enclosing scope lifts nothing, so the
-            // incremental plan stays self-contained.
-            if (!TryWirePromotedStepRequirements(promoted.Scope, promoted.ParentStepId, liftedKeys, resolver))
+            if (!TryWirePromotedStepRequirements(
+                promoted.Scope,
+                promoted.ParentStepId,
+                liftedKeys,
+                resolver,
+                out var unhostedRequirement))
             {
-                return incrementalPlanSteps;
+                throw CreateUnsatisfiableDeferRequirementException(
+                    producers[0],
+                    unhostedRequirement,
+                    "no step of the enclosing scope provides a requirement of a promoted step");
             }
         }
 
@@ -1513,14 +1520,18 @@ public sealed partial class OperationPlanner
     /// promoted step <paramref name="promotedStepId"/> whose key is not in <paramref name="wiredKeys"/>.
     /// </summary>
     /// <returns>
-    /// <c>false</c> when no step of <paramref name="scopeState"/> can provide one of these requirements.
+    /// <c>false</c> when no step of <paramref name="scopeState"/> can provide
+    /// <paramref name="unhostedRequirement"/>.
     /// </returns>
     private bool TryWirePromotedStepRequirements(
         ScopeState scopeState,
         int promotedStepId,
         HashSet<string> wiredKeys,
-        ValueSelectionToSelectionSetRewriter resolver)
+        ValueSelectionToSelectionSetRewriter resolver,
+        [NotNullWhen(false)] out OperationRequirement? unhostedRequirement)
     {
+        unhostedRequirement = null;
+
         if (scopeState.Steps.ById(promotedStepId) is not OperationPlanStep promotedStep)
         {
             return true;
@@ -1559,6 +1570,7 @@ public sealed partial class OperationPlanner
 
             if (!isWired)
             {
+                unhostedRequirement = requirement;
                 return false;
             }
         }
