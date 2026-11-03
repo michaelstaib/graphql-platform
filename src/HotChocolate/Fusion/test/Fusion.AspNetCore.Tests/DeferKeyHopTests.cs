@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using HotChocolate.Fusion.Configuration;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types.Composite;
 using HotChocolate.Types.Relay;
@@ -22,6 +23,11 @@ public class DeferKeyHopTests : FusionTestBase
                 {
                     foreach (var shape in Enum.GetValues<DeferShape>())
                     {
+                        if (form is OperationForm.Mutation && IsRefusedUnderMutation(shape))
+                        {
+                            continue;
+                        }
+
                         var (selection, _) = GetSelections(shape);
                         bool?[] aValues = selection.Contains("$a") ? [true, false] : [null];
                         bool?[] bValues = selection.Contains("$b") ? [true, false] : [null];
@@ -37,6 +43,33 @@ public class DeferKeyHopTests : FusionTestBase
                                 };
                                 data.Add(row);
                             }
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    public static TheoryData<Topology, DeferShape, bool, bool?> RefusedMutationCases
+    {
+        get
+        {
+            var data = new TheoryData<Topology, DeferShape, bool, bool?>();
+
+            foreach (var topology in Enum.GetValues<Topology>())
+            {
+                foreach (var shape in Enum.GetValues<DeferShape>().Where(IsRefusedUnderMutation))
+                {
+                    var (selection, _) = GetSelections(shape);
+                    bool?[] bValues = selection.Contains("$b") ? [true, false] : [null];
+
+                    foreach (var a in new[] { true, false })
+                    {
+                        foreach (var b in bValues)
+                        {
+                            data.Add(topology, shape, a, b);
                         }
                     }
                 }
@@ -74,6 +107,34 @@ public class DeferKeyHopTests : FusionTestBase
             $"Deferred: {deferredOutcome.Data?.ToJsonString()}, plain: {plainOutcome.Data?.ToJsonString()}");
         Assert.Equal(form is OperationForm.Mutation ? 1 : 0, deferredMutationCount);
     }
+
+    [Theory]
+    [MemberData(nameof(RefusedMutationCases))]
+    public async Task Defer_Should_RefuseMutation_When_KeyFieldConditionsDifferFromItsLookup(
+        Topology topology,
+        DeferShape shape,
+        bool a,
+        bool? b)
+    {
+        // arrange
+        var mutationCounter = new MutationCounter();
+        using var gateway = await CreateGatewayAsync(topology, mutationCounter);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var (deferred, _) = GetRequests(OperationForm.Mutation, shape, a, b);
+
+        // act
+        var outcome = await ExecuteAsync(client, deferred);
+
+        // assert
+        Assert.Null(outcome.Data);
+        Assert.StartsWith(
+            "The @defer fragment at path '$.create.user' cannot be planned: ",
+            outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
+        Assert.Equal(0, mutationCounter.Count);
+    }
+
+    private static bool IsRefusedUnderMutation(DeferShape shape)
+        => shape is DeferShape.InnerSkippedAndIncludedKey or DeferShape.InnerKeyUnderTwoVariables;
 
     private static string? GetSkipReason(Topology topology, OperationForm form, DeferShape shape, bool? a)
         => (shape, a) switch
@@ -141,6 +202,12 @@ public class DeferKeyHopTests : FusionTestBase
                 ("users { ... @defer { id total } }", "users { id total }"),
             DeferShape.ConditionalListKeyAndHopField =>
                 ("users { ... @defer(if: $a) { id total } }", "users { id total }"),
+            DeferShape.InnerSkippedAndIncludedKey =>
+                ("user { ... @defer { ... @skip(if: $a) { id } ... @include(if: $a) { id total } } }",
+                    "user { ... @skip(if: $a) { id } ... @include(if: $a) { id total } }"),
+            DeferShape.InnerKeyUnderTwoVariables =>
+                ("user { ... @defer { ... @include(if: $a) { id } ... @include(if: $b) { id total } } }",
+                    "user { ... @include(if: $a) { id } ... @include(if: $b) { id total } }"),
             DeferShape.FriendChainKeyAndHopField =>
                 ("users { friend { friend { ... @defer(if: $a) { id total } } } }",
                     "users { friend { friend { id total } } }"),
@@ -208,14 +275,14 @@ public class DeferKeyHopTests : FusionTestBase
                 ("A", root),
                 ("B", CreateSourceSchema("B", b => b.AddQueryType<TotalByIdSource.Query>())),
                 ("E", name)
-            ]),
+            ], configureGatewayBuilder: IncludeExceptionDetails),
             Topology.OneHopKey => await CreateCompositeSchemaAsync(
             [
                 ("A", root),
                 ("B", CreateSourceSchema("B", b => b.AddQueryType<TotalBySkuSource.Query>())),
                 ("C", CreateSourceSchema("C", b => b.AddQueryType<SkuByIdSource.Query>())),
                 ("E", name)
-            ]),
+            ], configureGatewayBuilder: IncludeExceptionDetails),
             Topology.TwoHopKey => await CreateCompositeSchemaAsync(
             [
                 ("A", root),
@@ -223,10 +290,13 @@ public class DeferKeyHopTests : FusionTestBase
                 ("C", CreateSourceSchema("C", b => b.AddQueryType<CodeByIdSource.Query>())),
                 ("D", CreateSourceSchema("D", b => b.AddQueryType<SkuByCodeSource.Query>())),
                 ("E", name)
-            ]),
+            ], configureGatewayBuilder: IncludeExceptionDetails),
             _ => throw new ArgumentOutOfRangeException(nameof(topology))
         };
     }
+
+    private static void IncludeExceptionDetails(IFusionGatewayBuilder builder)
+        => builder.ModifyRequestOptions(options => options.IncludeExceptionDetails = true);
 
     private static async Task<Outcome> ExecuteAsync(GraphQLHttpClient client, OperationRequest request)
     {
@@ -383,7 +453,9 @@ public class DeferKeyHopTests : FusionTestBase
         NestedIncludedKeyAndHopField,
         ListKeyAndHopField,
         ConditionalListKeyAndHopField,
-        FriendChainKeyAndHopField
+        FriendChainKeyAndHopField,
+        InnerSkippedAndIncludedKey,
+        InnerKeyUnderTwoVariables
     }
 
     private sealed record Outcome(JsonNode? Data, JsonNode? Errors, List<string> Violations);
