@@ -487,6 +487,11 @@ internal sealed class JsonResultPatcher(bool rejectOverlappingPositions)
                 _overlaps.Add($"{itemPosition} (list)");
                 MergeList(targetList, sourceList, itemPosition);
             }
+            else if (target[i] is JsonArray && source[i] is JsonArray)
+            {
+                _overlaps.Add($"{itemPosition} (list)");
+                target[i] = source[i]?.DeepClone();
+            }
             else if (!JsonNode.DeepEquals(target[i], source[i]))
             {
                 _overlaps.Add($"{itemPosition} (leaf)");
