@@ -1343,8 +1343,8 @@ public sealed partial class OperationPlanner
     /// compiled parent Operation carries the field (the runtime composite
     /// result document relies on that field being preserved during result
     /// merging). Nothing is injected and <paramref name="isPartiallyResolvable"/> is set
-    /// when the step can host only part of the requirement. A step whose conditions differ
-    /// from <paramref name="consumerConditions"/> is never a host.
+    /// when the step can host only part of the requirement. A step with a condition that
+    /// <paramref name="consumerConditions"/> lacks is never a host.
     /// </summary>
     private bool TryInlineDeferRequirementInScope(
         OperationRequirement requirement,
@@ -1371,7 +1371,7 @@ public sealed partial class OperationPlanner
             }
 
             // A step that the deferred consumer can run without would leave the key unset.
-            if (!ConditionsEqual(parentStep.Conditions, consumerConditions))
+            if (!AreConditionsSubsetOf(parentStep.Conditions, consumerConditions))
             {
                 continue;
             }
@@ -1452,6 +1452,25 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Determines whether every condition of <paramref name="conditions"/> is also a condition
+    /// of <paramref name="other"/>, in any order.
+    /// </summary>
+    private static bool AreConditionsSubsetOf(
+        ExecutionNodeCondition[] conditions,
+        ExecutionNodeCondition[] other)
+    {
+        foreach (var condition in conditions)
+        {
+            if (Array.IndexOf(other, condition) < 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static void AddParentStepDependent(ScopeState scopeState, int providerStepId, int dependentStepId)
