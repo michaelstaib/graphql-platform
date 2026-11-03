@@ -133,13 +133,14 @@ public sealed partial class OperationPlanner
                 : _schema.GetOperationType(descriptor.Operation.Operation).Name;
 
     /// <summary>
-    /// Throws when a <c>@defer</c> of a mutation operation is nested inside another <c>@defer</c> and its chain
-    /// of enclosing groups has an <c>if</c> variable, <c>@include</c> or <c>@skip</c> condition, unless one
-    /// condition on one variable, with one polarity, conditions every group of the chain.
+    /// Throws when a <c>@defer</c> of a mutation operation is nested inside another <c>@defer</c> and the
+    /// enclosing groups of its incremental plan have an <c>if</c> variable, <c>@include</c> or <c>@skip</c>
+    /// condition, unless one condition on one variable, with one polarity, conditions every one of them.
     /// </summary>
     private void EnsureMutationHasNoConditionedDeferChain(
         OperationDefinitionNode operation,
-        DeferPartitioningResult partitioning)
+        DeferPartitioningResult partitioning,
+        ImmutableArray<IncrementalPlanDescriptor> descriptors)
     {
         if (operation.Operation != OperationType.Mutation)
         {
@@ -148,49 +149,74 @@ public sealed partial class OperationPlanner
 
         foreach (var deliveryGroup in partitioning.AllDeliveryGroups)
         {
-            if (deliveryGroup.Parent is null || !IsChainMovable(deliveryGroup, out var outermost))
-            {
-                continue;
-            }
+            EnsureDeliveryGroupsAreNotConditionedChain(operation, [deliveryGroup]);
+        }
 
-            var path = outermost.Path ?? SelectionPath.Root;
-            var typeName = TryLocateIncrementalPlanAnchor(operation, path, out _, out var anchorType)
-                ? anchorType.Name
-                : _schema.GetOperationType(operation.Operation).Name;
-
-            throw ThrowHelper.DeferredMutationConditionedDeferChain(path, typeName);
+        foreach (var descriptor in descriptors)
+        {
+            EnsureDeliveryGroupsAreNotConditionedChain(operation, descriptor.DeliveryGroupSet);
         }
     }
 
-    private static bool IsChainMovable(DeliveryGroup innermost, out DeliveryGroup outermost)
+    private void EnsureDeliveryGroupsAreNotConditionedChain(
+        OperationDefinitionNode operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (!IsConditionedChain(deliveryGroups, out var outermost))
+        {
+            return;
+        }
+
+        var path = outermost.Path ?? SelectionPath.Root;
+        var typeName = TryLocateIncrementalPlanAnchor(operation, path, out _, out var anchorType)
+            ? anchorType.Name
+            : _schema.GetOperationType(operation.Operation).Name;
+
+        throw ThrowHelper.DeferredMutationConditionedDeferChain(path, typeName);
+    }
+
+    private static bool IsConditionedChain(
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        [NotNullWhen(true)] out DeliveryGroup? outermost)
     {
         string? sharedVariable = null;
         var hasMultipleVariables = false;
         var hasConditionedGroup = false;
         var hasUnconditionalGroup = false;
-        outermost = innermost;
+        outermost = null;
+        DeliveryGroup? nestedOutermost = null;
 
-        for (var current = innermost; current is not null; current = current.Parent)
+        foreach (var deliveryGroup in deliveryGroups)
         {
-            outermost = current;
-
-            if (current.IfVariable is null && current.Conditions.IsEmpty)
+            for (var current = deliveryGroup; current is not null; current = current.Parent)
             {
-                hasUnconditionalGroup = true;
-                continue;
-            }
+                if (current.Parent is null && deliveryGroup.Parent is not null)
+                {
+                    nestedOutermost ??= current;
+                }
 
-            hasConditionedGroup = true;
-            Track(current.IfVariable, enables: true);
+                if (current.IfVariable is null && current.Conditions.IsEmpty)
+                {
+                    hasUnconditionalGroup = true;
+                    continue;
+                }
 
-            foreach (var condition in current.Conditions)
-            {
-                Track(condition.Skip, enables: false);
-                Track(condition.Include, enables: true);
+                hasConditionedGroup = true;
+                Track(current.IfVariable, enables: true);
+
+                foreach (var condition in current.Conditions)
+                {
+                    Track(condition.Skip, enables: false);
+                    Track(condition.Include, enables: true);
+                }
             }
         }
 
-        return hasConditionedGroup && (hasUnconditionalGroup || hasMultipleVariables);
+        outermost = nestedOutermost;
+
+        return nestedOutermost is not null
+            && hasConditionedGroup
+            && (hasUnconditionalGroup || hasMultipleVariables);
 
         void Track(string? variable, bool enables)
         {
