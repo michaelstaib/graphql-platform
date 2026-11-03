@@ -573,6 +573,7 @@ public sealed partial class OperationPlanner
         var enclosingScopeStates = new Dictionary<IncrementalPlanDescriptor, ScopeState>();
         var lifted = new List<LiftedDeferRequirement>();
         var promotedIncrementalPlanStepIds = new HashSet<int>();
+        var promotedParentSteps = new Dictionary<int, (ScopeState Scope, int ParentStepId)>();
 
         ScopeState ScopeStateFor(ParentPlanContext scope)
         {
@@ -645,7 +646,7 @@ public sealed partial class OperationPlanner
                         out var parentStepId,
                         out var isPartiallyResolvable))
                     {
-                        lifted.Add(new LiftedDeferRequirement(requirement, downstreamStepId, parentStepId));
+                        lifted.Add(new LiftedDeferRequirement(requirement, downstreamStepId, parentStepId, scopeState));
                         resolved = true;
                         break;
                     }
@@ -669,11 +670,28 @@ public sealed partial class OperationPlanner
                     if (newStepId is { } resolvedStepId)
                     {
                         scopeState.Steps = stepsAfterPromotion;
-                        lifted.Add(new LiftedDeferRequirement(requirement, downstreamStepId, resolvedStepId));
+
+                        if (stepsAfterPromotion.ById(resolvedStepId) is OperationPlanStep promotedStep
+                            && TryLocateDeferRequirementTarget(
+                                promotedStep,
+                                sourceRequirement.Path,
+                                out _,
+                                out var promotedTargetType))
+                        {
+                            MirrorDeferRequirementIntoInternalOperation(
+                                scopeState,
+                                sourceRequirement.Path,
+                                promotedTargetType,
+                                resolver.Rewrite(sourceRequirement.Map, promotedTargetType));
+                        }
+
+                        lifted.Add(
+                            new LiftedDeferRequirement(requirement, downstreamStepId, resolvedStepId, scopeState));
 
                         if (promotedIncrementalPlanStepId is { } pid)
                         {
                             promotedIncrementalPlanStepIds.Add(pid);
+                            promotedParentSteps[pid] = (scopeState, resolvedStepId);
                         }
 
                         resolved = true;
@@ -767,7 +785,7 @@ public sealed partial class OperationPlanner
                     continue;
                 }
 
-                lifted.Add(new LiftedDeferRequirement(requirement, downstreamStep.Id, resolvedId));
+                lifted.Add(new LiftedDeferRequirement(requirement, downstreamStep.Id, resolvedId, scopeState));
 
                 var fieldName = requirement.InternalAlias ?? ExtractRootFieldName(requirement.Map.ToString());
                 if (fieldName is not null)
@@ -780,6 +798,26 @@ public sealed partial class OperationPlanner
         if (lifted.Count == 0)
         {
             return incrementalPlanSteps;
+        }
+
+        // A promoted step runs in the enclosing scope, so the parent-scope step that supplies
+        // one of its own requirements must feed it there.
+        foreach (var entry in lifted)
+        {
+            if (!promotedParentSteps.TryGetValue(entry.DownstreamStepId, out var promoted))
+            {
+                continue;
+            }
+
+            if (!ReferenceEquals(promoted.Scope, entry.Scope))
+            {
+                throw CreateUnsatisfiableDeferRequirementException(
+                    producers[0],
+                    entry.Requirement,
+                    "a promoted step and the provider of its requirement lie in different enclosing scopes");
+            }
+
+            AddParentStepDependent(entry.Scope, entry.ParentStepId, promoted.ParentStepId);
         }
 
         // Sever the in-plan edges that were rerouted to the parent scope and
@@ -1369,29 +1407,60 @@ public sealed partial class OperationPlanner
 
             scopeState.Steps = scopeState.Steps.SetItem(i, updatedParentStep);
 
-            // Mirror the inline onto the enclosing scope's internal operation
-            // so the compiled Operation (and the runtime composite result
-            // document bound to it) also carries the selection.
-            if (TryLocateInternalSelectionSetAtPath(
-                scopeState.InternalOperation.SelectionSet,
+            MirrorDeferRequirementIntoInternalOperation(
+                scopeState,
                 requirement.Path,
-                out var internalTargetSelectionSet))
-            {
-                var overallIndex = SelectionSetIndexer.Create(scopeState.InternalOperation).ToBuilder();
-                var overallTargetId = overallIndex.GetId(internalTargetSelectionSet);
-                scopeState.InternalOperation = InlineSelectionsIntoOverallOperation(
-                    scopeState.InternalOperation,
-                    overallIndex,
-                    targetType,
-                    overallTargetId,
-                    injectionSelections);
-            }
+                targetType,
+                injectionSelections);
 
             parentStepId = parentStep.Id;
             return true;
         }
 
         return false;
+    }
+
+    private static void AddParentStepDependent(ScopeState scopeState, int providerStepId, int dependentStepId)
+    {
+        for (var i = 0; i < scopeState.Steps.Count; i++)
+        {
+            if (scopeState.Steps[i] is OperationPlanStep provider && provider.Id == providerStepId)
+            {
+                scopeState.Steps = scopeState.Steps.SetItem(
+                    i,
+                    provider with { Dependents = provider.Dependents.Add(dependentStepId) });
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds <paramref name="selections"/> to the enclosing scope's internal operation at
+    /// <paramref name="path"/> so the compiled Operation (and the runtime composite result
+    /// document bound to it) carries the fields a parent-scope step supplies to a deferred step.
+    /// </summary>
+    private void MirrorDeferRequirementIntoInternalOperation(
+        ScopeState scopeState,
+        SelectionPath path,
+        ITypeDefinition targetType,
+        SelectionSetNode selections)
+    {
+        if (!TryLocateInternalSelectionSetAtPath(
+            scopeState.InternalOperation.SelectionSet,
+            path,
+            out var internalTargetSelectionSet))
+        {
+            return;
+        }
+
+        var overallIndex = SelectionSetIndexer.Create(scopeState.InternalOperation).ToBuilder();
+        var overallTargetId = overallIndex.GetId(internalTargetSelectionSet);
+        scopeState.InternalOperation = InlineSelectionsIntoOverallOperation(
+            scopeState.InternalOperation,
+            overallIndex,
+            targetType,
+            overallTargetId,
+            selections);
     }
 
     /// <summary>
@@ -2246,7 +2315,8 @@ public sealed partial class OperationPlanner
     private readonly record struct LiftedDeferRequirement(
         OperationRequirement Requirement,
         int DownstreamStepId,
-        int ParentStepId);
+        int ParentStepId,
+        ScopeState Scope);
 
     /// <summary>
     /// Builds execution nodes for an incremental plan's plan steps.
