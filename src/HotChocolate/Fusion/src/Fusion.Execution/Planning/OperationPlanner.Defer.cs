@@ -534,8 +534,7 @@ public sealed partial class OperationPlanner
         }
 
         var clientFieldNames = CollectClientFieldNames(descriptor);
-        producers = KeepClientOutputOfProducers(descriptor, producers, clientFieldNames, ref incrementalPlanSteps);
-        producers = RemoveProducersFedInPlan(producers, incrementalPlanSteps);
+        producers = SelectProducersKeepingClientOutput(descriptor, producers, clientFieldNames, ref incrementalPlanSteps);
 
         if (producers.IsEmpty)
         {
@@ -745,10 +744,23 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            // A step reads its requirements either all from the parent scope or partly from
+            // this incremental plan, so its reroutes are undone when one requirement stays here.
+            var rerouteScopeState = ScopeStateFor(parentContext);
+            var stepsBeforeReroute = rerouteScopeState.Steps;
+            var internalOperationBeforeReroute = rerouteScopeState.InternalOperation;
+            var liftedCountBeforeReroute = lifted.Count;
+            var reroutedCountBeforeReroute = rerouted.Count;
+            var keepsInPlanProvider = false;
+
             foreach (var (_, requirement) in downstreamStep.Requirements)
             {
                 if (!requirement.Path.Equals(descriptor.Path))
                 {
+                    keepsInPlanProvider |=
+                        TryFindDeferRequirementProvider(incrementalPlanSteps, downstreamStep, requirement)
+                            is { } inPlanProvider
+                        && !producerIds.Contains(inPlanProvider.Id);
                     continue;
                 }
 
@@ -765,6 +777,7 @@ public sealed partial class OperationPlanner
                 // matching FindDeferRequirementProducers' own restriction above.
                 if (!providerStep.Target.IsParentOfOrSame(descriptor.Path))
                 {
+                    keepsInPlanProvider = true;
                     continue;
                 }
 
@@ -796,6 +809,7 @@ public sealed partial class OperationPlanner
                 {
                     // The immediate parent scope cannot serve it either; fall back to
                     // the existing in-plan chaining onto providerStep.
+                    keepsInPlanProvider = true;
                     continue;
                 }
 
@@ -806,6 +820,14 @@ public sealed partial class OperationPlanner
                 {
                     rerouted.Add((providerStep.Id, downstreamStep.Id, fieldName));
                 }
+            }
+
+            if (keepsInPlanProvider && lifted.Count > liftedCountBeforeReroute)
+            {
+                rerouteScopeState.Steps = stepsBeforeReroute;
+                rerouteScopeState.InternalOperation = internalOperationBeforeReroute;
+                lifted.RemoveRange(liftedCountBeforeReroute, lifted.Count - liftedCountBeforeReroute);
+                rerouted.RemoveRange(reroutedCountBeforeReroute, rerouted.Count - reroutedCountBeforeReroute);
             }
         }
 
@@ -1900,11 +1922,97 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
+    /// Narrows <paramref name="producers"/> to the steps whose data the enclosing scope can supply
+    /// while every client-visible field of <paramref name="descriptor"/> stays in the incremental plan.
+    /// No remaining step reads from both a producer and a step that is not a producer, unless every
+    /// narrowing leaves such a step.
+    /// </summary>
+    private static ImmutableArray<OperationPlanStep> SelectProducersKeepingClientOutput(
+        IncrementalPlanDescriptor descriptor,
+        ImmutableArray<OperationPlanStep> producers,
+        HashSet<string> clientFieldNames,
+        ref ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        var candidateSteps = incrementalPlanSteps;
+        var candidates = ImmutableArray<OperationPlanStep>.Empty;
+
+        foreach (var (allowProducerTarget, removeProducersFedInPlan) in
+            (ReadOnlySpan<(bool, bool)>)[(true, true), (false, true), (false, false)])
+        {
+            candidateSteps = incrementalPlanSteps;
+            candidates = KeepClientOutputOfProducers(
+                descriptor,
+                producers,
+                clientFieldNames,
+                allowProducerTarget,
+                ref candidateSteps);
+
+            if (removeProducersFedInPlan)
+            {
+                candidates = RemoveProducersFedInPlan(candidates, candidateSteps);
+            }
+
+            if (!ReadsFromProducerAndPlan(candidates, candidateSteps))
+            {
+                break;
+            }
+        }
+
+        incrementalPlanSteps = candidateSteps;
+        return candidates;
+
+        static bool ReadsFromProducerAndPlan(
+            ImmutableArray<OperationPlanStep> producers,
+            ImmutableList<PlanStep> steps)
+        {
+            var producerIds = new HashSet<int>();
+            foreach (var producer in producers)
+            {
+                producerIds.Add(producer.Id);
+            }
+
+            foreach (var step in steps)
+            {
+                if (step is not OperationPlanStep consumer || producerIds.Contains(consumer.Id))
+                {
+                    continue;
+                }
+
+                var readsFromProducer = false;
+                var readsFromPlan = false;
+
+                foreach (var candidate in steps)
+                {
+                    if (candidate is OperationPlanStep provider && provider.Dependents.Contains(consumer.Id))
+                    {
+                        if (producerIds.Contains(provider.Id))
+                        {
+                            readsFromProducer = true;
+                        }
+                        else
+                        {
+                            readsFromPlan = true;
+                        }
+                    }
+                }
+
+                if (readsFromProducer && readsFromPlan)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Keeps every client-visible field of <paramref name="descriptor"/> that only a step in
     /// <paramref name="producers"/> selects: the field moves, with its <c>@include</c> and <c>@skip</c>
     /// conditions and those of its enclosing inline fragments, to a dependent lookup of that producer
-    /// whose schema resolves it, preferring a dependent that is not itself a producer. A producer whose
-    /// field no dependent can take is not a producer, and neither is a producer that takes such a field.
+    /// whose schema resolves it, preferring a dependent that is not itself a producer and taking a
+    /// producer only when <paramref name="allowProducerTarget"/> is <c>true</c>. A producer whose field
+    /// no dependent can take is not a producer, and neither is a producer that takes such a field.
     /// </summary>
     /// <returns>
     /// The producers that select no client-visible field the rest of the incremental plan lacks.
@@ -1913,6 +2021,7 @@ public sealed partial class OperationPlanner
         IncrementalPlanDescriptor descriptor,
         ImmutableArray<OperationPlanStep> producers,
         HashSet<string> clientFieldNames,
+        bool allowProducerTarget,
         ref ImmutableList<PlanStep> incrementalPlanSteps)
     {
         if (clientFieldNames.Count == 0)
@@ -1943,6 +2052,7 @@ public sealed partial class OperationPlanner
                 clientFieldNames,
                 producerIds,
                 keptProducerIds,
+                allowProducerTarget,
                 ref incrementalPlanSteps))
             {
                 keptProducerIds.Add(producer.Id);
@@ -1961,6 +2071,7 @@ public sealed partial class OperationPlanner
             HashSet<string> clientFieldNames,
             HashSet<int> producerIds,
             HashSet<int> keptProducerIds,
+            bool allowProducerTarget,
             ref ImmutableList<PlanStep> incrementalPlanSteps)
         {
             var allKept = true;
@@ -1977,6 +2088,7 @@ public sealed partial class OperationPlanner
                         clientFieldNames,
                         producerIds,
                         keptProducerIds,
+                        allowProducerTarget,
                         ref incrementalPlanSteps);
                     continue;
                 }
@@ -2008,15 +2120,16 @@ public sealed partial class OperationPlanner
                     continue;
                 }
 
-                if (TryMoveFieldToDependent(
-                    producer,
-                    field,
-                    enclosingFragments,
-                    anchorPath,
-                    producerIds,
-                    allowProducer: true,
-                    ref incrementalPlanSteps,
-                    out var receivingStepId))
+                if (allowProducerTarget
+                    && TryMoveFieldToDependent(
+                        producer,
+                        field,
+                        enclosingFragments,
+                        anchorPath,
+                        producerIds,
+                        allowProducer: true,
+                        ref incrementalPlanSteps,
+                        out var receivingStepId))
                 {
                     keptProducerIds.Add(receivingStepId);
                     continue;

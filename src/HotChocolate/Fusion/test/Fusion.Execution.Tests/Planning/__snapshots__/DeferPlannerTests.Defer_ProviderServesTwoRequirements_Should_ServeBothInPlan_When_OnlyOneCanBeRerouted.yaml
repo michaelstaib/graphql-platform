@@ -4,7 +4,6 @@ operation:
         user(id: "1") {
           name
           id @fusion__requirement
-          currencyCode @fusion__requirement
         }
       }
     hash: 123456789101112
@@ -19,7 +18,6 @@ nodes:
         user(id: "1") {
           name
           id
-          currencyCode
         }
       }
 deliveryGroups:
@@ -33,15 +31,6 @@ incrementalPlans:
       - name: __fusion_1_id
         selectionMap: >-
           id
-      - name: __fusion_2_id
-        selectionMap: >-
-          id
-      - name: __fusion_3_region
-        selectionMap: >-
-          regionCode
-      - name: __fusion_4_currency
-        selectionMap: >-
-          currencyCode
     nodes:
       - id: 1
         type: Operation
@@ -50,7 +39,9 @@ incrementalPlans:
           query Op_defer_1($__fusion_1_id: ID!) {
             userById(id: $__fusion_1_id) {
               bio
+              id
               regionCode
+              currencyCode
             }
           }
         source: $.userById
@@ -89,4 +80,3 @@ incrementalPlans:
               currencyCode
         dependencies:
           - id: 1
-          - parentNodeId: 1
