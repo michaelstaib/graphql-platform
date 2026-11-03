@@ -32,17 +32,6 @@ internal static class ThrowHelper
     public static InvalidOperationException DeferredPlanNotFound(SelectionPath path)
         => new($"No plan was found for the @defer fragment at path '{path}'.");
 
-    public static DeferredMutationLookupRequiredException DeferredMutationKeyOutOfReach(
-        SelectionPath path,
-        string typeName)
-        => new(
-            path,
-            typeName,
-            string.Format(
-                FusionExecutionResources.DeferredMutationLookupRequiredException_KeyOutOfReach,
-                path,
-                typeName));
-
     public static DeferredMutationLookupRequiredException DeferredMutationConditionedDeferChain(
         SelectionPath path,
         string typeName)

@@ -133,36 +133,6 @@ public sealed partial class OperationPlanner
                 : _schema.GetOperationType(descriptor.Operation.Operation).Name;
 
     /// <summary>
-    /// Throws when a nested incremental plan of a mutation operation can be moved out of its enclosing
-    /// incremental plan by an <c>if</c> variable and reads a key that only the enclosing plans select.
-    /// </summary>
-    private void EnsureMovableMutationPlanCanReadItsKeys(IncrementalPlanDescriptor descriptor)
-    {
-        if (descriptor.Operation.Operation == OperationType.Query
-            || descriptor.Parent is null
-            || descriptor.Requirements.Count == 0
-            || !CanMoveOutOfEnclosingPlan(descriptor))
-        {
-            return;
-        }
-
-        // A moved plan reads its keys from the result of a plan further out, at the latest from the
-        // main plan, so every enclosing plan must read the key from its own enclosing plan as well.
-        foreach (var requirement in descriptor.Requirements.Values)
-        {
-            for (var enclosing = descriptor.Parent; enclosing is not null; enclosing = enclosing.Parent)
-            {
-                if (!ReadsFromEnclosingPlan(enclosing, requirement))
-                {
-                    throw ThrowHelper.DeferredMutationKeyOutOfReach(
-                        descriptor.Path,
-                        GetIncrementalPlanAnchorTypeName(descriptor));
-                }
-            }
-        }
-    }
-
-    /// <summary>
     /// Throws when a <c>@defer</c> of a mutation operation is nested inside another <c>@defer</c> and its chain
     /// of enclosing groups has an <c>if</c> variable, <c>@include</c> or <c>@skip</c> condition, unless one
     /// variable conditions every group of the chain.
@@ -238,55 +208,6 @@ public sealed partial class OperationPlanner
                 hasMultipleVariables = true;
             }
         }
-    }
-
-    /// <summary>
-    /// Determines whether an <c>if</c> variable can disable a delivery group of
-    /// <paramref name="descriptor"/> or one of their enclosing groups without disabling all of them.
-    /// </summary>
-    private static bool CanMoveOutOfEnclosingPlan(IncrementalPlanDescriptor descriptor)
-    {
-        string? sharedIfVariable = null;
-        var hasUnconditionalGroup = false;
-
-        foreach (var deliveryGroup in descriptor.DeliveryGroupSet)
-        {
-            for (var current = deliveryGroup; current is not null; current = current.Parent)
-            {
-                if (current.IfVariable is null)
-                {
-                    hasUnconditionalGroup = true;
-                }
-                else if (sharedIfVariable is null)
-                {
-                    sharedIfVariable = current.IfVariable;
-                }
-                else if (!sharedIfVariable.Equals(current.IfVariable, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return sharedIfVariable is not null && hasUnconditionalGroup;
-    }
-
-    private static bool ReadsFromEnclosingPlan(
-        IncrementalPlanDescriptor descriptor,
-        OperationRequirement requirement)
-    {
-        var map = requirement.Map.ToString();
-
-        foreach (var candidate in descriptor.Requirements.Values)
-        {
-            if (candidate.Path.Equals(requirement.Path)
-                && candidate.Map.ToString().Equals(map, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -371,7 +292,6 @@ public sealed partial class OperationPlanner
             var finalSteps = contextGraph.GetRegisteredSteps(descriptor);
 
             EnsureNoMutationStepInIncrementalPlan(descriptor, finalSteps);
-            EnsureMovableMutationPlanCanReadItsKeys(descriptor);
 
             var registeredInternalOp = contextGraph.GetRegisteredInternalOperation(descriptor);
 
