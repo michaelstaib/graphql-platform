@@ -45,6 +45,9 @@
   <data name="DeferredMutationLookupRequiredException_NoLookupAvailable" xml:space="preserve">
     <value>The @defer fragment at path '{0}' cannot be planned: the deferred fields on anchor type '{1}' cannot be planned without running the mutation root field again, which would duplicate its side effects.</value>
   </data>
+  <data name="DeferredMutationLookupRequiredException_KeyOutOfReach" xml:space="preserve">
+    <value>The @defer fragment at path '{0}' cannot be planned: an if variable can move the deferred fields on anchor type '{1}' out of the enclosing @defer whose result holds their key, and the key cannot be read from the mutation result instead.</value>
+  </data>
   <data name="SourceSchemaRequestDispatcher_NodeNotRegisteredInGroup" xml:space="preserve">
     <value>The execution node with id '{0}' is registered to be part of batching group '{1}', but no request was submitted for that node.</value>
   </data>

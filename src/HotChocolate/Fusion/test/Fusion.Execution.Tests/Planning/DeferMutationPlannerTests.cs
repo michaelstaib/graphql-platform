@@ -16,6 +16,8 @@ public class DeferMutationPlannerTests : FusionTestBase
     [InlineData(Topology.DirectKey, MutationShape.NamedFragments, "Mutation/a | Query/e | Query/b")]
     [InlineData(Topology.DirectKey, MutationShape.IfVariable, "Mutation/a,Query/e,Query/b | Query/e | Query/b")]
     [InlineData(Topology.DirectKey, MutationShape.InnerIfVariable, "Mutation/a | Query/e | Query/b")]
+    [InlineData(Topology.DirectKey, MutationShape.OuterIfVariable, "Mutation/a,Query/e | Query/e | Query/b")]
+    [InlineData(Topology.DirectKey, MutationShape.TwoIfVariables, "Mutation/a,Query/e,Query/b | Query/e | Query/b")]
     [InlineData(Topology.DirectKey, MutationShape.TwoRootFields, "Mutation/a,Mutation/a | Query/e | Query/b | Query/e")]
     [InlineData(Topology.DirectKey, MutationShape.ListField, "Mutation/a | Query/e | Query/b")]
     [InlineData(Topology.OneHopKey, MutationShape.Nested, "Mutation/a | Query/e,Query/c | Query/b")]
@@ -25,7 +27,6 @@ public class DeferMutationPlannerTests : FusionTestBase
         Topology.OneHopKey,
         MutationShape.IfVariable,
         "Mutation/a,Query/e,Query/b,Query/c | Query/e,Query/c | Query/b")]
-    [InlineData(Topology.OneHopKey, MutationShape.InnerIfVariable, "Mutation/a | Query/e,Query/c | Query/b")]
     [InlineData(
         Topology.OneHopKey,
         MutationShape.TwoRootFields,
@@ -38,7 +39,6 @@ public class DeferMutationPlannerTests : FusionTestBase
         Topology.TwoHopKey,
         MutationShape.IfVariable,
         "Mutation/a,Query/e,Query/b,Query/d,Query/c | Query/e,Query/d,Query/c | Query/b")]
-    [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariable, "Mutation/a | Query/e,Query/d,Query/c | Query/b")]
     [InlineData(
         Topology.TwoHopKey,
         MutationShape.TwoRootFields,
@@ -90,6 +90,10 @@ public class DeferMutationPlannerTests : FusionTestBase
     [InlineData(Topology.DirectKey, MutationShape.AnchorOnMutationResult, "$.create")]
     [InlineData(Topology.OneHopKey, MutationShape.NestedTotalFirst, "$.create.user")]
     [InlineData(Topology.TwoHopKey, MutationShape.NestedTotalFirst, "$.create.user")]
+    [InlineData(Topology.OneHopKey, MutationShape.InnerIfVariable, "$.create.user")]
+    [InlineData(Topology.OneHopKey, MutationShape.OuterIfVariable, "$.create.user")]
+    [InlineData(Topology.OneHopKey, MutationShape.TwoIfVariables, "$.create.user")]
+    [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariable, "$.create.user")]
     [InlineData(Topology.DirectKey, MutationShape.RootDefer, "$")]
     [InlineData(Topology.DirectKey, MutationShape.ThreeLevels, "$.create.user")]
     [InlineData(Topology.NameOnMutationSubgraph, MutationShape.Nested, "$.create.user")]
@@ -111,6 +115,24 @@ public class DeferMutationPlannerTests : FusionTestBase
 
         // assert
         Assert.Equal(expectedPath, error.Path.ToString());
+    }
+
+    [Fact]
+    public void Defer_Should_RefuseShape_When_IfVariableCanMoveNestedDeferAwayFromItsKey()
+    {
+        // arrange
+        var schema = ComposeTopology(Topology.OneHopKey);
+
+        // act
+        var error = Assert.Throws<DeferredMutationLookupRequiredException>(
+            () => PlanOperation(schema, GetOperation(MutationShape.InnerIfVariable)));
+
+        // assert
+        Assert.Equal(
+            "The @defer fragment at path '$.create.user' cannot be planned: an if variable can move the deferred "
+            + "fields on anchor type 'User' out of the enclosing @defer whose result holds their key, and the key "
+            + "cannot be read from the mutation result instead.",
+            error.Message);
     }
 
     [Fact]
@@ -275,6 +297,32 @@ public class DeferMutationPlannerTests : FusionTestBase
                             ... @defer(label: "outer") {
                                 name
                                 ... @defer(if: $defer, label: "inner") { total }
+                            }
+                        }
+                    }
+                }
+                """,
+            MutationShape.OuterIfVariable =>
+                """
+                mutation($defer: Boolean!) {
+                    create {
+                        user {
+                            ... @defer(if: $defer, label: "outer") {
+                                name
+                                ... @defer(label: "inner") { total }
+                            }
+                        }
+                    }
+                }
+                """,
+            MutationShape.TwoIfVariables =>
+                """
+                mutation($outer: Boolean!, $inner: Boolean!) {
+                    create {
+                        user {
+                            ... @defer(if: $outer, label: "outer") {
+                                name
+                                ... @defer(if: $inner, label: "inner") { total }
                             }
                         }
                     }
@@ -516,6 +564,8 @@ public class DeferMutationPlannerTests : FusionTestBase
         NamedFragments,
         IfVariable,
         InnerIfVariable,
+        OuterIfVariable,
+        TwoIfVariables,
         TwoRootFields,
         ListField,
         AnchorOnMutationResult,

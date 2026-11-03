@@ -18,6 +18,8 @@ public class DeferMutationTests : FusionTestBase
     [InlineData(Topology.DirectKey, MutationShape.IfVariableTrue)]
     [InlineData(Topology.DirectKey, MutationShape.IfVariableFalse)]
     [InlineData(Topology.DirectKey, MutationShape.InnerIfVariableTrue)]
+    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariableFalse)]
+    [InlineData(Topology.DirectKey, MutationShape.OuterIfVariableFalse)]
     [InlineData(Topology.DirectKey, MutationShape.TwoRootFields)]
     [InlineData(Topology.DirectKey, MutationShape.ListField)]
     [InlineData(Topology.OneHopKey, MutationShape.Nested)]
@@ -25,7 +27,6 @@ public class DeferMutationTests : FusionTestBase
     [InlineData(Topology.OneHopKey, MutationShape.NamedFragments)]
     [InlineData(Topology.OneHopKey, MutationShape.IfVariableTrue)]
     [InlineData(Topology.OneHopKey, MutationShape.IfVariableFalse)]
-    [InlineData(Topology.OneHopKey, MutationShape.InnerIfVariableTrue)]
     [InlineData(Topology.OneHopKey, MutationShape.TwoRootFields)]
     [InlineData(Topology.OneHopKey, MutationShape.ListField)]
     [InlineData(Topology.TwoHopKey, MutationShape.Nested)]
@@ -33,7 +34,6 @@ public class DeferMutationTests : FusionTestBase
     [InlineData(Topology.TwoHopKey, MutationShape.NamedFragments)]
     [InlineData(Topology.TwoHopKey, MutationShape.IfVariableTrue)]
     [InlineData(Topology.TwoHopKey, MutationShape.IfVariableFalse)]
-    [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariableTrue)]
     [InlineData(Topology.TwoHopKey, MutationShape.TwoRootFields)]
     [InlineData(Topology.TwoHopKey, MutationShape.ListField)]
     public async Task Defer_Should_RunMutationOncePerRootField_When_ShapeIsDeferred(
@@ -83,6 +83,11 @@ public class DeferMutationTests : FusionTestBase
     [InlineData(Topology.DirectKey, MutationShape.AnchorOnMutationResult)]
     [InlineData(Topology.OneHopKey, MutationShape.NestedTotalFirst)]
     [InlineData(Topology.TwoHopKey, MutationShape.NestedTotalFirst)]
+    [InlineData(Topology.OneHopKey, MutationShape.InnerIfVariableTrue)]
+    [InlineData(Topology.OneHopKey, MutationShape.InnerIfVariableFalse)]
+    [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariableTrue)]
+    [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariableFalse)]
+    [InlineData(Topology.OneHopKey, MutationShape.OuterIfVariableFalse)]
     [InlineData(Topology.DirectKey, MutationShape.ThreeLevels)]
     [InlineData(Topology.NameOnMutationSubgraph, MutationShape.Nested)]
     [InlineData(Topology.NameOnMutationSubgraph, MutationShape.Sibling)]
@@ -205,7 +210,7 @@ public class DeferMutationTests : FusionTestBase
                     }),
                 new OperationRequest(plainUser),
                 1),
-            MutationShape.InnerIfVariableTrue => (
+            MutationShape.InnerIfVariableTrue or MutationShape.InnerIfVariableFalse => (
                 new OperationRequest(
                     """
                     mutation($defer: Boolean!) {
@@ -219,7 +224,27 @@ public class DeferMutationTests : FusionTestBase
                         }
                     }
                     """,
-                    variables: new Dictionary<string, object?> { ["defer"] = true }),
+                    variables: new Dictionary<string, object?>
+                    {
+                        ["defer"] = shape is MutationShape.InnerIfVariableTrue
+                    }),
+                new OperationRequest(plainUser),
+                1),
+            MutationShape.OuterIfVariableFalse => (
+                new OperationRequest(
+                    """
+                    mutation($defer: Boolean!) {
+                        create {
+                            user {
+                                ... @defer(if: $defer, label: "outer") {
+                                    name
+                                    ... @defer(label: "inner") { total }
+                                }
+                            }
+                        }
+                    }
+                    """,
+                    variables: new Dictionary<string, object?> { ["defer"] = false }),
                 new OperationRequest(plainUser),
                 1),
             MutationShape.TwoRootFields => (
@@ -477,6 +502,8 @@ public class DeferMutationTests : FusionTestBase
         IfVariableTrue,
         IfVariableFalse,
         InnerIfVariableTrue,
+        InnerIfVariableFalse,
+        OuterIfVariableFalse,
         TwoRootFields,
         ListField,
         AnchorOnMutationResult,

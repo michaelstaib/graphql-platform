@@ -16,6 +16,13 @@ public sealed class DeferredMutationLookupRequiredException : Exception
         TypeName = typeName;
     }
 
+    internal DeferredMutationLookupRequiredException(SelectionPath path, string typeName, string message)
+        : base(message)
+    {
+        Path = path;
+        TypeName = typeName;
+    }
+
     private static string FormatMessage(SelectionPath path, string typeName)
     {
         ArgumentNullException.ThrowIfNull(path);
