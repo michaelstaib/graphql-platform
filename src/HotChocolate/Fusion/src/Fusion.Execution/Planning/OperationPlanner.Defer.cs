@@ -650,6 +650,7 @@ public sealed partial class OperationPlanner
                         sourceRequirement,
                         schemaHint,
                         downstreamStep.Conditions,
+                        excludedHostStepId: null,
                         resolver,
                         scopeState,
                         out var parentStepId,
@@ -778,6 +779,7 @@ public sealed partial class OperationPlanner
                         requirement,
                         candidateSchema!,
                         downstreamStep.Conditions,
+                        excludedHostStepId: null,
                         resolver,
                         scopeState,
                         out var parentStepId,
@@ -814,7 +816,8 @@ public sealed partial class OperationPlanner
         // one of its own requirements must feed it there.
         foreach (var entry in lifted)
         {
-            if (!promotedParentSteps.TryGetValue(entry.DownstreamStepId, out var promoted))
+            if (!promotedParentSteps.TryGetValue(entry.DownstreamStepId, out var promoted)
+                || entry.ParentStepId == promoted.ParentStepId)
             {
                 continue;
             }
@@ -831,19 +834,25 @@ public sealed partial class OperationPlanner
         }
 
         // A promoted step's requirement that an incremental-plan step served without being
-        // lifted still needs a provider in the enclosing scope.
+        // lifted, or that was lifted onto the promoted step itself, still needs another provider
+        // in the enclosing scope.
         foreach (var (promotedStepId, promoted) in promotedParentSteps)
         {
             var liftedKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var entry in lifted)
             {
-                if (entry.DownstreamStepId == promotedStepId)
+                if (entry.DownstreamStepId == promotedStepId && entry.ParentStepId != promoted.ParentStepId)
                 {
                     liftedKeys.Add(entry.Requirement.Key);
                 }
             }
 
-            WirePromotedStepRequirements(promoted.Scope, promoted.ParentStepId, liftedKeys, resolver);
+            // A promoted step that cannot be fed in the enclosing scope lifts nothing, so the
+            // incremental plan stays self-contained.
+            if (!TryWirePromotedStepRequirements(promoted.Scope, promoted.ParentStepId, liftedKeys, resolver))
+            {
+                return incrementalPlanSteps;
+            }
         }
 
         // Sever the in-plan edges that were rerouted to the parent scope and
@@ -1344,12 +1353,14 @@ public sealed partial class OperationPlanner
     /// result document relies on that field being preserved during result
     /// merging). Nothing is injected and <paramref name="isPartiallyResolvable"/> is set
     /// when the step can host only part of the requirement. A step with a condition that
-    /// <paramref name="consumerConditions"/> lacks is never a host.
+    /// <paramref name="consumerConditions"/> lacks, or the step <paramref name="excludedHostStepId"/>,
+    /// is never a host.
     /// </summary>
     private bool TryInlineDeferRequirementInScope(
         OperationRequirement requirement,
         string schemaName,
         ExecutionNodeCondition[] consumerConditions,
+        int? excludedHostStepId,
         ValueSelectionToSelectionSetRewriter resolver,
         ScopeState scopeState,
         out int parentStepId,
@@ -1360,7 +1371,8 @@ public sealed partial class OperationPlanner
 
         for (var i = 0; i < scopeState.Steps.Count; i++)
         {
-            if (scopeState.Steps[i] is not OperationPlanStep parentStep)
+            if (scopeState.Steps[i] is not OperationPlanStep parentStep
+                || parentStep.Id == excludedHostStepId)
             {
                 continue;
             }
@@ -1488,10 +1500,13 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Makes a step of <paramref name="scopeState"/> the provider of each requirement of the
+    /// Makes another step of <paramref name="scopeState"/> the provider of each requirement of the
     /// promoted step <paramref name="promotedStepId"/> whose key is not in <paramref name="wiredKeys"/>.
     /// </summary>
-    private void WirePromotedStepRequirements(
+    /// <returns>
+    /// <c>false</c> when no step of <paramref name="scopeState"/> can provide one of these requirements.
+    /// </returns>
+    private bool TryWirePromotedStepRequirements(
         ScopeState scopeState,
         int promotedStepId,
         HashSet<string> wiredKeys,
@@ -1499,7 +1514,7 @@ public sealed partial class OperationPlanner
     {
         if (scopeState.Steps.ById(promotedStepId) is not OperationPlanStep promotedStep)
         {
-            return;
+            return true;
         }
 
         foreach (var (key, requirement) in promotedStep.Requirements)
@@ -1509,39 +1524,37 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            var isWired = false;
+
             foreach (var schemaName in scopeState.Steps
                 .OfType<OperationPlanStep>()
                 .Select(candidate => candidate.SchemaName)
                 .Where(schemaName => schemaName is not null)
                 .Distinct(StringComparer.Ordinal))
             {
-                var stepsBeforeInline = scopeState.Steps;
-                var internalOperationBeforeInline = scopeState.InternalOperation;
-
-                if (!TryInlineDeferRequirementInScope(
+                if (TryInlineDeferRequirementInScope(
                     requirement,
                     schemaName!,
                     promotedStep.Conditions,
+                    excludedHostStepId: promotedStepId,
                     resolver,
                     scopeState,
                     out var providerStepId,
                     out _))
                 {
-                    continue;
+                    AddParentStepDependent(scopeState, providerStepId, promotedStepId);
+                    isWired = true;
+                    break;
                 }
+            }
 
-                // The promoted step cannot provide its own requirement.
-                if (providerStepId == promotedStepId)
-                {
-                    scopeState.Steps = stepsBeforeInline;
-                    scopeState.InternalOperation = internalOperationBeforeInline;
-                    continue;
-                }
-
-                AddParentStepDependent(scopeState, providerStepId, promotedStepId);
-                break;
+            if (!isWired)
+            {
+                return false;
             }
         }
+
+        return true;
     }
 
     /// <summary>
