@@ -2200,11 +2200,11 @@ public sealed partial class OperationPlanner
         out int receivingStepId)
     {
         var fieldConditions = new List<ExecutionNodeCondition>(producer.Conditions);
-        fieldConditions.AddRange(SelectionSetPartitioner.ExtractDirectiveConditions(field.Directives) ?? []);
+        fieldConditions.AddRange(SkipIncludeConditions.Extract(field.Directives) ?? []);
 
         foreach (var fragment in enclosingFragments)
         {
-            fieldConditions.AddRange(SelectionSetPartitioner.ExtractDirectiveConditions(fragment.Directives) ?? []);
+            fieldConditions.AddRange(SkipIncludeConditions.Extract(fragment.Directives) ?? []);
         }
 
         var fieldConditionArray = fieldConditions.ToArray();
