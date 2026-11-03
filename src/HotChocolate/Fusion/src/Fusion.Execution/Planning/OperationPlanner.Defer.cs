@@ -1880,8 +1880,10 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Keeps every client-visible field of <paramref name="descriptor"/> that only a step in
-    /// <paramref name="producers"/> selects: the field moves to a dependent lookup of that producer
+    /// <paramref name="producers"/> selects: the field moves, with its <c>@include</c> and <c>@skip</c>
+    /// conditions and those of its enclosing inline fragments, to a dependent lookup of that producer
     /// whose schema resolves it, and a producer whose field no dependent can take is not a producer.
+    /// A producer selects only leaf fields at the anchor, so no composite field needs to move.
     /// </summary>
     /// <returns>
     /// The producers that select no client-visible field the rest of the incremental plan lacks.
@@ -1912,8 +1914,49 @@ public sealed partial class OperationPlanner
                 descriptor.Path,
                 producer.Target.Length);
 
-            foreach (var selection in producerAnchorSelectionSet.Selections)
+            if (!TryKeepClientFields(
+                producer,
+                producerAnchorSelectionSet,
+                [],
+                descriptor.Path,
+                clientFieldNames,
+                producerIds,
+                ref incrementalPlanSteps))
             {
+                keptProducerIds.Add(producer.Id);
+            }
+        }
+
+        return keptProducerIds.Count == 0
+            ? producers
+            : producers.RemoveAll(producer => keptProducerIds.Contains(producer.Id));
+
+        static bool TryKeepClientFields(
+            OperationPlanStep producer,
+            SelectionSetNode selectionSet,
+            ImmutableArray<InlineFragmentNode> enclosingFragments,
+            SelectionPath anchorPath,
+            HashSet<string> clientFieldNames,
+            HashSet<int> producerIds,
+            ref ImmutableList<PlanStep> incrementalPlanSteps)
+        {
+            var allKept = true;
+
+            foreach (var selection in selectionSet.Selections)
+            {
+                if (selection is InlineFragmentNode fragment)
+                {
+                    allKept &= TryKeepClientFields(
+                        producer,
+                        fragment.SelectionSet,
+                        enclosingFragments.Add(fragment),
+                        anchorPath,
+                        clientFieldNames,
+                        producerIds,
+                        ref incrementalPlanSteps);
+                    continue;
+                }
+
                 if (selection is not FieldNode { SelectionSet: null } field
                     || field.Name.Value.Equals("__typename", StringComparison.Ordinal))
                 {
@@ -1923,21 +1966,22 @@ public sealed partial class OperationPlanner
                 var responseName = field.Alias?.Value ?? field.Name.Value;
 
                 if (!clientFieldNames.Contains(responseName)
-                    || IsSelectedByOtherStep(incrementalPlanSteps, producerIds, descriptor.Path, responseName))
+                    || IsSelectedByOtherStep(incrementalPlanSteps, producerIds, anchorPath, responseName))
                 {
                     continue;
                 }
 
-                if (!TryMoveFieldToDependent(producer, field, descriptor.Path, producerIds, ref incrementalPlanSteps))
-                {
-                    keptProducerIds.Add(producer.Id);
-                }
+                allKept &= TryMoveFieldToDependent(
+                    producer,
+                    field,
+                    enclosingFragments,
+                    anchorPath,
+                    producerIds,
+                    ref incrementalPlanSteps);
             }
-        }
 
-        return keptProducerIds.Count == 0
-            ? producers
-            : producers.RemoveAll(producer => keptProducerIds.Contains(producer.Id));
+            return allKept;
+        }
 
         static bool IsSelectedByOtherStep(
             ImmutableList<PlanStep> steps,
@@ -1980,12 +2024,15 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Adds <paramref name="field"/> to the first dependent lookup of <paramref name="producer"/> at
-    /// <paramref name="anchorPath"/> whose source schema resolves it without requirements.
+    /// Adds <paramref name="field"/>, inside copies of <paramref name="enclosingFragments"/>, to the
+    /// first dependent lookup of <paramref name="producer"/> at <paramref name="anchorPath"/> whose
+    /// source schema resolves it without requirements. Only the <c>@include</c> and <c>@skip</c>
+    /// directives of the field and of the fragments are kept.
     /// </summary>
     private static bool TryMoveFieldToDependent(
         OperationPlanStep producer,
         FieldNode field,
+        ImmutableArray<InlineFragmentNode> enclosingFragments,
         SelectionPath anchorPath,
         HashSet<int> producerIds,
         ref ImmutableList<PlanStep> incrementalPlanSteps)
@@ -2001,15 +2048,28 @@ public sealed partial class OperationPlanner
                 || !entityType.Fields.TryGetField(field.Name.Value, allowInaccessibleFields: true, out var entityField)
                 || !entityField.Sources.TryGetMember(schemaName, out var source)
                 || source.IsExternal
-                || source.Requirements is not null)
+                || source.Requirements is not null
+                || enclosingFragments.Any(
+                    fragment => fragment.TypeCondition is { } typeCondition
+                        && !typeCondition.Name.Value.Equals(entityType.Name, StringComparison.Ordinal)))
             {
                 continue;
+            }
+
+            ISelectionNode movedSelection = field.WithDirectives(KeepConditionDirectives(field.Directives));
+
+            for (var i = enclosingFragments.Length - 1; i >= 0; i--)
+            {
+                var fragment = enclosingFragments[i];
+                movedSelection = fragment
+                    .WithDirectives(KeepConditionDirectives(fragment.Directives))
+                    .WithSelectionSet(new SelectionSetNode([movedSelection]));
             }
 
             var entitySelectionSet = GetStepEntitySelectionSet(dependent);
             var updatedDependent = WithEntitySelectionSet(
                 dependent,
-                new SelectionSetNode([.. entitySelectionSet.Selections, field.WithDirectives([])]));
+                new SelectionSetNode([.. entitySelectionSet.Selections, movedSelection]));
 
             incrementalPlanSteps = incrementalPlanSteps.SetItem(
                 incrementalPlanSteps.IndexOf(dependent),
@@ -2018,6 +2078,13 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+
+        static IReadOnlyList<DirectiveNode> KeepConditionDirectives(IReadOnlyList<DirectiveNode> directives)
+            => directives
+                .Where(
+                    directive => directive.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal)
+                        || directive.Name.Value.Equals(DirectiveNames.Skip.Name, StringComparison.Ordinal))
+                .ToArray();
     }
 
     /// <summary>
