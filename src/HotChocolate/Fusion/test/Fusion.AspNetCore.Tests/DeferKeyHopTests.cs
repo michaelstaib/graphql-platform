@@ -82,9 +82,10 @@ public class DeferKeyHopTests : FusionTestBase
                 "A nested @defer under a disabled @defer loses its fields.",
             (DeferShape.ConditionalAndUnconditionalSameField, false) =>
                 "The unconditional group delivers total again after the initial payload.",
-            (DeferShape.InnerIncludeWithKey, _)
-                when form is OperationForm.Mutation && topology is not Topology.DirectKey =>
-                "A deferred key field that no lookup after the key hop resolves cannot be planned under a mutation.",
+            (DeferShape.NestedIncludedKeyAndHopField, false) when topology is not Topology.DirectKey =>
+                "The enclosing group loses its fields when the nested group behind a key hop is excluded.",
+            (DeferShape.AliasedKeyAndHopField, _) when form is OperationForm.Mutation =>
+                "A deferred group with an aliased key field cannot be planned under a mutation.",
             _ => null
         };
 
@@ -92,31 +93,57 @@ public class DeferKeyHopTests : FusionTestBase
         => shape switch
         {
             DeferShape.Conditional =>
-                ("... @defer(if: $a) { name total }", "name total"),
+                ("user { ... @defer(if: $a) { name total } }", "user { name total }"),
             DeferShape.ConditionalAndUnconditionalSiblings =>
-                ("... @defer(if: $a) { total } ... @defer { name }", "name total"),
+                ("user { ... @defer(if: $a) { total } ... @defer { name } }", "user { name total }"),
             DeferShape.ConditionalAndUnconditionalSameField =>
-                ("... @defer(if: $a) { total } ... @defer { total }", "total"),
+                ("user { ... @defer(if: $a) { total } ... @defer { total } }", "user { total }"),
             DeferShape.IdAndName =>
-                ("... @defer { id name }", "id name"),
+                ("user { ... @defer { id name } }", "user { id name }"),
             DeferShape.NestedChain =>
-                ("... @defer { id ... @defer { name ... @defer { total } } }", "id name total"),
+                ("user { ... @defer { id ... @defer { name ... @defer { total } } } }", "user { id name total }"),
             DeferShape.ConditionalNestedChain =>
-                ("... @defer(if: $a) { id ... @defer { name ... @defer { total } } }", "id name total"),
+                ("user { ... @defer(if: $a) { id ... @defer { name ... @defer { total } } } }",
+                    "user { id name total }"),
             DeferShape.IncludedGroup =>
-                ("... @defer @include(if: $a) { name total }", "... @include(if: $a) { name total }"),
+                ("user { ... @defer @include(if: $a) { name total } }", "user { ... @include(if: $a) { name total } }"),
             DeferShape.SkippedGroup =>
-                ("... @defer @skip(if: $a) { name total }", "... @skip(if: $a) { name total }"),
+                ("user { ... @defer @skip(if: $a) { name total } }", "user { ... @skip(if: $a) { name total } }"),
             DeferShape.IncludedGroupWithKey =>
-                ("... @defer @include(if: $a) { id name }", "... @include(if: $a) { id name }"),
+                ("user { ... @defer @include(if: $a) { id name } }", "user { ... @include(if: $a) { id name } }"),
             DeferShape.ConditionalSkippedGroup =>
-                ("... @defer(if: $b) @skip(if: $a) { name total }", "... @skip(if: $a) { name total }"),
+                ("user { ... @defer(if: $b) @skip(if: $a) { name total } }",
+                    "user { ... @skip(if: $a) { name total } }"),
             DeferShape.InnerSkipUnderConditional =>
-                ("... @defer(if: $b) { ... @skip(if: $a) { name total } }", "... @skip(if: $a) { name total }"),
+                ("user { ... @defer(if: $b) { ... @skip(if: $a) { name total } } }",
+                    "user { ... @skip(if: $a) { name total } }"),
             DeferShape.InnerIncludeWithKey =>
-                ("... @defer { ... @include(if: $a) { id total } }", "... @include(if: $a) { id total }"),
+                ("user { ... @defer { ... @include(if: $a) { id total } } }",
+                    "user { ... @include(if: $a) { id total } }"),
             DeferShape.IncludedKeyField =>
-                ("... @defer { id @include(if: $a) name }", "id @include(if: $a) name"),
+                ("user { ... @defer { id @include(if: $a) name } }", "user { id @include(if: $a) name }"),
+            DeferShape.KeyAndHopField =>
+                ("user { ... @defer { id total } }", "user { id total }"),
+            DeferShape.AliasedKeyAndHopField =>
+                ("user { ... @defer { k: id total } }", "user { k: id total }"),
+            DeferShape.ConditionalKeyAndHopField =>
+                ("user { ... @defer(if: $a) { id total } }", "user { id total }"),
+            DeferShape.IncludedGroupKeyAndHopField =>
+                ("user { ... @defer @include(if: $a) { id total } }", "user { ... @include(if: $a) { id total } }"),
+            DeferShape.SkippedGroupKeyAndHopField =>
+                ("user { ... @defer @skip(if: $a) { id total } }", "user { ... @skip(if: $a) { id total } }"),
+            DeferShape.SiblingsKeyAndHopField =>
+                ("user { ... @defer(if: $a) { id total } ... @defer(if: $b) { name } }", "user { id total name }"),
+            DeferShape.NestedIncludedKeyAndHopField =>
+                ("user { ... @defer { name ... @defer @include(if: $a) { id total } } }",
+                    "user { name ... @include(if: $a) { id total } }"),
+            DeferShape.ListKeyAndHopField =>
+                ("users { ... @defer { id total } }", "users { id total }"),
+            DeferShape.ConditionalListKeyAndHopField =>
+                ("users { ... @defer(if: $a) { id total } }", "users { id total }"),
+            DeferShape.FriendChainKeyAndHopField =>
+                ("users { friend { friend { ... @defer(if: $a) { id total } } } }",
+                    "users { friend { friend { id total } } }"),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 
@@ -160,7 +187,7 @@ public class DeferKeyHopTests : FusionTestBase
         }
 
         var header = declarations.Count == 0 ? operationType : $"{operationType}({string.Join(", ", declarations)})";
-        var text = $"{header} {{ {rootField} {{ user {{ {selection} }} }} }}";
+        var text = $"{header} {{ {rootField} {{ {selection} }} }}";
 
         return variables.Count == 0 ? new OperationRequest(text) : new OperationRequest(text, variables: variables);
     }
@@ -346,7 +373,17 @@ public class DeferKeyHopTests : FusionTestBase
         ConditionalSkippedGroup,
         InnerSkipUnderConditional,
         InnerIncludeWithKey,
-        IncludedKeyField
+        IncludedKeyField,
+        KeyAndHopField,
+        AliasedKeyAndHopField,
+        ConditionalKeyAndHopField,
+        IncludedGroupKeyAndHopField,
+        SkippedGroupKeyAndHopField,
+        SiblingsKeyAndHopField,
+        NestedIncludedKeyAndHopField,
+        ListKeyAndHopField,
+        ConditionalListKeyAndHopField,
+        FriendChainKeyAndHopField
     }
 
     private sealed record Outcome(JsonNode? Data, JsonNode? Errors, List<string> Violations);
@@ -380,9 +417,15 @@ public class DeferKeyHopTests : FusionTestBase
             }
         }
 
-        public record CreateResult(User User);
+        public record CreateResult(User User)
+        {
+            public User[] Users => [new User(1), new User(2)];
+        }
 
-        public record User([property: ID] int Id);
+        public record User([property: ID] int Id)
+        {
+            public User Friend => new(Id + 1);
+        }
     }
 
     private static class NameSource
