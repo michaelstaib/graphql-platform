@@ -309,7 +309,11 @@ internal sealed class DeferOperationRewriter
                 node = node.GetOrAddChild(segment);
             }
 
-            node.AddContribution(occurrence.ResponseName, occurrence.FieldNode, occurrence.TypeCondition);
+            node.AddContribution(
+                occurrence.ResponseName,
+                occurrence.FieldNode,
+                occurrence.TypeCondition,
+                occurrence.Conditions);
         }
 
         var rootSelectionSet = BuildSelectionSetFromPathNode(
@@ -439,52 +443,48 @@ internal sealed class DeferOperationRewriter
     {
         var selections = new List<ISelectionNode>();
 
-        // Leaf contributions at this path. Group by type condition name so
-        // each `on Type` wrapping is emitted once. The same response name
-        // may be contributed by multiple sibling @defer fragments; we only
-        // keep the first to avoid duplicate selections in the subgraph
-        // request.
+        // Leaf contributions at this path. Group by type condition name and fragment
+        // conditions so each wrapping fragment is emitted once. The same response name
+        // may be contributed by multiple sibling @defer fragments; we only keep the
+        // first to avoid duplicate selections in the subgraph request.
         if (node.Contributions.Count > 0)
         {
             var unconditional = new List<FieldNode>();
-            var byTypeCondition = new Dictionary<string, (NamedTypeNode Node, List<FieldNode> Fields)>(
-                StringComparer.Ordinal);
-            var seen = new HashSet<(string? TypeCondition, string ResponseName)>();
+            var byFragmentKey = new Dictionary<(string? TypeCondition, FragmentConditions Conditions), FragmentGroup>();
+            var seen = new HashSet<(string? TypeCondition, FragmentConditions Conditions, string ResponseName)>();
 
             foreach (var contribution in node.Contributions)
             {
-                var discriminator = (contribution.TypeCondition?.Name.Value, contribution.ResponseName);
-                if (!seen.Add(discriminator))
+                var typeName = contribution.TypeCondition?.Name.Value;
+
+                if (!seen.Add((typeName, contribution.Conditions, contribution.ResponseName)))
                 {
                     continue;
                 }
 
-                if (contribution.TypeCondition is null)
+                if (contribution.TypeCondition is null && contribution.Conditions.IsEmpty)
                 {
                     unconditional.Add(contribution.FieldNode);
+                    continue;
                 }
-                else
-                {
-                    var typeName = contribution.TypeCondition.Name.Value;
-                    if (!byTypeCondition.TryGetValue(typeName, out var bucketEntry))
-                    {
-                        bucketEntry = (contribution.TypeCondition, []);
-                        byTypeCondition[typeName] = bucketEntry;
-                    }
 
-                    bucketEntry.Fields.Add(contribution.FieldNode);
+                var key = (typeName, contribution.Conditions);
+
+                if (!byFragmentKey.TryGetValue(key, out var group))
+                {
+                    group = new FragmentGroup(contribution.TypeCondition, contribution.Conditions);
+                    byFragmentKey[key] = group;
                 }
+
+                group.Fields.Add(contribution.FieldNode);
             }
 
             selections.AddRange(unconditional);
 
-            foreach (var (_, bucketEntry) in byTypeCondition)
+            foreach (var group in byFragmentKey.Values)
             {
-                selections.Add(new InlineFragmentNode(
-                    null,
-                    bucketEntry.Node,
-                    [],
-                    new SelectionSetNode(bucketEntry.Fields.ToArray<ISelectionNode>())));
+                selections.Add(
+                    WrapInFragments(group.TypeCondition, group.Conditions, group.Fields.ToArray<ISelectionNode>()));
             }
         }
 
@@ -493,7 +493,11 @@ internal sealed class DeferOperationRewriter
         // syntactically valid query against the root schema.
         foreach (var (segment, childNode) in node.Children)
         {
-            var wrappingField = ResolveWrappingField(originalSelectionSet, segment, activeTypeCondition: null)
+            var wrappingField = ResolveWrappingField(
+                originalSelectionSet,
+                segment,
+                activeTypeCondition: null,
+                FragmentConditions.Empty)
                 ?? throw new InvalidOperationException(
                     $"Unable to resolve wrapping field for '{segment.ResponseName}' at path '{FormatPath(parentPath)}'.");
 
@@ -514,18 +518,19 @@ internal sealed class DeferOperationRewriter
 
             // A composite field selected under a type condition is re-wrapped in
             // an `... on Type` inline fragment so the reconstructed operation stays
-            // valid when its enclosing field returns an abstract type.
-            if (segment.TypeCondition is { } typeConditionName)
+            // valid when its enclosing field returns an abstract type. The @skip and
+            // @include conditions of the enclosing fragments are carried the same way.
+            if (segment.TypeCondition is null && segment.Conditions.IsEmpty)
             {
-                selections.Add(new InlineFragmentNode(
-                    null,
-                    new NamedTypeNode(typeConditionName),
-                    [],
-                    new SelectionSetNode([childField])));
+                selections.Add(childField);
             }
             else
             {
-                selections.Add(childField);
+                var typeCondition = segment.TypeCondition is { } typeConditionName
+                    ? new NamedTypeNode(typeConditionName)
+                    : null;
+
+                selections.Add(WrapInFragments(typeCondition, segment.Conditions, [childField]));
             }
         }
 
@@ -537,16 +542,80 @@ internal sealed class DeferOperationRewriter
         return new SelectionSetNode(selections);
     }
 
+    private static InlineFragmentNode WrapInFragments(
+        NamedTypeNode? typeCondition,
+        FragmentConditions conditions,
+        IReadOnlyList<ISelectionNode> selections)
+    {
+        // The innermost fragment carries the type condition. Each further condition
+        // wraps the result in one more fragment, so the conditions apply as a conjunction.
+        var innermost = conditions.IsEmpty ? -1 : conditions.Items.Length - 1;
+
+        var fragment = new InlineFragmentNode(
+            null,
+            typeCondition,
+            innermost < 0 ? [] : CreateConditionDirectives(conditions.Items[innermost]),
+            new SelectionSetNode(selections));
+
+        for (var i = innermost - 1; i >= 0; i--)
+        {
+            fragment = new InlineFragmentNode(
+                null,
+                null,
+                CreateConditionDirectives(conditions.Items[i]),
+                new SelectionSetNode([fragment]));
+        }
+
+        return fragment;
+    }
+
+    private static List<DirectiveNode> CreateConditionDirectives(IncludeCondition condition)
+    {
+        var directives = new List<DirectiveNode>(2);
+
+        if (condition.Skip is { } skipVariable)
+        {
+            directives.Add(
+                CreateConditionDirective(
+                    DirectiveNames.Skip.Name,
+                    DirectiveNames.Skip.Arguments.If,
+                    skipVariable));
+        }
+
+        if (condition.Include is { } includeVariable)
+        {
+            directives.Add(
+                CreateConditionDirective(
+                    DirectiveNames.Include.Name,
+                    DirectiveNames.Include.Arguments.If,
+                    includeVariable));
+        }
+
+        return directives;
+    }
+
+    private static DirectiveNode CreateConditionDirective(string name, string argumentName, string variableName)
+        => new(
+            null,
+            new NameNode(name),
+            [
+                new ArgumentNode(
+                    null,
+                    new NameNode(argumentName),
+                    new VariableNode(new NameNode(variableName)))
+            ]);
+
     private static FieldNode? ResolveWrappingField(
         SelectionSetNode selectionSet,
         FieldPathSegment segment,
-        string? activeTypeCondition)
+        string? activeTypeCondition,
+        FragmentConditions activeConditions)
     {
-        // The segment records the type condition that was active when the field
-        // was collected. Sibling type-condition branches can reuse the same
+        // The segment records the type condition and fragment conditions that were
+        // active when the field was collected. Sibling branches can reuse the same
         // response name for divergent composite selections, so the wrapping
-        // field is only a match when the type condition it sits under matches
-        // the one recorded on the segment. Matching by response name alone would
+        // field is only a match when the type condition and conditions it sits under
+        // match the ones recorded on the segment. Matching by response name alone would
         // resolve against the wrong branch and drop its nested selections.
         for (var i = 0; i < selectionSet.Selections.Count; i++)
         {
@@ -557,7 +626,8 @@ internal sealed class DeferOperationRewriter
                 var responseName = field.Alias?.Value ?? field.Name.Value;
 
                 if (responseName.Equals(segment.ResponseName, StringComparison.Ordinal)
-                    && string.Equals(activeTypeCondition, segment.TypeCondition, StringComparison.Ordinal))
+                    && string.Equals(activeTypeCondition, segment.TypeCondition, StringComparison.Ordinal)
+                    && activeConditions.Equals(segment.Conditions))
                 {
                     return field;
                 }
@@ -566,7 +636,10 @@ internal sealed class DeferOperationRewriter
             if (selection is InlineFragmentNode inline)
             {
                 var nestedTypeCondition = inline.TypeCondition?.Name.Value ?? activeTypeCondition;
-                var nested = ResolveWrappingField(inline.SelectionSet, segment, nestedTypeCondition);
+                var nestedConditions = IncludeCondition.TryCreate(inline, out var includeCondition)
+                    ? activeConditions.Add(includeCondition)
+                    : activeConditions;
+                var nested = ResolveWrappingField(inline.SelectionSet, segment, nestedTypeCondition, nestedConditions);
 
                 if (nested is not null)
                 {
@@ -690,9 +763,22 @@ internal sealed class DeferOperationRewriter
         public void Add(FieldOccurrence occurrence) => Occurrences.Add(occurrence);
     }
 
+    private sealed class FragmentGroup(NamedTypeNode? typeCondition, FragmentConditions conditions)
+    {
+        public NamedTypeNode? TypeCondition { get; } = typeCondition;
+        public FragmentConditions Conditions { get; } = conditions;
+        public List<FieldNode> Fields { get; } = [];
+    }
+
+    private readonly record struct Contribution(
+        string ResponseName,
+        FieldNode FieldNode,
+        NamedTypeNode? TypeCondition,
+        FragmentConditions Conditions);
+
     private sealed class PathNode
     {
-        public List<(string ResponseName, FieldNode FieldNode, NamedTypeNode? TypeCondition)> Contributions { get; } = [];
+        public List<Contribution> Contributions { get; } = [];
         public Dictionary<FieldPathSegment, PathNode> Children { get; } = [];
 
         public PathNode GetOrAddChild(FieldPathSegment segment)
@@ -706,9 +792,13 @@ internal sealed class DeferOperationRewriter
             return child;
         }
 
-        public void AddContribution(string responseName, FieldNode fieldNode, NamedTypeNode? typeCondition)
+        public void AddContribution(
+            string responseName,
+            FieldNode fieldNode,
+            NamedTypeNode? typeCondition,
+            FragmentConditions conditions)
         {
-            Contributions.Add((responseName, fieldNode, typeCondition));
+            Contributions.Add(new Contribution(responseName, fieldNode, typeCondition, conditions));
         }
     }
 }

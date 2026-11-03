@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Planning;
@@ -63,6 +65,21 @@ public sealed class OperationCompiler
         string hash,
         string shortHash,
         OperationDefinitionNode operationDefinition)
+        => Compile(id, hash, shortHash, operationDefinition, deliveryGroups: []);
+
+    /// <summary>
+    /// Compiles the operation and registers the include conditions of the delivery groups, so
+    /// that the include flags of a request also cover them.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when a delivery group ID is negative.
+    /// </exception>
+    internal Operation Compile(
+        string id,
+        string hash,
+        string shortHash,
+        OperationDefinitionNode operationDefinition,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentNullException.ThrowIfNull(operationDefinition);
@@ -74,6 +91,11 @@ public sealed class OperationCompiler
         var includeConditions = new IncludeConditionCollection(_maxAllowedIncludeConditions);
         var deferConditions = new DeferConditionCollection(_maxAllowedDeferConditions);
         IncludeConditionVisitor.Instance.Visit(operationDefinition, includeConditions);
+
+        var deliveryGroupIds = RegisterDeliveryGroupConditions(
+            deliveryGroups,
+            includeConditions,
+            out var deliveryGroupConditionIndices);
 
         // Scans the operation for @defer fragments and creates one
         // DeliveryGroup object for each. Also fills deferConditions with any
@@ -134,6 +156,8 @@ public sealed class OperationCompiler
                 includeConditions,
                 deferConditions,
                 partitioning.ByFragment,
+                deliveryGroupIds,
+                deliveryGroupConditionIndices,
                 hasIncrementalParts,
                 lastId,
                 compilationContext.ElementsById);
@@ -142,6 +166,63 @@ public sealed class OperationCompiler
         {
             _fieldsPool.Return(fields);
         }
+    }
+
+    private static ImmutableArray<int> RegisterDeliveryGroupConditions(
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        IncludeConditionCollection includeConditions,
+        out ImmutableArray<ImmutableArray<int>> conditionIndices)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty)
+        {
+            conditionIndices = [];
+            return [];
+        }
+
+        var conditionalGroupCount = 0;
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (deliveryGroup.Id < 0)
+            {
+                throw ThrowHelper.DeliveryGroupIdNegative(deliveryGroup.Id, nameof(deliveryGroups));
+            }
+
+            if (!deliveryGroup.Conditions.IsDefaultOrEmpty)
+            {
+                conditionalGroupCount++;
+            }
+        }
+
+        var ids = new int[conditionalGroupCount];
+        var indices = new ImmutableArray<int>[conditionalGroupCount];
+        var position = 0;
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (deliveryGroup.Conditions.IsDefaultOrEmpty)
+            {
+                continue;
+            }
+
+            var groupIndices = ImmutableArray.CreateBuilder<int>(deliveryGroup.Conditions.Length);
+
+            foreach (var condition in deliveryGroup.Conditions)
+            {
+                includeConditions.Add(condition);
+                groupIndices.Add(includeConditions.IndexOf(condition));
+            }
+
+            ids[position] = deliveryGroup.Id;
+            indices[position] = groupIndices.MoveToImmutable();
+            position++;
+        }
+
+        // The ids are sorted so that the operation can look up a group by its id with a binary search.
+        Array.Sort(ids, indices);
+
+        conditionIndices = ImmutableCollectionsMarshal.AsImmutableArray(indices);
+        return ImmutableCollectionsMarshal.AsImmutableArray(ids);
     }
 
     internal SelectionSet CompileSelectionSet(

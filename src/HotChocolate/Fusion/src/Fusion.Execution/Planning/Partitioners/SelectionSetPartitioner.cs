@@ -53,37 +53,6 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             context.SelectionSetIndex);
     }
 
-    private static ExecutionNodeCondition[]? ExtractDirectiveConditions(
-        IReadOnlyList<DirectiveNode> directives)
-    {
-        List<ExecutionNodeCondition>? conditions = null;
-
-        foreach (var directive in directives)
-        {
-            var passingValue = directive.Name.Value switch
-            {
-                "skip" => false,
-                "include" => true,
-                _ => (bool?)null
-            };
-
-            if (passingValue.HasValue
-                && directive.Arguments.Count > 0
-                && directive.Arguments[0].Value is VariableNode variable)
-            {
-                conditions ??= [];
-                conditions.Add(new ExecutionNodeCondition
-                {
-                    VariableName = variable.Name.Value,
-                    PassingValue = passingValue.Value,
-                    Directive = directive
-                });
-            }
-        }
-
-        return conditions?.ToArray();
-    }
-
     private (SelectionSetNode?, SelectionSetNode?) RewriteSelectionSet(
         Context context,
         ITypeDefinition type,
@@ -146,7 +115,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                             }
                         }
 
-                        var fieldConditions = ExtractDirectiveConditions(fieldNode.Directives);
+                        var fieldConditions = SkipIncludeConditions.Extract(fieldNode.Directives);
                         var savedCount = context.PushConditions(fieldConditions);
 
                         var (resolvable, unresolvable) =
@@ -168,7 +137,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
                 case InlineFragmentNode inlineFragmentNode:
                 {
-                    var fragmentConditions = ExtractDirectiveConditions(inlineFragmentNode.Directives);
+                    var fragmentConditions = SkipIncludeConditions.Extract(inlineFragmentNode.Directives);
                     var savedCount = context.PushConditions(fragmentConditions);
 
                     {

@@ -37,6 +37,7 @@ internal static class DeferPartitioner
             operation.SelectionSet.Selections,
             parent: null,
             currentPath: SelectionPath.Root,
+            conditions: [],
             deferConditions,
             byFragment,
             ordered);
@@ -52,6 +53,7 @@ internal static class DeferPartitioner
         IReadOnlyList<ISelectionNode> selections,
         DeliveryGroup? parent,
         SelectionPath currentPath,
+        ImmutableArray<IncludeCondition> conditions,
         DeferConditionCollection deferConditions,
         Dictionary<InlineFragmentNode, DeliveryGroup> byFragment,
         List<DeliveryGroup> ordered)
@@ -66,7 +68,7 @@ internal static class DeferPartitioner
                 {
                     var responseName = field.Alias?.Value ?? field.Name.Value;
                     var childPath = currentPath.AppendField(responseName);
-                    Walk(sub.Selections, parent, childPath, deferConditions, byFragment, ordered);
+                    Walk(sub.Selections, parent, childPath, conditions, deferConditions, byFragment, ordered);
                 }
 
                 continue;
@@ -75,6 +77,12 @@ internal static class DeferPartitioner
             if (selection is InlineFragmentNode inline)
             {
                 var nested = parent;
+                var nestedConditions = conditions;
+
+                if (IncludeCondition.TryCreate(inline, out var includeCondition))
+                {
+                    nestedConditions = nestedConditions.Add(includeCondition);
+                }
 
                 if (DeferCondition.TryCreate(inline, out var deferCondition))
                 {
@@ -86,14 +94,22 @@ internal static class DeferPartitioner
                     var usage = new DeliveryGroup(label, parent, deferIndex)
                     {
                         Path = currentPath,
-                        IfVariable = ifVariable
+                        IfVariable = ifVariable,
+                        Conditions = nestedConditions
                     };
                     byFragment[inline] = usage;
                     ordered.Add(usage);
                     nested = usage;
                 }
 
-                Walk(inline.SelectionSet.Selections, nested, currentPath, deferConditions, byFragment, ordered);
+                Walk(
+                    inline.SelectionSet.Selections,
+                    nested,
+                    currentPath,
+                    nestedConditions,
+                    deferConditions,
+                    byFragment,
+                    ordered);
                 continue;
             }
 

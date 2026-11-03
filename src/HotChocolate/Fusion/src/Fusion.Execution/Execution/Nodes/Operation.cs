@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -22,6 +23,8 @@ public sealed class Operation : IOperation
     private readonly IncludeConditionCollection _includeConditions;
     private readonly DeferConditionCollection _deferConditions;
     private readonly IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> _deliveryGroupByFragment;
+    private readonly ImmutableArray<int> _deliveryGroupIds;
+    private readonly ImmutableArray<ImmutableArray<int>> _deliveryGroupConditionIndices;
     private readonly OperationFeatureCollection _features;
     private readonly bool _hasIncrementalParts;
     private object[] _elementsById;
@@ -39,6 +42,8 @@ public sealed class Operation : IOperation
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> deliveryGroupByFragment,
+        ImmutableArray<int> deliveryGroupIds,
+        ImmutableArray<ImmutableArray<int>> deliveryGroupConditionIndices,
         bool hasIncrementalParts,
         int lastId,
         object[] elementsById)
@@ -67,6 +72,8 @@ public sealed class Operation : IOperation
         _includeConditions = includeConditions;
         _deferConditions = deferConditions;
         _deliveryGroupByFragment = deliveryGroupByFragment;
+        _deliveryGroupIds = deliveryGroupIds;
+        _deliveryGroupConditionIndices = deliveryGroupConditionIndices;
         _hasIncrementalParts = hasIncrementalParts;
         _lastId = lastId;
         _elementsById = elementsById;
@@ -289,6 +296,40 @@ public sealed class Operation : IOperation
         }
 
         return includeFlags;
+    }
+
+    /// <summary>
+    /// Determines whether include conditions of the delivery group were compiled into this operation.
+    /// </summary>
+    internal bool HasDeliveryGroupConditions(DeliveryGroup deliveryGroup)
+        => _deliveryGroupIds.BinarySearch(deliveryGroup.Id) >= 0;
+
+    /// <summary>
+    /// Determines whether all include conditions of the delivery group are set in the specified
+    /// include flags. A group whose conditions were not compiled into this operation counts as included.
+    /// </summary>
+    internal bool AreDeliveryGroupConditionsIncluded(DeliveryGroup deliveryGroup, ConditionFlags includeFlags)
+    {
+        var position = _deliveryGroupIds.BinarySearch(deliveryGroup.Id);
+
+        if (position < 0)
+        {
+            return true;
+        }
+
+        foreach (var index in _deliveryGroupConditionIndices[position])
+        {
+            var isIncluded = index < 64
+                ? (includeFlags.Word0 & (1ul << index)) != 0
+                : (includeFlags.Overflow![(index >> 6) - 1] & (1ul << (index & 63))) != 0;
+
+            if (!isIncluded)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
