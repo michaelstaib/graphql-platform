@@ -53,7 +53,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             context.SelectionSetIndex);
     }
 
-    private static ExecutionNodeCondition[]? ExtractDirectiveConditions(
+    internal static ExecutionNodeCondition[]? ExtractDirectiveConditions(
         IReadOnlyList<DirectiveNode> directives)
     {
         List<ExecutionNodeCondition>? conditions = null;

@@ -2184,9 +2184,10 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Adds <paramref name="field"/>, inside copies of <paramref name="enclosingFragments"/>, to the
     /// first dependent lookup of <paramref name="producer"/> at <paramref name="anchorPath"/> whose
-    /// source schema resolves it without requirements, and that is in <paramref name="producerIds"/>
-    /// exactly when <paramref name="allowProducer"/> is <c>true</c>. Only the <c>@include</c> and
-    /// <c>@skip</c> directives of the field and of the fragments are kept.
+    /// source schema resolves it without requirements, whose conditions hold whenever the field and
+    /// <paramref name="producer"/> are selected, and that is in <paramref name="producerIds"/> exactly
+    /// when <paramref name="allowProducer"/> is <c>true</c>. Only the <c>@include</c> and <c>@skip</c>
+    /// directives of the field and of the fragments are kept.
     /// </summary>
     private static bool TryMoveFieldToDependent(
         OperationPlanStep producer,
@@ -2198,6 +2199,16 @@ public sealed partial class OperationPlanner
         ref ImmutableList<PlanStep> incrementalPlanSteps,
         out int receivingStepId)
     {
+        var fieldConditions = new List<ExecutionNodeCondition>(producer.Conditions);
+        fieldConditions.AddRange(SelectionSetPartitioner.ExtractDirectiveConditions(field.Directives) ?? []);
+
+        foreach (var fragment in enclosingFragments)
+        {
+            fieldConditions.AddRange(SelectionSetPartitioner.ExtractDirectiveConditions(fragment.Directives) ?? []);
+        }
+
+        var fieldConditionArray = fieldConditions.ToArray();
+
         foreach (var dependentStepId in producer.Dependents)
         {
             if (producerIds.Contains(dependentStepId) != allowProducer
@@ -2210,6 +2221,7 @@ public sealed partial class OperationPlanner
                 || !entityField.Sources.TryGetMember(schemaName, out var source)
                 || source.IsExternal
                 || source.Requirements is not null
+                || !AreConditionsSubsetOf(dependent.Conditions, fieldConditionArray)
                 || enclosingFragments.Any(
                     fragment => fragment.TypeCondition is { } typeCondition
                         && !typeCondition.Name.Value.Equals(entityType.Name, StringComparison.Ordinal)))
