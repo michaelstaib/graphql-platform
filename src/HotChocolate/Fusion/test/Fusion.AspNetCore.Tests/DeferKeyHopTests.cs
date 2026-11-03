@@ -10,11 +10,11 @@ namespace HotChocolate.Fusion;
 
 public class DeferKeyHopTests : FusionTestBase
 {
-    public static TheoryData<Topology, OperationForm, DeferShape, bool> Cases
+    public static TheoryData<Topology, OperationForm, DeferShape, bool?, bool?> Cases
     {
         get
         {
-            var data = new TheoryData<Topology, OperationForm, DeferShape, bool>();
+            var data = new TheoryData<Topology, OperationForm, DeferShape, bool?, bool?>();
 
             foreach (var topology in Enum.GetValues<Topology>())
             {
@@ -22,34 +22,21 @@ public class DeferKeyHopTests : FusionTestBase
                 {
                     foreach (var shape in Enum.GetValues<DeferShape>())
                     {
-                        data.Add(topology, form, shape, true);
+                        var (selection, _) = GetSelections(shape);
+                        bool?[] aValues = selection.Contains("$a") ? [true, false] : [null];
+                        bool?[] bValues = selection.Contains("$b") ? [true, false] : [null];
 
-                        switch (shape)
+                        foreach (var a in aValues)
                         {
-                            case DeferShape.IdAndName or DeferShape.NestedChain:
-                                break;
-
-                            case DeferShape.ConditionalNestedChain:
-                                data.Add(
-                                    new TheoryDataRow<Topology, OperationForm, DeferShape, bool>(
-                                        topology, form, shape, false)
-                                    {
-                                        Skip = "A nested @defer under a disabled @defer loses its fields."
-                                    });
-                                break;
-
-                            case DeferShape.ConditionalAndUnconditionalSameField:
-                                data.Add(
-                                    new TheoryDataRow<Topology, OperationForm, DeferShape, bool>(
-                                        topology, form, shape, false)
-                                    {
-                                        Skip = "The unconditional group delivers total again after the initial payload."
-                                    });
-                                break;
-
-                            default:
-                                data.Add(topology, form, shape, false);
-                                break;
+                            foreach (var b in bValues)
+                            {
+                                var row = new TheoryDataRow<Topology, OperationForm, DeferShape, bool?, bool?>(
+                                    topology, form, shape, a, b)
+                                {
+                                    Skip = GetSkipReason(topology, form, shape, a)
+                                };
+                                data.Add(row);
+                            }
                         }
                     }
                 }
@@ -65,15 +52,18 @@ public class DeferKeyHopTests : FusionTestBase
         Topology topology,
         OperationForm form,
         DeferShape shape,
-        bool deferEnabled)
+        bool? a,
+        bool? b)
     {
         // arrange
-        using var gateway = await CreateGatewayAsync(topology);
+        var mutationCounter = new MutationCounter();
+        using var gateway = await CreateGatewayAsync(topology, mutationCounter);
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
-        var (deferred, plain) = GetRequests(form, shape, deferEnabled);
+        var (deferred, plain) = GetRequests(form, shape, a, b);
 
         // act
         var deferredOutcome = await ExecuteAsync(client, deferred);
+        var deferredMutationCount = mutationCounter.Count;
         var plainOutcome = await ExecuteAsync(client, plain);
 
         // assert
@@ -82,21 +72,24 @@ public class DeferKeyHopTests : FusionTestBase
         Assert.True(
             JsonNode.DeepEquals(plainOutcome.Data, deferredOutcome.Data),
             $"Deferred: {deferredOutcome.Data?.ToJsonString()}, plain: {plainOutcome.Data?.ToJsonString()}");
+        Assert.Equal(form is OperationForm.Mutation ? 1 : 0, deferredMutationCount);
     }
 
-    private static (OperationRequest Deferred, OperationRequest Plain) GetRequests(
-        OperationForm form,
-        DeferShape shape,
-        bool deferEnabled)
-    {
-        var (operationType, rootField) = form switch
+    private static string? GetSkipReason(Topology topology, OperationForm form, DeferShape shape, bool? a)
+        => (shape, a) switch
         {
-            OperationForm.Query => ("query", "current"),
-            OperationForm.Mutation => ("mutation", "create"),
-            _ => throw new ArgumentOutOfRangeException(nameof(form))
+            (DeferShape.ConditionalNestedChain, false) =>
+                "A nested @defer under a disabled @defer loses its fields.",
+            (DeferShape.ConditionalAndUnconditionalSameField, false) =>
+                "The unconditional group delivers total again after the initial payload.",
+            (DeferShape.InnerIncludeWithKey, _)
+                when form is OperationForm.Mutation && topology is not Topology.DirectKey =>
+                "A deferred key field that no lookup after the key hop resolves cannot be planned under a mutation.",
+            _ => null
         };
 
-        var (selection, plainSelection) = shape switch
+    private static (string Selection, string PlainSelection) GetSelections(DeferShape shape)
+        => shape switch
         {
             DeferShape.Conditional =>
                 ("... @defer(if: $a) { name total }", "name total"),
@@ -110,31 +103,74 @@ public class DeferKeyHopTests : FusionTestBase
                 ("... @defer { id ... @defer { name ... @defer { total } } }", "id name total"),
             DeferShape.ConditionalNestedChain =>
                 ("... @defer(if: $a) { id ... @defer { name ... @defer { total } } }", "id name total"),
+            DeferShape.IncludedGroup =>
+                ("... @defer @include(if: $a) { name total }", "... @include(if: $a) { name total }"),
+            DeferShape.SkippedGroup =>
+                ("... @defer @skip(if: $a) { name total }", "... @skip(if: $a) { name total }"),
+            DeferShape.IncludedGroupWithKey =>
+                ("... @defer @include(if: $a) { id name }", "... @include(if: $a) { id name }"),
+            DeferShape.ConditionalSkippedGroup =>
+                ("... @defer(if: $b) @skip(if: $a) { name total }", "... @skip(if: $a) { name total }"),
+            DeferShape.InnerSkipUnderConditional =>
+                ("... @defer(if: $b) { ... @skip(if: $a) { name total } }", "... @skip(if: $a) { name total }"),
+            DeferShape.InnerIncludeWithKey =>
+                ("... @defer { ... @include(if: $a) { id total } }", "... @include(if: $a) { id total }"),
+            DeferShape.IncludedKeyField =>
+                ("... @defer { id @include(if: $a) name }", "id @include(if: $a) name"),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 
-        var plain = new OperationRequest(
-            $"{operationType} {{ {rootField} {{ user {{ {plainSelection} }} }} }}");
-
-        if (shape is DeferShape.IdAndName or DeferShape.NestedChain)
+    private static (OperationRequest Deferred, OperationRequest Plain) GetRequests(
+        OperationForm form,
+        DeferShape shape,
+        bool? a,
+        bool? b)
+    {
+        var (operationType, rootField) = form switch
         {
-            return (
-                new OperationRequest($"{operationType} {{ {rootField} {{ user {{ {selection} }} }} }}"),
-                plain);
-        }
+            OperationForm.Query => ("query", "current"),
+            OperationForm.Mutation => ("mutation", "create"),
+            _ => throw new ArgumentOutOfRangeException(nameof(form))
+        };
+
+        var (selection, plainSelection) = GetSelections(shape);
 
         return (
-            new OperationRequest(
-                $"{operationType}($a: Boolean!) {{ {rootField} {{ user {{ {selection} }} }} }}",
-                variables: new Dictionary<string, object?> { ["a"] = deferEnabled }),
-            plain);
+            CreateRequest(operationType, rootField, selection, a, b),
+            CreateRequest(operationType, rootField, plainSelection, a, b));
     }
 
-    private async Task<Gateway> CreateGatewayAsync(Topology topology)
+    private static OperationRequest CreateRequest(
+        string operationType,
+        string rootField,
+        string selection,
+        bool? a,
+        bool? b)
+    {
+        var declarations = new List<string>();
+        var variables = new Dictionary<string, object?>();
+
+        foreach (var (name, value) in new[] { ("a", a), ("b", b) })
+        {
+            if (selection.Contains("$" + name))
+            {
+                declarations.Add($"${name}: Boolean!");
+                variables[name] = value;
+            }
+        }
+
+        var header = declarations.Count == 0 ? operationType : $"{operationType}({string.Join(", ", declarations)})";
+        var text = $"{header} {{ {rootField} {{ user {{ {selection} }} }} }}";
+
+        return variables.Count == 0 ? new OperationRequest(text) : new OperationRequest(text, variables: variables);
+    }
+
+    private async Task<Gateway> CreateGatewayAsync(Topology topology, MutationCounter mutationCounter)
     {
         var root = CreateSourceSchema(
             "A",
-            b => b.AddQueryType<RootSource.Query>().AddMutationType<RootSource.Mutation>());
+            b => b.AddQueryType<RootSource.Query>().AddMutationType<RootSource.Mutation>(),
+            configureServices: services => services.AddSingleton(mutationCounter));
 
         var name = CreateSourceSchema("E", b => b.AddQueryType<NameSource.Query>());
 
@@ -303,10 +339,26 @@ public class DeferKeyHopTests : FusionTestBase
         ConditionalAndUnconditionalSameField,
         IdAndName,
         NestedChain,
-        ConditionalNestedChain
+        ConditionalNestedChain,
+        IncludedGroup,
+        SkippedGroup,
+        IncludedGroupWithKey,
+        ConditionalSkippedGroup,
+        InnerSkipUnderConditional,
+        InnerIncludeWithKey,
+        IncludedKeyField
     }
 
     private sealed record Outcome(JsonNode? Data, JsonNode? Errors, List<string> Violations);
+
+    private sealed class MutationCounter
+    {
+        private int _count;
+
+        public int Count => Volatile.Read(ref _count);
+
+        public void Increment() => Interlocked.Increment(ref _count);
+    }
 
     private static class RootSource
     {
@@ -321,7 +373,11 @@ public class DeferKeyHopTests : FusionTestBase
 
         public class Mutation
         {
-            public CreateResult Create() => new(new User(1));
+            public CreateResult Create([Service] MutationCounter mutationCounter)
+            {
+                mutationCounter.Increment();
+                return new CreateResult(new User(1));
+            }
         }
 
         public record CreateResult(User User);
