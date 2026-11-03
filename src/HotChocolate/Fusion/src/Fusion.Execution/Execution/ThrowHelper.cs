@@ -43,14 +43,14 @@ internal static class ThrowHelper
                 path,
                 typeName));
 
-    public static DeferredMutationLookupRequiredException DeferredMutationChainUnderConditionalGroup(
+    public static DeferredMutationLookupRequiredException DeferredMutationConditionedDeferChain(
         SelectionPath path,
         string typeName)
         => new(
             path,
             typeName,
             string.Format(
-                FusionExecutionResources.DeferredMutationLookupRequiredException_ChainUnderConditionalGroup,
+                FusionExecutionResources.DeferredMutationLookupRequiredException_ConditionedDeferChain,
                 path,
                 typeName));
 

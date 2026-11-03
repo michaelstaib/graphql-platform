@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using HotChocolate.Fusion.Configuration;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types.Composite;
 using HotChocolate.Types.Relay;
@@ -17,9 +18,6 @@ public class DeferMutationTests : FusionTestBase
     [InlineData(Topology.DirectKey, MutationShape.NamedFragments)]
     [InlineData(Topology.DirectKey, MutationShape.IfVariableTrue)]
     [InlineData(Topology.DirectKey, MutationShape.IfVariableFalse)]
-    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariableTrue)]
-    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariableFalse)]
-    [InlineData(Topology.DirectKey, MutationShape.OuterIfVariableFalse)]
     [InlineData(Topology.DirectKey, MutationShape.TwoRootFields)]
     [InlineData(Topology.DirectKey, MutationShape.ListField)]
     [InlineData(Topology.OneHopKey, MutationShape.Nested)]
@@ -88,6 +86,9 @@ public class DeferMutationTests : FusionTestBase
     [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariableTrue)]
     [InlineData(Topology.TwoHopKey, MutationShape.InnerIfVariableFalse)]
     [InlineData(Topology.OneHopKey, MutationShape.OuterIfVariableFalse)]
+    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariableTrue)]
+    [InlineData(Topology.DirectKey, MutationShape.InnerIfVariableFalse)]
+    [InlineData(Topology.DirectKey, MutationShape.OuterIfVariableFalse)]
     [InlineData(Topology.DirectKey, MutationShape.ThreeLevels)]
     [InlineData(Topology.NameOnMutationSubgraph, MutationShape.Nested)]
     [InlineData(Topology.NameOnMutationSubgraph, MutationShape.Sibling)]
@@ -109,11 +110,33 @@ public class DeferMutationTests : FusionTestBase
 
         // assert
         Assert.Equal(0, outcome.CreateCalls);
-        outcome.Errors!.ToJsonString().MatchInlineSnapshot(
-            """
-            [{"message":"Unexpected Execution Error"}]
-            """);
+        Assert.Equal(
+            GetRefusalMessage(topology, shape),
+            outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
     }
+
+    private static string GetRefusalMessage(Topology topology, MutationShape shape)
+        => (topology, shape) switch
+        {
+            (_, MutationShape.InnerIfVariableTrue
+                or MutationShape.InnerIfVariableFalse
+                or MutationShape.OuterIfVariableFalse) =>
+                string.Format(ConditionedDeferChainMessage, "$.create.user", "User"),
+            (_, MutationShape.AnchorOnMutationResult) =>
+                string.Format(NoLookupAvailableMessage, "$.create", "CreateResult"),
+            (_, MutationShape.TwoRootFields) =>
+                string.Format(NoLookupAvailableMessage, "$.a.user", "User"),
+            _ => string.Format(NoLookupAvailableMessage, "$.create.user", "User")
+        };
+
+    private const string ConditionedDeferChainMessage =
+        "The @defer fragment at path '{0}' cannot be planned: the deferred fields on anchor type '{1}' are nested "
+        + "in a chain of @defer fragments where an if variable, @include or @skip condition can disable a "
+        + "fragment of the chain, and a mutation cannot deliver them without losing fields.";
+
+    private const string NoLookupAvailableMessage =
+        "The @defer fragment at path '{0}' cannot be planned: the deferred fields on anchor type '{1}' cannot be "
+        + "planned without running the mutation root field again, which would duplicate its side effects.";
 
     private static (OperationRequest Deferred, OperationRequest Plain, int RootFields) GetRequests(
         MutationShape shape)
@@ -324,6 +347,9 @@ public class DeferMutationTests : FusionTestBase
         };
     }
 
+    private static void IncludeExceptionDetails(IFusionGatewayBuilder builder)
+        => builder.ModifyRequestOptions(options => options.IncludeExceptionDetails = true);
+
     private async Task<Gateway> CreateGatewayAsync(Topology topology)
     {
         var mutation = CreateSourceSchema(
@@ -340,7 +366,7 @@ public class DeferMutationTests : FusionTestBase
                     ("A", mutation),
                     ("B", CreateSourceSchema("B", b => b.AddQueryType<TotalByIdSource.Query>())),
                     ("E", name)
-                ]);
+                ], configureGatewayBuilder: IncludeExceptionDetails);
 
             case Topology.OneHopKey:
                 return await CreateCompositeSchemaAsync(
@@ -349,7 +375,7 @@ public class DeferMutationTests : FusionTestBase
                     ("B", CreateSourceSchema("B", b => b.AddQueryType<TotalBySkuSource.Query>())),
                     ("C", CreateSourceSchema("C", b => b.AddQueryType<SkuByIdSource.Query>())),
                     ("E", name)
-                ]);
+                ], configureGatewayBuilder: IncludeExceptionDetails);
 
             case Topology.TwoHopKey:
                 return await CreateCompositeSchemaAsync(
@@ -359,7 +385,7 @@ public class DeferMutationTests : FusionTestBase
                     ("C", CreateSourceSchema("C", b => b.AddQueryType<CodeByIdSource.Query>())),
                     ("D", CreateSourceSchema("D", b => b.AddQueryType<SkuByCodeSource.Query>())),
                     ("E", name)
-                ]);
+                ], configureGatewayBuilder: IncludeExceptionDetails);
 
             default:
                 return await CreateCompositeSchemaAsync(
@@ -371,7 +397,7 @@ public class DeferMutationTests : FusionTestBase
                             b => b.AddQueryType<NamedMutationSource.Query>()
                                 .AddMutationType<NamedMutationSource.Mutation>())),
                     ("B", CreateSourceSchema("B", b => b.AddQueryType<TotalByIdSource.Query>()))
-                ]);
+                ], configureGatewayBuilder: IncludeExceptionDetails);
         }
     }
 

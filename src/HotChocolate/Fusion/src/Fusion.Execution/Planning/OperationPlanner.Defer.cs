@@ -163,10 +163,11 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Throws when a <c>@defer</c> of a mutation operation is nested three or more levels deep and its
-    /// outermost enclosing <c>@defer</c> has an <c>if</c> variable.
+    /// Throws when a <c>@defer</c> of a mutation operation is nested inside another <c>@defer</c> and its chain
+    /// of enclosing groups has an <c>if</c> variable, <c>@include</c> or <c>@skip</c> condition, unless one
+    /// variable conditions every group of the chain.
     /// </summary>
-    private void EnsureMutationHasNoDeepDeferChainUnderConditionalGroup(
+    private void EnsureMutationHasNoConditionedDeferChain(
         OperationDefinitionNode operation,
         DeferPartitioningResult partitioning)
     {
@@ -177,22 +178,64 @@ public sealed partial class OperationPlanner
 
         foreach (var deliveryGroup in partitioning.AllDeliveryGroups)
         {
-            var depth = 1;
-            var outermost = deliveryGroup;
-
-            while (outermost.Parent is not null)
+            if (deliveryGroup.Parent is null || !IsChainMovable(deliveryGroup, out var outermost))
             {
-                outermost = outermost.Parent;
-                depth++;
+                continue;
             }
 
-            if (depth >= 3 && outermost.IfVariable is not null && outermost.Path is { } path)
-            {
-                var typeName = TryLocateIncrementalPlanAnchor(operation, path, out _, out var anchorType)
-                    ? anchorType.Name
-                    : _schema.GetOperationType(operation.Operation).Name;
+            var path = outermost.Path ?? SelectionPath.Root;
+            var typeName = TryLocateIncrementalPlanAnchor(operation, path, out _, out var anchorType)
+                ? anchorType.Name
+                : _schema.GetOperationType(operation.Operation).Name;
 
-                throw ThrowHelper.DeferredMutationChainUnderConditionalGroup(path, typeName);
+            throw ThrowHelper.DeferredMutationConditionedDeferChain(path, typeName);
+        }
+    }
+
+    private static bool IsChainMovable(DeliveryGroup innermost, out DeliveryGroup outermost)
+    {
+        string? sharedVariable = null;
+        var hasMultipleVariables = false;
+        var hasConditionedGroup = false;
+        var hasUnconditionalGroup = false;
+        outermost = innermost;
+
+        for (var current = innermost; current is not null; current = current.Parent)
+        {
+            outermost = current;
+
+            if (current.IfVariable is null && current.Conditions.IsEmpty)
+            {
+                hasUnconditionalGroup = true;
+                continue;
+            }
+
+            hasConditionedGroup = true;
+            Track(current.IfVariable);
+
+            foreach (var condition in current.Conditions)
+            {
+                Track(condition.Skip);
+                Track(condition.Include);
+            }
+        }
+
+        return hasConditionedGroup && (hasUnconditionalGroup || hasMultipleVariables);
+
+        void Track(string? variable)
+        {
+            if (variable is null)
+            {
+                return;
+            }
+
+            if (sharedVariable is null)
+            {
+                sharedVariable = variable;
+            }
+            else if (!sharedVariable.Equals(variable, StringComparison.Ordinal))
+            {
+                hasMultipleVariables = true;
             }
         }
     }

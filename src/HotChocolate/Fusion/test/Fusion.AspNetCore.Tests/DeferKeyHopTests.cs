@@ -24,7 +24,12 @@ public class DeferKeyHopTests : FusionTestBase
                     foreach (var shape in Enum.GetValues<DeferShape>())
                     {
                         if (form is OperationForm.Mutation
-                            && (IsRefusedUnderMutation(shape) || IsDeepChainUnderConditionalGroup(shape)))
+                            && (IsRefusedUnderMutation(shape) || IsRefusedConditionedChain(shape)))
+                        {
+                            continue;
+                        }
+
+                        if (IsMutationRefusalOnly(shape))
                         {
                             continue;
                         }
@@ -80,19 +85,25 @@ public class DeferKeyHopTests : FusionTestBase
         }
     }
 
-    public static TheoryData<Topology, DeferShape, bool> DeepChainMutationCases
+    public static TheoryData<Topology, DeferShape, bool, bool?> ConditionedChainMutationCases
     {
         get
         {
-            var data = new TheoryData<Topology, DeferShape, bool>();
+            var data = new TheoryData<Topology, DeferShape, bool, bool?>();
 
             foreach (var topology in Enum.GetValues<Topology>())
             {
-                foreach (var shape in Enum.GetValues<DeferShape>().Where(IsDeepChainUnderConditionalGroup))
+                foreach (var shape in Enum.GetValues<DeferShape>().Where(IsRefusedConditionedChain))
                 {
+                    var (selection, _) = GetSelections(shape);
+                    bool?[] bValues = selection.Contains("$b") ? [true, false] : [null];
+
                     foreach (var a in new[] { true, false })
                     {
-                        data.Add(topology, shape, a);
+                        foreach (var b in bValues)
+                        {
+                            data.Add(topology, shape, a, b);
+                        }
                     }
                 }
             }
@@ -156,17 +167,18 @@ public class DeferKeyHopTests : FusionTestBase
     }
 
     [Theory]
-    [MemberData(nameof(DeepChainMutationCases))]
-    public async Task Defer_Should_RefuseMutation_When_DeferChainIsDeepUnderConditionalGroup(
+    [MemberData(nameof(ConditionedChainMutationCases))]
+    public async Task Defer_Should_RefuseMutation_When_DeferChainHasConditionedGroup(
         Topology topology,
         DeferShape shape,
-        bool a)
+        bool a,
+        bool? b)
     {
         // arrange
         var mutationCounter = new MutationCounter();
         using var gateway = await CreateGatewayAsync(topology, mutationCounter);
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
-        var (deferred, _) = GetRequests(OperationForm.Mutation, shape, a, null);
+        var (deferred, _) = GetRequests(OperationForm.Mutation, shape, a, b);
 
         // act
         var outcome = await ExecuteAsync(client, deferred);
@@ -174,15 +186,32 @@ public class DeferKeyHopTests : FusionTestBase
         // assert
         Assert.Null(outcome.Data);
         Assert.Equal(
-            "The @defer fragment at path '$.create.user' cannot be planned: the deferred fields on anchor type "
-            + "'User' are nested three or more @defer levels below an @defer with an if variable, and a "
-            + "mutation cannot deliver them without losing fields.",
+            $"The @defer fragment at path '{GetRefusedPath(shape)}' cannot be planned: the deferred fields on "
+            + "anchor type 'User' are nested in a chain of @defer fragments where an if variable, @include or "
+            + "@skip condition can disable a fragment of the chain, and a mutation cannot deliver them without "
+            + "losing fields.",
             outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
         Assert.Equal(0, mutationCounter.Count);
     }
 
-    private static bool IsDeepChainUnderConditionalGroup(DeferShape shape)
-        => shape is DeferShape.ConditionalNestedChain or DeferShape.ConditionalNestedChainWithoutKey;
+    private static string GetRefusedPath(DeferShape shape)
+        => shape is DeferShape.TwoLevelsConditionedOuterList ? "$.create.users" : "$.create.user";
+
+    private static bool IsRefusedConditionedChain(DeferShape shape)
+        => shape is DeferShape.ConditionalNestedChain
+            or DeferShape.ConditionalNestedChainWithoutKey
+            or DeferShape.NestedIncludedKeyAndHopField
+            || IsMutationRefusalOnly(shape);
+
+    private static bool IsMutationRefusalOnly(DeferShape shape)
+        => shape is DeferShape.TwoLevelsConditionedOuter
+            or DeferShape.TwoLevelsConditionedOuterWithKey
+            or DeferShape.TwoLevelsConditionedOuterWithoutKey
+            or DeferShape.TwoLevelsConditionedOuterList
+            or DeferShape.ThreeLevelsIncludedMiddle
+            or DeferShape.ThreeLevelsIncludedInner
+            or DeferShape.TwoLevelsIncludedBoth
+            or DeferShape.ConditionedChainNextToPlainChain;
 
     private static bool IsRefusedUnderMutation(DeferShape shape)
         => shape is DeferShape.InnerSkippedAndIncludedKey
@@ -220,6 +249,29 @@ public class DeferKeyHopTests : FusionTestBase
             DeferShape.ConditionalNestedChainWithoutKey =>
                 ("user { ... @defer(if: $a) { ... @defer { name ... @defer { total } } } }",
                     "user { name total }"),
+            DeferShape.ConditionalNestedChainOnOneVariable =>
+                ("user { ... @defer(if: $a) { id ... @defer(if: $a) { name ... @defer(if: $a) { total } } } }",
+                    "user { id name total }"),
+            DeferShape.TwoLevelsConditionedOuter =>
+                ("user { ... @defer(if: $a) { name ... @defer { total } } }", "user { name total }"),
+            DeferShape.TwoLevelsConditionedOuterWithKey =>
+                ("user { ... @defer(if: $a) { id ... @defer { name total } } }", "user { id name total }"),
+            DeferShape.TwoLevelsConditionedOuterWithoutKey =>
+                ("user { ... @defer(if: $a) { ... @defer { name total } } }", "user { name total }"),
+            DeferShape.TwoLevelsConditionedOuterList =>
+                ("users { ... @defer(if: $a) { name ... @defer { total } } }", "users { name total }"),
+            DeferShape.ThreeLevelsIncludedMiddle =>
+                ("user { ... @defer { id ... @defer @include(if: $a) { name ... @defer { total } } } }",
+                    "user { id ... @include(if: $a) { name total } }"),
+            DeferShape.ThreeLevelsIncludedInner =>
+                ("user { ... @defer { id ... @defer { name ... @defer @include(if: $a) { total } } } }",
+                    "user { id name ... @include(if: $a) { total } }"),
+            DeferShape.TwoLevelsIncludedBoth =>
+                ("user { ... @defer @include(if: $a) { name ... @defer @include(if: $b) { total } } }",
+                    "user { ... @include(if: $a) { name ... @include(if: $b) { total } } }"),
+            DeferShape.ConditionedChainNextToPlainChain =>
+                ("user { ... @defer(if: $a) { id ... @defer { name } } ... @defer { ... @defer { total } } }",
+                    "user { id name total }"),
             DeferShape.IncludedGroup =>
                 ("user { ... @defer @include(if: $a) { name total } }", "user { ... @include(if: $a) { name total } }"),
             DeferShape.SkippedGroup =>
@@ -492,6 +544,15 @@ public class DeferKeyHopTests : FusionTestBase
         NestedChain,
         ConditionalNestedChain,
         ConditionalNestedChainWithoutKey,
+        ConditionalNestedChainOnOneVariable,
+        TwoLevelsConditionedOuter,
+        TwoLevelsConditionedOuterWithKey,
+        TwoLevelsConditionedOuterWithoutKey,
+        TwoLevelsConditionedOuterList,
+        ThreeLevelsIncludedMiddle,
+        ThreeLevelsIncludedInner,
+        TwoLevelsIncludedBoth,
+        ConditionedChainNextToPlainChain,
         IncludedGroup,
         SkippedGroup,
         IncludedGroupWithKey,

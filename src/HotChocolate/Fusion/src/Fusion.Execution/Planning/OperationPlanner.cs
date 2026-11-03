@@ -134,7 +134,7 @@ public sealed partial class OperationPlanner
                 // later Selection._deliveryGroups entries share object identity.
                 var deferConditions = new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions);
                 partitioning = DeferPartitioner.Partition(operationDefinition, deferConditions);
-                EnsureMutationHasNoDeepDeferChainUnderConditionalGroup(operationDefinition, partitioning);
+                EnsureMutationHasNoConditionedDeferChain(operationDefinition, partitioning);
 
                 var rewriter = new DeferOperationRewriter(_options.InlineUnlabeledDeferFragments);
                 var splitResult = rewriter.Split(operationDefinition, partitioning);

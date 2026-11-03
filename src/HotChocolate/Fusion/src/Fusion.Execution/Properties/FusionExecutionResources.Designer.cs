@@ -105,9 +105,9 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
-        internal static string DeferredMutationLookupRequiredException_ChainUnderConditionalGroup {
+        internal static string DeferredMutationLookupRequiredException_ConditionedDeferChain {
             get {
-                return ResourceManager.GetString("DeferredMutationLookupRequiredException_ChainUnderConditionalGroup", resourceCulture);
+                return ResourceManager.GetString("DeferredMutationLookupRequiredException_ConditionedDeferChain", resourceCulture);
             }
         }
 
