@@ -115,7 +115,27 @@ public class DeferMutationPlannerTests : FusionTestBase
 
         // assert
         Assert.Equal(expectedPath, error.Path.ToString());
+        Assert.Equal(GetRefusalMessage(shape, expectedPath), error.Message);
     }
+
+    private static string GetRefusalMessage(MutationShape shape, string path)
+        => shape switch
+        {
+            MutationShape.InnerIfVariable or MutationShape.OuterIfVariable or MutationShape.TwoIfVariables =>
+                string.Format(ConditionedDeferChainMessage, path, "User"),
+            MutationShape.RootDefer => string.Format(NoLookupAvailableMessage, path, "Mutation"),
+            MutationShape.AnchorOnMutationResult => string.Format(NoLookupAvailableMessage, path, "CreateResult"),
+            _ => string.Format(NoLookupAvailableMessage, path, "User")
+        };
+
+    private const string ConditionedDeferChainMessage =
+        "The @defer fragment at path '{0}' cannot be planned: the deferred fields on anchor type '{1}' are nested "
+        + "in a chain of @defer fragments where an if variable, @include or @skip condition can disable a "
+        + "fragment of the chain, and a mutation cannot deliver them without losing fields.";
+
+    private const string NoLookupAvailableMessage =
+        "The @defer fragment at path '{0}' cannot be planned: the deferred fields on anchor type '{1}' cannot be "
+        + "planned without running the mutation root field again, which would duplicate its side effects.";
 
     [Fact]
     public void Defer_Should_RefuseShape_When_NestedDeferChainHasConditionedGroup()

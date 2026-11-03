@@ -111,20 +111,65 @@ public class DeferMutationTests : FusionTestBase
         // assert
         Assert.Equal(0, outcome.CreateCalls);
         Assert.Equal(
-            GetRefusalMessage(topology, shape),
+            GetRefusalMessage(shape),
             outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
     }
 
-    private static string GetRefusalMessage(Topology topology, MutationShape shape)
-        => (topology, shape) switch
+    [Theory]
+    [MemberData(nameof(MixedPolarityChainRows))]
+    public async Task Defer_Should_NotRunMutation_When_ChainMixesSkipAndIfOnOneVariable(
+        Topology topology,
+        string selection,
+        bool a)
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(topology);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            "mutation($a: Boolean!) { create { user { " + selection + " } } }",
+            variables: new Dictionary<string, object?> { ["a"] = a });
+
+        // act
+        MutationSource.Reset();
+        var outcome = await ExecuteAsync(client, request);
+
+        // assert
+        Assert.Equal(0, outcome.CreateCalls);
+        Assert.Equal(
+            string.Format(ConditionedDeferChainMessage, "$.create.user", "User"),
+            outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
+    }
+
+    public static IEnumerable<object[]> MixedPolarityChainRows()
+    {
+        string[] selections =
+        [
+            "... @defer(if: $a) { name ... @defer @skip(if: $a) { total } }",
+            "... @defer(if: $a) { id ... @defer @skip(if: $a) { name ... @defer { total } } }",
+            "... @defer @skip(if: $a) { name ... @defer(if: $a) { total } }",
+            "... @defer(if: $a, label: \"o\") { name ... @defer(label: \"i\") @skip(if: $a) { total } }"
+        ];
+
+        foreach (var topology in new[] { Topology.DirectKey, Topology.OneHopKey, Topology.TwoHopKey })
         {
-            (_, MutationShape.InnerIfVariableTrue
+            foreach (var selection in selections)
+            {
+                yield return [topology, selection, true];
+                yield return [topology, selection, false];
+            }
+        }
+    }
+
+    private static string GetRefusalMessage(MutationShape shape)
+        => shape switch
+        {
+            MutationShape.InnerIfVariableTrue
                 or MutationShape.InnerIfVariableFalse
-                or MutationShape.OuterIfVariableFalse) =>
+                or MutationShape.OuterIfVariableFalse =>
                 string.Format(ConditionedDeferChainMessage, "$.create.user", "User"),
-            (_, MutationShape.AnchorOnMutationResult) =>
+            MutationShape.AnchorOnMutationResult =>
                 string.Format(NoLookupAvailableMessage, "$.create", "CreateResult"),
-            (_, MutationShape.TwoRootFields) =>
+            MutationShape.TwoRootFields =>
                 string.Format(NoLookupAvailableMessage, "$.a.user", "User"),
             _ => string.Format(NoLookupAvailableMessage, "$.create.user", "User")
         };
