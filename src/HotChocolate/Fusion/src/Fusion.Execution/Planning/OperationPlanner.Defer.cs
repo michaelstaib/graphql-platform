@@ -823,12 +823,20 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            // A promoted step fed from another enclosing scope lifts nothing, so the incremental
+            // plan stays self-contained, unless that plan would run a mutation root field again.
             if (!ReferenceEquals(promoted.Scope, entry.Scope))
             {
-                throw CreateUnsatisfiableDeferRequirementException(
-                    producers[0],
-                    entry.Requirement,
-                    "a promoted step and the provider of its requirement lie in different enclosing scopes");
+                if (incrementalPlanSteps.Any(
+                    step => step is OperationPlanStep { Definition.Operation: OperationType.Mutation }))
+                {
+                    throw CreateUnsatisfiableDeferRequirementException(
+                        producers[0],
+                        entry.Requirement,
+                        "a promoted step and the provider of its requirement lie in different enclosing scopes");
+                }
+
+                return incrementalPlanSteps;
             }
 
             AddParentStepDependent(entry.Scope, entry.ParentStepId, promoted.ParentStepId);
