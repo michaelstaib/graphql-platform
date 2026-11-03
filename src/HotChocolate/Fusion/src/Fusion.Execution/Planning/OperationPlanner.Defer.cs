@@ -641,6 +641,7 @@ public sealed partial class OperationPlanner
                     if (TryInlineDeferRequirementInScope(
                         sourceRequirement,
                         schemaHint,
+                        downstreamStep.Conditions,
                         resolver,
                         scopeState,
                         out var parentStepId,
@@ -768,6 +769,7 @@ public sealed partial class OperationPlanner
                     if (TryInlineDeferRequirementInScope(
                         requirement,
                         candidateSchema!,
+                        downstreamStep.Conditions,
                         resolver,
                         scopeState,
                         out var parentStepId,
@@ -1317,11 +1319,13 @@ public sealed partial class OperationPlanner
     /// compiled parent Operation carries the field (the runtime composite
     /// result document relies on that field being preserved during result
     /// merging). Nothing is injected and <paramref name="isPartiallyResolvable"/> is set
-    /// when the step can host only part of the requirement.
+    /// when the step can host only part of the requirement. A step whose conditions differ
+    /// from <paramref name="consumerConditions"/> is never a host.
     /// </summary>
     private bool TryInlineDeferRequirementInScope(
         OperationRequirement requirement,
         string schemaName,
+        ExecutionNodeCondition[] consumerConditions,
         ValueSelectionToSelectionSetRewriter resolver,
         ScopeState scopeState,
         out int parentStepId,
@@ -1338,6 +1342,12 @@ public sealed partial class OperationPlanner
             }
 
             if (!string.Equals(parentStep.SchemaName, schemaName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // A step that the deferred consumer can run without would leave the key unset.
+            if (!ConditionsEqual(parentStep.Conditions, consumerConditions))
             {
                 continue;
             }
