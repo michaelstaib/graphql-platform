@@ -43,6 +43,17 @@ internal static class ThrowHelper
                 path,
                 typeName));
 
+    public static DeferredMutationLookupRequiredException DeferredMutationChainUnderConditionalGroup(
+        SelectionPath path,
+        string typeName)
+        => new(
+            path,
+            typeName,
+            string.Format(
+                FusionExecutionResources.DeferredMutationLookupRequiredException_ChainUnderConditionalGroup,
+                path,
+                typeName));
+
     public static InvalidOperationException LookupTargetPathsReleased()
         => new("The paths of lookup targets can only be created while their result document is in use.");
 

@@ -23,7 +23,8 @@ public class DeferKeyHopTests : FusionTestBase
                 {
                     foreach (var shape in Enum.GetValues<DeferShape>())
                     {
-                        if (form is OperationForm.Mutation && IsRefusedUnderMutation(shape))
+                        if (form is OperationForm.Mutation
+                            && (IsRefusedUnderMutation(shape) || IsDeepChainUnderConditionalGroup(shape)))
                         {
                             continue;
                         }
@@ -71,6 +72,27 @@ public class DeferKeyHopTests : FusionTestBase
                         {
                             data.Add(topology, shape, a, b);
                         }
+                    }
+                }
+            }
+
+            return data;
+        }
+    }
+
+    public static TheoryData<Topology, DeferShape, bool> DeepChainMutationCases
+    {
+        get
+        {
+            var data = new TheoryData<Topology, DeferShape, bool>();
+
+            foreach (var topology in Enum.GetValues<Topology>())
+            {
+                foreach (var shape in Enum.GetValues<DeferShape>().Where(IsDeepChainUnderConditionalGroup))
+                {
+                    foreach (var a in new[] { true, false })
+                    {
+                        data.Add(topology, shape, a);
                     }
                 }
             }
@@ -133,6 +155,35 @@ public class DeferKeyHopTests : FusionTestBase
         Assert.Equal(0, mutationCounter.Count);
     }
 
+    [Theory]
+    [MemberData(nameof(DeepChainMutationCases))]
+    public async Task Defer_Should_RefuseMutation_When_DeferChainIsDeepUnderConditionalGroup(
+        Topology topology,
+        DeferShape shape,
+        bool a)
+    {
+        // arrange
+        var mutationCounter = new MutationCounter();
+        using var gateway = await CreateGatewayAsync(topology, mutationCounter);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var (deferred, _) = GetRequests(OperationForm.Mutation, shape, a, null);
+
+        // act
+        var outcome = await ExecuteAsync(client, deferred);
+
+        // assert
+        Assert.Null(outcome.Data);
+        Assert.Equal(
+            "The @defer fragment at path '$.create.user' cannot be planned: the deferred fields on anchor type "
+            + "'User' are nested three or more @defer levels below an @defer with an if variable, and a "
+            + "mutation cannot deliver them without losing fields.",
+            outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
+        Assert.Equal(0, mutationCounter.Count);
+    }
+
+    private static bool IsDeepChainUnderConditionalGroup(DeferShape shape)
+        => shape is DeferShape.ConditionalNestedChain or DeferShape.ConditionalNestedChainWithoutKey;
+
     private static bool IsRefusedUnderMutation(DeferShape shape)
         => shape is DeferShape.InnerSkippedAndIncludedKey
             or DeferShape.InnerKeyUnderTwoVariables
@@ -141,7 +192,7 @@ public class DeferKeyHopTests : FusionTestBase
     private static string? GetSkipReason(Topology topology, DeferShape shape, bool? a)
         => (shape, a) switch
         {
-            (DeferShape.ConditionalNestedChain, false) =>
+            (DeferShape.ConditionalNestedChain or DeferShape.ConditionalNestedChainWithoutKey, false) =>
                 "A nested @defer under a disabled @defer loses its fields.",
             (DeferShape.ConditionalAndUnconditionalSameField, false) =>
                 "The unconditional group delivers total again after the initial payload.",
@@ -166,6 +217,9 @@ public class DeferKeyHopTests : FusionTestBase
             DeferShape.ConditionalNestedChain =>
                 ("user { ... @defer(if: $a) { id ... @defer { name ... @defer { total } } } }",
                     "user { id name total }"),
+            DeferShape.ConditionalNestedChainWithoutKey =>
+                ("user { ... @defer(if: $a) { ... @defer { name ... @defer { total } } } }",
+                    "user { name total }"),
             DeferShape.IncludedGroup =>
                 ("user { ... @defer @include(if: $a) { name total } }", "user { ... @include(if: $a) { name total } }"),
             DeferShape.SkippedGroup =>
@@ -437,6 +491,7 @@ public class DeferKeyHopTests : FusionTestBase
         IdAndName,
         NestedChain,
         ConditionalNestedChain,
+        ConditionalNestedChainWithoutKey,
         IncludedGroup,
         SkippedGroup,
         IncludedGroupWithKey,

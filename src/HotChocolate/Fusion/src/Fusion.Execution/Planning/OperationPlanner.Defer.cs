@@ -163,6 +163,41 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
+    /// Throws when a <c>@defer</c> of a mutation operation is nested three or more levels deep and its
+    /// outermost enclosing <c>@defer</c> has an <c>if</c> variable.
+    /// </summary>
+    private void EnsureMutationHasNoDeepDeferChainUnderConditionalGroup(
+        OperationDefinitionNode operation,
+        DeferPartitioningResult partitioning)
+    {
+        if (operation.Operation != OperationType.Mutation)
+        {
+            return;
+        }
+
+        foreach (var deliveryGroup in partitioning.AllDeliveryGroups)
+        {
+            var depth = 1;
+            var outermost = deliveryGroup;
+
+            while (outermost.Parent is not null)
+            {
+                outermost = outermost.Parent;
+                depth++;
+            }
+
+            if (depth >= 3 && outermost.IfVariable is not null && outermost.Path is { } path)
+            {
+                var typeName = TryLocateIncrementalPlanAnchor(operation, path, out _, out var anchorType)
+                    ? anchorType.Name
+                    : _schema.GetOperationType(operation.Operation).Name;
+
+                throw ThrowHelper.DeferredMutationChainUnderConditionalGroup(path, typeName);
+            }
+        }
+    }
+
+    /// <summary>
     /// Determines whether an <c>if</c> variable can disable a delivery group of
     /// <paramref name="descriptor"/> or one of their enclosing groups without disabling all of them.
     /// </summary>
