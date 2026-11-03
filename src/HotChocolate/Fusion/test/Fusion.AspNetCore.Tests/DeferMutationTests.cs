@@ -116,8 +116,8 @@ public class DeferMutationTests : FusionTestBase
     }
 
     [Theory]
-    [MemberData(nameof(MixedPolarityChainRows))]
-    public async Task Defer_Should_NotRunMutation_When_ChainMixesSkipAndIfOnOneVariable(
+    [MemberData(nameof(ConditionedChainRows))]
+    public async Task Defer_Should_NotRunMutation_When_PlanServesConditionedDeferChains(
         Topology topology,
         string selection,
         bool a)
@@ -140,14 +140,27 @@ public class DeferMutationTests : FusionTestBase
             outcome.Errors?[0]?["extensions"]?["exception"]?["message"]?.GetValue<string>());
     }
 
-    public static IEnumerable<object[]> MixedPolarityChainRows()
+    public static IEnumerable<object[]> ConditionedChainRows()
     {
         string[] selections =
         [
             "... @defer(if: $a) { name ... @defer @skip(if: $a) { total } }",
-            "... @defer(if: $a) { id ... @defer @skip(if: $a) { name ... @defer { total } } }",
             "... @defer @skip(if: $a) { name ... @defer(if: $a) { total } }",
-            "... @defer(if: $a, label: \"o\") { name ... @defer(label: \"i\") @skip(if: $a) { total } }"
+            "... @defer @skip(if: $a) { name ... @defer(if: $a) @skip(if: $a) { total } }",
+            "... @skip(if: $a) { ... @defer { name ... @defer(if: $a) { total } } }",
+            "... @defer(if: $a, label: \"o\") { name ... @defer(label: \"i\") @skip(if: $a) { total } }",
+            "... @skip(if: $a) { ... @defer(if: $a, label: \"o\") { name ... @defer(label: \"i\") { total } } }",
+            "... @defer(if: $a) { id ... @defer @skip(if: $a) { name ... @defer { total } } }",
+            "... @defer(if: $a) { ... @defer @skip(if: $a) { name ... @defer { total } } }",
+            "... @defer(if: $a) { id ... @defer(if: $a) { name ... @defer @skip(if: $a) { total } } }",
+            "... @skip(if: $a) { ... @defer(if: $a) { id ... @defer { name ... @defer { total } } } }",
+            "... @defer @include(if: $a) { name ... @defer(if: $a) { total } } "
+            + "... @defer { name ... @defer { total } }",
+            "... @include(if: $a) { ... @defer { name ... @defer(if: $a) { total } } } "
+            + "... @defer { name ... @defer { total } }",
+            "... @defer { id ... @defer { name total } } ... @defer @include(if: $a) { id total }",
+            "... @defer @skip(if: $a) { id ... @defer { name ... @defer { total } } } "
+            + "... @defer(if: $a) { id ... @defer(if: $a) { total } }"
         ];
 
         foreach (var topology in new[] { Topology.DirectKey, Topology.OneHopKey, Topology.TwoHopKey })
