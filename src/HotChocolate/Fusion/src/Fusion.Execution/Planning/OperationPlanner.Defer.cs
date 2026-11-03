@@ -744,8 +744,8 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
-            // A step reads its requirements either all from the parent scope or partly from
-            // this incremental plan, so its reroutes are undone when one requirement stays here.
+            // A step that keeps one requirement served in this incremental plan keeps all of them
+            // here, so its reroutes are undone.
             var rerouteScopeState = ScopeStateFor(parentContext);
             var stepsBeforeReroute = rerouteScopeState.Steps;
             var internalOperationBeforeReroute = rerouteScopeState.InternalOperation;
