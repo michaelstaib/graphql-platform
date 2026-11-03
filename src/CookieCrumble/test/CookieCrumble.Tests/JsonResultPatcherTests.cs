@@ -292,6 +292,116 @@ public class JsonResultPatcherTests
     }
 
     [Fact]
+    public void WriteResponse_Should_Throw_When_PatchRepeatsAListOfAnotherLength()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher(rejectOverlappingPositions: true);
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Apply(
+                patcher,
+                """
+                {"data":{"node":{"friends":[{"id":"1"}]}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+                """,
+                """
+                {"incremental":[{"id":"0","data":{"friends":[{"name":"a"},{"name":"b"}]}}],"completed":[{"id":"0"}]}
+                """));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.friends (list)");
+    }
+
+    [Fact]
+    public void WriteResponse_Should_Throw_When_PatchRepeatsANestedListOfAnotherLength()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher(rejectOverlappingPositions: true);
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Apply(
+                patcher,
+                """
+                {"data":{"node":{"rows":[[{"id":"1"}]]}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+                """,
+                """
+                {"incremental":[{"id":"0","data":{"rows":[[{"name":"a"},{"name":"b"}]]}}],"completed":[{"id":"0"}]}
+                """));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.rows (list), node.rows[0] (list)");
+    }
+
+    [Fact]
+    public void WriteResponse_Should_Throw_When_PatchReplacesNullWithAnObject()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher(rejectOverlappingPositions: true);
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Apply(
+                patcher,
+                """
+                {"data":{"node":{"child":null}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+                """,
+                """
+                {"incremental":[{"id":"0","data":{"child":{"name":"a"}}}],"completed":[{"id":"0"}]}
+                """));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.child (leaf)");
+    }
+
+    [Fact]
+    public void WriteResponse_Should_Throw_When_PatchReplacesAnObjectWithAScalar()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher(rejectOverlappingPositions: true);
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Apply(
+                patcher,
+                """
+                {"data":{"node":{"child":{"id":"1"}}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+                """,
+                """
+                {"incremental":[{"id":"0","data":{"child":"a"}}],"completed":[{"id":"0"}]}
+                """));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.child (leaf)");
+    }
+
+    [Fact]
+    public void WriteResponse_Should_Throw_When_PatchReplacesAListWithAnObject()
+    {
+        // arrange
+        var patcher = new JsonResultPatcher(rejectOverlappingPositions: true);
+
+        // act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => Apply(
+                patcher,
+                """
+                {"data":{"node":{"friends":[{"id":"1"}]}},"pending":[{"id":"0","path":["node"]}],"hasNext":true}
+                """,
+                """
+                {"incremental":[{"id":"0","data":{"friends":{"name":"a"}}}],"completed":[{"id":"0"}]}
+                """));
+
+        // assert
+        exception.Message.MatchInlineSnapshot(
+            "Incremental payloads delivered a response position more than once: node.friends (leaf)");
+    }
+
+    [Fact]
     public void WriteResponse_Should_Throw_When_PatchRepeatsALeaf()
     {
         // arrange
