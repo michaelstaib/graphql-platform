@@ -532,6 +532,14 @@ public sealed partial class OperationPlanner
             return incrementalPlanSteps;
         }
 
+        var clientFieldNames = CollectClientFieldNames(descriptor);
+        producers = KeepClientOutputOfProducers(descriptor, producers, clientFieldNames, ref incrementalPlanSteps);
+
+        if (producers.IsEmpty)
+        {
+            return incrementalPlanSteps;
+        }
+
         var producerIds = new HashSet<int>();
         foreach (var producer in producers)
         {
@@ -840,7 +848,7 @@ public sealed partial class OperationPlanner
 
         // Sever the in-plan edges that were rerouted to the parent scope and
         // drop the provider's field once nothing else consumes it.
-        incrementalPlanSteps = RemoveReroutedInPlanEdges(incrementalPlanSteps, rerouted);
+        incrementalPlanSteps = RemoveReroutedInPlanEdges(incrementalPlanSteps, rerouted, clientFieldNames);
 
         // Drop every producer step (its data now comes from the enclosing scope)
         // along with any incremental-plan step that got promoted wholesale into
@@ -1839,6 +1847,185 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
+    /// Keeps every client-visible field of <paramref name="descriptor"/> that only a step in
+    /// <paramref name="producers"/> selects: the field moves to a dependent lookup of that producer
+    /// whose schema resolves it, and a producer whose field no dependent can take is not a producer.
+    /// </summary>
+    /// <returns>
+    /// The producers that select no client-visible field the rest of the incremental plan lacks.
+    /// </returns>
+    private static ImmutableArray<OperationPlanStep> KeepClientOutputOfProducers(
+        IncrementalPlanDescriptor descriptor,
+        ImmutableArray<OperationPlanStep> producers,
+        HashSet<string> clientFieldNames,
+        ref ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        if (clientFieldNames.Count == 0)
+        {
+            return producers;
+        }
+
+        var producerIds = new HashSet<int>();
+        foreach (var producer in producers)
+        {
+            producerIds.Add(producer.Id);
+        }
+
+        var keptProducerIds = new HashSet<int>();
+
+        foreach (var producer in producers)
+        {
+            var producerAnchorSelectionSet = LocateSelectionSetAtPath(
+                GetStepEntitySelectionSet(producer),
+                descriptor.Path,
+                producer.Target.Length);
+
+            foreach (var selection in producerAnchorSelectionSet.Selections)
+            {
+                if (selection is not FieldNode { SelectionSet: null } field
+                    || field.Name.Value.Equals("__typename", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var responseName = field.Alias?.Value ?? field.Name.Value;
+
+                if (!clientFieldNames.Contains(responseName)
+                    || IsSelectedByOtherStep(incrementalPlanSteps, producerIds, descriptor.Path, responseName))
+                {
+                    continue;
+                }
+
+                if (!TryMoveFieldToDependent(producer, field, descriptor.Path, producerIds, ref incrementalPlanSteps))
+                {
+                    keptProducerIds.Add(producer.Id);
+                }
+            }
+        }
+
+        return keptProducerIds.Count == 0
+            ? producers
+            : producers.RemoveAll(producer => keptProducerIds.Contains(producer.Id));
+
+        static bool IsSelectedByOtherStep(
+            ImmutableList<PlanStep> steps,
+            HashSet<int> producerIds,
+            SelectionPath anchorPath,
+            string responseName)
+        {
+            foreach (var step in steps)
+            {
+                if (step is OperationPlanStep candidate
+                    && !producerIds.Contains(candidate.Id)
+                    && candidate.Target.IsParentOfOrSame(anchorPath)
+                    && SelectsLeafField(
+                        LocateSelectionSetAtPath(
+                            GetStepEntitySelectionSet(candidate),
+                            anchorPath,
+                            candidate.Target.Length),
+                        responseName))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static bool SelectsLeafField(SelectionSetNode selectionSet, string responseName)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                if (selection is FieldNode { SelectionSet: null } field
+                    && (field.Alias?.Value ?? field.Name.Value).Equals(responseName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Adds <paramref name="field"/> to the first dependent lookup of <paramref name="producer"/> at
+    /// <paramref name="anchorPath"/> whose source schema resolves it without requirements.
+    /// </summary>
+    private static bool TryMoveFieldToDependent(
+        OperationPlanStep producer,
+        FieldNode field,
+        SelectionPath anchorPath,
+        HashSet<int> producerIds,
+        ref ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        foreach (var dependentStepId in producer.Dependents)
+        {
+            if (producerIds.Contains(dependentStepId)
+                || incrementalPlanSteps.ById(dependentStepId) is not OperationPlanStep dependent
+                || dependent.Lookup is null
+                || dependent.SchemaName is not { } schemaName
+                || !dependent.Target.Equals(anchorPath)
+                || dependent.Type is not FusionComplexTypeDefinition entityType
+                || !entityType.Fields.TryGetField(field.Name.Value, allowInaccessibleFields: true, out var entityField)
+                || !entityField.Sources.TryGetMember(schemaName, out var source)
+                || source.IsExternal
+                || source.Requirements is not null)
+            {
+                continue;
+            }
+
+            var entitySelectionSet = GetStepEntitySelectionSet(dependent);
+            var updatedDependent = WithEntitySelectionSet(
+                dependent,
+                new SelectionSetNode([.. entitySelectionSet.Selections, field.WithDirectives([])]));
+
+            incrementalPlanSteps = incrementalPlanSteps.SetItem(
+                incrementalPlanSteps.IndexOf(dependent),
+                updatedDependent);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Collects the response names of the client-visible fields <paramref name="descriptor"/>
+    /// selects at its anchor.
+    /// </summary>
+    private HashSet<string> CollectClientFieldNames(IncrementalPlanDescriptor descriptor)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        if (!descriptor.Path.IsRoot
+            && TryLocateIncrementalPlanAnchor(descriptor.Operation, descriptor.Path, out var anchorSelectionSet, out _))
+        {
+            CollectClientFieldNames(anchorSelectionSet, names);
+        }
+
+        return names;
+    }
+
+    private static void CollectClientFieldNames(SelectionSetNode selectionSet, HashSet<string> names)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode field
+                    when !field.Directives.Any(
+                        t => t.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)
+                            || t.Name.Value.Equals("fusion__empty", StringComparison.Ordinal)):
+                    names.Add(field.Alias?.Value ?? field.Name.Value);
+                    break;
+
+                case InlineFragmentNode fragment:
+                    CollectClientFieldNames(fragment.SelectionSet, names);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Collects the response names of the leaf fields of <paramref name="selectionSet"/>,
     /// descending through inline fragments. The <c>__typename</c> discriminator is ignored;
     /// it never satisfies a requirement.
@@ -1877,11 +2064,13 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Removes each <paramref name="rerouted"/> provider-to-dependent dependency edge, unless
     /// the dependent still has another requirement that resolves back to the same provider,
-    /// and drops the provider's rerouted field once no remaining dependent still consumes it.
+    /// and drops the provider's rerouted field once no remaining dependent still consumes it,
+    /// unless the field is in <paramref name="clientFieldNames"/>.
     /// </summary>
     private static ImmutableList<PlanStep> RemoveReroutedInPlanEdges(
         ImmutableList<PlanStep> incrementalPlanSteps,
-        List<(int ProviderStepId, int DownstreamStepId, string FieldName)> rerouted)
+        List<(int ProviderStepId, int DownstreamStepId, string FieldName)> rerouted,
+        HashSet<string> clientFieldNames)
     {
         if (rerouted.Count == 0)
         {
@@ -1963,7 +2152,7 @@ public sealed partial class OperationPlanner
 
                 foreach (var fieldName in removals.Select(r => r.FieldName).Distinct(StringComparer.Ordinal))
                 {
-                    if (!stillConsumedFieldNames.Contains(fieldName))
+                    if (!stillConsumedFieldNames.Contains(fieldName) && !clientFieldNames.Contains(fieldName))
                     {
                         updatedProviderStep = RemoveUnconsumedEntityField(updatedProviderStep, fieldName);
                     }
