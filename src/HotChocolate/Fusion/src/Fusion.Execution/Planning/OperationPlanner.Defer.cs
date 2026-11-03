@@ -689,7 +689,11 @@ public sealed partial class OperationPlanner
         }
 
         var clientFieldNames = CollectClientFieldNames(descriptor);
-        producers = SelectProducersKeepingClientOutput(descriptor, producers, clientFieldNames, ref incrementalPlanSteps);
+        producers = SelectProducersKeepingClientOutput(
+            descriptor,
+            producers,
+            clientFieldNames,
+            ref incrementalPlanSteps);
 
         if (producers.IsEmpty)
         {
