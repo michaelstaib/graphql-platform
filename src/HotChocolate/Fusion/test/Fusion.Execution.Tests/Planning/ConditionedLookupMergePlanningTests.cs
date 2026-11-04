@@ -232,6 +232,29 @@ public class ConditionedLookupMergePlanningTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void CreatePlan_Should_KeepClientSelectionOrder_When_MergedPartsInterleave()
+    {
+        // arrange
+        var schema = CreateDirectKeySchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query ($a: Boolean!) {
+              user {
+                first: total
+                ... @include(if: $a) { second: total rating }
+                third: bonus
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
     private static FusionSchemaDefinition CreateDirectKeySchema()
         => ComposeSchema(
             """
