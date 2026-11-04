@@ -5655,6 +5655,79 @@ public class DeferTests : FusionTestBase
         Assert.Equal(plain.ToJsonString(), merged.ToJsonString());
     }
 
+    [Theory]
+    [InlineData("OneHopKey")]
+    [InlineData("TwoHopKey")]
+    public async Task Defer_Should_DeliverClientKey_When_MutationGroupNeedsKeyHops(string topology)
+    {
+        // arrange
+        using var gateway = await CreateClientKeyMutationGatewayAsync(topology);
+        using var plainGateway = await CreateClientKeyMutationGatewayAsync(topology);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var plainClient = GraphQLHttpClient.Create(plainGateway.CreateClient());
+        var request = new OperationRequest("mutation { create { user { ... @defer { id total } } } }");
+        var plainRequest = new OperationRequest("mutation { create { user { id total } } }");
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var plainResult = await plainClient.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, postFix: topology, stableStream: true);
+
+        var merged = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plain = JsonNode.Parse(await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken))!["data"]!;
+        Assert.Equal(plain.ToJsonString(), merged.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(
+        false,
+        Skip = "A deferred fragment ignores @include/@skip, so the group over-delivers (PR #154).")]
+    public async Task Defer_Should_DeliverClientKey_When_MutationGroupIsConditionedAndNeedsKeyHops(bool a)
+    {
+        // arrange
+        using var gateway = await CreateClientKeyMutationGatewayAsync("TwoHopKey");
+        using var plainGateway = await CreateClientKeyMutationGatewayAsync("TwoHopKey");
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var plainClient = GraphQLHttpClient.Create(plainGateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["a"] = a };
+        var request = new OperationRequest(
+            "mutation($a: Boolean!) { create { user { ... @defer @include(if: $a) { id code total } } } }",
+            variables: variables);
+        var plainRequest = new OperationRequest(
+            "mutation($a: Boolean!) { create { user { ... @include(if: $a) { id code total } } } }",
+            variables: variables);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var plainResult = await plainClient.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, postFix: a ? "True" : "False", stableStream: true);
+
+        var merged = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plain = JsonNode.Parse(await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken))!["data"]!;
+        Assert.Equal(plain.ToJsonString(), merged.ToJsonString());
+    }
+
     private async Task<Gateway> CreateClientKeyGatewayAsync(string topology)
     {
         var root = CreateSourceSchema(
@@ -5698,6 +5771,42 @@ public class DeferTests : FusionTestBase
         };
     }
 
+    private async Task<Gateway> CreateClientKeyMutationGatewayAsync(string topology)
+    {
+        var root = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<ClientKeySourceA.Query>().AddMutationType<ClientKeySourceA.Mutation>());
+
+        var name = CreateSourceSchema(
+            "E",
+            b => b.AddQueryType<ClientKeySourceName.Query>());
+
+        var rank = CreateSourceSchema(
+            "F",
+            b => b.AddQueryType<ClientKeySourceRank.Query>());
+
+        return topology switch
+        {
+            "OneHopKey" => await CreateCompositeSchemaAsync(
+            [
+                ("A", root),
+                ("B", CreateSourceSchema("B", b => b.AddQueryType<ClientKeyTotalBySku.Query>())),
+                ("C", CreateSourceSchema("C", b => b.AddQueryType<ClientKeySkuById.Query>())),
+                ("E", name),
+                ("F", rank)
+            ]),
+            _ => await CreateCompositeSchemaAsync(
+            [
+                ("A", root),
+                ("B", CreateSourceSchema("B", b => b.AddQueryType<ClientKeyTotalBySku.Query>())),
+                ("C", CreateSourceSchema("C", b => b.AddQueryType<ClientKeyCodeById.Query>())),
+                ("D", CreateSourceSchema("D", b => b.AddQueryType<ClientKeySkuByCode.Query>())),
+                ("E", name),
+                ("F", rank)
+            ])
+        };
+    }
+
     private static class ClientKeySourceA
     {
         public class Query
@@ -5707,6 +5816,11 @@ public class DeferTests : FusionTestBase
             [Lookup]
             [Internal]
             public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public class Mutation
+        {
+            public Current Create() => new();
         }
 
         public class Current

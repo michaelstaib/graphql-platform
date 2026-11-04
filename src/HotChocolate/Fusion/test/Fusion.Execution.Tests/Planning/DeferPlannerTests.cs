@@ -3102,6 +3102,108 @@ public class DeferPlannerTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Defer_Should_KeepSeedKeyHopInGroup_When_MutationGroupSelectsOnlyKeyAndTotalOnOneHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("OneHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_KeepSeedKeyHopInGroup_When_MutationGroupSelectsOnlyKeyAndTotalOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_KeepSeedKeyHopInGroup_When_MutationGroupSelectsKeyAndSkuAndTotalOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        sku
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["code", "id", "sku", "sku", "total"], GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_HostClientKeyOnKeyHop_When_MutationGroupIsConditioned()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation($a: Boolean!) {
+                touch {
+                    ... @defer @include(if: $a) {
+                        id
+                        code
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["code", "id", "sku", "total"], GetIncrementalEntityFields(plan));
+    }
+
     private static string[] GetIncrementalEntityFields(OperationPlan plan)
     {
         var fields = new List<string>();
