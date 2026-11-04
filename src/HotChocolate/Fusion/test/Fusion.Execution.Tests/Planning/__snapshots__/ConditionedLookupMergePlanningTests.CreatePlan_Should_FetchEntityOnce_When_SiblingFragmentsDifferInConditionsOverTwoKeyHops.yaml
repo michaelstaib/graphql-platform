@@ -1,0 +1,150 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        user {
+          sku @fusion__requirement
+          code @fusion__requirement
+          id @fusion__requirement
+          ... @include(if: $a) {
+            total
+            rating
+          }
+          ... @include(if: $b) {
+            total
+            rating
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 4
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!, $b: Boolean!) {
+        user {
+          ... @include(if: $a) {
+            __typename
+          }
+          ... @include(if: $b) {
+            __typename
+          }
+          id
+        }
+      }
+    forwardedVariables:
+      - a
+      - b
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($a: Boolean!, $b: Boolean!, $__fusion_1_sku: String!) {
+        userBySku(sku: $__fusion_1_sku) {
+          ... @include(if: $a) {
+            total
+            rating
+          }
+          ... @include(if: $b) {
+            total
+            rating
+          }
+        }
+      }
+    source: $.userBySku
+    target: $.user
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    forwardedVariables:
+      - a
+      - b
+    dependencies:
+      - id: 8
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          code
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: ID!) {
+        userById(id: $__fusion_5_id) {
+          code
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_3($__fusion_2_code: String!) {
+        userByCode(code: $__fusion_2_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.user
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_2_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $b
+        passingValue: true
+    dependencies:
+      - id: 4
+  - id: 5
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_5($__fusion_4_code: String!) {
+        userByCode(code: $__fusion_4_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.user
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_4_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $a
+        passingValue: true
+    dependencies:
+      - id: 6

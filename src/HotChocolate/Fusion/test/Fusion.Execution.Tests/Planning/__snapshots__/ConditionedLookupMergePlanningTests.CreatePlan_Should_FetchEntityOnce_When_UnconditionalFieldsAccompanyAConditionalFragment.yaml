@@ -1,0 +1,71 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user {
+          total
+          sku @fusion__requirement
+          id @fusion__requirement
+          ... @include(if: $a) {
+            rating
+            bonus
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!) {
+        user {
+          ... @include(if: $a) {
+            __typename
+          }
+          id
+        }
+      }
+    forwardedVariables:
+      - a
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($a: Boolean!, $__fusion_1_sku: String!) {
+        userBySku(sku: $__fusion_1_sku) {
+          total
+          ... @include(if: $a) {
+            rating
+            bonus
+          }
+        }
+      }
+    source: $.userBySku
+    target: $.user
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        userById(id: $__fusion_2_id) {
+          sku
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
