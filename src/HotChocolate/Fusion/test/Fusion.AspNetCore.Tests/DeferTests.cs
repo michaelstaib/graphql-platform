@@ -5528,22 +5528,19 @@ public class DeferTests : FusionTestBase
         public record OwnerInput(int Raw, int Computed);
     }
 
-    private const string KeyHopSkipReason =
-        "The promoted key hop node has no dependency on the node that supplies its key, so the hop never runs.";
-
     [Theory]
     [InlineData("DirectKey", false, 2)]
     [InlineData("DirectKey", false, 3)]
     [InlineData("DirectKey", true, 2)]
     [InlineData("DirectKey", true, 3)]
-    [InlineData("OneHopKey", false, 2, Skip = KeyHopSkipReason)]
-    [InlineData("OneHopKey", false, 3, Skip = KeyHopSkipReason)]
-    [InlineData("OneHopKey", true, 2, Skip = KeyHopSkipReason)]
-    [InlineData("OneHopKey", true, 3, Skip = KeyHopSkipReason)]
-    [InlineData("TwoHopKey", false, 2, Skip = KeyHopSkipReason)]
-    [InlineData("TwoHopKey", false, 3, Skip = KeyHopSkipReason)]
-    [InlineData("TwoHopKey", true, 2, Skip = KeyHopSkipReason)]
-    [InlineData("TwoHopKey", true, 3, Skip = KeyHopSkipReason)]
+    [InlineData("OneHopKey", false, 2)]
+    [InlineData("OneHopKey", false, 3)]
+    [InlineData("OneHopKey", true, 2)]
+    [InlineData("OneHopKey", true, 3)]
+    [InlineData("TwoHopKey", false, 2)]
+    [InlineData("TwoHopKey", false, 3)]
+    [InlineData("TwoHopKey", true, 2)]
+    [InlineData("TwoHopKey", true, 3)]
     public async Task Defer_Should_DeliverClientKey_When_GroupNeedsMultipleLookups(
         string topology,
         bool list,
@@ -5586,8 +5583,8 @@ public class DeferTests : FusionTestBase
 
     [Theory]
     [InlineData("DirectKey")]
-    [InlineData("OneHopKey", Skip = KeyHopSkipReason)]
-    [InlineData("TwoHopKey", Skip = KeyHopSkipReason)]
+    [InlineData("OneHopKey")]
+    [InlineData("TwoHopKey")]
     public async Task Defer_Should_DeliverAliasedClientKey_When_GroupNeedsMultipleLookups(string topology)
     {
         // arrange
@@ -5611,6 +5608,46 @@ public class DeferTests : FusionTestBase
 
         // assert
         await MatchSnapshotAsync(gateway, request, result, postFix: topology, stableStream: true);
+
+        var merged = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plain = JsonNode.Parse(await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken))!["data"]!;
+        Assert.Equal(plain.ToJsonString(), merged.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(
+        false,
+        Skip = "A deferred fragment ignores @include/@skip, so the group over-delivers (PR #154).")]
+    public async Task Defer_Should_DeliverClientField_When_GroupIsConditionedAndHopSelectsIt(bool a)
+    {
+        // arrange
+        using var gateway = await CreateClientKeyGatewayAsync("TwoHopKey");
+        using var plainGateway = await CreateClientKeyGatewayAsync("TwoHopKey");
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var plainClient = GraphQLHttpClient.Create(plainGateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["a"] = a };
+        var request = new OperationRequest(
+            "query($a: Boolean!) { current { user { ... @defer @include(if: $a) { id code name total } } } }",
+            variables: variables);
+        var plainRequest = new OperationRequest(
+            "query($a: Boolean!) { current { user { ... @include(if: $a) { id code name total } } } }",
+            variables: variables);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var plainResult = await plainClient.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, postFix: a ? "True" : "False", stableStream: true);
 
         var merged = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
         var plain = JsonNode.Parse(await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(

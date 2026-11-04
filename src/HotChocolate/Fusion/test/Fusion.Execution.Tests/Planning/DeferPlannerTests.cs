@@ -3050,6 +3050,58 @@ public class DeferPlannerTests : FusionTestBase
         Assert.Equal(["id", "name", "total"], GetIncrementalEntityFields(plan));
     }
 
+    [Fact]
+    public void Defer_Should_KeepKeyHopInGroup_When_HopSelectsClientField()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+                user {
+                    ... @defer @include(if: $a) {
+                        id
+                        code
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanMutationGroup_When_HopSelectsClientField()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        code
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
     private static string[] GetIncrementalEntityFields(OperationPlan plan)
     {
         var fields = new List<string>();
@@ -3077,8 +3129,11 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     private static FusionSchemaDefinition ComposeClientKeySchema(string topology)
+        => ComposeClientKeySchema(topology, string.Empty);
+
+    private static FusionSchemaDefinition ComposeClientKeySchema(string topology, string rootExtension)
     {
-        const string root =
+        var root =
             """
             # name: a
             type Query {
@@ -3090,7 +3145,7 @@ public class DeferPlannerTests : FusionTestBase
             type User @key(fields: "id") {
                 id: ID!
             }
-            """;
+            """ + "\n" + rootExtension;
 
         const string name =
             """

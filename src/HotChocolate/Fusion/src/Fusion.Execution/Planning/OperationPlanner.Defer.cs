@@ -525,7 +525,9 @@ public sealed partial class OperationPlanner
         // such step at index 0; a lookup-anchored seed may produce it anywhere in
         // the list (or several, chained through each other), so every step is
         // considered.
-        var producers = FindDeferRequirementProducers(incrementalPlanSteps, descriptor.Path);
+        var clientSelectedFields = new Lazy<HashSet<ClientSelectedField>>(
+            () => CollectClientSelectedFields(descriptor));
+        var producers = FindDeferRequirementProducers(incrementalPlanSteps, descriptor.Path, clientSelectedFields);
 
         if (producers.IsEmpty)
         {
@@ -783,8 +785,6 @@ public sealed partial class OperationPlanner
         }
 
         var unroutedIncrementalPlanSteps = incrementalPlanSteps;
-        var clientSelectedFields = new Lazy<HashSet<ClientSelectedField>>(
-            () => CollectClientSelectedFields(descriptor));
 
         // Sever the in-plan edges that were rerouted to the parent scope and
         // drop the provider's field once nothing else consumes it.
@@ -1627,9 +1627,10 @@ public sealed partial class OperationPlanner
     /// is consumed by one of its dependents as a requirement that does not lie below
     /// <paramref name="anchorPath"/>.
     /// </summary>
-    private static ImmutableArray<OperationPlanStep> FindDeferRequirementProducers(
+    private ImmutableArray<OperationPlanStep> FindDeferRequirementProducers(
         ImmutableList<PlanStep> incrementalPlanSteps,
-        SelectionPath anchorPath)
+        SelectionPath anchorPath,
+        Lazy<HashSet<ClientSelectedField>> clientSelectedFields)
     {
         var producers = ImmutableArray.CreateBuilder<OperationPlanStep>();
 
@@ -1639,13 +1640,78 @@ public sealed partial class OperationPlanner
                 && operationStep.SchemaName is not null
                 && !operationStep.Dependents.IsEmpty
                 && operationStep.Target.IsParentOfOrSame(anchorPath)
-                && IsPureRequirementProducer(operationStep, incrementalPlanSteps, anchorPath))
+                && IsPureRequirementProducer(operationStep, incrementalPlanSteps, anchorPath)
+                && !IsClientVisibleHop(operationStep, incrementalPlanSteps, anchorPath, clientSelectedFields))
             {
                 producers.Add(operationStep);
             }
         }
 
         return producers.ToImmutable();
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="step"/> or a step that feeds it, directly or transitively,
+    /// selects a client-selected field at <paramref name="anchorPath"/>. A step without an
+    /// in-plan provider is never client visible.
+    /// </summary>
+    private bool IsClientVisibleHop(
+        OperationPlanStep step,
+        ImmutableList<PlanStep> incrementalPlanSteps,
+        SelectionPath anchorPath,
+        Lazy<HashSet<ClientSelectedField>> clientSelectedFields)
+        => IsClientVisibleHop(step, incrementalPlanSteps, anchorPath, clientSelectedFields, []);
+
+    private bool IsClientVisibleHop(
+        OperationPlanStep step,
+        ImmutableList<PlanStep> incrementalPlanSteps,
+        SelectionPath anchorPath,
+        Lazy<HashSet<ClientSelectedField>> clientSelectedFields,
+        HashSet<int> visited)
+    {
+        if (!visited.Add(step.Id))
+        {
+            return false;
+        }
+
+        var providers = new List<OperationPlanStep>();
+
+        foreach (var (_, requirement) in step.Requirements)
+        {
+            if (TryFindDeferRequirementProvider(incrementalPlanSteps, step, requirement) is { } provider)
+            {
+                providers.Add(provider);
+            }
+        }
+
+        if (providers.Count == 0)
+        {
+            return false;
+        }
+
+        if (TryLocateDeferRequirementTarget(step, anchorPath, out var anchorSelectionSet, out _))
+        {
+            var stepFields = new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment)>();
+            CollectStepFields(anchorSelectionSet, inFragment: false, stepFields);
+
+            foreach (var key in stepFields.Keys)
+            {
+                if (clientSelectedFields.Value.Contains(key))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (var provider in providers)
+        {
+            if (IsClientVisibleHop(provider, incrementalPlanSteps, anchorPath, clientSelectedFields, visited))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1809,7 +1875,8 @@ public sealed partial class OperationPlanner
 
         // The fields that dropped steps select at the anchor, keyed the way the client
         // selects them, together with the step conditions they were selected under.
-        var droppedFields = new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment, ExecutionNodeCondition[] Conditions)>();
+        var droppedFields =
+            new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment, ExecutionNodeCondition[] Conditions)>();
 
         foreach (var step in incrementalPlanSteps)
         {
@@ -1926,8 +1993,8 @@ public sealed partial class OperationPlanner
     }
 
     private static bool IsConditionDirective(DirectiveNode directive)
-        => directive.Name.Value.Equals("skip", StringComparison.Ordinal)
-            || directive.Name.Value.Equals("include", StringComparison.Ordinal);
+        => directive.Name.Value.Equals(DirectiveNames.Skip.Name, StringComparison.Ordinal)
+            || directive.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal);
 
     private static bool CanHostField(OperationPlanStep host, FieldNode field, ExecutionNodeCondition[] conditions)
         => host.Conditions.All(conditions.Contains)

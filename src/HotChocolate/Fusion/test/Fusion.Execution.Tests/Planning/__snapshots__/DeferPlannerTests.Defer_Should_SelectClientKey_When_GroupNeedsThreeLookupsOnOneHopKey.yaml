@@ -19,36 +19,21 @@ nodes:
           id
         }
       }
-  - id: 2
-    type: Operation
-    schema: c
-    operation: |
-      query Op_defer_4($__fusion_4_id: ID!) {
-        userById(id: $__fusion_4_id) {
-          sku
-        }
-      }
-    source: $.userById
-    target: $.user
-    requirements:
-      - name: __fusion_4_id
-        selectionMap: >-
-          id
 deliveryGroups:
   - id: 0
     path: $.user
 incrementalPlans:
   - deliveryGroupIds:
       - 0
-    parentNodeId: 2
+    parentNodeId: 1
     requirements:
       - name: __fusion_1_id
         selectionMap: >-
           id
-      - name: __fusion_2_sku
-        selectionMap: >-
-          sku
       - name: __fusion_3_id
+        selectionMap: >-
+          id
+      - name: __fusion_4_id
         selectionMap: >-
           id
     nodes:
@@ -86,7 +71,7 @@ incrementalPlans:
             selectionMap: >-
               sku
         dependencies:
-          - parentNodeId: 2
+          - id: 4
       - id: 3
         type: Operation
         schema: e
@@ -100,6 +85,23 @@ incrementalPlans:
         target: $.user
         requirements:
           - name: __fusion_3_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+      - id: 4
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_4($__fusion_4_id: ID!) {
+            userById(id: $__fusion_4_id) {
+              sku
+            }
+          }
+        source: $.userById
+        target: $.user
+        requirements:
+          - name: __fusion_4_id
             selectionMap: >-
               id
         dependencies:

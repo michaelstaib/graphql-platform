@@ -19,53 +19,40 @@ nodes:
           id
         }
       }
-  - id: 2
-    type: Operation
-    schema: c
-    operation: |
-      query Op_defer_1($__fusion_1_id: ID!) {
-        userById(id: $__fusion_1_id) {
-          id
-          code
-        }
-      }
-    source: $.userById
-    target: $.users
-    requirements:
-      - name: __fusion_1_id
-        selectionMap: >-
-          id
-  - id: 3
-    type: Operation
-    schema: d
-    operation: |
-      query Op_defer_4($__fusion_4_code: String!) {
-        userByCode(code: $__fusion_4_code) {
-          sku
-        }
-      }
-    source: $.userByCode
-    target: $.users
-    requirements:
-      - name: __fusion_4_code
-        selectionMap: >-
-          code
 deliveryGroups:
   - id: 0
     path: $.users
 incrementalPlans:
   - deliveryGroupIds:
       - 0
-    parentNodeId: 2
+    parentNodeId: 1
     requirements:
-      - name: __fusion_2_sku
+      - name: __fusion_1_id
         selectionMap: >-
-          sku
+          id
       - name: __fusion_3_id
         selectionMap: >-
           id
     nodes:
       - id: 1
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              id
+              code
+            }
+          }
+        source: $.userById
+        target: $.users
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+      - id: 2
         type: Operation
         schema: b
         operation: |
@@ -81,15 +68,14 @@ incrementalPlans:
             selectionMap: >-
               sku
         dependencies:
-          - parentNodeId: 3
-      - id: 2
+          - id: 4
+      - id: 3
         type: Operation
         schema: e
         operation: |
           query Op_defer_3($__fusion_3_id: ID!) {
             userById(id: $__fusion_3_id) {
               name
-              id
             }
           }
         source: $.userById
@@ -100,3 +86,20 @@ incrementalPlans:
               id
         dependencies:
           - parentNodeId: 1
+      - id: 4
+        type: Operation
+        schema: d
+        operation: |
+          query Op_defer_4($__fusion_4_code: String!) {
+            userByCode(code: $__fusion_4_code) {
+              sku
+            }
+          }
+        source: $.userByCode
+        target: $.users
+        requirements:
+          - name: __fusion_4_code
+            selectionMap: >-
+              code
+        dependencies:
+          - id: 1

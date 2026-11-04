@@ -19,51 +19,21 @@ nodes:
           id
         }
       }
-  - id: 2
-    type: Operation
-    schema: d
-    operation: |
-      query Op_defer_4($__fusion_4_code: String!) {
-        userByCode(code: $__fusion_4_code) {
-          sku
-        }
-      }
-    source: $.userByCode
-    target: $.users
-    requirements:
-      - name: __fusion_4_code
-        selectionMap: >-
-          code
-  - id: 3
-    type: Operation
-    schema: c
-    operation: |
-      query Op_defer_5($__fusion_5_id: ID!) {
-        userById(id: $__fusion_5_id) {
-          code
-        }
-      }
-    source: $.userById
-    target: $.users
-    requirements:
-      - name: __fusion_5_id
-        selectionMap: >-
-          id
 deliveryGroups:
   - id: 0
     path: $.users
 incrementalPlans:
   - deliveryGroupIds:
       - 0
-    parentNodeId: 2
+    parentNodeId: 1
     requirements:
       - name: __fusion_1_id
         selectionMap: >-
           id
-      - name: __fusion_2_sku
-        selectionMap: >-
-          sku
       - name: __fusion_3_id
+        selectionMap: >-
+          id
+      - name: __fusion_5_id
         selectionMap: >-
           id
     nodes:
@@ -101,7 +71,7 @@ incrementalPlans:
             selectionMap: >-
               sku
         dependencies:
-          - parentNodeId: 2
+          - id: 4
       - id: 3
         type: Operation
         schema: e
@@ -115,6 +85,40 @@ incrementalPlans:
         target: $.users
         requirements:
           - name: __fusion_3_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+      - id: 4
+        type: Operation
+        schema: d
+        operation: |
+          query Op_defer_4($__fusion_4_code: String!) {
+            userByCode(code: $__fusion_4_code) {
+              sku
+            }
+          }
+        source: $.userByCode
+        target: $.users
+        requirements:
+          - name: __fusion_4_code
+            selectionMap: >-
+              code
+        dependencies:
+          - id: 5
+      - id: 5
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_5($__fusion_5_id: ID!) {
+            userById(id: $__fusion_5_id) {
+              code
+            }
+          }
+        source: $.userById
+        target: $.users
+        requirements:
+          - name: __fusion_5_id
             selectionMap: >-
               id
         dependencies:
