@@ -5527,4 +5527,266 @@ public class DeferTests : FusionTestBase
 
         public record OwnerInput(int Raw, int Computed);
     }
+
+    private const string KeyHopSkipReason =
+        "The promoted key hop node has no dependency on the node that supplies its key, so the hop never runs.";
+
+    [Theory]
+    [InlineData("DirectKey", false, 2)]
+    [InlineData("DirectKey", false, 3)]
+    [InlineData("DirectKey", true, 2)]
+    [InlineData("DirectKey", true, 3)]
+    [InlineData("OneHopKey", false, 2, Skip = KeyHopSkipReason)]
+    [InlineData("OneHopKey", false, 3, Skip = KeyHopSkipReason)]
+    [InlineData("OneHopKey", true, 2, Skip = KeyHopSkipReason)]
+    [InlineData("OneHopKey", true, 3, Skip = KeyHopSkipReason)]
+    [InlineData("TwoHopKey", false, 2, Skip = KeyHopSkipReason)]
+    [InlineData("TwoHopKey", false, 3, Skip = KeyHopSkipReason)]
+    [InlineData("TwoHopKey", true, 2, Skip = KeyHopSkipReason)]
+    [InlineData("TwoHopKey", true, 3, Skip = KeyHopSkipReason)]
+    public async Task Defer_Should_DeliverClientKey_When_GroupNeedsMultipleLookups(
+        string topology,
+        bool list,
+        int lookups)
+    {
+        // arrange
+        using var gateway = await CreateClientKeyGatewayAsync(topology);
+        using var plainGateway = await CreateClientKeyGatewayAsync(topology);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var plainClient = GraphQLHttpClient.Create(plainGateway.CreateClient());
+        var fields = lookups == 2 ? "id name total" : "id name total rank";
+        var field = list ? "users" : "user";
+        var request = new OperationRequest($"{{ current {{ {field} {{ ... @defer {{ {fields} }} }} }} }}");
+        var plainRequest = new OperationRequest($"{{ current {{ {field} {{ {fields} }} }} }}");
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var plainResult = await plainClient.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(
+            gateway,
+            request,
+            result,
+            postFix: $"{topology}_{(list ? "List" : "Single")}_{lookups}",
+            stableStream: true);
+
+        var merged = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plain = JsonNode.Parse(await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken))!["data"]!;
+        Assert.Equal(plain.ToJsonString(), merged.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("DirectKey")]
+    [InlineData("OneHopKey", Skip = KeyHopSkipReason)]
+    [InlineData("TwoHopKey", Skip = KeyHopSkipReason)]
+    public async Task Defer_Should_DeliverAliasedClientKey_When_GroupNeedsMultipleLookups(string topology)
+    {
+        // arrange
+        using var gateway = await CreateClientKeyGatewayAsync(topology);
+        using var plainGateway = await CreateClientKeyGatewayAsync(topology);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var plainClient = GraphQLHttpClient.Create(plainGateway.CreateClient());
+        var request = new OperationRequest("{ current { user { ... @defer { uid: id name total } } } }");
+        var plainRequest = new OperationRequest("{ current { user { uid: id name total } } }");
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        using var plainResult = await plainClient.PostAsync(
+            plainRequest,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, postFix: topology, stableStream: true);
+
+        var merged = MergeIncrementalPayloads(await ReadPayloadsAsync(result));
+        var plain = JsonNode.Parse(await plainResult.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken))!["data"]!;
+        Assert.Equal(plain.ToJsonString(), merged.ToJsonString());
+    }
+
+    private async Task<Gateway> CreateClientKeyGatewayAsync(string topology)
+    {
+        var root = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<ClientKeySourceA.Query>());
+
+        var name = CreateSourceSchema(
+            "E",
+            b => b.AddQueryType<ClientKeySourceName.Query>());
+
+        var rank = CreateSourceSchema(
+            "F",
+            b => b.AddQueryType<ClientKeySourceRank.Query>());
+
+        return topology switch
+        {
+            "DirectKey" => await CreateCompositeSchemaAsync(
+            [
+                ("A", root),
+                ("B", CreateSourceSchema("B", b => b.AddQueryType<ClientKeyTotalById.Query>())),
+                ("E", name),
+                ("F", rank)
+            ]),
+            "OneHopKey" => await CreateCompositeSchemaAsync(
+            [
+                ("A", root),
+                ("B", CreateSourceSchema("B", b => b.AddQueryType<ClientKeyTotalBySku.Query>())),
+                ("C", CreateSourceSchema("C", b => b.AddQueryType<ClientKeySkuById.Query>())),
+                ("E", name),
+                ("F", rank)
+            ]),
+            _ => await CreateCompositeSchemaAsync(
+            [
+                ("A", root),
+                ("B", CreateSourceSchema("B", b => b.AddQueryType<ClientKeyTotalBySku.Query>())),
+                ("C", CreateSourceSchema("C", b => b.AddQueryType<ClientKeyCodeById.Query>())),
+                ("D", CreateSourceSchema("D", b => b.AddQueryType<ClientKeySkuByCode.Query>())),
+                ("E", name),
+                ("F", rank)
+            ])
+        };
+    }
+
+    private static class ClientKeySourceA
+    {
+        public class Query
+        {
+            public Current GetCurrent() => new();
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public class Current
+        {
+            public User User => new(1);
+
+            public User[] GetUsers() => [new(1), new(2), new(3)];
+        }
+
+        public record User([property: ID] int Id);
+    }
+
+    private static class ClientKeySourceName
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public string Name => $"user-{Id}";
+        }
+    }
+
+    private static class ClientKeySourceRank
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Rank => 7 * Id;
+        }
+    }
+
+    private static class ClientKeyTotalById
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Total => 41 + Id;
+        }
+    }
+
+    private static class ClientKeyTotalBySku
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserBySku(string sku) => new(sku);
+        }
+
+        public record User([property: Shareable] string Sku)
+        {
+            public int Total => 41 + int.Parse(Sku[(Sku.LastIndexOf('-') + 1)..]);
+        }
+    }
+
+    private static class ClientKeySkuById
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Sku => $"sku-{Id}";
+        }
+    }
+
+    private static class ClientKeyCodeById
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Code => $"code-{Id}";
+        }
+    }
+
+    private static class ClientKeySkuByCode
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserByCode(string code) => new(code);
+        }
+
+        public record User([property: Shareable] string Code)
+        {
+            [Shareable]
+            public string Sku => $"sku-{Code}";
+        }
+    }
 }

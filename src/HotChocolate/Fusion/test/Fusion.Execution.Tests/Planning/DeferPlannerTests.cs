@@ -2818,6 +2818,224 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_SelectClientKey_When_GroupNeedsTwoLookupsOnDirectKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("DirectKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_ListGroupNeedsThreeLookupsOnDirectKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("DirectKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                users {
+                    ... @defer {
+                        id
+                        name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_GroupNeedsThreeLookupsOnOneHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("OneHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id
+                        name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_ListGroupNeedsThreeLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                users {
+                    ... @defer {
+                        id
+                        name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    private static FusionSchemaDefinition ComposeClientKeySchema(string topology)
+    {
+        const string root =
+            """
+            # name: a
+            type Query {
+                user: User!
+                users: [User!]!
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+            }
+            """;
+
+        const string name =
+            """
+            # name: e
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """;
+
+        const string rank =
+            """
+            # name: f
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                rank: Int!
+            }
+            """;
+
+        const string totalById =
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                total: Int!
+            }
+            """;
+
+        const string totalBySku =
+            """
+            # name: b
+            type Query {
+                userBySku(sku: String!): User @lookup @internal
+            }
+
+            type User @key(fields: "sku") {
+                sku: String! @shareable
+                total: Int!
+            }
+            """;
+
+        const string skuById =
+            """
+            # name: c
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                sku: String! @shareable
+            }
+            """;
+
+        const string codeById =
+            """
+            # name: c
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                code: String! @shareable
+            }
+            """;
+
+        const string skuByCode =
+            """
+            # name: d
+            type Query {
+                userByCode(code: String!): User @lookup @internal
+            }
+
+            type User @key(fields: "code") {
+                code: String! @shareable
+                sku: String! @shareable
+            }
+            """;
+
+        return topology switch
+        {
+            "DirectKey" => ComposeSchema(root, totalById, name, rank),
+            "OneHopKey" => ComposeSchema(root, totalBySku, skuById, name, rank),
+            _ => ComposeSchema(root, totalBySku, codeById, skuByCode, name, rank)
+        };
+    }
+
+    [Fact]
     public void Defer_Should_FetchAllPrerequisites_When_RequirementMixesNativeAndComputedFields()
     {
         // arrange

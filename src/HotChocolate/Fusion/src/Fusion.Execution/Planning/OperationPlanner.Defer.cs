@@ -784,7 +784,11 @@ public sealed partial class OperationPlanner
 
         // Sever the in-plan edges that were rerouted to the parent scope and
         // drop the provider's field once nothing else consumes it.
-        incrementalPlanSteps = RemoveReroutedInPlanEdges(incrementalPlanSteps, rerouted);
+        incrementalPlanSteps = RemoveReroutedInPlanEdges(
+            incrementalPlanSteps,
+            rerouted,
+            descriptor.Path,
+            CollectClientSelectedLeafFieldNames(descriptor));
 
         // Drop every producer step (its data now comes from the enclosing scope)
         // along with any incremental-plan step that got promoted wholesale into
@@ -1723,13 +1727,52 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
+    /// Collects the response names of the leaf fields the client selects directly at the anchor
+    /// of <paramref name="descriptor"/>, ignoring internal requirement selections.
+    /// </summary>
+    private HashSet<string> CollectClientSelectedLeafFieldNames(IncrementalPlanDescriptor descriptor)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+
+        if (TryLocateIncrementalPlanAnchor(descriptor.Operation, descriptor.Path, out var anchorSelectionSet, out _))
+        {
+            CollectClientSelectedLeafFieldNames(anchorSelectionSet, names);
+        }
+
+        return names;
+    }
+
+    private static void CollectClientSelectedLeafFieldNames(SelectionSetNode selectionSet, HashSet<string> names)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode { SelectionSet: null } field
+                    when !field.Name.Value.Equals("__typename", StringComparison.Ordinal)
+                        && !field.Directives.Any(
+                            t => t.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)):
+                    names.Add(field.Alias?.Value ?? field.Name.Value);
+                    break;
+
+                case InlineFragmentNode fragment:
+                    CollectClientSelectedLeafFieldNames(fragment.SelectionSet, names);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
     /// Removes each <paramref name="rerouted"/> provider-to-dependent dependency edge, unless
     /// the dependent still has another requirement that resolves back to the same provider,
-    /// and drops the provider's rerouted field once no remaining dependent still consumes it.
+    /// and drops the provider's rerouted field once no remaining dependent still consumes it
+    /// and the client does not select it at <paramref name="anchorPath"/>.
     /// </summary>
     private static ImmutableList<PlanStep> RemoveReroutedInPlanEdges(
         ImmutableList<PlanStep> incrementalPlanSteps,
-        List<(int ProviderStepId, int DownstreamStepId, string FieldName)> rerouted)
+        List<(int ProviderStepId, int DownstreamStepId, string FieldName)> rerouted,
+        SelectionPath anchorPath,
+        HashSet<string> clientSelectedFieldNames)
     {
         if (rerouted.Count == 0)
         {
@@ -1809,9 +1852,13 @@ public sealed partial class OperationPlanner
 
                 var updatedProviderStep = providerStep with { Dependents = remainingDependents };
 
+                var providerTargetsAnchor = providerStep.Target.Equals(anchorPath);
+
                 foreach (var fieldName in removals.Select(r => r.FieldName).Distinct(StringComparer.Ordinal))
                 {
-                    if (!stillConsumedFieldNames.Contains(fieldName))
+                    var isSelectedByClient = providerTargetsAnchor && clientSelectedFieldNames.Contains(fieldName);
+
+                    if (!stillConsumedFieldNames.Contains(fieldName) && !isSelectedByClient)
                     {
                         updatedProviderStep = RemoveUnconsumedEntityField(updatedProviderStep, fieldName);
                     }

@@ -1,0 +1,106 @@
+operation:
+  - document: |
+      {
+        user {
+          __typename @fusion__empty
+          id @fusion__requirement
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_defer_4($__fusion_4_id: ID!) {
+        userById(id: $__fusion_4_id) {
+          sku
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+deliveryGroups:
+  - id: 0
+    path: $.user
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 2
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+      - name: __fusion_2_sku
+        selectionMap: >-
+          sku
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: f
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              id
+              rank
+            }
+          }
+        source: $.userById
+        target: $.user
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+      - id: 2
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_2_sku: String!) {
+            userBySku(sku: $__fusion_2_sku) {
+              total
+            }
+          }
+        source: $.userBySku
+        target: $.user
+        requirements:
+          - name: __fusion_2_sku
+            selectionMap: >-
+              sku
+        dependencies:
+          - parentNodeId: 2
+      - id: 3
+        type: Operation
+        schema: e
+        operation: |
+          query Op_defer_3($__fusion_3_id: ID!) {
+            userById(id: $__fusion_3_id) {
+              name
+            }
+          }
+        source: $.userById
+        target: $.user
+        requirements:
+          - name: __fusion_3_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
