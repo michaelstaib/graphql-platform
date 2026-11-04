@@ -3047,7 +3047,7 @@ public class DeferPlannerTests : FusionTestBase
 
         // assert
         MatchSnapshot(plan);
-        Assert.Equal(["id", "name", "total"], GetIncrementalEntityFields(plan));
+        Assert.Equal(["code", "id", "id", "name", "sku", "total"], GetIncrementalEntityFields(plan));
     }
 
     [Fact]
