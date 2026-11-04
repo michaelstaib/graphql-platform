@@ -63,24 +63,7 @@ nodes:
       - a
       - b
     dependencies:
-      - id: 3
-  - id: 3
-    type: Operation
-    schema: d
-    operation: |
-      query Op_123456789101112_3($__fusion_2_code: String!) {
-        userByCode(code: $__fusion_2_code) {
-          sku
-        }
-      }
-    source: $.userByCode
-    target: $.user
-    requirements:
-      - name: __fusion_2_code
-        selectionMap: >-
-          code
-    dependencies:
-      - id: 4
+      - id: 8
   - id: 4
     type: Operation
     schema: c
@@ -92,9 +75,76 @@ nodes:
       }
     source: $.userById
     target: $.user
+    batchingGroupId: 7
     requirements:
       - name: __fusion_3_id
         selectionMap: >-
           id
+    conditions:
+      - variable: $b
+        passingValue: true
     dependencies:
       - id: 1
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: ID!) {
+        userById(id: $__fusion_5_id) {
+          code
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_3($__fusion_2_code: String!) {
+        userByCode(code: $__fusion_2_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.user
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_2_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $b
+        passingValue: true
+    dependencies:
+      - id: 4
+  - id: 5
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_5($__fusion_4_code: String!) {
+        userByCode(code: $__fusion_4_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.user
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_4_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $a
+        passingValue: true
+    dependencies:
+      - id: 6

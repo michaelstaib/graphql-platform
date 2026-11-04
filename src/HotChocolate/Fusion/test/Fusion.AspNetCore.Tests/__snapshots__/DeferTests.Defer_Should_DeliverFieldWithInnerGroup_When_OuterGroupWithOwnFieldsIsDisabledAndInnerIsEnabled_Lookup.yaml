@@ -123,19 +123,15 @@ sourceSchemas:
       }
     interactions:
       - request:
-          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
           document: |
-            query Op_792d5816_2($b: Boolean!, $__fusion_1_id: ID!) {
+            query Op_792d5816_2($__fusion_1_id: ID!) {
               messageById(id: $__fusion_1_id) {
-                ... @skip(if: $b) {
-                  body
-                }
                 title
               }
             }
           variables: |
             {
-              "b": true,
               "__fusion_1_id": "TWVzc2FnZTo0MTY4NzUxNzE4"
             }
         response:
@@ -208,16 +204,14 @@ operationPlan:
       type: Operation
       schema: B
       operation: |
-        query Op_792d5816_2($b: Boolean!, $__fusion_1_id: ID!) {
+        query Op_792d5816_2($__fusion_1_id: ID!) {
           messageById(id: $__fusion_1_id) {
-            ... @skip(if: $b) {
-              body
-            }
             title
           }
         }
       source: $.messageById
       target: $.message
+      batchingGroupId: 4
       requirements:
         - name: __fusion_1_id
           selectionMap: >-
@@ -225,8 +219,29 @@ operationPlan:
       conditions:
         - variable: $a
           passingValue: false
-      forwardedVariables:
-        - b
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query Op_792d5816_3($__fusion_2_id: ID!) {
+          messageById(id: $__fusion_2_id) {
+            body
+          }
+        }
+      source: $.messageById
+      target: $.message
+      batchingGroupId: 4
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+        - variable: $b
+          passingValue: false
       dependencies:
         - id: 1
   deliveryGroups:
@@ -240,7 +255,7 @@ operationPlan:
   incrementalPlans:
     - deliveryGroupIds:
         - 0
-      parentNodeId: 2
+      parentNodeId: 1
       requirements:
         - name: __fusion_1_id
           selectionMap: >-

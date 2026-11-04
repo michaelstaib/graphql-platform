@@ -35,11 +35,11 @@ nodes:
     operation: |
       query Op_123456789101112_2($a: Boolean!, $__fusion_1_sku: String!) {
         userBySku(sku: $__fusion_1_sku) {
+          total
           ... @include(if: $a) {
             rating
             bonus
           }
-          total
         }
       }
     source: $.userBySku

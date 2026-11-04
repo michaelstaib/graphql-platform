@@ -551,6 +551,7 @@ nodes:
         $__fusion_2_id: ID!
       ) {
         reviewById(id: $__fusion_2_id) {
+          body
           ... @skip(if: $level4) {
             stars
             product {
@@ -560,7 +561,6 @@ nodes:
               }
             }
           }
-          body
         }
       }
     source: $.reviewById
@@ -722,6 +722,7 @@ nodes:
         $__fusion_3_id: ID!
       ) {
         productById(id: $__fusion_3_id) {
+          name
           ... @include(if: $level5) {
             price
             dimension @skip(if: $level6) {
@@ -729,7 +730,6 @@ nodes:
               width
             }
           }
-          name
         }
       }
     source: $.productById
@@ -740,6 +740,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $level3
+        passingValue: true
       - variable: $level4
         passingValue: false
     forwardedVariables:
@@ -757,6 +759,7 @@ nodes:
         $__fusion_17_id: ID!
       ) {
         productById(id: $__fusion_17_id) {
+          name
           ... @skip(if: $level5) {
             price
             dimension @include(if: $level6) {
@@ -764,7 +767,6 @@ nodes:
               width
             }
           }
-          name
         }
       }
     source: $.productById
@@ -794,6 +796,7 @@ nodes:
         $__fusion_7_id: ID!
       ) {
         reviewById(id: $__fusion_7_id) {
+          body
           ... @skip(if: $level3) {
             stars
             product {
@@ -811,7 +814,6 @@ nodes:
               }
             }
           }
-          body
         }
       }
     source: $.reviewById
@@ -841,6 +843,7 @@ nodes:
         $__fusion_11_id: ID!
       ) {
         reviewById(id: $__fusion_11_id) {
+          body
           ... @skip(if: $level3) {
             stars
             product {
@@ -850,7 +853,6 @@ nodes:
               }
             }
           }
-          body
         }
       }
     source: $.reviewById
@@ -878,6 +880,10 @@ nodes:
         $__fusion_8_id: ID!
       ) {
         productById(id: $__fusion_8_id) {
+          name
+          ... @include(if: $level4) {
+            price
+          }
           ... @include(if: $level4) {
             ... @skip(if: $level5) {
               dimension {
@@ -885,9 +891,7 @@ nodes:
                 width
               }
             }
-            price
           }
-          name
         }
       }
     source: $.productById
@@ -898,6 +902,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $level2
+        passingValue: true
       - variable: $level3
         passingValue: false
     forwardedVariables:
@@ -915,6 +921,7 @@ nodes:
         $__fusion_12_id: ID!
       ) {
         productById(id: $__fusion_12_id) {
+          name
           ... @include(if: $level4) {
             price
             dimension @skip(if: $level5) {
@@ -922,7 +929,6 @@ nodes:
               width
             }
           }
-          name
         }
       }
     source: $.productById
@@ -933,6 +939,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $level2
+        passingValue: true
       - variable: $level3
         passingValue: false
     forwardedVariables:

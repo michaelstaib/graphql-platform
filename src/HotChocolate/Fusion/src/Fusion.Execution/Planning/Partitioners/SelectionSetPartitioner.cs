@@ -24,7 +24,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             RootPath = input.SelectionSet.Path,
             SelectionSetIndex = input.SelectionSetIndex,
             PruneUnprovidedAbstractBranches = input.PruneUnprovidedAbstractBranches,
-            TreatSourceExternalAsUnresolvable = input.TreatSourceExternalAsUnresolvable
+            TreatSourceExternalAsUnresolvable = input.TreatSourceExternalAsUnresolvable,
+            MergeConditionedEntries = !input.KeepConditionedEntriesSeparate
         };
 
         var (resolvable, _) =
@@ -98,7 +99,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         var complexType = type as FusionComplexTypeDefinition;
         List<ISelectionNode>? resolvableSelections = null;
         List<ISelectionNode>? unresolvableSelections = null;
-        var unresolvableCountAtEntry = HasInlineFragment(selectionSetNode)
+        var unresolvableCountAtEntry = context.MergeConditionedEntries && HasInlineFragment(selectionSetNode)
             ? CountEntries(context.Unresolvable)
             : -1;
 
@@ -532,9 +533,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
     /// <summary>
     /// Merges the unresolvable entries that one selection set pushed for its own path into a
-    /// single entry. The conditions shared by all merged entries stay on the entry, and each part
-    /// keeps its remaining conditions as <c>@skip</c> and <c>@include</c> fragments around its
-    /// selections.
+    /// single unconditional entry. Each part keeps its conditions as <c>@skip</c> and
+    /// <c>@include</c> fragments around its selections.
     /// </summary>
     private static void MergeEntriesOfSameSelectionSet(
         Context context,
@@ -576,46 +576,71 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return;
         }
 
-        var commonLength = int.MaxValue;
-        ExecutionNodeCondition[]? reference = null;
+        var selectionSetId = context.GetId(selectionSetNode);
+        var positions = new Dictionary<uint, int>();
 
-        foreach (var entry in pushed)
+        for (var i = 0; i < selectionSetNode.Selections.Count; i++)
         {
-            if (!IsMergeable(entry, path, type))
+            if (selectionSetNode.Selections[i] is InlineFragmentNode { TypeCondition: null } fragment)
             {
-                continue;
+                AddFragmentPositions(context, fragment.SelectionSet, i, positions);
             }
-
-            if (reference is null)
-            {
-                reference = entry.Conditions;
-                commonLength = entry.Conditions.Length;
-                continue;
-            }
-
-            commonLength = Math.Min(commonLength, GetCommonPrefixLength(reference, entry.Conditions));
         }
 
-        var selections = new List<ISelectionNode>();
-        var mergedConditions = reference![..commonLength];
+        // The parts keep the order of the document so that the source schema resolves them in
+        // the order the client selected them.
+        var parts = new List<(int Position, ISelectionNode Selection)>();
 
         for (var i = pushedCount - 1; i >= 0; i--)
         {
             var entry = pushed[i];
 
-            if (IsMergeable(entry, path, type))
+            if (!IsMergeable(entry, path, type))
             {
-                var wrapped = WrapInExtraConditions(context, entry.SelectionSet.Node, entry.Conditions, commonLength);
-                selections.AddRange(wrapped.Selections);
+                continue;
             }
+
+            if (entry.SelectionSet.Id == selectionSetId)
+            {
+                foreach (var selection in entry.SelectionSet.Node.Selections)
+                {
+                    var position = IndexOfSelection(selectionSetNode, selection);
+
+                    if (entry.Conditions.Length == 0)
+                    {
+                        parts.Add((position, selection));
+                        continue;
+                    }
+
+                    var single = new SelectionSetNode([selection]);
+                    context.SelectionSetIndexBuilder.Register(single);
+                    parts.AddRange(
+                        WrapInExtraConditions(context, single, entry.Conditions, 0)
+                            .Selections.Select(t => (position, t)));
+                }
+
+                continue;
+            }
+
+            var fragmentPosition = positions.GetValueOrDefault(entry.SelectionSet.Id, int.MaxValue);
+            parts.AddRange(
+                WrapInExtraConditions(context, entry.SelectionSet.Node, entry.Conditions, 0)
+                    .Selections.Select(t => (fragmentPosition, t)));
         }
+
+        var selections = parts
+            .Select((part, index) => (part.Position, Index: index, part.Selection))
+            .OrderBy(t => t.Position)
+            .ThenBy(t => t.Index)
+            .Select(t => t.Selection)
+            .ToList();
 
         var mergedSelectionSet = new SelectionSetNode(selections);
         context.Register(selectionSetNode, mergedSelectionSet);
 
         var merged = new ConditionedSelectionSet(
             new SelectionSet(context.GetId(selectionSetNode), mergedSelectionSet, type, path),
-            mergedConditions);
+            []);
 
         // The merged entry takes the place of the oldest merged entry.
         var mergedPlaced = false;
@@ -640,21 +665,54 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 && ReferenceEquals(entry.SelectionSet.Type, type);
     }
 
-    private static int GetCommonPrefixLength(
-        ExecutionNodeCondition[] left,
-        ExecutionNodeCondition[] right)
+    private static void AddFragmentPositions(
+        Context context,
+        SelectionSetNode selectionSet,
+        int position,
+        Dictionary<uint, int> positions)
     {
-        var length = Math.Min(left.Length, right.Length);
-
-        for (var i = 0; i < length; i++)
+        if (context.SelectionSetIndex.IsRegistered(selectionSet))
         {
-            if (!left[i].Equals(right[i]))
+            positions[context.GetId(selectionSet)] = position;
+        }
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is InlineFragmentNode { TypeCondition: null } fragment)
+            {
+                AddFragmentPositions(context, fragment.SelectionSet, position, positions);
+            }
+        }
+    }
+
+    private static int IndexOfSelection(SelectionSetNode selectionSet, ISelectionNode selection)
+    {
+        for (var i = 0; i < selectionSet.Selections.Count; i++)
+        {
+            if (ReferenceEquals(selectionSet.Selections[i], selection))
             {
                 return i;
             }
         }
 
-        return length;
+        if (selection is FieldNode field)
+        {
+            var responseName = field.Alias?.Value ?? field.Name.Value;
+
+            for (var i = 0; i < selectionSet.Selections.Count; i++)
+            {
+                if (selectionSet.Selections[i] is FieldNode candidate
+                    && string.Equals(
+                        candidate.Alias?.Value ?? candidate.Name.Value,
+                        responseName,
+                        StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+        }
+
+        return int.MaxValue;
     }
 
     private (FieldNode?, FieldNode?) RewriteFieldNode(
@@ -1444,6 +1502,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         public bool PruneUnprovidedAbstractBranches { get; init; }
 
         public bool TreatSourceExternalAsUnresolvable { get; init; }
+
+        public bool MergeConditionedEntries { get; init; }
 
         [field: AllowNull, MaybeNull]
         public SelectionSetIndexBuilder SelectionSetIndexBuilder

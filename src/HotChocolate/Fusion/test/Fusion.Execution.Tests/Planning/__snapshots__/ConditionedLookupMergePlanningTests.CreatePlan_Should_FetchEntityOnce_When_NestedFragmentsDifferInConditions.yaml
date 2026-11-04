@@ -52,7 +52,7 @@ nodes:
       - a
       - b
     dependencies:
-      - id: 4
+      - id: 6
   - id: 3
     type: Operation
     schema: e
@@ -89,9 +89,34 @@ nodes:
       }
     source: $.userById
     target: $.user
+    batchingGroupId: 6
     requirements:
       - name: __fusion_3_id
         selectionMap: >-
           id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        userById(id: $__fusion_4_id) {
+          sku
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 6
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: false
     dependencies:
       - id: 1

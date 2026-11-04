@@ -159,6 +159,12 @@ public sealed partial class OperationPlanner
                 _ => throw new ArgumentOutOfRangeException()
             };
 
+            // The defer routing below relies on the shape of the steps of the main operation.
+            if (deferSplit.HasValue)
+            {
+                node = node with { MergeConditionedLookups = false };
+            }
+
             var internalOperationDefinition = mainOperationDefinition;
             ImmutableList<PlanStep> planSteps = [];
 
@@ -1006,6 +1012,7 @@ public sealed partial class OperationPlanner
     {
         current = InlineLookupRequirements(
             workItem.SelectionSet,
+            GetConditionedServedSelections(workItem, lookup, current),
             current,
             lookup,
             workItem.EstimatedDepth,
@@ -1013,6 +1020,7 @@ public sealed partial class OperationPlanner
             workItem.Conditions,
             workItem.AllowSourceSchemaReentry,
             workItem.SourceSchemaNodePolicy,
+            workItem.RequireImpliedSupplierConditions,
             consumerStep: null,
             out var unresolvedRequirements);
 
@@ -1058,6 +1066,7 @@ public sealed partial class OperationPlanner
             SchemaName = current.SchemaName,
             SelectionSet = workItem.SelectionSet,
             SelectionSetIndex = index,
+            KeepConditionedEntriesSeparate = !current.MergeConditionedLookups,
             PruneUnprovidedAbstractBranches = isEventStreamRoot,
             ProvidedSelectionSet = isEventStreamRoot
                 ? CreateEventStreamProvidedSelectionSet(
@@ -1204,7 +1213,8 @@ public sealed partial class OperationPlanner
             ExcessFanout = costState.ExcessFanout,
             OpsPerLevel = costState.OpsPerLevel,
             OperationStepDepths = costState.StepDepths,
-            EventStreamDirective = current.EventStreamDirective
+            EventStreamDirective = current.EventStreamDirective,
+            MergeConditionedLookups = current.MergeConditionedLookups
         };
 
         possiblePlans.EnqueueBranches(next);
@@ -1215,6 +1225,7 @@ public sealed partial class OperationPlanner
 
     private PlanNode InlineLookupRequirements(
         SelectionSet workItemSelectionSet,
+        SelectionSetNode? servedSelections,
         PlanNode current,
         Lookup lookup,
         int lookupStepDepth,
@@ -1222,6 +1233,7 @@ public sealed partial class OperationPlanner
         ExecutionNodeCondition[]? conditions,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy,
+        bool requireImpliedSupplierConditions,
         OperationPlanStep? consumerStep,
         out SelectionSetNode? unresolvedRequirements)
     {
@@ -1282,6 +1294,13 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            // A step that runs under conditions the conditioned lookup does not imply cannot
+            // provide its key.
+            if (requireImpliedSupplierConditions && !AreImpliedBy(step.Conditions, conditions))
+            {
+                continue;
+            }
+
             if (!processed.Add(schemaName)
                 || (!allowSourceSchemaReentry
                     && lookup.SchemaName.Equals(schemaName)
@@ -1312,6 +1331,7 @@ public sealed partial class OperationPlanner
                 SchemaName = schemaName,
                 SelectionSet = workItemSelectionSet with { Node = selectionSet },
                 SelectionSetIndex = index,
+                KeepConditionedEntriesSeparate = !current.MergeConditionedLookups,
                 TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null,
                 EntryKeyCoverage =
                     step.Lookup is not null && workItemSelectionSet.Id == step.RootSelectionSetId
@@ -1392,6 +1412,7 @@ public sealed partial class OperationPlanner
                 workItemSelectionSet.Id,
                 workItemSelectionSet.Path) is { } ancestorMatch
             && (consumerStep is null || !ancestorMatch.Step.DependsOn(consumerStep, steps))
+            && (!requireImpliedSupplierConditions || AreImpliedBy(ancestorMatch.Step.Conditions, conditions))
             && processed.Add(ancestorMatch.Step.SchemaName!)
             && (allowSourceSchemaReentry
                 || !lookup.SchemaName.Equals(ancestorMatch.Step.SchemaName)
@@ -1443,19 +1464,30 @@ public sealed partial class OperationPlanner
         // crosses an entity boundary resolves via that entity's key lookup.
         if (selectionSet is not null)
         {
-            backlog = PushRequirementLeftover(
-                backlog,
-                index,
-                selectionSet,
-                workItemSelectionSet.Id,
-                workItemSelectionSet.Type,
-                workItemSelectionSet.Path,
-                lookup.SchemaName,
-                ImmutableHashSet<int>.Empty.Add(lookupStepId),
-                lookupStepDepth,
-                conditions ?? [],
-                allowSourceSchemaReentry,
-                sourceSchemaNodePolicy);
+            // A lookup that serves selections under different condition sets needs its key
+            // whenever one of the sets holds, so the key is resolved once per condition set.
+            var leftoverConditions =
+                servedSelections is null
+                    ? null
+                    : GetContentConditions(servedSelections);
+
+            foreach (var leftoverCondition in leftoverConditions ?? [conditions ?? []])
+            {
+                backlog = PushRequirementLeftover(
+                    backlog,
+                    index,
+                    selectionSet,
+                    workItemSelectionSet.Id,
+                    workItemSelectionSet.Type,
+                    workItemSelectionSet.Path,
+                    lookup.SchemaName,
+                    ImmutableHashSet<int>.Empty.Add(lookupStepId),
+                    lookupStepDepth,
+                    leftoverCondition,
+                    allowSourceSchemaReentry,
+                    sourceSchemaNodePolicy,
+                    requireImpliedSupplierConditions || leftoverConditions is not null);
+            }
         }
 
         var remainingCost =
@@ -1770,7 +1802,8 @@ public sealed partial class OperationPlanner
             ExcessFanout = current.ExcessFanout,
             OpsPerLevel = current.OpsPerLevel,
             OperationStepDepths = current.OperationStepDepths,
-            EventStreamDirective = current.EventStreamDirective
+            EventStreamDirective = current.EventStreamDirective,
+            MergeConditionedLookups = current.MergeConditionedLookups
         };
 
         possiblePlans.EnqueueBranches(next);
@@ -1813,6 +1846,7 @@ public sealed partial class OperationPlanner
                 workItem.Selection.Path);
             current = InlineLookupRequirements(
                 selectionSetStub,
+                servedSelections: null,
                 current,
                 lookup,
                 workItem.EstimatedDepth,
@@ -1820,6 +1854,7 @@ public sealed partial class OperationPlanner
                 workItem.Conditions,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy,
+                requireImpliedSupplierConditions: false,
                 currentStep,
                 out _);
             backlog = current.Backlog;
@@ -1884,7 +1919,8 @@ public sealed partial class OperationPlanner
                 stepDepth,
                 workItem.Conditions,
                 allowSourceSchemaReentry: false,
-                workItem.SourceSchemaNodePolicy);
+                workItem.SourceSchemaNodePolicy,
+                requireImpliedSupplierConditions: false);
         }
 
         var requirements = mergeWithExistingStep
@@ -2022,7 +2058,8 @@ public sealed partial class OperationPlanner
                 ExcessFanout = current.ExcessFanout,
                 OpsPerLevel = current.OpsPerLevel,
                 OperationStepDepths = current.OperationStepDepths,
-                EventStreamDirective = current.EventStreamDirective
+                EventStreamDirective = current.EventStreamDirective,
+                MergeConditionedLookups = current.MergeConditionedLookups
             };
 
             possiblePlans.EnqueueBranches(mergeNext);
@@ -2105,7 +2142,8 @@ public sealed partial class OperationPlanner
             ExcessFanout = costState.ExcessFanout,
             OpsPerLevel = costState.OpsPerLevel,
             OperationStepDepths = costState.StepDepths,
-            EventStreamDirective = current.EventStreamDirective
+            EventStreamDirective = current.EventStreamDirective,
+            MergeConditionedLookups = current.MergeConditionedLookups
         };
 
         possiblePlans.EnqueueBranches(next);
@@ -2166,6 +2204,26 @@ public sealed partial class OperationPlanner
         return false;
     }
 
+    private static bool AreImpliedBy(
+        ExecutionNodeCondition[] conditions,
+        ExecutionNodeCondition[]? impliedBy)
+    {
+        if (impliedBy is null || impliedBy.Length == 0)
+        {
+            return true;
+        }
+
+        foreach (var condition in conditions)
+        {
+            if (!impliedBy.Contains(condition))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool ConditionsEqual(
         ExecutionNodeCondition[] left,
         ExecutionNodeCondition[] right)
@@ -2202,6 +2260,7 @@ public sealed partial class OperationPlanner
             SchemaName = current.SchemaName,
             SelectionSet = workItem.SelectionSet,
             SelectionSetIndex = index,
+            KeepConditionedEntriesSeparate = !current.MergeConditionedLookups,
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
             EntryKeyCoverage = lookup.Requirements
         };
@@ -2340,7 +2399,8 @@ public sealed partial class OperationPlanner
             ExcessFanout = costState.ExcessFanout,
             OpsPerLevel = costState.OpsPerLevel,
             OperationStepDepths = costState.StepDepths,
-            EventStreamDirective = current.EventStreamDirective
+            EventStreamDirective = current.EventStreamDirective,
+            MergeConditionedLookups = current.MergeConditionedLookups
         };
 
         possiblePlans.EnqueueBranches(next);
@@ -2555,7 +2615,8 @@ public sealed partial class OperationPlanner
             ExcessFanout = costState.ExcessFanout,
             OpsPerLevel = costState.OpsPerLevel,
             OperationStepDepths = costState.StepDepths,
-            EventStreamDirective = current.EventStreamDirective
+            EventStreamDirective = current.EventStreamDirective,
+            MergeConditionedLookups = current.MergeConditionedLookups
         };
 
         possiblePlans.EnqueueBranches(next);
@@ -2669,6 +2730,7 @@ public sealed partial class OperationPlanner
             SchemaName = current.SchemaName,
             SelectionSet = selectionSet,
             SelectionSetIndex = index,
+            KeepConditionedEntriesSeparate = !current.MergeConditionedLookups,
             TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null
         };
 
@@ -2690,6 +2752,129 @@ public sealed partial class OperationPlanner
         return resolvable;
     }
 
+    /// <summary>
+    /// Gets the part of the work item that the schema of the lookup serves when that part sits
+    /// inside conditional fragments, or <see langword="null"/> when the work item has none.
+    /// </summary>
+    private SelectionSetNode? GetConditionedServedSelections(
+        OperationWorkItem workItem,
+        Lookup lookup,
+        PlanNode current)
+    {
+        if (!HasConditionedFragment(workItem.SelectionSet.Node))
+        {
+            return null;
+        }
+
+        var input = new SelectionSetPartitionerInput
+        {
+            SchemaName = current.SchemaName,
+            SelectionSet = workItem.SelectionSet,
+            SelectionSetIndex = current.SelectionSetIndex,
+            KeepConditionedEntriesSeparate = !current.MergeConditionedLookups,
+            TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
+            EntryKeyCoverage = lookup.Requirements
+        };
+
+        return _partitioner.Partition(input).Resolvable;
+
+        static bool HasConditionedFragment(SelectionSetNode selectionSet)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                if (selection is InlineFragmentNode { TypeCondition: null } fragment
+                    && (fragment.Directives.Count > 0 || HasConditionedFragment(fragment.SelectionSet)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets the distinct condition sets under which <paramref name="content"/> selects anything,
+    /// or <see langword="null"/> when part of the content is not conditional.
+    /// </summary>
+    private static List<ExecutionNodeCondition[]>? GetContentConditions(SelectionSetNode content)
+    {
+        var groups = new List<DirectiveNode[]>();
+
+        if (!TryCollectContentConditions(content, [], groups) || groups.Count == 0)
+        {
+            return null;
+        }
+
+        var result = new List<ExecutionNodeCondition[]>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var group in groups)
+        {
+            if (!seen.Add(string.Join(' ', group.Select(t => t.ToString()))))
+            {
+                continue;
+            }
+
+            result.Add([.. ExtractConditions(group)!]);
+        }
+
+        return result;
+    }
+
+    private static bool TryCollectContentConditions(
+        SelectionSetNode selectionSet,
+        ImmutableArray<DirectiveNode> conditions,
+        List<DirectiveNode[]> groups)
+    {
+        var hasContent = false;
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is not InlineFragmentNode { TypeCondition: null } fragment)
+            {
+                hasContent = true;
+                continue;
+            }
+
+            var nested = conditions;
+
+            foreach (var directive in fragment.Directives)
+            {
+                if (!IsVariableCondition(directive))
+                {
+                    return false;
+                }
+
+                nested = nested.Add(directive);
+            }
+
+            if (!TryCollectContentConditions(fragment.SelectionSet, nested, groups))
+            {
+                return false;
+            }
+        }
+
+        if (!hasContent)
+        {
+            return true;
+        }
+
+        if (conditions.IsEmpty)
+        {
+            return false;
+        }
+
+        groups.Add([.. conditions]);
+        return true;
+
+        static bool IsVariableCondition(DirectiveNode directive)
+            => (directive.Name.Value.Equals("skip", StringComparison.Ordinal)
+                    || directive.Name.Value.Equals("include", StringComparison.Ordinal))
+                && directive.Arguments.Count > 0
+                && directive.Arguments[0].Value is VariableNode;
+    }
+
     // A leftover requirement selection set could not be inlined into any existing plan step.
     // Direct fields of the requiring entity are pushed as a lookup rooted at the entity itself.
     // A nested object or list field is instead re-rooted at the nested entity type (its own path
@@ -2709,7 +2894,8 @@ public sealed partial class OperationPlanner
         int parentDepth,
         ExecutionNodeCondition[] conditions,
         bool allowSourceSchemaReentry,
-        SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy)
+        SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy,
+        bool requireImpliedSupplierConditions)
     {
         var complexType = entityType as FusionComplexTypeDefinition;
         List<ISelectionNode>? directSelections = null;
@@ -2755,6 +2941,7 @@ public sealed partial class OperationPlanner
                         ParentDepth = parentDepth,
                         Conditions = conditions,
                         AllowSourceSchemaReentry = allowSourceSchemaReentry,
+                        RequireImpliedSupplierConditions = requireImpliedSupplierConditions,
                         SourceSchemaNodePolicy = descendantPolicy
                     });
                 continue;
@@ -2781,6 +2968,7 @@ public sealed partial class OperationPlanner
                     ParentDepth = parentDepth,
                     Conditions = conditions,
                     AllowSourceSchemaReentry = allowSourceSchemaReentry,
+                    RequireImpliedSupplierConditions = requireImpliedSupplierConditions,
                     SourceSchemaNodePolicy = descendantPolicy
                 });
         }
