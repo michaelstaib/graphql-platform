@@ -89,7 +89,7 @@ public sealed class ConditionedLookupMergeTests : FusionTestBase
 
         // assert
         Assert.Equal(expected.ToJsonString(), result.Data.ToJsonString());
-        Assert.InRange(result.RequestCount("B"), a || b ? 1 : 0, 1);
+        Assert.Equal(RequestsToB(topology, a, b), result.RequestCount("B"));
     }
 
     [Theory]
@@ -143,6 +143,9 @@ public sealed class ConditionedLookupMergeTests : FusionTestBase
         Assert.Equal(expected.ToJsonString(), result.Data.ToJsonString());
         Assert.Equal(1, result.RequestCount("B"));
     }
+
+    private static int RequestsToB(Topology topology, bool a, bool b)
+        => topology is Topology.DirectKey || a || b ? 1 : 0;
 
     private static async Task<JsonNode> ExpectedNestedFragmentsAsync(
         Gateway gateway,

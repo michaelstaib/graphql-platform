@@ -159,7 +159,6 @@ public sealed partial class OperationPlanner
                 _ => throw new ArgumentOutOfRangeException()
             };
 
-            // The defer routing below relies on the shape of the steps of the main operation.
             if (deferSplit.HasValue)
             {
                 node = node with { MergeConditionedLookups = false };
@@ -1464,8 +1463,6 @@ public sealed partial class OperationPlanner
         // crosses an entity boundary resolves via that entity's key lookup.
         if (selectionSet is not null)
         {
-            // A lookup that serves selections under different condition sets needs its key
-            // whenever one of the sets holds, so the key is resolved once per condition set.
             var leftoverConditions =
                 servedSelections is null
                     ? null
@@ -1483,7 +1480,7 @@ public sealed partial class OperationPlanner
                     lookup.SchemaName,
                     ImmutableHashSet<int>.Empty.Add(lookupStepId),
                     lookupStepDepth,
-                    leftoverCondition,
+                    PrefixConditions(conditions, leftoverCondition),
                     allowSourceSchemaReentry,
                     sourceSchemaNodePolicy,
                     requireImpliedSupplierConditions || leftoverConditions is not null);
@@ -2204,13 +2201,35 @@ public sealed partial class OperationPlanner
         return false;
     }
 
+    private static ExecutionNodeCondition[] PrefixConditions(
+        ExecutionNodeCondition[]? prefix,
+        ExecutionNodeCondition[] conditions)
+    {
+        if (prefix is null || prefix.Length == 0)
+        {
+            return conditions;
+        }
+
+        var result = new List<ExecutionNodeCondition>(prefix);
+
+        foreach (var condition in conditions)
+        {
+            if (!result.Contains(condition))
+            {
+                result.Add(condition);
+            }
+        }
+
+        return [.. result];
+    }
+
     private static bool AreImpliedBy(
         ExecutionNodeCondition[] conditions,
         ExecutionNodeCondition[]? impliedBy)
     {
         if (impliedBy is null || impliedBy.Length == 0)
         {
-            return true;
+            return conditions.Length == 0;
         }
 
         foreach (var condition in conditions)
