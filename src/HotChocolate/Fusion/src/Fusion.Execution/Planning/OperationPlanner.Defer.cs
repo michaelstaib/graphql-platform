@@ -76,7 +76,8 @@ public sealed partial class OperationPlanner
                             descriptor.Operation,
                             descriptor.Path,
                             out _,
-                            out var anchorType)
+                            out var anchorType,
+                            out _)
                                 ? anchorType.Name
                                 : _schema.GetOperationType(descriptor.Operation.Operation).Name;
 
@@ -176,6 +177,7 @@ public sealed partial class OperationPlanner
                 descriptor.Operation,
                 descriptor.Path,
                 out var anchorSelectionSet,
+                out _,
                 out _)
             && ContainsSelectedField(anchorSelectionSet);
     }
@@ -350,7 +352,8 @@ public sealed partial class OperationPlanner
                 deferredOperation,
                 descriptor.Path,
                 out var anchorSelectionSet,
-                out var anchorType))
+                out var anchorType,
+                out _))
             {
                 throw new InvalidOperationException(
                     $"Unable to locate the defer anchor selection set at path '{descriptor.Path}' "
@@ -476,18 +479,6 @@ public sealed partial class OperationPlanner
     /// to find the anchor selection set for a non-root-anchored incremental plan, whose
     /// operation is a full path replica from <c>Query</c> down to the deferred fields.
     /// </summary>
-    private bool TryLocateIncrementalPlanAnchor(
-        OperationDefinitionNode operation,
-        SelectionPath path,
-        out SelectionSetNode anchorSelectionSet,
-        out ITypeDefinition anchorType)
-        => TryLocateIncrementalPlanAnchor(
-            operation,
-            path,
-            out anchorSelectionSet,
-            out anchorType,
-            out _);
-
     private bool TryLocateIncrementalPlanAnchor(
         OperationDefinitionNode operation,
         SelectionPath path,
@@ -964,6 +955,7 @@ public sealed partial class OperationPlanner
             descriptor.Path,
             onlyStep.Target.Length,
             out var deferredFieldsSelectionSet,
+            out _,
             out _))
         {
             return false;
@@ -980,6 +972,7 @@ public sealed partial class OperationPlanner
             descriptor.Path,
             parentStep.Target.Length,
             out var parentTargetSelectionSet,
+            out _,
             out _))
         {
             return false;
@@ -1024,7 +1017,12 @@ public sealed partial class OperationPlanner
                 return false;
             }
 
-            if (!TryLocateIncrementalPlanAnchor(descriptor.Operation, descriptor.Path, out _, out var anchorType))
+            if (!TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out _,
+                out var anchorType,
+                out _))
             {
                 return false;
             }
@@ -2097,32 +2095,13 @@ public sealed partial class OperationPlanner
             path,
             startIndex: parentStep.Target.Length,
             out targetSelectionSet,
-            out targetType);
-
-    /// <summary>
-    /// Walks <paramref name="startSet"/> from <paramref name="path"/>'s <paramref name="startIndex"/>
-    /// segment onward, following fields and inline fragments, to locate the selection set at
-    /// <paramref name="path"/> and resolve its GraphQL type.
-    /// </summary>
-    private bool TryLocateSelectionSetAtPath(
-        SelectionSetNode startSet,
-        ITypeDefinition startType,
-        SelectionPath path,
-        int startIndex,
-        out SelectionSetNode targetSelectionSet,
-        out ITypeDefinition targetType)
-        => TryLocateSelectionSetAtPath(
-            startSet,
-            startType,
-            path,
-            startIndex,
-            out targetSelectionSet,
             out targetType,
             out _);
 
     /// <summary>
-    /// Walks <paramref name="startSet"/> like the overload without
-    /// <paramref name="lastListSegmentIndex"/> and additionally reports the index of the last
+    /// Walks <paramref name="startSet"/> from <paramref name="path"/>'s <paramref name="startIndex"/>
+    /// segment onward, following fields and inline fragments, to locate the selection set at
+    /// <paramref name="path"/> and resolve its GraphQL type. Also reports the index of the last
     /// segment of <paramref name="path"/> that selects a list typed field, or -1 when there is none.
     /// </summary>
     private bool TryLocateSelectionSetAtPath(

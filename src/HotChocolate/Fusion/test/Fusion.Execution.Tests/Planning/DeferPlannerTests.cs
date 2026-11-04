@@ -3368,7 +3368,7 @@ public class DeferPlannerTests : FusionTestBase
         // assert
         error.Message.MatchInlineSnapshot(
             """
-            The deferred incremental plan at path '$.results' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'a'. Reason: requirement path lies outside the defer's anchor. The anchor would be read again from '$' and joined to the response by list position.
+            The deferred incremental plan at path '$.results' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'a'. Reason: the union anchor would be read again from '$' above a list and joined to the response by list position.
             """);
     }
 
@@ -3400,7 +3400,7 @@ public class DeferPlannerTests : FusionTestBase
         // assert
         error.Message.MatchInlineSnapshot(
             """
-            The deferred incremental plan at path '$.containers.result' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'a'. Reason: requirement path lies outside the defer's anchor. The anchor would be read again from '$' and joined to the response by list position.
+            The deferred incremental plan at path '$.containers.result' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'a'. Reason: the union anchor would be read again from '$' above a list and joined to the response by list position.
             """);
     }
 
@@ -3432,7 +3432,7 @@ public class DeferPlannerTests : FusionTestBase
         // assert
         error.Message.MatchInlineSnapshot(
             """
-            The deferred incremental plan at path '$.containers.results' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'c'. Reason: requirement path lies outside the defer's anchor. The anchor would be read again from '$.containers' and joined to the response by list position.
+            The deferred incremental plan at path '$.containers.results' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'c'. Reason: the union anchor would be read again from '$.containers' above a list and joined to the response by list position.
             """);
     }
 

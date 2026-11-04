@@ -5493,7 +5493,7 @@ public class DeferTests : FusionTestBase
         var deferredRequest = new OperationRequest(
             """
             {
-                product {
+                a: productById(id: 1) {
                     id
                     ... @defer(label: "outer") {
                         owner {
@@ -5513,13 +5513,47 @@ public class DeferTests : FusionTestBase
                         }
                     }
                 }
+                b: productById(id: 2) {
+                    id
+                    ... @defer(label: "outerB") {
+                        owner {
+                            __typename
+                            ... on User {
+                                name
+                                ... @defer(label: "userB") {
+                                    total
+                                }
+                            }
+                            ... on Team {
+                                title
+                                ... @defer(label: "teamB") {
+                                    size
+                                }
+                            }
+                        }
+                    }
+                }
             }
             """);
 
         var plainRequest = new OperationRequest(
             """
             {
-                product {
+                a: productById(id: 1) {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            name
+                            total
+                        }
+                        ... on Team {
+                            title
+                            size
+                        }
+                    }
+                }
+                b: productById(id: 2) {
                     id
                     owner {
                         __typename
@@ -5556,12 +5590,20 @@ public class DeferTests : FusionTestBase
         deferredData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
             {
-              "product": {
+              "a": {
                 "id": "1",
                 "owner": {
                   "__typename": "User",
                   "name": "User 2",
                   "total": 5000
+                }
+              },
+              "b": {
+                "id": "2",
+                "owner": {
+                  "__typename": "Team",
+                  "title": "Team 3",
+                  "size": 7
                 }
               }
             }
@@ -5594,10 +5636,24 @@ public class DeferTests : FusionTestBase
         var deferredRequest = new OperationRequest(
             """
             {
-                product {
+                a: productById(id: 1) {
                     id
                     owner {
                         ... @defer(label: "owner") {
+                            __typename
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                size
+                            }
+                        }
+                    }
+                }
+                b: productById(id: 2) {
+                    id
+                    owner {
+                        ... @defer(label: "ownerB") {
                             __typename
                             ... on User {
                                 total
@@ -5614,7 +5670,19 @@ public class DeferTests : FusionTestBase
         var plainRequest = new OperationRequest(
             """
             {
-                product {
+                a: productById(id: 1) {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            total
+                        }
+                        ... on Team {
+                            size
+                        }
+                    }
+                }
+                b: productById(id: 2) {
                     id
                     owner {
                         __typename
@@ -5649,11 +5717,18 @@ public class DeferTests : FusionTestBase
         deferredData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
             {
-              "product": {
+              "a": {
                 "id": "1",
                 "owner": {
                   "__typename": "User",
                   "total": 5000
+                }
+              },
+              "b": {
+                "id": "2",
+                "owner": {
+                  "__typename": "Team",
+                  "size": 7
                 }
               }
             }
@@ -5679,7 +5754,8 @@ public class DeferTests : FusionTestBase
         [
             ("A", server1),
             ("B", server2)
-        ]);
+        ],
+        configureGatewayBuilder: builder => builder.ModifyRequestOptions(o => o.IncludeExceptionDetails = true));
 
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
 
@@ -5712,10 +5788,12 @@ public class DeferTests : FusionTestBase
         // assert
         var body = await result.HttpResponseMessage.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);
-        body.MatchInlineSnapshot(
+        var error = JsonNode.Parse(body)!["errors"]![0]!;
+        error["extensions"]!["exception"]!["message"]!.GetValue<string>().MatchInlineSnapshot(
             """
-            {"errors":[{"message":"Unexpected Execution Error"}]}
+            The deferred incremental plan at path '$.products.owner' could not be resolved from the parent plan. Defer anchor type: union 'Owner'. Target schema: 'A'. Reason: the union anchor would be read again from '$' above a list and joined to the response by list position.
             """);
+        Assert.Empty(gateway.Interactions);
     }
 
     private static class UnionOwnerSourceA
@@ -5723,6 +5801,8 @@ public class DeferTests : FusionTestBase
         public class Query
         {
             public Product GetProduct() => new(1);
+
+            public Product GetProductById(int id) => new(id);
 
             public Product[] GetProducts() => [new(1), new(2)];
 

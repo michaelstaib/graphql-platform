@@ -207,6 +207,12 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
+        internal static string OperationPlan_UnionAnchoredDeferReadByListPosition {
+            get {
+                return ResourceManager.GetString("OperationPlan_UnionAnchoredDeferReadByListPosition", resourceCulture);
+            }
+        }
+
         internal static string OperationBatchExecutionNode_MissingBatchResult {
             get {
                 return ResourceManager.GetString("OperationBatchExecutionNode_MissingBatchResult", resourceCulture);
