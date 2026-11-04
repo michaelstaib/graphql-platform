@@ -1859,9 +1859,12 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
-            var host = !inFragment && node.Arguments.Count == 0 && node.Directives.Count == 0 && node.SelectionSet is null
-                ? hosts.Find(candidate => CanHostField(candidate, node, conditions))
-                : null;
+            var host = !inFragment
+                && node.Arguments.Count == 0
+                && node.SelectionSet is null
+                && node.Directives.All(IsConditionDirective)
+                    ? hosts.Find(candidate => CanHostField(candidate, node, conditions))
+                    : null;
 
             if (host is null)
             {
@@ -1874,7 +1877,7 @@ public sealed partial class OperationPlanner
                 additions[host.Id] = hostAdditions;
             }
 
-            hostAdditions.Add(node);
+            hostAdditions.Add(node.WithDirectives([]));
         }
 
         if (additions.Count == 0)
@@ -1922,8 +1925,12 @@ public sealed partial class OperationPlanner
         }
     }
 
+    private static bool IsConditionDirective(DirectiveNode directive)
+        => directive.Name.Value.Equals("skip", StringComparison.Ordinal)
+            || directive.Name.Value.Equals("include", StringComparison.Ordinal);
+
     private static bool CanHostField(OperationPlanStep host, FieldNode field, ExecutionNodeCondition[] conditions)
-        => (host.Conditions.Length == 0 || host.Conditions.SequenceEqual(conditions))
+        => host.Conditions.All(conditions.Contains)
             && host.Type is FusionComplexTypeDefinition complexType
             && complexType.Fields.TryGetField(field.Name.Value, allowInaccessibleFields: true, out var schemaField)
             && schemaField.Sources.TryGetMember(host.SchemaName!, out var source)

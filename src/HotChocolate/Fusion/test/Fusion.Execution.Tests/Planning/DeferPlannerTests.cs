@@ -3024,6 +3024,32 @@ public class DeferPlannerTests : FusionTestBase
         Assert.Equal(["id: name", "rank", "total"], GetIncrementalEntityFields(plan));
     }
 
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_KeyIsConditionedBesideAConditionedGroup()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                user {
+                    ... @defer @include(if: $a) {
+                        id @include(if: $b)
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["id", "name", "total"], GetIncrementalEntityFields(plan));
+    }
+
     private static string[] GetIncrementalEntityFields(OperationPlan plan)
     {
         var fields = new List<string>();

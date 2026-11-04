@@ -1,0 +1,112 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        user {
+          id @fusion__requirement
+          ... @include(if: $a) {
+            __typename @fusion__empty
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!) {
+        user {
+          ... @include(if: $a) {
+            __typename
+          }
+          id
+        }
+      }
+    forwardedVariables:
+      - a
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_defer_1($b: Boolean!, $__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          id @include(if: $b)
+          id
+          code
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - b
+  - id: 3
+    type: Operation
+    schema: d
+    operation: |
+      query Op_defer_4($__fusion_4_code: String!) {
+        userByCode(code: $__fusion_4_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.user
+    requirements:
+      - name: __fusion_4_code
+        selectionMap: >-
+          code
+deliveryGroups:
+  - id: 0
+    path: $.user
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 2
+    requirements:
+      - name: __fusion_2_sku
+        selectionMap: >-
+          sku
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_2($__fusion_2_sku: String!) {
+            userBySku(sku: $__fusion_2_sku) {
+              total
+            }
+          }
+        source: $.userBySku
+        target: $.user
+        requirements:
+          - name: __fusion_2_sku
+            selectionMap: >-
+              sku
+        dependencies:
+          - parentNodeId: 3
+      - id: 2
+        type: Operation
+        schema: e
+        operation: |
+          query Op_defer_3($__fusion_3_id: ID!) {
+            userById(id: $__fusion_3_id) {
+              name
+              id
+            }
+          }
+        source: $.userById
+        target: $.user
+        requirements:
+          - name: __fusion_3_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
