@@ -2920,6 +2920,136 @@ public class DeferPlannerTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_GroupNeedsTwoLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_ListGroupNeedsTwoLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                users {
+                    ... @defer {
+                        id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_SelectAliasedClientKey_When_GroupNeedsTwoLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        uid: id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("uid: id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_NotAddKeyField_When_ClientAliasesAnotherFieldToTheKeyName()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("DirectKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id: name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["id: name", "rank", "total"], GetIncrementalEntityFields(plan));
+    }
+
+    private static string[] GetIncrementalEntityFields(OperationPlan plan)
+    {
+        var fields = new List<string>();
+
+        foreach (var incrementalPlan in plan.IncrementalPlans)
+        {
+            foreach (var node in incrementalPlan.AllNodes.OfType<OperationExecutionNode>())
+            {
+                var document = Utf8GraphQLParser.Parse(node.Operation.Value.Span);
+                var operation = document.Definitions.OfType<OperationDefinitionNode>().Single();
+                var lookup = (FieldNode)operation.SelectionSet.Selections[0];
+
+                foreach (var field in lookup.SelectionSet!.Selections.OfType<FieldNode>())
+                {
+                    fields.Add(
+                        field.Alias is { } alias
+                            ? $"{alias.Value}: {field.Name.Value}"
+                            : field.Name.Value);
+                }
+            }
+        }
+
+        fields.Sort(StringComparer.Ordinal);
+        return fields.ToArray();
+    }
+
     private static FusionSchemaDefinition ComposeClientKeySchema(string topology)
     {
         const string root =

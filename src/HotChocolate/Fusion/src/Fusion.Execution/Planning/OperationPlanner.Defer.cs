@@ -782,13 +782,17 @@ public sealed partial class OperationPlanner
             return incrementalPlanSteps;
         }
 
+        var unroutedIncrementalPlanSteps = incrementalPlanSteps;
+        var clientSelectedFields = new Lazy<HashSet<ClientSelectedField>>(
+            () => CollectClientSelectedFields(descriptor));
+
         // Sever the in-plan edges that were rerouted to the parent scope and
         // drop the provider's field once nothing else consumes it.
         incrementalPlanSteps = RemoveReroutedInPlanEdges(
             incrementalPlanSteps,
             rerouted,
             descriptor.Path,
-            CollectClientSelectedLeafFieldNames(descriptor));
+            clientSelectedFields);
 
         // Drop every producer step (its data now comes from the enclosing scope)
         // along with any incremental-plan step that got promoted wholesale into
@@ -798,6 +802,19 @@ public sealed partial class OperationPlanner
         foreach (var producer in producers)
         {
             droppedStepIds.Add(producer.Id);
+        }
+
+        // A dropped step that selects a field the client asked for at the anchor takes it
+        // along. A remaining step has to select it instead, otherwise the plan stays
+        // self-contained.
+        if (!TryKeepClientSelectedFields(
+            descriptor.Path,
+            incrementalPlanSteps,
+            droppedStepIds,
+            clientSelectedFields,
+            out incrementalPlanSteps))
+        {
+            return unroutedIncrementalPlanSteps;
         }
 
         var rewrittenIncrementalPlan = RewriteIncrementalPlanAfterDeferRequirementRouting(
@@ -1727,40 +1744,190 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Collects the response names of the leaf fields the client selects directly at the anchor
-    /// of <paramref name="descriptor"/>, ignoring internal requirement selections.
+    /// A field the client selects at the anchor of an incremental plan, identified by its
+    /// response name together with the name of the schema field it selects.
     /// </summary>
-    private HashSet<string> CollectClientSelectedLeafFieldNames(IncrementalPlanDescriptor descriptor)
+    private readonly record struct ClientSelectedField(string ResponseName, string FieldName);
+
+    /// <summary>
+    /// Collects the fields the client selects directly at the anchor of
+    /// <paramref name="descriptor"/>, ignoring internal requirement selections.
+    /// </summary>
+    private HashSet<ClientSelectedField> CollectClientSelectedFields(IncrementalPlanDescriptor descriptor)
     {
-        var names = new HashSet<string>(StringComparer.Ordinal);
+        var fields = new HashSet<ClientSelectedField>();
 
         if (TryLocateIncrementalPlanAnchor(descriptor.Operation, descriptor.Path, out var anchorSelectionSet, out _))
         {
-            CollectClientSelectedLeafFieldNames(anchorSelectionSet, names);
+            CollectClientSelectedFields(anchorSelectionSet, fields);
         }
 
-        return names;
+        return fields;
     }
 
-    private static void CollectClientSelectedLeafFieldNames(SelectionSetNode selectionSet, HashSet<string> names)
+    private static void CollectClientSelectedFields(
+        SelectionSetNode selectionSet,
+        HashSet<ClientSelectedField> fields)
     {
         foreach (var selection in selectionSet.Selections)
         {
             switch (selection)
             {
-                case FieldNode { SelectionSet: null } field
+                case FieldNode field
                     when !field.Name.Value.Equals("__typename", StringComparison.Ordinal)
                         && !field.Directives.Any(
                             t => t.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)):
-                    names.Add(field.Alias?.Value ?? field.Name.Value);
+                    fields.Add(ToClientSelectedField(field));
                     break;
 
                 case InlineFragmentNode fragment:
-                    CollectClientSelectedLeafFieldNames(fragment.SelectionSet, names);
+                    CollectClientSelectedFields(fragment.SelectionSet, fields);
                     break;
             }
         }
     }
+
+    private static ClientSelectedField ToClientSelectedField(FieldNode field)
+        => new(field.Alias?.Value ?? field.Name.Value, field.Name.Value);
+
+    /// <summary>
+    /// Makes sure every field the client selects at <paramref name="anchorPath"/> that a
+    /// step in <paramref name="droppedStepIds"/> selects is still selected by a remaining
+    /// step, by adding it to a remaining step of the anchor that can resolve it.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c> when a client field would be lost because no remaining step can resolve it.
+    /// </returns>
+    private bool TryKeepClientSelectedFields(
+        SelectionPath anchorPath,
+        ImmutableList<PlanStep> incrementalPlanSteps,
+        HashSet<int> droppedStepIds,
+        Lazy<HashSet<ClientSelectedField>> clientSelectedFields,
+        out ImmutableList<PlanStep> updatedIncrementalPlanSteps)
+    {
+        updatedIncrementalPlanSteps = incrementalPlanSteps;
+
+        // The fields that dropped steps select at the anchor, keyed the way the client
+        // selects them, together with the step conditions they were selected under.
+        var droppedFields = new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment, ExecutionNodeCondition[] Conditions)>();
+
+        foreach (var step in incrementalPlanSteps)
+        {
+            if (!droppedStepIds.Contains(step.Id)
+                || step is not OperationPlanStep droppedStep
+                || !TryLocateDeferRequirementTarget(droppedStep, anchorPath, out var droppedAnchorSet, out _))
+            {
+                continue;
+            }
+
+            var stepFields = new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment)>();
+            CollectStepFields(droppedAnchorSet, inFragment: false, stepFields);
+
+            foreach (var (key, (node, inFragment)) in stepFields)
+            {
+                droppedFields.TryAdd(key, (node, inFragment, droppedStep.Conditions));
+            }
+        }
+
+        if (droppedFields.Count == 0)
+        {
+            return true;
+        }
+
+        var remainingFields = new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment)>();
+        var hosts = new List<OperationPlanStep>();
+
+        foreach (var step in incrementalPlanSteps)
+        {
+            if (droppedStepIds.Contains(step.Id)
+                || step is not OperationPlanStep { SchemaName: not null } remainingStep
+                || !remainingStep.Target.Equals(anchorPath))
+            {
+                continue;
+            }
+
+            hosts.Add(remainingStep);
+            CollectStepFields(GetStepEntitySelectionSet(remainingStep), inFragment: false, remainingFields);
+        }
+
+        var additions = new Dictionary<int, List<FieldNode>>();
+
+        foreach (var (key, (node, inFragment, conditions)) in droppedFields)
+        {
+            if (remainingFields.ContainsKey(key) || !clientSelectedFields.Value.Contains(key))
+            {
+                continue;
+            }
+
+            var host = !inFragment && node.Arguments.Count == 0 && node.Directives.Count == 0 && node.SelectionSet is null
+                ? hosts.Find(candidate => CanHostField(candidate, node, conditions))
+                : null;
+
+            if (host is null)
+            {
+                return false;
+            }
+
+            if (!additions.TryGetValue(host.Id, out var hostAdditions))
+            {
+                hostAdditions = [];
+                additions[host.Id] = hostAdditions;
+            }
+
+            hostAdditions.Add(node);
+        }
+
+        if (additions.Count == 0)
+        {
+            return true;
+        }
+
+        var updated = ImmutableList.CreateBuilder<PlanStep>();
+
+        foreach (var step in incrementalPlanSteps)
+        {
+            if (step is OperationPlanStep hostStep && additions.TryGetValue(hostStep.Id, out var hostAdditions))
+            {
+                var selections = new List<ISelectionNode>(GetStepEntitySelectionSet(hostStep).Selections);
+                selections.AddRange(hostAdditions);
+                updated.Add(WithEntitySelectionSet(hostStep, new SelectionSetNode(selections)));
+            }
+            else
+            {
+                updated.Add(step);
+            }
+        }
+
+        updatedIncrementalPlanSteps = updated.ToImmutable();
+        return true;
+    }
+
+    private static void CollectStepFields(
+        SelectionSetNode selectionSet,
+        bool inFragment,
+        Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment)> fields)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case FieldNode field:
+                    fields.TryAdd(ToClientSelectedField(field), (field, inFragment));
+                    break;
+
+                case InlineFragmentNode fragment:
+                    CollectStepFields(fragment.SelectionSet, inFragment: true, fields);
+                    break;
+            }
+        }
+    }
+
+    private static bool CanHostField(OperationPlanStep host, FieldNode field, ExecutionNodeCondition[] conditions)
+        => (host.Conditions.Length == 0 || host.Conditions.SequenceEqual(conditions))
+            && host.Type is FusionComplexTypeDefinition complexType
+            && complexType.Fields.TryGetField(field.Name.Value, allowInaccessibleFields: true, out var schemaField)
+            && schemaField.Sources.TryGetMember(host.SchemaName!, out var source)
+            && !source.IsExternal;
 
     /// <summary>
     /// Removes each <paramref name="rerouted"/> provider-to-dependent dependency edge, unless
@@ -1772,7 +1939,7 @@ public sealed partial class OperationPlanner
         ImmutableList<PlanStep> incrementalPlanSteps,
         List<(int ProviderStepId, int DownstreamStepId, string FieldName)> rerouted,
         SelectionPath anchorPath,
-        HashSet<string> clientSelectedFieldNames)
+        Lazy<HashSet<ClientSelectedField>> clientSelectedFields)
     {
         if (rerouted.Count == 0)
         {
@@ -1852,13 +2019,10 @@ public sealed partial class OperationPlanner
 
                 var updatedProviderStep = providerStep with { Dependents = remainingDependents };
 
-                var providerTargetsAnchor = providerStep.Target.Equals(anchorPath);
-
                 foreach (var fieldName in removals.Select(r => r.FieldName).Distinct(StringComparer.Ordinal))
                 {
-                    var isSelectedByClient = providerTargetsAnchor && clientSelectedFieldNames.Contains(fieldName);
-
-                    if (!stillConsumedFieldNames.Contains(fieldName) && !isSelectedByClient)
+                    if (!stillConsumedFieldNames.Contains(fieldName)
+                        && !IsSelectedByClient(updatedProviderStep, fieldName, anchorPath, clientSelectedFields))
                     {
                         updatedProviderStep = RemoveUnconsumedEntityField(updatedProviderStep, fieldName);
                     }
@@ -1873,6 +2037,29 @@ public sealed partial class OperationPlanner
         }
 
         return updated.ToImmutable();
+    }
+
+    private static bool IsSelectedByClient(
+        OperationPlanStep providerStep,
+        string responseName,
+        SelectionPath anchorPath,
+        Lazy<HashSet<ClientSelectedField>> clientSelectedFields)
+    {
+        if (!providerStep.Target.Equals(anchorPath))
+        {
+            return false;
+        }
+
+        foreach (var selection in GetStepEntitySelectionSet(providerStep).Selections)
+        {
+            if (selection is FieldNode field
+                && (field.Alias?.Value ?? field.Name.Value).Equals(responseName, StringComparison.Ordinal))
+            {
+                return clientSelectedFields.Value.Contains(ToClientSelectedField(field));
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
