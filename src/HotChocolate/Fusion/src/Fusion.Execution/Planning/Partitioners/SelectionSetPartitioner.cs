@@ -98,6 +98,9 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         var complexType = type as FusionComplexTypeDefinition;
         List<ISelectionNode>? resolvableSelections = null;
         List<ISelectionNode>? unresolvableSelections = null;
+        var unresolvableCountAtEntry = HasInlineFragment(selectionSetNode)
+            ? CountEntries(context.Unresolvable)
+            : -1;
 
         // When the selection set type is an @interfaceObject stand-in in this schema, values here
         // are opaque: the schema holds no authoritative concrete type. Both __typename and any type
@@ -226,6 +229,11 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             context.Unresolvable = context.Unresolvable.Push(
                 new ConditionedSelectionSet(selectionSet, context.SnapshotConditions()));
             unresolvableSelections = null;
+        }
+
+        if (unresolvableCountAtEntry >= 0)
+        {
+            MergeEntriesOfSameSelectionSet(context, type, selectionSetNode, unresolvableCountAtEntry);
         }
 
         resolvableSelections ??= [.. selectionSetNode.Selections];
@@ -495,6 +503,158 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         }
 
         return selectionSet;
+    }
+
+    private static bool HasInlineFragment(SelectionSetNode selectionSet)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is InlineFragmentNode)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int CountEntries(ImmutableStack<ConditionedSelectionSet> entries)
+    {
+        var count = 0;
+
+        foreach (var _ in entries)
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Merges the unresolvable entries that one selection set pushed for its own path into a
+    /// single entry. The conditions shared by all merged entries stay on the entry, and each part
+    /// keeps its remaining conditions as <c>@skip</c> and <c>@include</c> fragments around its
+    /// selections.
+    /// </summary>
+    private static void MergeEntriesOfSameSelectionSet(
+        Context context,
+        ITypeDefinition type,
+        SelectionSetNode selectionSetNode,
+        int countAtEntry)
+    {
+        var pushedCount = CountEntries(context.Unresolvable) - countAtEntry;
+
+        if (pushedCount < 2)
+        {
+            return;
+        }
+
+        var path = context.BuildPath();
+
+        if (path.IsRoot)
+        {
+            return;
+        }
+
+        // The entries pushed by this selection set, newest first.
+        var pushed = new ConditionedSelectionSet[pushedCount];
+        var remaining = context.Unresolvable;
+        var mergeableCount = 0;
+
+        for (var i = 0; i < pushedCount; i++)
+        {
+            remaining = remaining.Pop(out pushed[i]);
+
+            if (IsMergeable(pushed[i], path, type))
+            {
+                mergeableCount++;
+            }
+        }
+
+        if (mergeableCount < 2)
+        {
+            return;
+        }
+
+        var commonLength = int.MaxValue;
+        ExecutionNodeCondition[]? reference = null;
+
+        foreach (var entry in pushed)
+        {
+            if (!IsMergeable(entry, path, type))
+            {
+                continue;
+            }
+
+            if (reference is null)
+            {
+                reference = entry.Conditions;
+                commonLength = entry.Conditions.Length;
+                continue;
+            }
+
+            commonLength = Math.Min(commonLength, GetCommonPrefixLength(reference, entry.Conditions));
+        }
+
+        var selections = new List<ISelectionNode>();
+        var mergedConditions = reference![..commonLength];
+
+        for (var i = pushedCount - 1; i >= 0; i--)
+        {
+            var entry = pushed[i];
+
+            if (IsMergeable(entry, path, type))
+            {
+                var wrapped = WrapInExtraConditions(context, entry.SelectionSet.Node, entry.Conditions, commonLength);
+                selections.AddRange(wrapped.Selections);
+            }
+        }
+
+        var mergedSelectionSet = new SelectionSetNode(selections);
+        context.Register(selectionSetNode, mergedSelectionSet);
+
+        var merged = new ConditionedSelectionSet(
+            new SelectionSet(context.GetId(selectionSetNode), mergedSelectionSet, type, path),
+            mergedConditions);
+
+        // The merged entry takes the place of the oldest merged entry.
+        var mergedPlaced = false;
+
+        for (var i = pushedCount - 1; i >= 0; i--)
+        {
+            if (!IsMergeable(pushed[i], path, type))
+            {
+                remaining = remaining.Push(pushed[i]);
+            }
+            else if (!mergedPlaced)
+            {
+                remaining = remaining.Push(merged);
+                mergedPlaced = true;
+            }
+        }
+
+        context.Unresolvable = remaining;
+
+        static bool IsMergeable(ConditionedSelectionSet entry, SelectionPath path, ITypeDefinition type)
+            => entry.SelectionSet.Path.Equals(path)
+                && ReferenceEquals(entry.SelectionSet.Type, type);
+    }
+
+    private static int GetCommonPrefixLength(
+        ExecutionNodeCondition[] left,
+        ExecutionNodeCondition[] right)
+    {
+        var length = Math.Min(left.Length, right.Length);
+
+        for (var i = 0; i < length; i++)
+        {
+            if (!left[i].Equals(right[i]))
+            {
+                return i;
+            }
+        }
+
+        return length;
     }
 
     private (FieldNode?, FieldNode?) RewriteFieldNode(
