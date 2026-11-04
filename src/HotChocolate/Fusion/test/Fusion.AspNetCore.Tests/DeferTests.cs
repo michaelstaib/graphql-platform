@@ -5594,7 +5594,7 @@ public class DeferTests : FusionTestBase
         var deferredRequest = new OperationRequest(
             """
             {
-                products {
+                product {
                     id
                     owner {
                         ... @defer(label: "owner") {
@@ -5614,7 +5614,7 @@ public class DeferTests : FusionTestBase
         var plainRequest = new OperationRequest(
             """
             {
-                products {
+                product {
                     id
                     owner {
                         __typename
@@ -5649,23 +5649,72 @@ public class DeferTests : FusionTestBase
         deferredData.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).MatchInlineSnapshot(
             """
             {
-              "products": [
-                {
-                  "id": "1",
-                  "owner": {
-                    "__typename": "User",
-                    "total": 5000
-                  }
-                },
-                {
-                  "id": "2",
-                  "owner": {
-                    "__typename": "Team",
-                    "size": 7
-                  }
+              "product": {
+                "id": "1",
+                "owner": {
+                  "__typename": "User",
+                  "total": 5000
                 }
-              ]
+              }
             }
+            """);
+    }
+
+    [Fact]
+    public async Task Defer_Should_RefuseToPlan_When_DeferIsAnchoredOnUnionTypedFieldUnderList()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<UnionOwnerSourceA.Query>()
+                .AddType<UnionOwnerSourceA.User>()
+                .AddType<UnionOwnerSourceA.Team>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<UnionOwnerSourceB.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+                products {
+                    id
+                    owner {
+                        ... @defer(label: "owner") {
+                            __typename
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                size
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        var body = await result.HttpResponseMessage.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken);
+        body.MatchInlineSnapshot(
+            """
+            {"errors":[{"message":"Unexpected Execution Error"}]}
             """);
     }
 

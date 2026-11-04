@@ -29,6 +29,18 @@ internal static class ThrowHelper
             FusionExecutionResources.OperationPlan_DeferredGroupPlannedToNothing,
             path));
 
+    public static InvalidOperationException UnionAnchoredDeferReadByListPosition(
+        SelectionPath anchorPath,
+        string anchorTypeName,
+        SelectionPath readTarget,
+        string schemaName)
+        => new(
+            $"The deferred incremental plan at path '{anchorPath}' could not be resolved from the parent plan. "
+            + $"Defer anchor type: union '{anchorTypeName}'. "
+            + $"Target schema: '{schemaName}'. "
+            + "Reason: requirement path lies outside the defer's anchor. "
+            + $"The anchor would be read again from '{readTarget}' and joined to the response by list position.");
+
     public static InvalidOperationException DeferredPlanNotFound(SelectionPath path)
         => new($"No plan was found for the @defer fragment at path '{path}'.");
 

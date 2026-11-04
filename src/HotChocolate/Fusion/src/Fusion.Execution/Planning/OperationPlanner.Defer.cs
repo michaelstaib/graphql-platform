@@ -102,6 +102,7 @@ public sealed partial class OperationPlanner
             }
 
             EnsureSelectedFieldsHaveNodes(descriptor, rewrittenIncrementalPlan);
+            EnsureUnionAnchorIsNotReadByListPosition(descriptor, rewrittenIncrementalPlan);
 
             var registeredInternalOp = incrementalPlanResult.InternalOperationDefinition ?? descriptor.Operation;
             contextGraph.RegisterDeferContext(
@@ -126,6 +127,41 @@ public sealed partial class OperationPlanner
         if (incrementalPlanSteps.Count == 0 && SelectsDeferredFields(descriptor))
         {
             throw ThrowHelper.DeferredGroupPlannedToNothing(descriptor.Path);
+        }
+    }
+
+    /// <summary>
+    /// Throws when <paramref name="descriptor"/> is anchored on a union type and a step of its
+    /// incremental plan reads the anchor from a target above a list typed segment of the anchor path.
+    /// </summary>
+    internal void EnsureUnionAnchorIsNotReadByListPosition(
+        IncrementalPlanDescriptor descriptor,
+        ImmutableList<PlanStep> incrementalPlanSteps)
+    {
+        if (descriptor.Path.IsRoot
+            || !TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out _,
+                out var anchorType,
+                out var lastListSegmentIndex)
+            || anchorType.Kind is not TypeKind.Union)
+        {
+            return;
+        }
+
+        foreach (var step in incrementalPlanSteps)
+        {
+            if (step is OperationPlanStep { SchemaName: not null } operationStep
+                && operationStep.Target.IsParentOfOrSame(descriptor.Path)
+                && lastListSegmentIndex >= operationStep.Target.Length)
+            {
+                throw ThrowHelper.UnionAnchoredDeferReadByListPosition(
+                    descriptor.Path,
+                    anchorType.Name,
+                    operationStep.Target,
+                    operationStep.SchemaName);
+            }
         }
     }
 
@@ -445,13 +481,27 @@ public sealed partial class OperationPlanner
         SelectionPath path,
         out SelectionSetNode anchorSelectionSet,
         out ITypeDefinition anchorType)
+        => TryLocateIncrementalPlanAnchor(
+            operation,
+            path,
+            out anchorSelectionSet,
+            out anchorType,
+            out _);
+
+    private bool TryLocateIncrementalPlanAnchor(
+        OperationDefinitionNode operation,
+        SelectionPath path,
+        out SelectionSetNode anchorSelectionSet,
+        out ITypeDefinition anchorType,
+        out int lastListSegmentIndex)
         => TryLocateSelectionSetAtPath(
             operation.SelectionSet,
             _schema.GetOperationType(operation.Operation),
             path,
             startIndex: 0,
             out anchorSelectionSet,
-            out anchorType);
+            out anchorType,
+            out lastListSegmentIndex);
 
     /// <summary>
     /// Determines whether <paramref name="path"/> is exactly the root's own
@@ -2061,9 +2111,32 @@ public sealed partial class OperationPlanner
         int startIndex,
         out SelectionSetNode targetSelectionSet,
         out ITypeDefinition targetType)
+        => TryLocateSelectionSetAtPath(
+            startSet,
+            startType,
+            path,
+            startIndex,
+            out targetSelectionSet,
+            out targetType,
+            out _);
+
+    /// <summary>
+    /// Walks <paramref name="startSet"/> like the overload without
+    /// <paramref name="lastListSegmentIndex"/> and additionally reports the index of the last
+    /// segment of <paramref name="path"/> that selects a list typed field, or -1 when there is none.
+    /// </summary>
+    private bool TryLocateSelectionSetAtPath(
+        SelectionSetNode startSet,
+        ITypeDefinition startType,
+        SelectionPath path,
+        int startIndex,
+        out SelectionSetNode targetSelectionSet,
+        out ITypeDefinition targetType,
+        out int lastListSegmentIndex)
     {
         var currentSet = startSet;
         var currentType = startType;
+        lastListSegmentIndex = -1;
 
         for (var i = startIndex; i < path.Length; i++)
         {
@@ -2093,6 +2166,11 @@ public sealed partial class OperationPlanner
                         targetSelectionSet = null!;
                         targetType = null!;
                         return false;
+                    }
+
+                    if (field.Type.IsListType())
+                    {
+                        lastListSegmentIndex = i;
                     }
 
                     currentSet = fieldNode.SelectionSet;
