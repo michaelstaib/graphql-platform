@@ -1875,8 +1875,9 @@ public sealed partial class OperationPlanner
 
         // The fields that dropped steps select at the anchor, keyed the way the client
         // selects them, together with the step conditions they were selected under.
-        var droppedFields =
-            new Dictionary<ClientSelectedField, (FieldNode Node, bool InFragment, ExecutionNodeCondition[] Conditions)>();
+        var droppedFields = new Dictionary<
+            ClientSelectedField,
+            (FieldNode Node, bool InFragment, ExecutionNodeCondition[] Conditions)>();
 
         foreach (var step in incrementalPlanSteps)
         {
