@@ -1,0 +1,97 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        user {
+          id
+          id @fusion__requirement
+          sku @fusion__requirement
+          ... @skip(if: $b) {
+            name
+            total
+          }
+          ... @skip(if: $a) {
+            name
+            total
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 5
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($a: Boolean!, $b: Boolean!, $__fusion_1_sku: String!) {
+        userBySku(sku: $__fusion_1_sku) {
+          ... @skip(if: $b) {
+            total
+          }
+          ... @skip(if: $a) {
+            total
+          }
+        }
+      }
+    source: $.userBySku
+    target: $.user
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    forwardedVariables:
+      - a
+      - b
+    dependencies:
+      - id: 4
+  - id: 3
+    type: Operation
+    schema: e
+    operation: |
+      query Op_123456789101112_3($a: Boolean!, $b: Boolean!, $__fusion_2_id: ID!) {
+        userById(id: $__fusion_2_id) {
+          ... @skip(if: $b) {
+            name
+          }
+          ... @skip(if: $a) {
+            name
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - a
+      - b
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          sku
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
