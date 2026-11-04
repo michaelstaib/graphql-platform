@@ -3278,6 +3278,224 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_PlanLookupPerPossibleType_When_UnionTypedFieldAnchorsDeferredFragment()
+    {
+        // arrange
+        var schema = ComposeUnionOwnerSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... on User {
+                            name
+                            ... @defer {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupForEverySelectedMember_When_UnionTypedFieldAnchorsDeferredFragment()
+    {
+        // arrange
+        var schema = ComposeUnionOwnerSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                product {
+                    id
+                    owner {
+                        __typename
+                        ... @defer {
+                            ... on User {
+                                total
+                            }
+                            ... on Team {
+                                size
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_Throw_When_UnionTypedListFieldAnchorsDeferredFragmentReadFromRoot()
+    {
+        // arrange
+        var schema = ComposeUnionResultsSchema();
+
+        // act
+        var error = Assert.Throws<InvalidOperationException>(() => PlanOperation(
+            schema,
+            """
+            {
+                results {
+                    ... @defer {
+                        __typename
+                        ... on Product {
+                            req
+                            far
+                        }
+                        ... on Review {
+                            id
+                        }
+                    }
+                }
+            }
+            """));
+
+        // assert
+        error.Message.MatchInlineSnapshot(
+            """
+            The deferred incremental plan at path '$.results' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'a'. Reason: the union anchor would be read again from '$' above a list and joined to the response by list position.
+            """);
+    }
+
+    [Fact]
+    public void Defer_Should_Throw_When_UnionTypedFieldUnderListAnchorsDeferredFragmentReadFromRoot()
+    {
+        // arrange
+        var schema = ComposeUnionResultsSchema();
+
+        // act
+        var error = Assert.Throws<InvalidOperationException>(() => PlanOperation(
+            schema,
+            """
+            {
+                containers {
+                    id
+                    result {
+                        ... @defer {
+                            __typename
+                            ... on Product {
+                                far
+                            }
+                        }
+                    }
+                }
+            }
+            """));
+
+        // assert
+        error.Message.MatchInlineSnapshot(
+            """
+            The deferred incremental plan at path '$.containers.result' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'a'. Reason: the union anchor would be read again from '$' above a list and joined to the response by list position.
+            """);
+    }
+
+    [Fact]
+    public void Defer_Should_Throw_When_UnionTypedListFieldAnchorsDeferredFragmentReadThroughLookup()
+    {
+        // arrange
+        var schema = ComposeUnionContainerLookupSchema();
+
+        // act
+        var error = Assert.Throws<InvalidOperationException>(() => PlanOperation(
+            schema,
+            """
+            {
+                containers {
+                    id
+                    results {
+                        ... @defer {
+                            __typename
+                            ... on Product {
+                                far
+                            }
+                        }
+                    }
+                }
+            }
+            """));
+
+        // assert
+        error.Message.MatchInlineSnapshot(
+            """
+            The deferred incremental plan at path '$.containers.results' could not be resolved from the parent plan. Defer anchor type: union 'Result'. Target schema: 'c'. Reason: the union anchor would be read again from '$.containers' above a list and joined to the response by list position.
+            """);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanLookupAtConcretePath_When_UnionTypedFieldUnderListIsReadThroughLookup()
+    {
+        // arrange
+        var schema = ComposeUnionContainerLookupSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+                containers {
+                    id
+                    result {
+                        ... @defer {
+                            __typename
+                            ... on Product {
+                                far
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanReadFromRoot_When_UnionTypedFieldAnchorIsNotUnderList()
+    {
+        // arrange
+        var schema = ComposeUnionResultsSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+                result {
+                    ... @defer {
+                        __typename
+                        ... on Product {
+                            req
+                            far
+                        }
+                        ... on Review {
+                            id
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void EnsureSelectedFieldsHaveNodes_Should_Throw_When_GroupSelectsFieldsAndPlansToNoNodes()
     {
         // arrange
@@ -3444,6 +3662,135 @@ public class DeferPlannerTests : FusionTestBase
             type Author @key(fields: "id") {
                 id: ID!
                 rating: Int!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeUnionOwnerSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                product: Product!
+            }
+
+            type Product {
+                id: ID!
+                owner: Owner!
+            }
+
+            union Owner = User | Team
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+
+            type Team @key(fields: "id") {
+                id: ID!
+                title: String!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup @internal
+                teamById(id: ID!): Team @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                total: Int!
+            }
+
+            type Team @key(fields: "id") {
+                id: ID!
+                size: Int!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeUnionResultsSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                results: [Result!]!
+                result: Result!
+                containers: [Container!]!
+            }
+
+            type Container {
+                id: ID!
+                result: Result!
+            }
+
+            union Result = Product | Review
+
+            type Product @key(fields: "id") {
+                id: ID!
+                value: String!
+            }
+
+            type Review {
+                id: ID!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                far: String!
+                req(value: String! @require(field: "value")): String!
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeUnionContainerLookupSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+                containers: [Container!]!
+            }
+
+            type Container @key(fields: "id") {
+                id: ID!
+            }
+            """,
+            """
+            # name: c
+            type Query {
+                containerById(id: ID!): Container @lookup @internal
+            }
+
+            type Container @key(fields: "id") {
+                id: ID!
+                result: Result!
+                results: [Result!]!
+            }
+
+            union Result = Product | Review
+
+            type Product @key(fields: "id") {
+                id: ID!
+                value: String!
+            }
+
+            type Review {
+                id: ID!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                productById(id: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                far: String!
             }
             """);
 }
