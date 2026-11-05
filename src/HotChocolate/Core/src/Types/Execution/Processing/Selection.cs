@@ -518,35 +518,23 @@ public sealed class Selection : ISelection, IFeatureProvider
 
     /// <summary>
     /// Evaluates the defer mask against word 0 of the request flags only.
-    /// The selection is deferred when every occurrence of the field has an enabled
-    /// <c>@defer</c> in its chain of enclosing fragments; callers must ensure the
-    /// operation has at most 64 defer conditions.
+    /// This is the narrow fast path; callers must ensure the operation has at most
+    /// 64 defer conditions.
     /// </summary>
     internal bool IsDeferredUnchecked(ulong deferFlags)
         => _deferMask != 0
             && (_deferMask & deferFlags) != 0
-            && (_deferUsage.Length < 2 || GetPrimaryDeferUsage(deferFlags, default) is not null);
+            && (_deferUsage.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, default));
 
     /// <summary>
     /// Evaluates the defer mask against all words of the request flags.
-    /// The selection is deferred when every occurrence of the field has an enabled
-    /// <c>@defer</c> in its chain of enclosing fragments.
+    /// The selection is deferred when any bit matches in any word.
     /// </summary>
     internal bool IsDeferredWide(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
-        if (!MatchesDeferMask(deferFlags, wideDeferFlags))
-        {
-            return false;
-        }
-
-        return _deferUsage.Length < 2 || GetPrimaryDeferUsage(deferFlags, wideDeferFlags) is not null;
-    }
-
-    private bool MatchesDeferMask(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
-    {
         if ((_deferMask & deferFlags) != 0)
         {
-            return true;
+            return _deferUsage.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
         }
 
         var wide = _wideDeferMask;
@@ -562,7 +550,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         {
             if ((wide[i] & wideDeferFlags[i]) != 0)
             {
-                return true;
+                return _deferUsage.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
             }
         }
 
@@ -993,6 +981,27 @@ nextItem:
         }
 
         return found;
+    }
+
+    // a field is deferred only if every occurrence has an enabled @defer in its chain.
+    private bool IsEveryOccurrenceDeferred(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    {
+        foreach (var occurrence in _deferUsage)
+        {
+            var usage = occurrence;
+
+            while (usage is not null && !IsConditionBitSet(deferFlags, wideDeferFlags, usage.DeferConditionIndex))
+            {
+                usage = usage.Parent;
+            }
+
+            if (usage is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
