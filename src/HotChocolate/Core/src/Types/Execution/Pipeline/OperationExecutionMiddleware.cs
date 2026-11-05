@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using HotChocolate.Buffers;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.Instrumentation;
 using HotChocolate.Execution.Processing;
@@ -223,16 +224,7 @@ internal sealed class OperationExecutionMiddleware
             {
                 if (resultBuffer[i].IsStreamResult() && operationContextBuffer[i] is { } contextOwner)
                 {
-                    // a stream that is disposed before the batch execution has finished abandons
-                    // the operation context, because the outstanding work may still use it.
-                    resultBuffer[i].RegisterForCleanup(
-                        () =>
-                        {
-                            if (memory.IsSealed)
-                            {
-                                contextOwner.Dispose();
-                            }
-                        });
+                    resultBuffer[i].RegisterForCleanup(new StreamedContextRelease(memory, contextOwner));
 
                     // Ownership now belongs to the stream, so we drop it from the buffer to keep
                     // ReleaseResources from disposing (and pooling) the context a second time.
@@ -455,6 +447,19 @@ internal sealed class OperationExecutionMiddleware
         }
 
         return true;
+    }
+
+    // a stream that is disposed before the batch execution has finished abandons
+    // the operation context, because the outstanding work may still use it.
+    private sealed class StreamedContextRelease(MemoryArena memory, OperationContextOwner contextOwner) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (memory.IsSealed)
+            {
+                contextOwner.Dispose();
+            }
+        }
     }
 
     public static RequestMiddlewareConfiguration Create()

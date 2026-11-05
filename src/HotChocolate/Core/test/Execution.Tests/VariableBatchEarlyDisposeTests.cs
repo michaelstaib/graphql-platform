@@ -71,6 +71,33 @@ public class VariableBatchEarlyDisposeTests
     }
 
     [Fact]
+    public async Task DisposeAsync_Should_AbandonItemOneContext_When_ItemOneIsDisposedBeforeItemZeroCompletes()
+    {
+        // arrange
+        var probe = new Probe();
+        var executor = await CreateExecutorAsync(probe);
+        var result = await ExecuteBatchAsync(executor);
+        var streams = GetStreams(result);
+        probe.Gate("1").TrySetResult();
+        probe.Gate("2").TrySetResult();
+
+        // act
+        // the shared arena is sealed only once the stream of item 0 was read to completion.
+        await ReadToCompletionAsync(streams[1]);
+        await streams[1].DisposeAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await ReadToCompletionAsync(streams[0]);
+        await streams[0].DisposeAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+        await result.DisposeAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // assert
+        probe.ItemStates.MatchInlineSnapshot(
+            """
+            item 0: returned
+            item 1: abandoned
+            """);
+    }
+
+    [Fact]
     public async Task DisposeAsync_Should_ObserveBatchExecutionFault_When_StreamsAreDisposedBeforeExecutionFinished()
     {
         // arrange
@@ -90,10 +117,10 @@ public class VariableBatchEarlyDisposeTests
         try
         {
             // act
-            await DisposeBeforeExecutionFaultsAsync();
+            var requestMarker = await DisposeBeforeExecutionFaultsAsync();
 
             // the abandoned request becomes unreachable shortly after its execution has faulted.
-            for (var i = 0; i < 10 && unobserved.IsEmpty; i++)
+            for (var i = 0; i < 10 && (requestMarker.IsAlive || unobserved.IsEmpty); i++)
             {
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
@@ -102,6 +129,7 @@ public class VariableBatchEarlyDisposeTests
             }
 
             // assert
+            Assert.False(requestMarker.IsAlive);
             Assert.Empty(unobserved);
         }
         finally
@@ -130,11 +158,14 @@ public class VariableBatchEarlyDisposeTests
     // The streams and the execution task must be unreachable once this method returns,
     // so that the garbage collector can finalize an unobserved faulted execution.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task DisposeBeforeExecutionFaultsAsync()
+    private static async Task<WeakReference> DisposeBeforeExecutionFaultsAsync()
     {
         var probe = new Probe();
         var executor = await CreateExecutorAsync(probe);
-        var result = await ExecuteBatchAsync(executor);
+        var marker = new object();
+        var result = await ExecuteBatchAsync(
+            executor,
+            CreateBatchRequest().SetGlobalState("marker", marker).Build());
 
         foreach (var stream in GetStreams(result))
         {
@@ -150,20 +181,26 @@ public class VariableBatchEarlyDisposeTests
         probe.Gate("1").TrySetResult();
         probe.Gate("2").TrySetResult();
         await probe.ProcessingFailed.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+
+        // only the request references the marker, so the marker is collected together with the request.
+        return new WeakReference(marker);
     }
 
     private static Task<IExecutionResult> ExecuteBatchAsync(IRequestExecutor executor)
-    {
-        var request = OperationRequestBuilder.New()
+        => ExecuteBatchAsync(executor, CreateBatchRequest().Build());
+
+    private static OperationRequestBuilder CreateBatchRequest()
+        => OperationRequestBuilder.New()
             .SetDocument("query($id: String!) { item(id: $id) { id ... @defer { stubborn } } }")
             .SetVariableValues(
                 new IReadOnlyDictionary<string, object?>[]
                 {
                     new Dictionary<string, object?> { ["id"] = "1" },
                     new Dictionary<string, object?> { ["id"] = "2" }
-                })
-            .Build();
+                });
 
+    private static Task<IExecutionResult> ExecuteBatchAsync(IRequestExecutor executor, IOperationRequest request)
+    {
         return executor
             .ExecuteAsync(request, TestContext.Current.CancellationToken)
             .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
@@ -229,10 +266,16 @@ public class VariableBatchEarlyDisposeTests
     public sealed class Probe
     {
         private readonly ConcurrentDictionary<string, TaskCompletionSource> _sources = new();
-        private int _itemContextsReturned;
+        private readonly ConcurrentDictionary<int, bool> _returnedItems = new();
         private int _failProcessing;
 
-        public string PoolState => $"item contexts returned: {Volatile.Read(ref _itemContextsReturned)}";
+        public string PoolState => $"item contexts returned: {_returnedItems.Count}";
+
+        public string ItemStates
+            => string.Join(
+                Environment.NewLine,
+                Enumerable.Range(0, ItemCount).Select(
+                    i => $"item {i}: {(_returnedItems.ContainsKey(i) ? "returned" : "abandoned")}"));
 
         public TaskCompletionSource ProcessingFailed { get; } = Create();
 
@@ -246,7 +289,7 @@ public class VariableBatchEarlyDisposeTests
 
         public TaskCompletionSource Returned(string id) => Get("returned", id);
 
-        public void ItemContextReturned() => Interlocked.Increment(ref _itemContextsReturned);
+        public void ItemContextReturned(int index) => _returnedItems.TryAdd(index, true);
 
         private TaskCompletionSource Get(string kind, string id)
             => _sources.GetOrAdd($"{kind}:{id}", static _ => Create());
@@ -260,16 +303,17 @@ public class VariableBatchEarlyDisposeTests
     private sealed class TrackingOperationContextPool(IFactory<OperationContext> factory, Probe probe)
         : ObjectPool<OperationContext>
     {
-        private readonly ConcurrentDictionary<OperationContext, bool> _items = new(ReferenceEqualityComparer.Instance);
+        private readonly ConcurrentDictionary<OperationContext, int> _items = new(ReferenceEqualityComparer.Instance);
         private int _rented;
 
         public override OperationContext Get()
         {
             var context = factory.Create();
+            var index = Interlocked.Increment(ref _rented) - 1;
 
-            if (Interlocked.Increment(ref _rented) <= ItemCount)
+            if (index < ItemCount)
             {
-                _items.TryAdd(context, true);
+                _items.TryAdd(context, index);
             }
 
             return context;
@@ -277,9 +321,9 @@ public class VariableBatchEarlyDisposeTests
 
         public override void Return(OperationContext obj)
         {
-            if (_items.ContainsKey(obj))
+            if (_items.TryGetValue(obj, out var index))
             {
-                probe.ItemContextReturned();
+                probe.ItemContextReturned(index);
             }
         }
     }
