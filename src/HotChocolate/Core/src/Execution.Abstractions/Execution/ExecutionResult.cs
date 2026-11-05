@@ -148,7 +148,7 @@ public abstract class ExecutionResult : IExecutionResult
         ThrowCleanupFailures(failures);
     }
 
-    // a single failure is thrown as is and several as an aggregate, so the caller can report each of them.
+    // a single failure is thrown as is and several as an aggregate.
     private protected static void ThrowCleanupFailures(List<Exception>? failures)
     {
         if (failures is null)
