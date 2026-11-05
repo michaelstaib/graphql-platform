@@ -309,14 +309,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             if (tasks.Count > 0 && !tasksRegistered)
             {
                 await coordinator.ReleaseChildBranches(itemsBranchId).ConfigureAwait(false);
-
-                foreach (var task in tasks)
-                {
-                    if (task is DeferTask deferTask)
-                    {
-                        deferTask.Reset();
-                    }
-                }
+                ReleaseUnregisteredTasks(tasks);
             }
 
             var result = new OperationResult(CreateErrors(ex));
@@ -327,6 +320,17 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         finally
         {
             contextOwner?.Dispose();
+        }
+    }
+
+    private void ReleaseUnregisteredTasks(List<IExecutionTask> tasks)
+    {
+        if (tasks.Count > 0)
+        {
+            ResolverTaskFactory.ReleaseUnregisteredTasks(
+                tasks,
+                start: 0,
+                _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
         }
     }
 
@@ -384,13 +388,7 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             await _parentContext.DeferExecutionCoordinator.ReleaseChildBranches(itemsBranchId)
                 .ConfigureAwait(false);
 
-            if (tasks.Count > 0)
-            {
-                ResolverTaskFactory.ReleaseUnregisteredTasks(
-                    tasks,
-                    start: 0,
-                    _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
-            }
+            ReleaseUnregisteredTasks(tasks);
         }
 
         return listResult;
