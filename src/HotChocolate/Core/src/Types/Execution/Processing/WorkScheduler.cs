@@ -116,60 +116,77 @@ internal sealed partial class WorkScheduler
     /// </summary>
     public void Complete(IExecutionTask task)
     {
-        AssertNotPooled();
+        var isReleased = false;
 
-        if (!task.IsRegistered)
+        try
         {
-            ReleaseOperationContext(task);
-            return;
-        }
+            AssertNotPooled();
 
-        var work = task.IsSerial ? _serial : _work;
-
-        lock (_sync)
-        {
-            switch (task)
+            if (!task.IsRegistered)
             {
-                case Tasks.ResolverTask resolverTask:
-                    CompleteBranchTaskUnsafe(task.BranchId);
-
-                    if (CompleteWorkUnsafe(work))
-                    {
-                        _completed.Add(resolverTask.Id);
-                        DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
-                    }
-
-                    break;
-
-                case Tasks.BatchResolverTask batchResolverTask:
-                    foreach (var additionalBranchId in batchResolverTask.BranchIds)
-                    {
-                        CompleteBranchTaskUnsafe(additionalBranchId);
-                    }
-
-                    if (CompleteWorkUnsafe(work))
-                    {
-                        _completed.Add(task.Id);
-                        DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
-                    }
-
-                    break;
-
-                default:
-                    CompleteBranchTaskUnsafe(task.BranchId);
-
-                    if (CompleteWorkUnsafe(work))
-                    {
-                        _completed.Add(task.Id);
-                    }
-
-                    break;
+                return;
             }
 
-            _signal.Set();
+            var work = task.IsSerial ? _serial : _work;
 
-            // the operation context and this scheduler can return to their pool once the task released them.
-            ReleaseOperationContext(task);
+            lock (_sync)
+            {
+                try
+                {
+                    switch (task)
+                    {
+                        case Tasks.ResolverTask resolverTask:
+                            CompleteBranchTaskUnsafe(task.BranchId);
+
+                            if (CompleteWorkUnsafe(work))
+                            {
+                                _completed.Add(resolverTask.Id);
+                                DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
+                            }
+
+                            break;
+
+                        case Tasks.BatchResolverTask batchResolverTask:
+                            foreach (var additionalBranchId in batchResolverTask.BranchIds)
+                            {
+                                CompleteBranchTaskUnsafe(additionalBranchId);
+                            }
+
+                            if (CompleteWorkUnsafe(work))
+                            {
+                                _completed.Add(task.Id);
+                                DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
+                            }
+
+                            break;
+
+                        default:
+                            CompleteBranchTaskUnsafe(task.BranchId);
+
+                            if (CompleteWorkUnsafe(work))
+                            {
+                                _completed.Add(task.Id);
+                            }
+
+                            break;
+                    }
+
+                    _signal.Set();
+                }
+                finally
+                {
+                    // the operation context and this scheduler can return to their pool once the task released them.
+                    isReleased = true;
+                    ReleaseOperationContext(task);
+                }
+            }
+        }
+        finally
+        {
+            if (!isReleased)
+            {
+                ReleaseOperationContext(task);
+            }
         }
     }
 
