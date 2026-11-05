@@ -111,7 +111,8 @@ internal sealed partial class WorkScheduler
     }
 
     /// <summary>
-    /// Complete a task
+    /// Completes a task and releases its hold on the operation context, so the task must not use
+    /// the scheduler afterwards.
     /// </summary>
     public void Complete(IExecutionTask task)
     {
@@ -119,16 +120,17 @@ internal sealed partial class WorkScheduler
 
         if (!task.IsRegistered)
         {
+            ReleaseOperationContext(task);
             return;
         }
 
         var work = task.IsSerial ? _serial : _work;
 
-        switch (task)
+        lock (_sync)
         {
-            case Tasks.ResolverTask resolverTask:
-                lock (_sync)
-                {
+            switch (task)
+            {
+                case Tasks.ResolverTask resolverTask:
                     CompleteBranchTaskUnsafe(task.BranchId);
 
                     if (CompleteWorkUnsafe(work))
@@ -136,12 +138,10 @@ internal sealed partial class WorkScheduler
                         _completed.Add(resolverTask.Id);
                         DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
                     }
-                }
-                break;
 
-            case Tasks.BatchResolverTask batchResolverTask:
-                lock (_sync)
-                {
+                    break;
+
+                case Tasks.BatchResolverTask batchResolverTask:
                     foreach (var additionalBranchId in batchResolverTask.BranchIds)
                     {
                         CompleteBranchTaskUnsafe(additionalBranchId);
@@ -152,23 +152,39 @@ internal sealed partial class WorkScheduler
                         _completed.Add(task.Id);
                         DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
                     }
-                }
-                break;
 
-            default:
-                lock (_sync)
-                {
+                    break;
+
+                default:
                     CompleteBranchTaskUnsafe(task.BranchId);
 
                     if (CompleteWorkUnsafe(work))
                     {
                         _completed.Add(task.Id);
                     }
-                }
+
+                    break;
+            }
+
+            _signal.Set();
+
+            // the operation context and this scheduler can return to their pool once the task released them.
+            ReleaseOperationContext(task);
+        }
+    }
+
+    private static void ReleaseOperationContext(IExecutionTask task)
+    {
+        switch (task)
+        {
+            case Tasks.ResolverTask resolverTask:
+                resolverTask.ReleaseOperationContext();
+                break;
+
+            case Tasks.BatchResolverTask batchResolverTask:
+                batchResolverTask.ReleaseOperationContext();
                 break;
         }
-
-        _signal.Set();
     }
 
     private bool CompleteWorkUnsafe(WorkQueue work)
