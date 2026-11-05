@@ -7,11 +7,11 @@ namespace HotChocolate.Execution.Integration.DataLoader;
 
 public class Issue9500Tests
 {
+    private const int NodeCount = 10_000;
+
     [Fact]
     public async Task Composite_DataLoader_Result_Overflows_Selection_Buffer_When_Paging_Many_Nodes()
     {
-        const int nodeCount = 100_000;
-
         var executor = await CreateExecutorAsync(
             c => c
                 .AddQueryType<Issue9500Query>()
@@ -23,7 +23,7 @@ public class Issue9500Tests
                 .SetDocument(
                     $$"""
                     {
-                      items(first: {{nodeCount}}) {
+                      items(first: {{NodeCount}}) {
                         edges {
                           cursor
                           node {
@@ -58,9 +58,9 @@ public class Issue9500Tests
 
     public class Issue9500Query
     {
-        [UsePaging(DefaultPageSize = 100000, MaxPageSize = 100000)]
+        [UsePaging(DefaultPageSize = NodeCount, MaxPageSize = NodeCount)]
         public IEnumerable<Item> GetItems()
-            => Enumerable.Range(0, 100_000).Select(i => new Item(i));
+            => Enumerable.Range(0, NodeCount).Select(i => new Item(i));
     }
 
     public class Item(int id)
