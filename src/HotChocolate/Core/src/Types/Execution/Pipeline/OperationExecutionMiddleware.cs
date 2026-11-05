@@ -216,11 +216,23 @@ internal sealed class OperationExecutionMiddleware
             IExecutionResult[] resultBuffer,
             int length)
         {
+            // the batch items share one arena, which is sealed once the batch execution has finished.
+            var memory = operationContextBuffer[0].OperationContext.Memory;
+
             for (var i = 0; i < length; i++)
             {
                 if (resultBuffer[i].IsStreamResult() && operationContextBuffer[i] is { } contextOwner)
                 {
-                    resultBuffer[i].RegisterForCleanup(contextOwner);
+                    // a stream that is disposed before the batch execution has finished abandons
+                    // the operation context, because the outstanding work may still use it.
+                    resultBuffer[i].RegisterForCleanup(
+                        () =>
+                        {
+                            if (memory.IsSealed)
+                            {
+                                contextOwner.Dispose();
+                            }
+                        });
 
                     // Ownership now belongs to the stream, so we drop it from the buffer to keep
                     // ReleaseResources from disposing (and pooling) the context a second time.

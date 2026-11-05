@@ -239,7 +239,7 @@ internal sealed class QueryExecutor
             results[i] = i == 0
                 ? new ResponseStream(CreateStreamAndComplete, ExecutionResultKind.DeferredResult)
                 : CreateItemStream(context);
-            results[i].RegisterForCleanup(requestCleanup.ExecuteAsync);
+            results[i].RegisterForCleanup(() => CancelAndExecuteAsync(requestCleanup, execution));
         }
 
         static ResponseStream CreateItemStream(OperationContext context)
