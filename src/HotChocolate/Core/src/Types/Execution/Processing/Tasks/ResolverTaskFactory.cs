@@ -376,7 +376,7 @@ internal static class ResolverTaskFactory
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
         var groupScope = context.GroupScope;
-        var taskCount = groupScope is null ? 0 : context.Tasks.Count;
+        var taskCount = context.Tasks.Count;
         var executedSuccessfully = false;
         object? resolverResult = null;
 
@@ -436,6 +436,15 @@ internal static class ResolverTaskFactory
         catch (Exception ex)
         {
             operationContext.ReportError(ex, resolverContext, fieldValue.Path);
+        }
+
+        // the children of an invalidated object can never contribute to the result.
+        if (fieldValue.IsInvalidated)
+        {
+            ReleaseUnregisteredTasks(
+                context.Tasks,
+                taskCount,
+                operationContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
         }
 
         if (groupScope is not null)

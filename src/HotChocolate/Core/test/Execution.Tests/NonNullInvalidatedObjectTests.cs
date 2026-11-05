@@ -50,10 +50,12 @@ public class NonNullInvalidatedObjectTests
     }
 
     [Fact]
-    public async Task Execute_Should_ReportOnlyTheChildViolation_When_PureChildInvalidatesPureObject()
+    public async Task Execute_Should_SkipAndReleaseChildResolvers_When_PureChildInvalidatesPureObject()
     {
         // arrange
-        var executor = await CreateExecutorAsync(new SlowCounter(), new CountingResolverTaskPool());
+        var counter = new SlowCounter();
+        var pool = new CountingResolverTaskPool();
+        var executor = await CreateExecutorAsync(counter, pool);
 
         // act
         var result = await executor.ExecuteAsync(
@@ -82,6 +84,8 @@ public class NonNullInvalidatedObjectTests
               }
             }
             """);
+        Assert.Equal(0, counter.Count);
+        await pool.WaitUntilAllReturnedAsync();
     }
 
     [Fact]
