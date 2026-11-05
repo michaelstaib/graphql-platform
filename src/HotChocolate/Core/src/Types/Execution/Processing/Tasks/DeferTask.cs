@@ -26,6 +26,22 @@ internal sealed class DeferTask : ExecutionTask
     {
         var deferContext = _deferContextOwner.OperationContext;
         var data = deferContext.Result.Data.Data;
+
+        // a group below a nulled object is never delivered, so its fields are not resolved.
+        if (deferContext.DeferExecutionCoordinator.TryDiscardNulledBranch(_executionBranchId))
+        {
+            if (_groupScope is not null)
+            {
+                // the members of the group are skipped so that the members after them can start.
+                foreach (var field in data.EnumerateObject())
+                {
+                    _groupScope.ReleaseSlots(field.AssertSelection());
+                }
+            }
+
+            return;
+        }
+
         var bufferedTasks = s_pool.Rent(data.GetPropertyCount());
         var i = 0;
 

@@ -52,7 +52,11 @@ internal static class ResolverTaskFactory
                         {
                             if (!branches.TryGetValue(deferUsage, out _))
                             {
-                                var branchId = coordinator.Branch(mainBranchId, Path.Root, deferUsage);
+                                var branchId = coordinator.Branch(
+                                    mainBranchId,
+                                    Path.Root,
+                                    deferUsage,
+                                    resultValue.Document);
                                 branches = branches.Add(deferUsage, branchId);
                             }
                         }
@@ -234,7 +238,11 @@ internal static class ResolverTaskFactory
                         if (!branches.TryGetValue(deferUsage, out _))
                         {
                             currentPath ??= resultValue.Path;
-                            var branchId = coordinator.Branch(parentBranchId, currentPath, deferUsage);
+                            var branchId = coordinator.Branch(
+                                parentBranchId,
+                                currentPath,
+                                deferUsage,
+                                resultValue.Document);
                             branches = branches.Add(deferUsage, branchId);
                             context.Tasks.Add(
                                 operationContext.CreateDeferTask(

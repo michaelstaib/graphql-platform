@@ -1328,6 +1328,36 @@ public class ExecutionGroupTests
         ]);
     }
 
+    [Fact]
+    public async Task Execute_Should_RunLaterMembers_When_DeferredMemberIsBelowANulledObject()
+    {
+        // arrange
+        // bad nulls pageInfo before the deferred group with the first member runs, so that group is discarded
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("reversed.pageInfo.hasNextPage");
+        script.Release("reversed.nodes");
+        script.Release("reversed.edges");
+
+        // act
+        var execution = executor.ExecuteAsync(
+            "{ reversed { pageInfo { bad ... @defer { hasNextPage } } nodes { name } edges } }",
+            cts.Token);
+        var payloads = await ReadPayloadsAsync(execution, cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "start reversed.nodes",
+            "end reversed.nodes",
+            "start reversed.edges",
+            "end reversed.edges"
+        ]);
+        payloads.MatchInlineSnapshots(
+            ["""{"reversed":{"pageInfo":null,"nodes":[{"name":"a"},{"name":"b"}],"edges":["e1"]}}"""]);
+    }
+
     private static async Task<List<string>> ReadStreamedItemsAsync(
         Task<IExecutionResult> execution,
         CancellationToken cancellationToken)

@@ -134,6 +134,19 @@ internal sealed class ExecutionGroupScope
     }
 
     /// <summary>
+    /// Skips the member of the specified selection and the members below it.
+    /// </summary>
+    public void ReleaseSlots(Selection selection)
+    {
+        if (_plan.TryGetNode(selection.Id, out var node) && node.SlotIndex >= 0)
+        {
+            Release(node.SlotIndex);
+        }
+
+        ReleaseSlotsBelow(selection);
+    }
+
+    /// <summary>
     /// Ends the sequencing so that all queued tasks start and later tasks are not queued.
     /// </summary>
     public void Abandon()

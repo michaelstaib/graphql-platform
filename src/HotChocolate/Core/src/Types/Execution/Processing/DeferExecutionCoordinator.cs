@@ -52,8 +52,9 @@ internal sealed partial class DeferExecutionCoordinator
     /// Registers a new deferred execution branch for the specified <paramref name="deferUsage"/>
     /// and <paramref name="path"/>, returning a unique branch identifier.
     /// If the branch was already registered, the existing identifier is returned.
+    /// The <paramref name="document"/> holds the deferred object at <paramref name="path"/>.
     /// </summary>
-    public int Branch(int currentBranchId, Path path, DeferUsage deferUsage)
+    public int Branch(int currentBranchId, Path path, DeferUsage deferUsage, ResultDocument document)
     {
         AssertInitialized();
 
@@ -72,13 +73,42 @@ internal sealed partial class DeferExecutionCoordinator
                 GetChildrenUnsafe(currentBranchId).Add(newBranchId);
                 _branchLookup.Add(
                     newBranchId,
-                    new DeferredBranch(path, deferUsage.Label, deferUsage, currentBranchId, BranchKind.Defer));
+                    new DeferredBranch(path, deferUsage.Label, deferUsage, currentBranchId, BranchKind.Defer)
+                    {
+                        Document = document
+                    });
                 _branchIdLookup.Add(key, newBranchId);
                 _hasBranches = true;
                 _pendingBranches++;
             }
 
             return newBranchId;
+        }
+    }
+
+    /// <summary>
+    /// Unregisters the deferred branch <paramref name="branchId"/> if its object was nulled before its parent
+    /// was delivered, returning <c>true</c> if the branch will never be delivered.
+    /// </summary>
+    public bool TryDiscardNulledBranch(int branchId)
+    {
+        AssertInitialized();
+
+        lock (_sync)
+        {
+            if (!_branchLookup.TryGetValue(branchId, out var branch))
+            {
+                return true;
+            }
+
+            if (_delivered.Contains(branch.ParentBranchId) || !IsNulledUnsafe(branch.Document!, branch.Path))
+            {
+                return false;
+            }
+
+            GetChildrenUnsafe(branch.ParentBranchId).Remove(branchId);
+            DiscardBranchUnsafe(branchId);
+            return true;
         }
     }
 
@@ -610,9 +640,11 @@ internal sealed partial class DeferExecutionCoordinator
             return true;
         }
 
-        return data.Value is ResultDocument document
-            && Resolve(document.Data, document.Data.Path.Length, path, out _) is Resolution.Nulled;
+        return data.Value is ResultDocument document && IsNulledUnsafe(document, path);
     }
+
+    private static bool IsNulledUnsafe(ResultDocument document, Path path)
+        => Resolve(document.Data, document.Data.Path.Length, path, out _) is Resolution.Nulled;
 
     private static Resolution Resolve(ResultElement root, int rootLength, Path path, out ResultElement element)
     {
@@ -779,6 +811,7 @@ internal sealed partial class DeferExecutionCoordinator
         public DeferUsage? Group { get; } = group;
         public int ParentBranchId { get; } = parentBranchId;
         public BranchKind Kind { get; } = kind;
+        public ResultDocument? Document { get; init; }
         public HashSet<int>? Children { get; set; }
         public StreamState? Stream { get; set; }
         public bool HasStreamItems { get; set; }

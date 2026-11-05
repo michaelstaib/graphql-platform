@@ -33,6 +33,11 @@ public readonly partial struct ResultElement
     /// </summary>
     internal ResultDocument.Cursor Cursor => _cursor;
 
+    /// <summary>
+    /// Gets the result document that holds this element.
+    /// </summary>
+    internal ResultDocument Document => _parent;
+
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private ElementTokenType TokenType => _parent?.GetElementTokenType(_cursor) ?? ElementTokenType.None;
 
