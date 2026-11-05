@@ -309,7 +309,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             if (tasks.Count > 0 && !tasksRegistered)
             {
                 await coordinator.ReleaseChildBranches(itemsBranchId).ConfigureAwait(false);
-                ReleaseUnregisteredTasks(tasks);
             }
 
             var result = new OperationResult(CreateErrors(ex));
@@ -319,18 +318,16 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
         finally
         {
-            contextOwner?.Dispose();
-        }
-    }
+            // the tasks of a batch that failed or was stopped before they were registered never run.
+            if (!tasksRegistered && tasks.Count > 0)
+            {
+                ResolverTaskFactory.ReleaseUnregisteredTasks(
+                    tasks,
+                    start: 0,
+                    _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
+            }
 
-    private void ReleaseUnregisteredTasks(List<IExecutionTask> tasks)
-    {
-        if (tasks.Count > 0)
-        {
-            ResolverTaskFactory.ReleaseUnregisteredTasks(
-                tasks,
-                start: 0,
-                _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
+            contextOwner?.Dispose();
         }
     }
 
@@ -388,7 +385,13 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             await _parentContext.DeferExecutionCoordinator.ReleaseChildBranches(itemsBranchId)
                 .ConfigureAwait(false);
 
-            ReleaseUnregisteredTasks(tasks);
+            if (tasks.Count > 0)
+            {
+                ResolverTaskFactory.ReleaseUnregisteredTasks(
+                    tasks,
+                    start: 0,
+                    _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
+            }
         }
 
         return listResult;

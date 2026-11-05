@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Runtime.CompilerServices;
 using HotChocolate.Execution.DependencyInjection;
 using HotChocolate.Execution.Processing;
 using HotChocolate.Execution.Processing.Tasks;
@@ -18,7 +19,7 @@ public class StreamDroppedTaskTests
         // arrange
         var resolverTasks = new CountingResolverTaskPool();
         var contexts = new TrackingOperationContextPool();
-        var source = new ListSource();
+        var source = new ListSource(waitsForStop: false);
         var executor = await CreateExecutorAsync(resolverTasks, contexts, source);
 
         // act
@@ -65,6 +66,48 @@ public class StreamDroppedTaskTests
                 """
             ]);
         Assert.Equal([true, true], contexts.Reusable);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReturnDroppedChildTasks_When_StreamIsStoppedWhileItemCompletionFails()
+    {
+        // arrange
+        var resolverTasks = new CountingResolverTaskPool();
+        var contexts = new TrackingOperationContextPool();
+        var source = new ListSource(waitsForStop: true);
+        var executor = await CreateExecutorAsync(resolverTasks, contexts, source);
+
+        // act
+        await StopWhileItemFailsAsync(executor, source);
+        await resolverTasks.WaitUntilAllReturnedAsync();
+
+        // assert
+        Assert.True(source.WasStopped);
+    }
+
+    private static async Task StopWhileItemFailsAsync(IRequestExecutor executor, ListSource source)
+    {
+        await Task.Run(
+                async () =>
+                {
+                    await using var result = await executor.ExecuteAsync(
+                        "{ lists @stream(initialCount: 0) { slow } }",
+                        TestContext.Current.CancellationToken);
+                    var stream = Assert.IsType<ResponseStream>(result);
+
+                    await using (var enumerator = stream
+                        .ReadResultsAsync()
+                        .GetAsyncEnumerator(TestContext.Current.CancellationToken))
+                    {
+                        Assert.True(await enumerator.MoveNextAsync());
+                        await enumerator.Current.DisposeAsync();
+
+                        source.Open();
+                        await source.ItemFailing.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
+                    }
+                },
+                TestContext.Current.CancellationToken)
+            .WaitAsync(s_timeout, TestContext.Current.CancellationToken);
     }
 
     private static async Task<List<string>> ReadToCompletionAsync(IRequestExecutor executor, ListSource source)
@@ -123,16 +166,40 @@ public class StreamDroppedTaskTests
         return builder.BuildRequestExecutorAsync();
     }
 
-    private sealed class ListSource
+    private sealed class ListSource(bool waitsForStop)
     {
         private readonly TaskCompletionSource _open = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _stopped;
+
+        public TaskCompletionSource ItemFailing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool WasStopped => Volatile.Read(ref _stopped) is 1;
 
         public void Open() => _open.TrySetResult();
 
-        public async IAsyncEnumerable<object> GetListsAsync()
+        public async IAsyncEnumerable<object> GetListsAsync([EnumeratorCancellation] CancellationToken stop = default)
         {
             await _open.Task.ConfigureAwait(false);
-            yield return new FailingList();
+            yield return new FailingList(this, stop);
+
+            if (waitsForStop)
+            {
+                // the source stays open, so the stream can still be stopped while the list is delivered.
+                await Task.Delay(Timeout.Infinite, stop).ConfigureAwait(false);
+            }
+        }
+
+        public void Fail(CancellationToken stop)
+        {
+            if (waitsForStop)
+            {
+                // the item fails only once the stream was stopped by the disposal of the response stream.
+                ItemFailing.TrySetResult();
+                SpinWait.SpinUntil(() => stop.IsCancellationRequested, s_timeout);
+                Volatile.Write(ref _stopped, stop.IsCancellationRequested ? 1 : 0);
+            }
+
+            throw new OperationCanceledException("The second item was cancelled.");
         }
     }
 
@@ -145,9 +212,8 @@ public class StreamDroppedTaskTests
         }
     }
 
-    // the second item fails with a cancellation that does not belong to the stream,
-    // after the first item created a child task.
-    private sealed class FailingList : IList
+    // the second item fails with a cancellation after the first item created a child task.
+    private sealed class FailingList(ListSource source, CancellationToken stop) : IList
     {
         private readonly Item _item = new();
 
@@ -157,7 +223,7 @@ public class StreamDroppedTaskTests
             {
                 if (index is not 0)
                 {
-                    throw new OperationCanceledException("The second item was cancelled.");
+                    source.Fail(stop);
                 }
 
                 return _item;
