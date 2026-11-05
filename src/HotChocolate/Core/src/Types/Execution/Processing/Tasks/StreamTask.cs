@@ -309,14 +309,6 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             if (tasks.Count > 0 && !tasksRegistered)
             {
                 await coordinator.ReleaseChildBranches(itemsBranchId).ConfigureAwait(false);
-
-                foreach (var task in tasks)
-                {
-                    if (task is DeferTask deferTask)
-                    {
-                        deferTask.Reset();
-                    }
-                }
             }
 
             var result = new OperationResult(CreateErrors(ex));
@@ -326,6 +318,15 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
         finally
         {
+            // the tasks of a batch that failed or was stopped before they were registered never run.
+            if (!tasksRegistered && tasks.Count > 0)
+            {
+                ResolverTaskFactory.ReleaseUnregisteredTasks(
+                    tasks,
+                    start: 0,
+                    _parentContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
+            }
+
             contextOwner?.Dispose();
         }
     }
