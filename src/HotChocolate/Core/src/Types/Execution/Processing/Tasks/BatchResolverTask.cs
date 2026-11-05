@@ -389,17 +389,22 @@ internal sealed class BatchResolverTask : IResolverTask
 
             if (resultValue is { IsNullable: false, IsNullOrInvalidated: true })
             {
-                if (entryContext.PropagateNullValues)
+                // the child that invalidated this object already propagated and reported its null.
+                if (!resultValue.IsInvalidated)
                 {
-                    PropagateNullValues(resultValue);
-                }
-                else
-                {
-                    resultValue.SetNullValue();
+                    if (entryContext.PropagateNullValues)
+                    {
+                        PropagateNullValues(resultValue);
+                    }
+                    else
+                    {
+                        resultValue.SetNullValue();
+                    }
+
+                    entryContext.Result.AddNonNullViolation(context.Path);
                 }
 
                 _completionStatus = ExecutionTaskStatus.Faulted;
-                entryContext.Result.AddNonNullViolation(context.Path);
                 ResolverTaskFactory.ReleaseUnregisteredTasks(_taskBuffer, taskBufferStart, _resolverTaskPool);
             }
         }

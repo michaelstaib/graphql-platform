@@ -377,7 +377,13 @@ public sealed partial class ResultDocument : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, this);
 
-        var tokenType = _metaDb.GetElementTokenType(current);
+        var tokenType = _metaDb.GetElementTokenType(current, resolveReferences: false);
+
+        if (tokenType is ElementTokenType.Reference)
+        {
+            current = _metaDb.GetLocationCursor(current);
+            tokenType = _metaDb.GetElementTokenType(current);
+        }
 
         if (tokenType is ElementTokenType.Null or ElementTokenType.None)
         {
@@ -388,18 +394,6 @@ public sealed partial class ResultDocument : IDisposable
         {
             var flags = _metaDb.GetFlags(current);
             return (flags & ElementFlags.IsInvalidated) == ElementFlags.IsInvalidated;
-        }
-
-        if (tokenType is ElementTokenType.Reference)
-        {
-            current = _metaDb.GetLocationCursor(current);
-            tokenType = _metaDb.GetElementTokenType(current);
-
-            if (tokenType is ElementTokenType.StartObject)
-            {
-                var flags = _metaDb.GetFlags(current);
-                return (flags & ElementFlags.IsInvalidated) == ElementFlags.IsInvalidated;
-            }
         }
 
         return false;

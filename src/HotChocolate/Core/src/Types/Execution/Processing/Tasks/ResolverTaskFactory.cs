@@ -376,7 +376,7 @@ internal static class ResolverTaskFactory
         var operationContext = context.OperationContext;
         var resolverContext = context.ResolverContext;
         var groupScope = context.GroupScope;
-        var taskCount = groupScope is null ? 0 : context.Tasks.Count;
+        var taskCount = context.Tasks.Count;
         var executedSuccessfully = false;
         object? resolverResult = null;
 
@@ -438,12 +438,22 @@ internal static class ResolverTaskFactory
             operationContext.ReportError(ex, resolverContext, fieldValue.Path);
         }
 
+        // the children of an invalidated object can never contribute to the result.
+        if (fieldValue.IsInvalidated)
+        {
+            ReleaseUnregisteredTasks(
+                context.Tasks,
+                taskCount,
+                operationContext.Services.GetRequiredService<ObjectPool<ResolverTask>>());
+        }
+
         if (groupScope is not null)
         {
             ReleaseWhenNoChildTasks(context.Tasks, groupScope, selection, taskCount);
         }
 
-        if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true })
+        // the child that invalidated this object already propagated and reported its null.
+        if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true } && !fieldValue.IsInvalidated)
         {
             if (operationContext.PropagateNullValues)
             {

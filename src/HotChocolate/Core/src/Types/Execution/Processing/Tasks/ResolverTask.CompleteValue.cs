@@ -49,17 +49,22 @@ internal sealed partial class ResolverTask
 
         if (resultValue is { IsNullable: false, IsNullOrInvalidated: true })
         {
-            if (_operationContext.PropagateNullValues)
+            // the child that invalidated this object already propagated and reported its null.
+            if (!resultValue.IsInvalidated)
             {
-                PropagateNullValues(resultValue);
-            }
-            else
-            {
-                resultValue.SetNullValue();
+                if (_operationContext.PropagateNullValues)
+                {
+                    PropagateNullValues(resultValue);
+                }
+                else
+                {
+                    resultValue.SetNullValue();
+                }
+
+                _operationContext.Result.AddNonNullViolation(_context.Path);
             }
 
             _completionStatus = ExecutionTaskStatus.Faulted;
-            _operationContext.Result.AddNonNullViolation(_context.Path);
             ResolverTaskFactory.ReleaseUnregisteredTasks(_taskBuffer, start: 0, objectPool);
         }
     }
