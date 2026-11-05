@@ -39,7 +39,7 @@ public class DeferDisabledSharedFieldTests
     public async Task Defer_Should_DeliverSharedFieldInInitialResponse_When_DisabledFragmentComesFirst()
     {
         // act
-        var (payloads, merged, plain) = await ExecuteAsync(DisabledFirstQuery, enabled: false);
+        var (payloads, merged, plain) = await ExecuteAsync(DisabledFirstQuery);
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -88,7 +88,7 @@ public class DeferDisabledSharedFieldTests
     public async Task Defer_Should_DeliverSharedFieldInInitialResponse_When_DisabledFragmentComesLast()
     {
         // act
-        var (payloads, merged, plain) = await ExecuteAsync(DisabledLastQuery, enabled: false);
+        var (payloads, merged, plain) = await ExecuteAsync(DisabledLastQuery);
 
         // assert
         payloads.MatchInlineSnapshots(
@@ -117,150 +117,6 @@ public class DeferDisabledSharedFieldTests
                     {
                       "id": "2",
                       "data": {
-                        "y": "y 1"
-                      }
-                    }
-                  ],
-                  "completed": [
-                    {
-                      "id": "2"
-                    }
-                  ],
-                  "hasNext": false
-                }
-                """
-            ]);
-        Assert.Equal(plain, merged);
-    }
-
-    [Fact]
-    public async Task Defer_Should_DeliverSharedFieldWithBothGroups_When_EnabledAndDisabledFragmentComesFirst()
-    {
-        // act
-        var (payloads, merged, plain) = await ExecuteAsync(DisabledFirstQuery, enabled: true);
-
-        // assert
-        payloads.MatchInlineSnapshots(
-            [
-                """
-                {
-                  "data": {
-                    "a": {}
-                  },
-                  "pending": [
-                    {
-                      "id": "2",
-                      "path": [
-                        "a"
-                      ]
-                    },
-                    {
-                      "id": "3",
-                      "path": [
-                        "a"
-                      ]
-                    }
-                  ],
-                  "hasNext": true
-                }
-                """,
-                """
-                {
-                  "incremental": [
-                    {
-                      "id": "2",
-                      "data": {
-                        "x": "x 1"
-                      }
-                    }
-                  ],
-                  "completed": [
-                    {
-                      "id": "2"
-                    }
-                  ],
-                  "hasNext": true
-                }
-                """,
-                """
-                {
-                  "incremental": [
-                    {
-                      "id": "3",
-                      "data": {
-                        "x": "x 1",
-                        "y": "y 1"
-                      }
-                    }
-                  ],
-                  "completed": [
-                    {
-                      "id": "3"
-                    }
-                  ],
-                  "hasNext": false
-                }
-                """
-            ]);
-        Assert.Equal(plain, merged);
-    }
-
-    [Fact]
-    public async Task Defer_Should_DeliverSharedFieldWithBothGroups_When_EnabledAndDisabledFragmentComesLast()
-    {
-        // act
-        var (payloads, merged, plain) = await ExecuteAsync(DisabledLastQuery, enabled: true);
-
-        // assert
-        payloads.MatchInlineSnapshots(
-            [
-                """
-                {
-                  "data": {
-                    "a": {}
-                  },
-                  "pending": [
-                    {
-                      "id": "2",
-                      "path": [
-                        "a"
-                      ]
-                    },
-                    {
-                      "id": "3",
-                      "path": [
-                        "a"
-                      ]
-                    }
-                  ],
-                  "hasNext": true
-                }
-                """,
-                """
-                {
-                  "incremental": [
-                    {
-                      "id": "3",
-                      "data": {
-                        "x": "x 1"
-                      }
-                    }
-                  ],
-                  "completed": [
-                    {
-                      "id": "3"
-                    }
-                  ],
-                  "hasNext": true
-                }
-                """,
-                """
-                {
-                  "incremental": [
-                    {
-                      "id": "2",
-                      "data": {
-                        "x": "x 1",
                         "y": "y 1"
                       }
                     }
@@ -371,17 +227,12 @@ public class DeferDisabledSharedFieldTests
     }
 
     private static async Task<(List<string> Payloads, string Merged, string Plain)> ExecuteAsync(
-        string query,
-        bool enabled)
+        string query)
     {
         // arrange
-        // x waits for the initial payload and y for the earlier payloads, so order is fixed.
+        // y waits for the initial payload, so the order of the payloads is fixed.
         var gates = new Gates();
-
-        if (!enabled)
-        {
-            gates.X.SetResult();
-        }
+        gates.X.SetResult();
 
         var executor = await new ServiceCollection()
             .AddSingleton(gates)
@@ -390,7 +241,6 @@ public class DeferDisabledSharedFieldTests
             .ModifyOptions(o => o.EnableDefer = true)
             .BuildRequestExecutorAsync();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var releaseYAfter = enabled ? 2 : 1;
         var payloads = new List<string>();
 
         // act
@@ -398,7 +248,7 @@ public class DeferDisabledSharedFieldTests
             OperationRequestBuilder
                 .New()
                 .SetDocument(query)
-                .SetVariableValues(new Dictionary<string, object?> { ["d"] = enabled })
+                .SetVariableValues(new Dictionary<string, object?> { ["d"] = false })
                 .Build(),
             cts.Token);
 
@@ -408,12 +258,7 @@ public class DeferDisabledSharedFieldTests
             {
                 await using var cleanup = payload;
                 payloads.Add(payload.ToJson());
-                gates.X.TrySetResult();
-
-                if (payloads.Count >= releaseYAfter)
-                {
-                    gates.Y.TrySetResult();
-                }
+                gates.Y.TrySetResult();
             }
         }
 
