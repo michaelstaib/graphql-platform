@@ -443,7 +443,8 @@ internal static class ResolverTaskFactory
             ReleaseWhenNoChildTasks(context.Tasks, groupScope, selection, taskCount);
         }
 
-        if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true })
+        // the child that invalidated this object already propagated and reported its null.
+        if (fieldValue is { IsNullable: false, IsNullOrInvalidated: true } && !fieldValue.IsInvalidated)
         {
             if (operationContext.PropagateNullValues)
             {
