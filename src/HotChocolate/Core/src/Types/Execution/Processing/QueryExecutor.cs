@@ -134,6 +134,11 @@ internal sealed class QueryExecutor
         }
     }
 
+    private sealed class ItemStreamCleanup(RequestCleanup requestCleanup, Task execution) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => CancelAndExecuteAsync(requestCleanup, execution);
+    }
+
     private static async Task<IExecutionResult> ExecuteNoIncrementalAsync(
         OperationContext operationContext,
         IImmutableDictionary<string, object?> scopedContext)
@@ -239,7 +244,7 @@ internal sealed class QueryExecutor
             results[i] = i == 0
                 ? new ResponseStream(CreateStreamAndComplete, ExecutionResultKind.DeferredResult)
                 : CreateItemStream(context);
-            results[i].RegisterForCleanup(requestCleanup.ExecuteAsync);
+            results[i].RegisterForCleanup(new ItemStreamCleanup(requestCleanup, execution));
         }
 
         static ResponseStream CreateItemStream(OperationContext context)
