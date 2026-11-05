@@ -115,6 +115,94 @@ public sealed class SubscriptionEventTimeoutTests
     }
 
     [Fact]
+    public async Task Event_Should_Not_Run_Callbacks_Of_A_Previous_Event_When_It_Times_Out()
+    {
+        // arrange
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var time = new FakeTimeProvider();
+        var probe = new CallbackProbe();
+
+        var executor = await new ServiceCollection()
+            .AddSingleton(probe)
+            .AddGraphQL()
+            .AddInMemorySubscriptions()
+            .AddQueryType(d => d.Field("foo").Resolve("bar"))
+            .AddSubscriptionType<CallbackSubscription>()
+            .ModifyRequestOptions(o => o.ExecutionTimeout = TimeSpan.FromSeconds(1))
+            .ConfigureSchemaServices(s => s.AddSingleton<TimeProvider>(time))
+            .Services
+            .BuildServiceProvider()
+            .GetRequestExecutorAsync(cancellationToken: cts.Token);
+
+        var sender = executor.Schema.Services.GetRootServiceProvider()
+            .GetRequiredService<ITopicEventSender>();
+
+        var subscribe = await executor.ExecuteAsync("subscription { onMessage }", cts.Token);
+        await using var stream = subscribe.ExpectResponseStream();
+        var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(cts.Token);
+
+        await sender.SendAsync("OnMessage", "register", cts.Token);
+        Assert.True(await enumerator.MoveNextAsync());
+
+        await sender.SendAsync("OnMessage", "block", cts.Token);
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await probe.Blocked.Task.WaitAsync(cts.Token);
+
+        // act
+        time.Advance(TimeSpan.FromSeconds(1));
+
+        // assert
+        Assert.False(await moveNext.WaitAsync(cts.Token));
+        Assert.False(probe.PreviousEventCallbackRan);
+
+        await enumerator.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Event_Should_Not_Run_Callbacks_Of_A_Previous_Event_When_The_Request_Is_Aborted()
+    {
+        // arrange
+        // the system time provider resets the event cancellation between events.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var abortCts = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, abortCts.Token);
+        var probe = new CallbackProbe();
+
+        var executor = await new ServiceCollection()
+            .AddSingleton(probe)
+            .AddGraphQL()
+            .AddInMemorySubscriptions()
+            .AddQueryType(d => d.Field("foo").Resolve("bar"))
+            .AddSubscriptionType<CallbackSubscription>()
+            .Services
+            .BuildServiceProvider()
+            .GetRequestExecutorAsync(cancellationToken: cts.Token);
+
+        var sender = executor.Schema.Services.GetRootServiceProvider()
+            .GetRequiredService<ITopicEventSender>();
+
+        var subscribe = await executor.ExecuteAsync("subscription { onMessage }", linked.Token);
+        await using var stream = subscribe.ExpectResponseStream();
+        var enumerator = stream.ReadResultsAsync().GetAsyncEnumerator(linked.Token);
+
+        await sender.SendAsync("OnMessage", "register", cts.Token);
+        Assert.True(await enumerator.MoveNextAsync());
+
+        await sender.SendAsync("OnMessage", "block", cts.Token);
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await probe.Blocked.Task.WaitAsync(cts.Token);
+
+        // act
+        await abortCts.CancelAsync();
+
+        // assert
+        Assert.False(await moveNext.WaitAsync(cts.Token));
+        Assert.False(probe.PreviousEventCallbackRan);
+
+        await enumerator.DisposeAsync();
+    }
+
+    [Fact]
     public async Task Client_Abort_Should_Tear_Down_Current_Event_When_Timeout_Is_Configured()
     {
         // arrange
@@ -210,6 +298,34 @@ public sealed class SubscriptionEventTimeoutTests
             await Task.Delay(Timeout.Infinite, cancellationToken);
             return message;
         }
+    }
+
+    public sealed class CallbackSubscription
+    {
+        [Subscribe]
+        public async Task<string> OnMessage(
+            [EventMessage] string message,
+            [Service] CallbackProbe probe,
+            CancellationToken cancellationToken)
+        {
+            if (message == "register")
+            {
+                // the registration is not disposed, so it outlives the event.
+                cancellationToken.Register(() => probe.PreviousEventCallbackRan = true);
+                return message;
+            }
+
+            probe.Blocked.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return message;
+        }
+    }
+
+    public sealed class CallbackProbe
+    {
+        public TaskCompletionSource Blocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool PreviousEventCallbackRan { get; set; }
     }
 
     public sealed class ResolverStarted() : TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
