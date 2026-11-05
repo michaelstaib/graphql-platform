@@ -49,9 +49,20 @@ public sealed class OperationResultBatch : ExecutionResult
 
     private static async ValueTask RunCleanUp(IReadOnlyList<IExecutionResult> results)
     {
+        List<Exception>? failures = null;
+
         foreach (var result in results)
         {
-            await result.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await result.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
         }
+
+        ThrowCleanupFailures(failures);
     }
 }
