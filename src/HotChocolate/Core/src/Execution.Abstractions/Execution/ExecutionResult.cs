@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using HotChocolate.Execution.Pipeline;
 using HotChocolate.Features;
 
 namespace HotChocolate.Execution;
@@ -83,7 +84,10 @@ public abstract class ExecutionResult : IExecutionResult
     /// </summary>
     protected void EnsureNotDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
-    /// <inheritdoc cref="IAsyncDisposable"/>
+    /// <summary>
+    /// Runs every registered cleanup. A single failure is thrown as is and several as an
+    /// <see cref="AggregateException"/>.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -92,7 +96,7 @@ public abstract class ExecutionResult : IExecutionResult
             return;
         }
 
-        ExceptionDispatchInfo? exception = null;
+        List<Exception>? failures = null;
         var entries = _cleanUpTasks;
         var length = _cleanupTasksLength;
 
@@ -123,7 +127,7 @@ public abstract class ExecutionResult : IExecutionResult
                 }
                 catch (Exception ex)
                 {
-                    exception ??= ExceptionDispatchInfo.Capture(ex);
+                    (failures ??= []).Add(ex);
                 }
             }
         }
@@ -141,7 +145,23 @@ public abstract class ExecutionResult : IExecutionResult
             GC.SuppressFinalize(this);
         }
 
-        exception?.Throw();
+        ThrowCleanupFailures(failures);
+    }
+
+    // a single failure is thrown as is and several as an aggregate.
+    private protected static void ThrowCleanupFailures(List<Exception>? failures)
+    {
+        if (failures is null)
+        {
+            return;
+        }
+
+        if (failures.Count is 1)
+        {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+
+        throw ThrowHelper.ExecutionResult_CleanupFailed(failures);
     }
 
     private void AddCleanupEntry(CleanupEntry entry)
