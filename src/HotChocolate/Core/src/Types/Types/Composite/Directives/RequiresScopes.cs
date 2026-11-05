@@ -1,6 +1,3 @@
-using HotChocolate.Internal;
-using HotChocolate.Types.Descriptors;
-using HotChocolate.Types.Descriptors.Configurations;
 using HotChocolate.Utilities;
 
 namespace HotChocolate.Types.Composite;
@@ -45,29 +42,6 @@ public sealed class RequiresScopes
     [GraphQLDescription("The scope groups of which at least one must be fully granted.")]
     [GraphQLType<NonNullType<ListType<NonNullType<ListType<NonNullType<StringType>>>>>>]
     public IReadOnlyList<IReadOnlyList<string>> Scopes { get; }
-
-    internal static void AddGroup(
-        IDirectiveConfigurationProvider configuration,
-        ITypeInspector typeInspector,
-        string[] scopes)
-    {
-        ArgumentNullException.ThrowIfNull(scopes);
-
-        var group = CreateGroup(scopes, nameof(scopes));
-        var groups = new List<IReadOnlyList<string>>();
-
-        for (var i = configuration.Directives.Count - 1; i >= 0; i--)
-        {
-            if (configuration.Directives[i].Value is RequiresScopes existing)
-            {
-                groups.AddRange(existing.Scopes);
-                configuration.Directives.RemoveAt(i);
-            }
-        }
-
-        groups.Add(group);
-        configuration.AddDirective(new RequiresScopes(groups), typeInspector);
-    }
 
     /// <inheritdoc />
     public override string ToString()

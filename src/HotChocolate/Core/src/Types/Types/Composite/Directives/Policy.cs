@@ -1,6 +1,3 @@
-using HotChocolate.Internal;
-using HotChocolate.Types.Descriptors;
-using HotChocolate.Types.Descriptors.Configurations;
 using HotChocolate.Utilities;
 
 namespace HotChocolate.Types.Composite;
@@ -45,29 +42,6 @@ public sealed class Policy
     [GraphQLDescription("The policy groups of which at least one must be fully satisfied.")]
     [GraphQLType<NonNullType<ListType<NonNullType<ListType<NonNullType<StringType>>>>>>]
     public IReadOnlyList<IReadOnlyList<string>> Policies { get; }
-
-    internal static void AddGroup(
-        IDirectiveConfigurationProvider configuration,
-        ITypeInspector typeInspector,
-        string[] policies)
-    {
-        ArgumentNullException.ThrowIfNull(policies);
-
-        var group = CreateGroup(policies, nameof(policies));
-        var groups = new List<IReadOnlyList<string>>();
-
-        for (var i = configuration.Directives.Count - 1; i >= 0; i--)
-        {
-            if (configuration.Directives[i].Value is Policy existing)
-            {
-                groups.AddRange(existing.Policies);
-                configuration.Directives.RemoveAt(i);
-            }
-        }
-
-        groups.Add(group);
-        configuration.AddDirective(new Policy(groups), typeInspector);
-    }
 
     /// <inheritdoc />
     public override string ToString()
