@@ -31,14 +31,10 @@ public static class PolicyDescriptorExtensions
         ArgumentNullException.ThrowIfNull(policies);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<Policy>(
+        global::HotChocolate.Types.Composite.Policy.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies),
-            static directive => directive.Policies,
-            static groups => new Policy(groups));
+            policies);
         return descriptor;
     }
 
@@ -68,14 +64,10 @@ public static class PolicyDescriptorExtensions
         ArgumentNullException.ThrowIfNull(policies);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<Policy>(
+        global::HotChocolate.Types.Composite.Policy.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies),
-            static directive => directive.Policies,
-            static groups => new Policy(groups));
+            policies);
         return descriptor;
     }
 
@@ -105,14 +97,10 @@ public static class PolicyDescriptorExtensions
         ArgumentNullException.ThrowIfNull(policies);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<Policy>(
+        global::HotChocolate.Types.Composite.Policy.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies),
-            static directive => directive.Policies,
-            static groups => new Policy(groups));
+            policies);
         return descriptor;
     }
 
@@ -142,14 +130,10 @@ public static class PolicyDescriptorExtensions
         ArgumentNullException.ThrowIfNull(policies);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<Policy>(
+        global::HotChocolate.Types.Composite.Policy.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies),
-            static directive => directive.Policies,
-            static groups => new Policy(groups));
+            policies);
         return descriptor;
     }
 
@@ -179,14 +163,10 @@ public static class PolicyDescriptorExtensions
         ArgumentNullException.ThrowIfNull(policies);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<Policy>(
+        global::HotChocolate.Types.Composite.Policy.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies),
-            static directive => directive.Policies,
-            static groups => new Policy(groups));
+            policies);
         return descriptor;
     }
 
@@ -216,14 +196,10 @@ public static class PolicyDescriptorExtensions
         ArgumentNullException.ThrowIfNull(policies);
 
         var extension = descriptor.Extend();
-        AuthorizationGroups.AddGroup<Policy>(
+        global::HotChocolate.Types.Composite.Policy.AddGroup(
             extension.Configuration,
             extension.Context.TypeInspector,
-            DirectiveNames.Policy.Name,
-            policies,
-            nameof(policies),
-            static directive => directive.Policies,
-            static groups => new Policy(groups));
+            policies);
         return descriptor;
     }
 }
