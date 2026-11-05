@@ -78,10 +78,10 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 #pragma warning restore IDE0370 // Remove unnecessary suppression
 
     /// <summary>
-    /// Gets the policy decisions of the variable set being executed, or <c>null</c> if the
+    /// Gets the policy outcome of the variable set being executed, or <c>null</c> if the
     /// operation is not protected or every selection is allowed.
     /// </summary>
-    internal PolicyDecisions? PolicyDecisions { get; private set; }
+    internal PolicyOutcome? PolicyOutcome { get; private set; }
 
     /// <summary>
     /// Gets the schema definition associated with this execution.
@@ -911,9 +911,9 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     {
         _resultStore.FinalizePocketedErrors();
 
-        if (PolicyDecisions is { RequiresFinalization: true } policyDecisions)
+        if (PolicyOutcome is { RequiresFinalization: true } policyOutcome)
         {
-            _resultStore.FinalizeDeniedSelections(policyDecisions);
+            _resultStore.FinalizeDeniedSelections(policyOutcome);
         }
 
         var environment = Schema.TryGetEnvironment();

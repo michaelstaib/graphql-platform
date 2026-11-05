@@ -124,7 +124,7 @@ internal sealed class PolicyEvaluator
                         scope.Record(
                             CreateAuditEntry(
                                 entry,
-                                new PolicyVerdict(PolicyOutcome.Denied, UnauthenticatedReason, null)));
+                                new PolicyVerdict(PolicyDecision.Denied, UnauthenticatedReason, null)));
                         answered.Add(descriptor);
                     }
 
@@ -176,7 +176,7 @@ internal sealed class PolicyEvaluator
                             scope.Record(
                                 CreateAuditEntry(
                                     entry,
-                                    new PolicyVerdict(PolicyOutcome.Unanswered, ex.Message, null)));
+                                    new PolicyVerdict(PolicyDecision.Unanswered, ex.Message, null)));
                             answered.Add(entry.Descriptor);
                         }
 
@@ -282,7 +282,7 @@ internal sealed class PolicyEvaluator
                 descriptor,
                 CoerceArguments((Selection)descriptor.Selection, variables));
 
-            scope.Record(CreateAuditEntry(entry, new PolicyVerdict(PolicyOutcome.Denied, reason, null)));
+            scope.Record(CreateAuditEntry(entry, new PolicyVerdict(PolicyDecision.Denied, reason, null)));
         }
     }
 
@@ -299,7 +299,7 @@ internal sealed class PolicyEvaluator
     public static bool IsFault(Exception exception, CancellationToken cancellationToken)
         => exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested;
 
-    private PolicyDecisions? CreateDecisions(
+    private PolicyOutcome? CreateDecisions(
         ImmutableArray<PolicyDescriptor> occurrences,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
         bool isAuthenticated)
@@ -332,7 +332,7 @@ internal sealed class PolicyEvaluator
 
         return denials.Count == 0
             ? null
-            : new PolicyDecisions(
+            : new PolicyOutcome(
                 denials.ToImmutable(),
                 _options.DenyHandling,
                 _options.EnableAttribution);
@@ -427,7 +427,7 @@ internal sealed class PolicyEvaluator
 
             if (!isAuthenticated
                 && entries[i].Descriptor.DirectiveName == DirectiveNames.Authenticated.Name
-                && verdict is { Outcome: PolicyOutcome.Denied, Reason: null })
+                && verdict is { Decision: PolicyDecision.Denied, Reason: null })
             {
                 verdict = verdict with { Reason = UnauthenticatedReason };
             }
@@ -512,7 +512,7 @@ internal sealed class PolicyEvaluator
             descriptor.PolicyName,
             descriptor.Scopes,
             CreateArgumentValues(entry.Arguments),
-            verdict.Outcome,
+            verdict.Decision,
             verdict.Reason,
             verdict.AuditData);
     }
@@ -560,7 +560,7 @@ internal sealed class PolicyEvaluator
 
         for (var i = 0; i < entries.Length; i++)
         {
-            if (verdicts[i].Outcome is not PolicyOutcome.Allowed)
+            if (verdicts[i].Decision is not PolicyDecision.Allowed)
             {
                 deniedDescriptors.Add(entries[i].Descriptor);
             }

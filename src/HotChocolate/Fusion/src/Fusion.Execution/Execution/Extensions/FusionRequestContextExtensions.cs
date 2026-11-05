@@ -58,26 +58,26 @@ public static class FusionRequestContextExtensions
         context.Features.Get<OperationPlanInFlightRelease>()?.TryRelease(context, plan);
     }
 
-    internal static PolicyDecisions? GetPolicyDecisions(
+    internal static PolicyOutcome? GetPolicyOutcome(
         this RequestContext context,
         int variableSetIndex)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var decisions = context.Features.Get<PolicyDecisionsInfo>()?.Decisions ?? default;
+        var outcomes = context.Features.Get<PolicyOutcomeFeature>()?.Outcomes ?? default;
 
-        return !decisions.IsDefault && (uint)variableSetIndex < (uint)decisions.Length
-            ? decisions[variableSetIndex]
+        return !outcomes.IsDefault && (uint)variableSetIndex < (uint)outcomes.Length
+            ? outcomes[variableSetIndex]
             : null;
     }
 
-    internal static void SetPolicyDecisions(
+    internal static void SetPolicyOutcomes(
         this RequestContext context,
-        ImmutableArray<PolicyDecisions?> decisions)
+        ImmutableArray<PolicyOutcome?> outcomes)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        context.Features.GetOrSet<PolicyDecisionsInfo>().Decisions = decisions;
+        context.Features.GetOrSet<PolicyOutcomeFeature>().Outcomes = outcomes;
     }
 
     internal static bool CollectOperationPlanTelemetry(

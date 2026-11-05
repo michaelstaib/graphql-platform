@@ -39,21 +39,21 @@ public sealed class PolicyVariable
     /// <summary>
     /// Returns whether the variable is <c>true</c> for a variable set.
     /// </summary>
-    /// <param name="decisions">
+    /// <param name="outcome">
     /// The denied selections of the variable set, or <c>null</c> if every selection is allowed.
     /// </param>
-    internal bool IsTrue(PolicyDecisions? decisions)
+    internal bool IsTrue(PolicyOutcome? outcome)
     {
         if (Operands.IsEmpty)
         {
-            if (decisions is null)
+            if (outcome is null)
             {
                 return false;
             }
 
             foreach (var selection in Selections)
             {
-                if (decisions.IsDenied(selection))
+                if (outcome.IsDenied(selection))
                 {
                     return true;
                 }
@@ -64,7 +64,7 @@ public sealed class PolicyVariable
 
         foreach (var operand in Operands)
         {
-            if (!operand.IsTrue(decisions))
+            if (!operand.IsTrue(outcome))
             {
                 return false;
             }

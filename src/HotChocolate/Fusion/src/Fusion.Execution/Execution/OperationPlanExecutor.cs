@@ -19,7 +19,7 @@ internal static partial class OperationPlanExecutor
         RequestContext requestContext,
         IVariableValueCollection variables,
         int variableIndex,
-        PolicyDecisions? policyDecisions,
+        PolicyOutcome? policyOutcome,
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
@@ -36,7 +36,7 @@ internal static partial class OperationPlanExecutor
                 requestContext,
                 variables,
                 variableIndex,
-                policyDecisions,
+                policyOutcome,
                 operationPlan,
                 executionCts);
 
@@ -80,7 +80,7 @@ internal static partial class OperationPlanExecutor
     public static async Task<IExecutionResult> ExecuteWithDeferAsync(
         RequestContext requestContext,
         IVariableValueCollection variables,
-        PolicyDecisions? policyDecisions,
+        PolicyOutcome? policyOutcome,
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
@@ -95,7 +95,7 @@ internal static partial class OperationPlanExecutor
                 requestContext,
                 variables,
                 variableIndex: -1,
-                policyDecisions,
+                policyOutcome,
                 operationPlan,
                 executionCts);
 
@@ -170,7 +170,7 @@ internal static partial class OperationPlanExecutor
                 () => CreateIncrementalStream(
                     requestContext,
                     variables,
-                    policyDecisions,
+                    policyOutcome,
                     operationPlan,
                     initialResult,
                     rootContext,
@@ -197,7 +197,7 @@ internal static partial class OperationPlanExecutor
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(
         RequestContext requestContext,
         IVariableValueCollection variables,
-        PolicyDecisions? policyDecisions,
+        PolicyOutcome? policyOutcome,
         OperationPlan operationPlan,
         OperationResult initialResult,
         OperationPlanContext rootContext,
@@ -262,7 +262,7 @@ internal static partial class OperationPlanExecutor
                 BeginIncrementalPlan(
                     requestContext,
                     variables,
-                    policyDecisions,
+                    policyOutcome,
                     incrementalPlan,
                     rootContext.GetResultStoreForChildDefer(),
                     channel.Writer,
@@ -345,7 +345,7 @@ internal static partial class OperationPlanExecutor
                     BeginIncrementalPlan(
                         requestContext,
                         variables,
-                        policyDecisions,
+                        policyOutcome,
                         candidate,
                         parentStore,
                         channel.Writer,
@@ -485,7 +485,7 @@ internal static partial class OperationPlanExecutor
     private static void BeginIncrementalPlan(
         RequestContext requestContext,
         IVariableValueCollection variables,
-        PolicyDecisions? policyDecisions,
+        PolicyOutcome? policyOutcome,
         IncrementalPlan incrementalPlan,
         FetchResultStore parentResultStore,
         ChannelWriter<IncrementalPlanResult> completion,
@@ -510,7 +510,7 @@ internal static partial class OperationPlanExecutor
                 requestContext,
                 variables,
                 variableIndex: -1,
-                policyDecisions,
+                policyOutcome,
                 incrementalPlan,
                 executionCts,
                 requestArena);
@@ -910,7 +910,7 @@ internal static partial class OperationPlanExecutor
                 requestContext,
                 requestContext.VariableValues[0],
                 variableIndex: -1,
-                requestContext.GetPolicyDecisions(0),
+                requestContext.GetPolicyOutcome(0),
                 operationPlan,
                 executionCts);
 

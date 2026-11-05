@@ -915,7 +915,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             null,
             [],
             ImmutableDictionary.Create<string, string>(),
-            PolicyOutcome.Allowed,
+            PolicyDecision.Allowed,
             null,
             null);
 
@@ -929,7 +929,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             : "{" + string.Join(",", entry.AuditData.Select(a => $"{a.Key}:{a.Value}")) + "}";
 
         return $"{entry.Coordinate} | @{entry.DirectiveName}{policyName} | scopes=[{scopes}] "
-            + $"| args={{{arguments}}} | {entry.Outcome} | reason={entry.Reason ?? "-"} | data={data}";
+            + $"| args={{{arguments}}} | {entry.Decision} | reason={entry.Reason ?? "-"} | data={data}";
     }
 
     private static string Format(AuditSubject subject)
@@ -964,7 +964,7 @@ public class AuditTrailTests : AuthorizationExecutionTestBase
             ";",
             scope.Entries.Select(
                 e => $"{e.Coordinate} @{e.DirectiveName}{(e.PolicyName is null ? string.Empty : $"({e.PolicyName})")} "
-                    + $"args={{{string.Join(",", e.Arguments.Select(a => $"{a.Key}:{a.Value}"))}}} {e.Outcome}"));
+                    + $"args={{{string.Join(",", e.Arguments.Select(a => $"{a.Key}:{a.Value}"))}}} {e.Decision}"));
 
         return $"trail={scope.Trail.InvocationId} | request={info.RequestIndex} | set={info.VariableSetIndex} | {entries}";
     }

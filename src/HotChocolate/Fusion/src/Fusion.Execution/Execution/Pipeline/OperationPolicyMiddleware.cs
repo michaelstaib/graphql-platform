@@ -75,7 +75,7 @@ internal sealed class OperationPolicyMiddleware
         var trail = context.Features.TryGet(out AuditInvocation? auditInvocation)
             ? auditInvocation.GetOrCreateTrail(_auditProvider, context.RequestServices)
             : _auditProvider.CreateTrail(context.RequestServices);
-        PolicyDecisions?[]? decisionSets = null;
+        PolicyOutcome?[]? outcomes = null;
         IVariableValueCollection[]? updatedVariableSets = null;
         var isSubscription = plan.Operation.Definition.Operation is OperationType.Subscription;
         var expiry = isSubscription ? GetExpiry(user) : null;
@@ -135,24 +135,24 @@ internal sealed class OperationPolicyMiddleware
                 return;
             }
 
-            var decisions = evaluation.Decisions;
+            var outcome = evaluation.Outcome;
 
-            if (decisions is not null
-                && decisions.TryGetRejection(_options.RejectRequestOn, out var denial))
+            if (outcome is not null
+                && outcome.TryGetRejection(_options.RejectRequestOn, out var denial))
             {
                 await RejectAsync(context, denial);
                 return;
             }
 
-            if (decisions is not null)
+            if (outcome is not null)
             {
-                decisionSets ??= new PolicyDecisions?[variableSets.Length];
-                decisionSets[i] = decisions;
+                outcomes ??= new PolicyOutcome?[variableSets.Length];
+                outcomes[i] = outcome;
             }
 
             if (isSubscription
-                && decisions is not null
-                && decisions.TryGetDenial(plan.Operation.RootSelectionSet, out var rootDenial))
+                && outcome is not null
+                && outcome.TryGetDenial(plan.Operation.RootSelectionSet, out var rootDenial))
             {
                 await RejectAsync(context, rootDenial);
                 return;
@@ -183,7 +183,7 @@ internal sealed class OperationPolicyMiddleware
                     new VariableValue(
                         variable.Name,
                         _booleanType,
-                        variable.IsTrue(decisions) ? BooleanValueNode.True : BooleanValueNode.False));
+                        variable.IsTrue(outcome) ? BooleanValueNode.True : BooleanValueNode.False));
             }
         }
 
@@ -192,9 +192,9 @@ internal sealed class OperationPolicyMiddleware
             context.VariableValues = ImmutableCollectionsMarshal.AsImmutableArray(updatedVariableSets);
         }
 
-        if (decisionSets is not null)
+        if (outcomes is not null)
         {
-            context.SetPolicyDecisions(ImmutableCollectionsMarshal.AsImmutableArray(decisionSets));
+            context.SetPolicyOutcomes(ImmutableCollectionsMarshal.AsImmutableArray(outcomes));
         }
 
         await next(context);
