@@ -2,10 +2,10 @@ operation:
   - document: |
       mutation M($x: Boolean!, $y: Boolean!) {
         a: bump(counter: "s", by: 1) {
-          id @fusion__requirement
           ... @include(if: $x) {
             id @include(if: $y)
           }
+          id @fusion__requirement
         }
       }
     name: M

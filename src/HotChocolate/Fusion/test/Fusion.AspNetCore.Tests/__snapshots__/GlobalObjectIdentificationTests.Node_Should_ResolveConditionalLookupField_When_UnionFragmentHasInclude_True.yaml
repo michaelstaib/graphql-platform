@@ -137,7 +137,6 @@ operationPlan:
             __typename @fusion__requirement
             id
             ... on CommunityContributor @include(if: $include) {
-              id @fusion__requirement
               ... on User {
                 email
               }
@@ -147,6 +146,7 @@ operationPlan:
               ... on FormerUser {
                 name
               }
+              id @fusion__requirement
             }
           }
         }
