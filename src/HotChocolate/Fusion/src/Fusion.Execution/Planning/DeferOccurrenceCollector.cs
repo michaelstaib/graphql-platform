@@ -6,8 +6,9 @@ namespace HotChocolate.Fusion.Planning;
 
 /// <summary>
 /// Collects leaf field occurrences together with their enclosing delivery
-/// group. The collected occurrences are grouped later by effective delivery
-/// group set to produce incremental plans.
+/// group, and the conditional <c>@defer</c> fragments nested inside another
+/// delivery group. The collected occurrences are grouped later by effective
+/// delivery group set to produce incremental plans.
 /// </summary>
 internal static class DeferOccurrenceCollector
 {
@@ -25,12 +26,13 @@ internal static class DeferOccurrenceCollector
     /// When <c>true</c> an unlabeled nested <c>@defer</c> whose <c>if</c>
     /// variable matches its parent is folded into the parent's set.
     /// </param>
-    public static List<FieldOccurrence> Collect(
+    public static DeferCollectionResult Collect(
         OperationDefinitionNode operation,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment,
         bool inlineUnlabeledNestedDefers)
     {
-        var occurrences = new List<FieldOccurrence>();
+        var occurrences = ImmutableArray.CreateBuilder<FieldOccurrence>();
+        var conditionalFragments = ImmutableArray.CreateBuilder<ConditionalFragmentOccurrence>();
         CollectOccurrences(
             operation.SelectionSet.Selections,
             parentPath: [],
@@ -38,8 +40,9 @@ internal static class DeferOccurrenceCollector
             parentTypeCondition: null,
             byFragment,
             inlineUnlabeledNestedDefers,
-            occurrences);
-        return occurrences;
+            occurrences,
+            conditionalFragments);
+        return new DeferCollectionResult(occurrences.ToImmutable(), conditionalFragments.ToImmutable());
     }
 
     private static void CollectOccurrences(
@@ -49,7 +52,8 @@ internal static class DeferOccurrenceCollector
         NamedTypeNode? parentTypeCondition,
         IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment,
         bool inlineUnlabeledNestedDefers,
-        List<FieldOccurrence> occurrences)
+        ImmutableArray<FieldOccurrence>.Builder occurrences,
+        ImmutableArray<ConditionalFragmentOccurrence>.Builder conditionalFragments)
     {
         foreach (var selection in selections)
         {
@@ -75,7 +79,8 @@ internal static class DeferOccurrenceCollector
                         parentTypeCondition: null,
                         byFragment,
                         inlineUnlabeledNestedDefers,
-                        occurrences);
+                        occurrences,
+                        conditionalFragments);
                 }
                 else
                 {
@@ -112,6 +117,17 @@ internal static class DeferOccurrenceCollector
                     }
                     else
                     {
+                        // Top-level conditional defers are covered by the main operation.
+                        if (canonical.IfVariable is not null && enclosingDefer is not null)
+                        {
+                            conditionalFragments.Add(
+                                new ConditionalFragmentOccurrence(
+                                    inlineFragment,
+                                    enclosingDefer,
+                                    parentPath,
+                                    parentTypeCondition));
+                        }
+
                         nestedDefer = canonical;
                     }
                 }
@@ -123,7 +139,8 @@ internal static class DeferOccurrenceCollector
                     inlineFragment.TypeCondition ?? parentTypeCondition,
                     byFragment,
                     inlineUnlabeledNestedDefers,
-                    occurrences);
+                    occurrences,
+                    conditionalFragments);
             }
         }
     }
