@@ -31,6 +31,11 @@ internal partial class MiddlewareContext : IMiddlewareContext
 
     public DeferUsage? DeferUsage { get; private set; }
 
+    /// <summary>
+    /// Gets the active defer usage sets of this request, or <c>null</c> if the operation has no incremental parts.
+    /// </summary>
+    internal DeferUsageSetTable? DeferUsageSetTable => _operationContext.DeferUsageSetTable;
+
     public IOperationResultBuilder OperationResult => _operationResultBuilder;
 
     public IDictionary<string, object?> ContextData => _operationContext.ContextData;

@@ -12,7 +12,9 @@ internal sealed class DeferUsageSet : IEquatable<DeferUsageSet>
     /// Initializes a new instance of <see cref="DeferUsageSet"/>.
     /// </summary>
     /// <param name="usages">The distinct defer usages of the set, sorted by <see cref="DeferUsage.Ordinal"/>.</param>
-    /// <param name="index">The index of this set in the defer usage sets of its operation.</param>
+    /// <param name="index">
+    /// The index of this set in the defer usage sets of its operation, or -1 for a set that only one request uses.
+    /// </param>
     public DeferUsageSet(DeferUsage[] usages, int index)
     {
         ArgumentNullException.ThrowIfNull(usages);
@@ -36,7 +38,7 @@ internal sealed class DeferUsageSet : IEquatable<DeferUsageSet>
     public DeferUsage[] Usages { get; }
 
     /// <summary>
-    /// Gets the index of this set in the defer usage sets of its operation.
+    /// Gets the index of this set in the defer usage sets of its operation, or -1 for a set that only one request uses.
     /// </summary>
     public int Index { get; }
 
