@@ -280,10 +280,42 @@ public class WideConditionMaskTests
         Assert.True(selection!.IsDeferred(new ConditionFlags(word0, wide)));
         Assert.False(selection.IsDeferred(new ConditionFlags(0ul, new ulong[2])));
 
-        var activeUsages = selection.GetActiveDeferUsages(new ConditionFlags(word0, wide));
+        var activeUsages = selection.GetActiveDeferUsages(word0, wide);
         Assert.NotNull(activeUsages);
         Assert.Equal(index, Assert.Single(activeUsages).DeferConditionIndex);
-        Assert.Null(selection.GetActiveDeferUsages(new ConditionFlags(0ul, new ulong[2])));
+        Assert.Null(selection.GetActiveDeferUsages(0ul, new ulong[2]));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, true)]
+    public void IsDeferred_Should_RequireEnabledDeferInEveryOccurrence_When_FlagsAreWide(
+        bool narrowEnabled,
+        bool wideEnabled,
+        bool expected)
+    {
+        // arrange
+        var schema = CreateSchema();
+        var source = CreateDeferDocument(conditionCount: 70);
+        var document = Utf8GraphQLParser.Parse(
+            source[..^2] + " ... @defer(if: $d3) { shared: foo } ... @defer(if: $d65) { shared: foo } }");
+        var operation = OperationCompiler.Compile("opid", document, schema);
+
+        Assert.True(operation.RootSelectionSet.TryGetSelection("shared", out var selection));
+
+        var word0 = narrowEnabled ? 1ul << 3 : 0ul;
+        var wide = new ulong[2];
+        wide[0] = wideEnabled ? 1ul << 1 : 0ul;
+
+        // act
+        var isDeferred = selection!.IsDeferred(new ConditionFlags(word0, wide));
+        var activeUsages = selection.GetActiveDeferUsages(word0, wide);
+
+        // assert
+        Assert.Equal(expected, isDeferred);
+        Assert.Equal(expected, activeUsages is not null);
     }
 
     [Fact]

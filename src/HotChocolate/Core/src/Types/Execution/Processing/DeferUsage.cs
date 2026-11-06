@@ -20,4 +20,57 @@ namespace HotChocolate.Execution.Processing;
 public sealed record DeferUsage(
     string? Label,
     DeferUsage? Parent,
-    int DeferConditionIndex);
+    int DeferConditionIndex)
+{
+    /// <summary>
+    /// Gets the creation order of this defer usage within its operation.
+    /// Equal defer usages of an operation share one instance and therefore one ordinal.
+    /// </summary>
+    public int Ordinal { get; internal init; }
+
+    /// <inheritdoc />
+    public bool Equals(DeferUsage? other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        return other is not null
+            && DeferConditionIndex == other.DeferConditionIndex
+            && string.Equals(Label, other.Label, StringComparison.Ordinal)
+            && Equals(Parent, other.Parent);
+    }
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+        => HashCode.Combine(Label, Parent, DeferConditionIndex);
+
+    /// <summary>
+    /// Gets the nearest defer usage in the parent chain of <paramref name="usage"/>, starting with
+    /// <paramref name="usage"/> itself, whose condition is enabled, or <c>null</c> if none is enabled.
+    /// </summary>
+    internal static DeferUsage? FindActive(DeferUsage? usage, ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    {
+        while (usage is not null && !IsConditionBitSet(deferFlags, wideDeferFlags, usage.DeferConditionIndex))
+        {
+            usage = usage.Parent;
+        }
+
+        return usage;
+    }
+
+    private static bool IsConditionBitSet(ulong flags, ReadOnlySpan<ulong> wideFlags, int index)
+    {
+        var word = index >> 6;
+        var bit = 1ul << (index & 63);
+
+        if (word == 0)
+        {
+            return (flags & bit) != 0;
+        }
+
+        word--;
+        return (uint)word < (uint)wideFlags.Length && (wideFlags[word] & bit) != 0;
+    }
+}

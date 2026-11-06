@@ -123,7 +123,8 @@ public sealed partial class OperationCompiler
         DeferConditionVisitor.Instance.Visit(operationDefinition, deferConditions);
         var fields = _fieldsPool.Get();
 
-        var compilationContext = new CompilationContext(new object[128]);
+        var deferUsageRegistry = new DeferUsageRegistry();
+        var compilationContext = new CompilationContext(new object[128], deferUsageRegistry);
 
         try
         {
@@ -142,6 +143,7 @@ public sealed partial class OperationCompiler
                 fields,
                 includeConditions,
                 deferConditions,
+                deferUsageRegistry,
                 parentDeferUsage: null);
 
             var selectionSet = BuildSelectionSet(
@@ -170,6 +172,7 @@ public sealed partial class OperationCompiler
                 compiler: this,
                 includeConditions,
                 deferConditions,
+                deferUsageRegistry,
                 compilationContext.Features,
                 lastId,
                 compilationContext.ElementsById,
@@ -203,7 +206,8 @@ public sealed partial class OperationCompiler
         ref object[] elementsById,
         ref int lastId)
     {
-        var compilationContext = new CompilationContext(elementsById, operation.Features);
+        var deferUsageRegistry = operation.DeferUsageRegistry;
+        var compilationContext = new CompilationContext(elementsById, deferUsageRegistry, operation.Features);
         var optimizers = OperationCompilerOptimizerHelper.GetOptimizers(selection);
 
         var fields = _fieldsPool.Get();
@@ -223,6 +227,7 @@ public sealed partial class OperationCompiler
                 fields,
                 includeConditions,
                 deferConditions,
+                deferUsageRegistry,
                 parentDeferUsage: first.DeferUsage);
 
             if (nodes.Length > 1)
@@ -238,6 +243,7 @@ public sealed partial class OperationCompiler
                         fields,
                         includeConditions,
                         deferConditions,
+                        deferUsageRegistry,
                         parentDeferUsage: node.DeferUsage);
                 }
             }
@@ -284,6 +290,7 @@ public sealed partial class OperationCompiler
         OrderedDictionary<string, List<FieldSelectionNode>> fields,
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
+        DeferUsageRegistry deferUsageRegistry,
         DeferUsage? parentDeferUsage)
     {
         for (var i = 0; i < selections.Count; i++)
@@ -331,7 +338,7 @@ public sealed partial class OperationCompiler
                     deferConditions.Add(deferCondition);
                     var deferIndex = deferConditions.IndexOf(deferCondition);
                     var label = GetDeferLabel(inlineFragmentNode);
-                    newDeferUsage = new DeferUsage(label, parentDeferUsage, deferIndex);
+                    newDeferUsage = deferUsageRegistry.GetOrCreateUsage(label, parentDeferUsage, deferIndex);
                 }
 
                 CollectFields(
@@ -341,6 +348,7 @@ public sealed partial class OperationCompiler
                     fields,
                     includeConditions,
                     deferConditions,
+                    deferUsageRegistry,
                     newDeferUsage);
             }
         }
@@ -476,7 +484,8 @@ public sealed partial class OperationCompiler
 
             // If any field node is not inside a deferred fragment, the selection
             // is not deferred — it must be included in the initial response.
-            DeferUsage[]? finalDeferUsage = null;
+            DeferUsage[]? orderedDeferUsages = null;
+            DeferUsageSet? deferUsageSet = null;
             ulong deferMask = 0;
             ulong[]? wideDeferMask = null;
 
@@ -500,10 +509,17 @@ public sealed partial class OperationCompiler
                     }
                 }
 
-                finalDeferUsage = deferUsages.ToArray();
+                RemoveDuplicateDeferUsages(deferUsages);
+                orderedDeferUsages = deferUsages.ToArray();
+                deferUsageSet = compilationContext.DeferUsageRegistry.Intern(orderedDeferUsages);
 
-                // The mask carries the condition bits of every usage in each parent chain, so
-                // a selection stays deferred while any enclosing @defer is enabled.
+                if (orderedDeferUsages.AsSpan().SequenceEqual(deferUsageSet.Usages))
+                {
+                    orderedDeferUsages = deferUsageSet.Usages;
+                }
+
+                // The mask is the union of the condition bits of every usage in each parent
+                // chain, and serves as a quick negative check.
                 if (!hasWideDeferFlags)
                 {
                     foreach (var usage in deferUsages)
@@ -550,7 +566,8 @@ public sealed partial class OperationCompiler
                 isProjectionRequirement,
                 wideIncludeFlags: flatWideIncludeFlags,
                 wideIncludeFlagsStride: wideIncludeFlagsStride,
-                deferUsage: finalDeferUsage,
+                deferUsageSet: deferUsageSet,
+                deferUsages: orderedDeferUsages,
                 deferMask: deferMask,
                 wideDeferMask: wideDeferMask,
                 isInternal: isInternal,
@@ -658,6 +675,22 @@ public sealed partial class OperationCompiler
         }
 
         return true;
+    }
+
+    // keeps the first occurrence of each usage so that the field node order is preserved.
+    private static void RemoveDuplicateDeferUsages(List<DeferUsage> deferUsages)
+    {
+        for (var i = deferUsages.Count - 1; i > 0; i--)
+        {
+            for (var j = 0; j < i; j++)
+            {
+                if (ReferenceEquals(deferUsages[i], deferUsages[j]))
+                {
+                    deferUsages.RemoveAt(i);
+                    break;
+                }
+            }
+        }
     }
 
     private static (ulong Word0, ulong[]? Overflow) BuildWideDeferMask(List<DeferUsage> deferUsages)
@@ -905,13 +938,19 @@ public sealed partial class OperationCompiler
     {
         private object[] _elementsById;
 
-        public CompilationContext(object[] elementsById, OperationFeatureCollection? features = null)
+        public CompilationContext(
+            object[] elementsById,
+            DeferUsageRegistry deferUsageRegistry,
+            OperationFeatureCollection? features = null)
         {
             _elementsById = elementsById;
+            DeferUsageRegistry = deferUsageRegistry;
             Features = features ?? new OperationFeatureCollection();
         }
 
         public object[] ElementsById => _elementsById;
+
+        public DeferUsageRegistry DeferUsageRegistry { get; }
 
         public OperationFeatureCollection Features { get; }
 
