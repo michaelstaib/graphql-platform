@@ -84,6 +84,71 @@ public class ExecutionResultSnapshotTests
     }
 
     [Fact]
+    public void Format_Should_WriteErrorsOnlyEntryAsSent_When_IdHasSeveralIncrementalEntries()
+    {
+        // arrange
+        var stream = CreateStream(
+            new Dictionary<string, object?>(),
+            new PendingResult(1, Path.Root, "items"),
+            CreateEntry(1, "b", "B"),
+            new IncrementalObjectResult(1, errors: [global::HotChocolate.ErrorBuilder.New().SetMessage("boom").Build()]),
+            CreateEntry(1, "a", "A"));
+
+        // act
+        var result = Format(stream);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {},
+              "pending": [
+                {
+                  "id": "1",
+                  "path": [],
+                  "label": "items"
+                }
+              ],
+              "incremental": [
+                {
+                  "id": "1",
+                  "subPath": [
+                    "b"
+                  ],
+                  "data": {
+                    "name": "B"
+                  }
+                },
+                {
+                  "id": "1",
+                  "data": null,
+                  "errors": [
+                    {
+                      "message": "boom"
+                    }
+                  ]
+                },
+                {
+                  "id": "1",
+                  "subPath": [
+                    "a"
+                  ],
+                  "data": {
+                    "name": "A"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "1"
+                }
+              ],
+              "hasNext": false
+            }
+            """);
+    }
+
+    [Fact]
     public void Format_Should_AcceptSubPathEntry_When_ScopeRejectsOverlapsAndPositionDiffersFromFragmentPath()
     {
         // arrange
