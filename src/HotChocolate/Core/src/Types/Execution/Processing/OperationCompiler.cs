@@ -144,7 +144,6 @@ public sealed partial class OperationCompiler
                 includeConditions,
                 deferConditions,
                 deferUsageRegistry,
-                depth: 0,
                 parentDeferUsage: null);
 
             var selectionSet = BuildSelectionSet(
@@ -220,7 +219,6 @@ public sealed partial class OperationCompiler
             var first = nodes[0];
             var hasWideIncludeFlags = operation.HasWideIncludeFlags;
             var hasWideDeferFlags = operation.HasWideDeferFlags;
-            var depth = selection.FieldSelectionPath.Length;
 
             CollectFields(
                 new PathIncludeFlagsBuilder(first.PathConditionFlags.Word0, first.PathConditionFlags.Overflow),
@@ -230,7 +228,6 @@ public sealed partial class OperationCompiler
                 includeConditions,
                 deferConditions,
                 deferUsageRegistry,
-                depth,
                 parentDeferUsage: first.DeferUsage);
 
             if (nodes.Length > 1)
@@ -247,7 +244,6 @@ public sealed partial class OperationCompiler
                         includeConditions,
                         deferConditions,
                         deferUsageRegistry,
-                        depth,
                         parentDeferUsage: node.DeferUsage);
                 }
             }
@@ -295,7 +291,6 @@ public sealed partial class OperationCompiler
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
         DeferUsageRegistry deferUsageRegistry,
-        int depth,
         DeferUsage? parentDeferUsage)
     {
         for (var i = 0; i < selections.Count; i++)
@@ -343,7 +338,7 @@ public sealed partial class OperationCompiler
                     deferConditions.Add(deferCondition);
                     var deferIndex = deferConditions.IndexOf(deferCondition);
                     var label = GetDeferLabel(inlineFragmentNode);
-                    newDeferUsage = deferUsageRegistry.GetOrCreateUsage(label, parentDeferUsage, deferIndex, depth);
+                    newDeferUsage = deferUsageRegistry.GetOrCreateUsage(label, parentDeferUsage, deferIndex);
                 }
 
                 CollectFields(
@@ -354,7 +349,6 @@ public sealed partial class OperationCompiler
                     includeConditions,
                     deferConditions,
                     deferUsageRegistry,
-                    depth,
                     newDeferUsage);
             }
         }
@@ -490,6 +484,7 @@ public sealed partial class OperationCompiler
 
             // If any field node is not inside a deferred fragment, the selection
             // is not deferred — it must be included in the initial response.
+            DeferUsage[]? orderedDeferUsages = null;
             DeferUsageSet? deferUsageSet = null;
             ulong deferMask = 0;
             ulong[]? wideDeferMask = null;
@@ -514,7 +509,14 @@ public sealed partial class OperationCompiler
                     }
                 }
 
-                deferUsageSet = compilationContext.DeferUsageRegistry.Intern(deferUsages);
+                RemoveDuplicateDeferUsages(deferUsages);
+                orderedDeferUsages = deferUsages.ToArray();
+                deferUsageSet = compilationContext.DeferUsageRegistry.Intern(orderedDeferUsages);
+
+                if (orderedDeferUsages.AsSpan().SequenceEqual(deferUsageSet.Usages))
+                {
+                    orderedDeferUsages = deferUsageSet.Usages;
+                }
 
                 // The mask is the union of the condition bits of every usage in each parent
                 // chain, and serves as a quick negative check.
@@ -565,6 +567,7 @@ public sealed partial class OperationCompiler
                 wideIncludeFlags: flatWideIncludeFlags,
                 wideIncludeFlagsStride: wideIncludeFlagsStride,
                 deferUsageSet: deferUsageSet,
+                deferUsages: orderedDeferUsages,
                 deferMask: deferMask,
                 wideDeferMask: wideDeferMask,
                 isInternal: isInternal,
@@ -672,6 +675,22 @@ public sealed partial class OperationCompiler
         }
 
         return true;
+    }
+
+    // keeps the first occurrence of each usage so that the field node order is preserved.
+    private static void RemoveDuplicateDeferUsages(List<DeferUsage> deferUsages)
+    {
+        for (var i = deferUsages.Count - 1; i > 0; i--)
+        {
+            for (var j = 0; j < i; j++)
+            {
+                if (ReferenceEquals(deferUsages[i], deferUsages[j]))
+                {
+                    deferUsages.RemoveAt(i);
+                    break;
+                }
+            }
+        }
     }
 
     private static (ulong Word0, ulong[]? Overflow) BuildWideDeferMask(List<DeferUsage> deferUsages)

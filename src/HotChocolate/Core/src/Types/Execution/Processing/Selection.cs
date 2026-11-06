@@ -20,6 +20,8 @@ public sealed class Selection : ISelection, IFeatureProvider
     private readonly int _wideIncludeFlagsStride;
     private readonly byte[] _utf8ResponseName;
     private readonly DeferUsageSet? _deferUsageSet;
+    // the usages of the set in the order of the field nodes they were collected from.
+    private readonly DeferUsage[] _deferUsages;
     private readonly ulong _deferMask;
     private readonly ulong[]? _wideDeferMask;
     private Flags _flags;
@@ -36,6 +38,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         ulong[]? wideIncludeFlags = null,
         int wideIncludeFlagsStride = 0,
         DeferUsageSet? deferUsageSet = null,
+        DeferUsage[]? deferUsages = null,
         ulong deferMask = 0,
         ulong[]? wideDeferMask = null,
         bool isInternal = false,
@@ -71,6 +74,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         _wideIncludeFlags = wideIncludeFlags;
         _wideIncludeFlagsStride = wideIncludeFlagsStride;
         _deferUsageSet = deferUsageSet;
+        _deferUsages = deferUsages ?? deferUsageSet?.Usages ?? [];
         _deferMask = deferMask;
         _wideDeferMask = wideDeferMask;
         _flags = isInternal ? Flags.Internal : Flags.None;
@@ -115,6 +119,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         ulong[]? wideIncludeFlags,
         int wideIncludeFlagsStride,
         DeferUsageSet? deferUsageSet,
+        DeferUsage[] deferUsages,
         ulong deferMask,
         ulong[]? wideDeferMask,
         Flags flags,
@@ -139,6 +144,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         _wideIncludeFlags = wideIncludeFlags;
         _wideIncludeFlagsStride = wideIncludeFlagsStride;
         _deferUsageSet = deferUsageSet;
+        _deferUsages = deferUsages;
         _deferMask = deferMask;
         _wideDeferMask = wideDeferMask;
         _flags = flags;
@@ -490,8 +496,6 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// </summary>
     internal DeferUsageSet? DeferUsageSet => _deferUsageSet;
 
-    private DeferUsage[] DeferUsages => _deferUsageSet?.Usages ?? [];
-
     /// <summary>
     /// Determines whether this selection is included and deferred under exactly the same
     /// conditions as the <paramref name="other"/> selection.
@@ -499,7 +503,8 @@ public sealed class Selection : ISelection, IFeatureProvider
     internal bool HasSameConditions(Selection other)
         => _includeFlags.AsSpan().SequenceEqual(other._includeFlags)
             && _wideIncludeFlags.AsSpan().SequenceEqual(other._wideIncludeFlags)
-            && ReferenceEquals(_deferUsageSet, other._deferUsageSet);
+            && ReferenceEquals(_deferUsageSet, other._deferUsageSet)
+            && _deferUsages.AsSpan().SequenceEqual(other._deferUsages);
 
     /// <inheritdoc />
     [Obsolete("Use IsDeferred(ConditionFlags) instead. This overload throws for operations with more than 64 conditions.")]
@@ -532,7 +537,7 @@ public sealed class Selection : ISelection, IFeatureProvider
     internal bool IsDeferredUnchecked(ulong deferFlags)
         => _deferMask != 0
             && (_deferMask & deferFlags) != 0
-            && (DeferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, default));
+            && (_deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, default));
 
     /// <summary>
     /// Evaluates the defer mask against all words of the request flags.
@@ -542,7 +547,7 @@ public sealed class Selection : ISelection, IFeatureProvider
     {
         if ((_deferMask & deferFlags) != 0)
         {
-            return DeferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
+            return _deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
         }
 
         var wide = _wideDeferMask;
@@ -558,7 +563,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         {
             if ((wide[i] & wideDeferFlags[i]) != 0)
             {
-                return DeferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
+                return _deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
             }
         }
 
@@ -671,7 +676,7 @@ public sealed class Selection : ISelection, IFeatureProvider
 
     internal DeferUsage? GetPrimaryDeferUsage(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
-        var deferUsages = DeferUsages;
+        var deferUsages = _deferUsages;
 
         if (deferUsages.Length == 0)
         {
@@ -770,7 +775,7 @@ public sealed class Selection : ISelection, IFeatureProvider
 
     internal DeferUsage[]? GetActiveDeferUsages(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
-        var deferUsages = DeferUsages;
+        var deferUsages = _deferUsages;
 
         if (deferUsages.Length == 0)
         {
@@ -907,7 +912,7 @@ nextItem:
 
     internal bool HasActiveDeferUsage(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags, DeferUsage target)
     {
-        var deferUsages = DeferUsages;
+        var deferUsages = _deferUsages;
 
         if (deferUsages.Length == 0)
         {
@@ -948,7 +953,7 @@ nextItem:
     // a field is deferred only if every occurrence has an enabled @defer in its chain.
     private bool IsEveryOccurrenceDeferred(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
-        foreach (var occurrence in DeferUsages)
+        foreach (var occurrence in _deferUsages)
         {
             if (DeferUsage.FindActive(occurrence, deferFlags, wideDeferFlags) is null)
             {
@@ -975,6 +980,7 @@ nextItem:
             _wideIncludeFlags,
             _wideIncludeFlagsStride,
             _deferUsageSet,
+            _deferUsages,
             _deferMask,
             _wideDeferMask,
             field.IsExecutionGroupRoot
@@ -1007,6 +1013,7 @@ nextItem:
             _wideIncludeFlags,
             _wideIncludeFlagsStride,
             _deferUsageSet,
+            _deferUsages,
             _deferMask,
             _wideDeferMask,
             _flags,
