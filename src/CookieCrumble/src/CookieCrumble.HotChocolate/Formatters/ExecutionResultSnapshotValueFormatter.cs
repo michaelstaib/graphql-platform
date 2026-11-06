@@ -216,43 +216,60 @@ internal sealed class ExecutionResultSnapshotValueFormatter
         {
             var group = byId[id];
 
-            writer.WriteStartObject();
-            writer.WriteString("id", id);
-
-            if (group.FirstOrDefault(e => e.SubPath is not null)?.SubPath is { } subPath)
+            // An id that received data for several response positions is written as one entry per position,
+            // in the order the entries were emitted.
+            if (group.Count(e => e.Data is not null) > 1)
             {
-                writer.WritePropertyName("subPath");
-                subPath.WriteTo(writer);
-            }
-
-            if (group.Any(e => e.Items is not null))
-            {
-                writer.WritePropertyName("items");
-                writer.WriteStartArray();
                 foreach (var entry in group)
                 {
-                    if (entry.Items is { } items)
-                    {
-                        foreach (var item in items.EnumerateArray())
-                        {
-                            item.WriteTo(writer);
-                        }
-                    }
+                    WriteIncrementalEntry(writer, id, [entry]);
                 }
-                writer.WriteEndArray();
-            }
-            else if (group.FirstOrDefault(e => e.Data is not null)?.Data is { } data)
-            {
-                writer.WritePropertyName("data");
-                data.WriteTo(writer);
+
+                continue;
             }
 
-            WriteMergedErrors(writer, group);
-
-            writer.WriteEndObject();
+            WriteIncrementalEntry(writer, id, group);
         }
 
         writer.WriteEndArray();
+    }
+
+    private static void WriteIncrementalEntry(Utf8JsonWriter writer, string id, List<IncrementalEntry> group)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("id", id);
+
+        if (group.FirstOrDefault(e => e.SubPath is not null)?.SubPath is { } subPath)
+        {
+            writer.WritePropertyName("subPath");
+            subPath.WriteTo(writer);
+        }
+
+        if (group.Any(e => e.Items is not null))
+        {
+            writer.WritePropertyName("items");
+            writer.WriteStartArray();
+            foreach (var entry in group)
+            {
+                if (entry.Items is { } items)
+                {
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        item.WriteTo(writer);
+                    }
+                }
+            }
+            writer.WriteEndArray();
+        }
+        else if (group.FirstOrDefault(e => e.Data is not null)?.Data is { } data)
+        {
+            writer.WritePropertyName("data");
+            data.WriteTo(writer);
+        }
+
+        WriteMergedErrors(writer, group);
+
+        writer.WriteEndObject();
     }
 
     private static void WriteCompleted(
