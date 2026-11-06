@@ -280,10 +280,10 @@ public class WideConditionMaskTests
         Assert.True(selection!.IsDeferred(new ConditionFlags(word0, wide)));
         Assert.False(selection.IsDeferred(new ConditionFlags(0ul, new ulong[2])));
 
-        var activeUsages = selection.GetActiveDeferUsages(new ConditionFlags(word0, wide));
+        var activeUsages = selection.GetActiveDeferUsages(word0, wide);
         Assert.NotNull(activeUsages);
         Assert.Equal(index, Assert.Single(activeUsages).DeferConditionIndex);
-        Assert.Null(selection.GetActiveDeferUsages(new ConditionFlags(0ul, new ulong[2])));
+        Assert.Null(selection.GetActiveDeferUsages(0ul, new ulong[2]));
     }
 
     [Theory]
@@ -311,7 +311,7 @@ public class WideConditionMaskTests
 
         // act
         var isDeferred = selection!.IsDeferred(new ConditionFlags(word0, wide));
-        var activeUsages = selection.GetActiveDeferUsages(new ConditionFlags(word0, wide));
+        var activeUsages = selection.GetActiveDeferUsages(word0, wide);
 
         // assert
         Assert.Equal(expected, isDeferred);
