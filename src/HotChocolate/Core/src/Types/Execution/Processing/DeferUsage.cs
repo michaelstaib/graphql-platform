@@ -17,7 +17,66 @@ namespace HotChocolate.Execution.Processing;
 /// associated with this defer directive. This index maps to a bit position in the
 /// runtime defer flags bitmask.
 /// </param>
+/// <param name="Depth">
+/// The number of field segments from the operation root to the selection set
+/// the deferred fragment is spread on.
+/// </param>
 public sealed record DeferUsage(
     string? Label,
     DeferUsage? Parent,
-    int DeferConditionIndex);
+    int DeferConditionIndex,
+    int Depth)
+{
+    /// <summary>
+    /// Gets the creation order of this defer usage within its operation.
+    /// Equal defer usages of an operation share one instance and therefore one ordinal.
+    /// </summary>
+    public int Ordinal { get; internal init; }
+
+    /// <inheritdoc />
+    public bool Equals(DeferUsage? other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        return other is not null
+            && DeferConditionIndex == other.DeferConditionIndex
+            && Depth == other.Depth
+            && string.Equals(Label, other.Label, StringComparison.Ordinal)
+            && Equals(Parent, other.Parent);
+    }
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+        => HashCode.Combine(Label, Parent, DeferConditionIndex, Depth);
+
+    /// <summary>
+    /// Gets the nearest defer usage in the parent chain of <paramref name="usage"/>, starting with
+    /// <paramref name="usage"/> itself, whose condition is enabled, or <c>null</c> if none is enabled.
+    /// </summary>
+    internal static DeferUsage? FindActive(DeferUsage? usage, ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    {
+        while (usage is not null && !IsConditionBitSet(deferFlags, wideDeferFlags, usage.DeferConditionIndex))
+        {
+            usage = usage.Parent;
+        }
+
+        return usage;
+    }
+
+    private static bool IsConditionBitSet(ulong flags, ReadOnlySpan<ulong> wideFlags, int index)
+    {
+        var word = index >> 6;
+        var bit = 1ul << (index & 63);
+
+        if (word == 0)
+        {
+            return (flags & bit) != 0;
+        }
+
+        word--;
+        return (uint)word < (uint)wideFlags.Length && (wideFlags[word] & bit) != 0;
+    }
+}

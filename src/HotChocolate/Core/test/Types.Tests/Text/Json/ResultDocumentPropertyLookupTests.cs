@@ -90,7 +90,7 @@ public class ResultDocumentPropertyLookupTests
         var deferFlags = new ConditionFlags(1);
         var selectionSet = operation.RootSelectionSet;
         var deferred = selectionSet.Selections.ToArray().Single(s => s.IsDeferred(deferFlags));
-        var deferUsage = deferred.GetPrimaryDeferUsage(deferFlags)!;
+        var deferUsage = deferred.GetPrimaryDeferUsage(deferFlags.Word0, deferFlags.Overflow)!;
 
         return new ResultDocument(
             CommonTestExtensions.CreateArena(),

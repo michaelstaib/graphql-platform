@@ -123,7 +123,8 @@ public sealed partial class OperationCompiler
         DeferConditionVisitor.Instance.Visit(operationDefinition, deferConditions);
         var fields = _fieldsPool.Get();
 
-        var compilationContext = new CompilationContext(new object[128]);
+        var deferUsageRegistry = new DeferUsageRegistry();
+        var compilationContext = new CompilationContext(new object[128], deferUsageRegistry);
 
         try
         {
@@ -142,6 +143,8 @@ public sealed partial class OperationCompiler
                 fields,
                 includeConditions,
                 deferConditions,
+                deferUsageRegistry,
+                depth: 0,
                 parentDeferUsage: null);
 
             var selectionSet = BuildSelectionSet(
@@ -170,6 +173,7 @@ public sealed partial class OperationCompiler
                 compiler: this,
                 includeConditions,
                 deferConditions,
+                deferUsageRegistry,
                 compilationContext.Features,
                 lastId,
                 compilationContext.ElementsById,
@@ -203,7 +207,8 @@ public sealed partial class OperationCompiler
         ref object[] elementsById,
         ref int lastId)
     {
-        var compilationContext = new CompilationContext(elementsById, operation.Features);
+        var deferUsageRegistry = operation.DeferUsageRegistry;
+        var compilationContext = new CompilationContext(elementsById, deferUsageRegistry, operation.Features);
         var optimizers = OperationCompilerOptimizerHelper.GetOptimizers(selection);
 
         var fields = _fieldsPool.Get();
@@ -215,6 +220,7 @@ public sealed partial class OperationCompiler
             var first = nodes[0];
             var hasWideIncludeFlags = operation.HasWideIncludeFlags;
             var hasWideDeferFlags = operation.HasWideDeferFlags;
+            var depth = selection.FieldSelectionPath.Length;
 
             CollectFields(
                 new PathIncludeFlagsBuilder(first.PathConditionFlags.Word0, first.PathConditionFlags.Overflow),
@@ -223,6 +229,8 @@ public sealed partial class OperationCompiler
                 fields,
                 includeConditions,
                 deferConditions,
+                deferUsageRegistry,
+                depth,
                 parentDeferUsage: first.DeferUsage);
 
             if (nodes.Length > 1)
@@ -238,6 +246,8 @@ public sealed partial class OperationCompiler
                         fields,
                         includeConditions,
                         deferConditions,
+                        deferUsageRegistry,
+                        depth,
                         parentDeferUsage: node.DeferUsage);
                 }
             }
@@ -284,6 +294,8 @@ public sealed partial class OperationCompiler
         OrderedDictionary<string, List<FieldSelectionNode>> fields,
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
+        DeferUsageRegistry deferUsageRegistry,
+        int depth,
         DeferUsage? parentDeferUsage)
     {
         for (var i = 0; i < selections.Count; i++)
@@ -331,7 +343,7 @@ public sealed partial class OperationCompiler
                     deferConditions.Add(deferCondition);
                     var deferIndex = deferConditions.IndexOf(deferCondition);
                     var label = GetDeferLabel(inlineFragmentNode);
-                    newDeferUsage = new DeferUsage(label, parentDeferUsage, deferIndex);
+                    newDeferUsage = deferUsageRegistry.GetOrCreateUsage(label, parentDeferUsage, deferIndex, depth);
                 }
 
                 CollectFields(
@@ -341,6 +353,8 @@ public sealed partial class OperationCompiler
                     fields,
                     includeConditions,
                     deferConditions,
+                    deferUsageRegistry,
+                    depth,
                     newDeferUsage);
             }
         }
@@ -476,7 +490,7 @@ public sealed partial class OperationCompiler
 
             // If any field node is not inside a deferred fragment, the selection
             // is not deferred — it must be included in the initial response.
-            DeferUsage[]? finalDeferUsage = null;
+            DeferUsageSet? deferUsageSet = null;
             ulong deferMask = 0;
             ulong[]? wideDeferMask = null;
 
@@ -500,7 +514,7 @@ public sealed partial class OperationCompiler
                     }
                 }
 
-                finalDeferUsage = deferUsages.ToArray();
+                deferUsageSet = compilationContext.DeferUsageRegistry.Intern(deferUsages);
 
                 // The mask is the union of the condition bits of every usage in each parent
                 // chain, and serves as a quick negative check.
@@ -550,7 +564,7 @@ public sealed partial class OperationCompiler
                 isProjectionRequirement,
                 wideIncludeFlags: flatWideIncludeFlags,
                 wideIncludeFlagsStride: wideIncludeFlagsStride,
-                deferUsage: finalDeferUsage,
+                deferUsageSet: deferUsageSet,
                 deferMask: deferMask,
                 wideDeferMask: wideDeferMask,
                 isInternal: isInternal,
@@ -905,13 +919,19 @@ public sealed partial class OperationCompiler
     {
         private object[] _elementsById;
 
-        public CompilationContext(object[] elementsById, OperationFeatureCollection? features = null)
+        public CompilationContext(
+            object[] elementsById,
+            DeferUsageRegistry deferUsageRegistry,
+            OperationFeatureCollection? features = null)
         {
             _elementsById = elementsById;
+            DeferUsageRegistry = deferUsageRegistry;
             Features = features ?? new OperationFeatureCollection();
         }
 
         public object[] ElementsById => _elementsById;
+
+        public DeferUsageRegistry DeferUsageRegistry { get; }
 
         public OperationFeatureCollection Features { get; }
 
