@@ -9,7 +9,7 @@ namespace HotChocolate.Execution.Processing;
 /// </summary>
 internal sealed class DeferUsageRegistry
 {
-    private readonly Dictionary<(string?, DeferUsage?, int, int), DeferUsage> _usages = [];
+    private readonly Dictionary<(string?, DeferUsage?, int), DeferUsage> _usages = [];
     private readonly Dictionary<DeferUsageSet, DeferUsageSet> _setLookup = [];
     private DeferUsageSet[] _sets = [];
 
@@ -22,13 +22,13 @@ internal sealed class DeferUsageRegistry
     /// <summary>
     /// Gets the defer usage for the specified values, creating it with the next ordinal if it does not exist.
     /// </summary>
-    public DeferUsage GetOrCreateUsage(string? label, DeferUsage? parent, int deferConditionIndex, int depth)
+    public DeferUsage GetOrCreateUsage(string? label, DeferUsage? parent, int deferConditionIndex)
     {
-        var key = (label, parent, deferConditionIndex, depth);
+        var key = (label, parent, deferConditionIndex);
 
         if (!_usages.TryGetValue(key, out var usage))
         {
-            usage = new DeferUsage(label, parent, deferConditionIndex, depth) { Ordinal = _usages.Count };
+            usage = new DeferUsage(label, parent, deferConditionIndex) { Ordinal = _usages.Count };
             _usages.Add(key, usage);
         }
 
@@ -36,21 +36,14 @@ internal sealed class DeferUsageRegistry
     }
 
     /// <summary>
-    /// Gets the interned defer usage set holding the distinct usages of <paramref name="usages"/>.
+    /// Gets the interned defer usage set of the distinct <paramref name="usages"/>, which may be in any order.
     /// </summary>
-    public DeferUsageSet Intern(List<DeferUsage> usages)
+    public DeferUsageSet Intern(DeferUsage[] usages)
     {
-        usages.Sort(static (x, y) => x.Ordinal.CompareTo(y.Ordinal));
+        var sorted = usages.ToArray();
+        Array.Sort(sorted, static (x, y) => x.Ordinal.CompareTo(y.Ordinal));
 
-        for (var i = usages.Count - 1; i > 0; i--)
-        {
-            if (ReferenceEquals(usages[i], usages[i - 1]))
-            {
-                usages.RemoveAt(i);
-            }
-        }
-
-        var candidate = new DeferUsageSet(usages.ToArray(), _sets.Length);
+        var candidate = new DeferUsageSet(sorted, _sets.Length);
 
         if (_setLookup.TryGetValue(candidate, out var set))
         {

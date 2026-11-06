@@ -17,15 +17,10 @@ namespace HotChocolate.Execution.Processing;
 /// associated with this defer directive. This index maps to a bit position in the
 /// runtime defer flags bitmask.
 /// </param>
-/// <param name="Depth">
-/// The number of field segments from the operation root to the selection set
-/// the deferred fragment is spread on.
-/// </param>
 public sealed record DeferUsage(
     string? Label,
     DeferUsage? Parent,
-    int DeferConditionIndex,
-    int Depth)
+    int DeferConditionIndex)
 {
     /// <summary>
     /// Gets the creation order of this defer usage within its operation.
@@ -43,14 +38,13 @@ public sealed record DeferUsage(
 
         return other is not null
             && DeferConditionIndex == other.DeferConditionIndex
-            && Depth == other.Depth
             && string.Equals(Label, other.Label, StringComparison.Ordinal)
             && Equals(Parent, other.Parent);
     }
 
     /// <inheritdoc />
     public override int GetHashCode()
-        => HashCode.Combine(Label, Parent, DeferConditionIndex, Depth);
+        => HashCode.Combine(Label, Parent, DeferConditionIndex);
 
     /// <summary>
     /// Gets the nearest defer usage in the parent chain of <paramref name="usage"/>, starting with
