@@ -8,8 +8,8 @@ namespace HotChocolate.Execution.Processing;
 [Collection(DeferUsageSetTableCollection.Name)]
 public class DeferUsageSetTableTests
 {
-    // one allocation of the smallest object per item over 1008 additional items exceeds this.
-    private const long Tolerance = 16 * 1024;
+    // a memory arena page of measurement noise stays below this; one allocation per item over 4080 items does not.
+    private const long Tolerance = 32 * 1024;
 
     [Fact]
     public void GetActive_Should_ReturnStaticSet_When_AllUsagesAreActive()
@@ -150,12 +150,12 @@ public class DeferUsageSetTableTests
 
         // act
         var small = await MeasureDifferenceAsync(executor, count: 16, alternate: false);
-        var large = await MeasureDifferenceAsync(executor, count: 1024, alternate: false);
+        var large = await MeasureDifferenceAsync(executor, count: 4096, alternate: false);
 
         // assert
         Assert.True(
             large - small < Tolerance,
-            $"The deferred operation allocates {small} bytes more at 16 items and {large} bytes more at 1024 items.");
+            $"The deferred operation allocates {small} bytes more at 16 items and {large} bytes more at 4096 items.");
     }
 
     [Fact]
@@ -166,12 +166,12 @@ public class DeferUsageSetTableTests
 
         // act
         var small = await MeasureDifferenceAsync(executor, count: 16, alternate: true);
-        var large = await MeasureDifferenceAsync(executor, count: 1024, alternate: true);
+        var large = await MeasureDifferenceAsync(executor, count: 4096, alternate: true);
 
         // assert
         Assert.True(
             large - small < Tolerance,
-            $"The deferred operation allocates {small} bytes more at 16 items and {large} bytes more at 1024 items.");
+            $"The deferred operation allocates {small} bytes more at 16 items and {large} bytes more at 4096 items.");
     }
 
     // the bytes a request with a disabled defer allocates more than the same request without defer;
@@ -191,21 +191,22 @@ public class DeferUsageSetTableTests
         await ExecuteAsync(executor, deferred, count, deferValue: false);
         await ExecuteAsync(executor, plain, count, deferValue: null);
 
-        var best = long.MaxValue;
+        // the smallest measurement of each operation is the one least disturbed by other work in the process.
+        var deferredBytes = long.MaxValue;
+        var plainBytes = long.MaxValue;
 
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 7; i++)
         {
             if (alternate)
             {
                 await ExecuteAsync(executor, deferred, count, deferValue: true);
             }
 
-            var deferredBytes = await MeasureAsync(executor, deferred, count, deferValue: false);
-            var plainBytes = await MeasureAsync(executor, plain, count, deferValue: null);
-            best = Math.Min(best, deferredBytes - plainBytes);
+            deferredBytes = Math.Min(deferredBytes, await MeasureAsync(executor, deferred, count, deferValue: false));
+            plainBytes = Math.Min(plainBytes, await MeasureAsync(executor, plain, count, deferValue: null));
         }
 
-        return best;
+        return deferredBytes - plainBytes;
     }
 
     private static async Task<long> MeasureAsync(IRequestExecutor executor, string query, int count, bool? deferValue)
