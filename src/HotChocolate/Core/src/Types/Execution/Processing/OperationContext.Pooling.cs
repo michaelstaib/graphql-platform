@@ -41,6 +41,7 @@ internal sealed partial class OperationContext
     private IBatchDispatcher _batchDispatcher = null!;
     private InputParser _inputParser = null!;
     private MemoryArena? _memory;
+    private DeferUsageSetTable? _deferUsageSetTable;
     private int _branchId;
     private int _variableIndex;
     private int _outstandingTasks;
@@ -73,6 +74,11 @@ internal sealed partial class OperationContext
     /// which is the context itself for the operation context of the request.
     /// </summary>
     internal OperationContext RootContext { get; private set; } = null!;
+
+    /// <summary>
+    /// Gets the active defer usage sets of this request, or <c>null</c> if the operation has no incremental parts.
+    /// </summary>
+    internal DeferUsageSetTable? DeferUsageSetTable => RootContext._deferUsageSetTable;
 
     /// <summary>
     /// Gets or sets the collector for the request cleanup of an incremental operation,
@@ -228,6 +234,9 @@ internal sealed partial class OperationContext
 
         IncludeConditionFlags = operation.CreateIncludeConditionFlags(variables);
         DeferConditionFlags = operation.CreateDeferConditionFlags(variables);
+        _deferUsageSetTable = operation.HasIncrementalParts
+            ? new DeferUsageSetTable(operation, DeferConditionFlags)
+            : null;
         _result.Data = new ResultDocument(_memory, operation, IncludeConditionFlags);
         _result.RequestIndex = _requestContext.RequestIndex;
         _result.VariableIndex = variableIndex;
@@ -353,6 +362,7 @@ internal sealed partial class OperationContext
             _resolveQueryRootValue = null!;
             _batchDispatcher = null!;
             _memory = null;
+            _deferUsageSetTable = null;
             RequestCleanup = null;
             RootContext = null!;
             _branchId = int.MinValue;

@@ -32,17 +32,20 @@ internal static class ResolverTaskFactory
             {
                 var coordinator = operationContext.DeferExecutionCoordinator;
                 var deferFlags = operationContext.DeferConditionFlags;
+                var deferUsageSets = GetDeferUsageSetTable(operationContext);
                 var branches = ImmutableDictionary<DeferUsage, int>.Empty;
 
                 foreach (var field in data)
                 {
                     var selection = field.AssertSelection();
+                    var activeSet = deferUsageSets.GetActive(selection);
+                    Debug.Assert((activeSet is not null) == selection.IsDeferred(deferFlags));
 
-                    if (selection.IsDeferred(deferFlags))
+                    if (activeSet is not null)
                     {
                         // Get all active defer usages for this field.
                         // If IsDeferred is true, there is at least one active usage.
-                        var deferUsages = selection.GetActiveDeferUsages(deferFlags);
+                        var deferUsages = selection.GetActiveDeferUsages(deferFlags.Word0, deferFlags.Overflow);
                         Debug.Assert(deferUsages is not null);
 
                         field.Value.MarkAsDeferred();
@@ -209,6 +212,7 @@ internal static class ResolverTaskFactory
         {
             var coordinator = operationContext.DeferExecutionCoordinator;
             var deferFlags = operationContext.DeferConditionFlags;
+            var deferUsageSets = GetDeferUsageSetTable(operationContext);
             var branches = ImmutableDictionary<DeferUsage, int>.Empty;
             Path? currentPath = null;
 
@@ -217,10 +221,15 @@ internal static class ResolverTaskFactory
             foreach (var field in resultValue.EnumerateObject())
             {
                 var selection = field.AssertSelection();
+                var activeSet = deferUsageSets.GetActive(selection);
+                Debug.Assert((activeSet is not null) == selection.IsDeferred(deferFlags));
 
-                if (selection.IsDeferred(deferFlags, parentDeferUsage))
+                // a selection whose active usages include the usage of the enclosing branch runs in that branch.
+                if (activeSet is not null
+                    && (parentDeferUsage is null
+                        || !selection.HasActiveDeferUsage(deferFlags.Word0, deferFlags.Overflow, parentDeferUsage)))
                 {
-                    var deferUsages = selection.GetActiveDeferUsages(deferFlags);
+                    var deferUsages = selection.GetActiveDeferUsages(deferFlags.Word0, deferFlags.Overflow);
                     Debug.Assert(deferUsages is not null);
 
                     field.Value.MarkAsDeferred();
@@ -487,6 +496,13 @@ internal static class ResolverTaskFactory
             // without child tasks nothing below this selection can ever start, so its members are skipped.
             groupScope.ReleaseSlotsBelow(selection);
         }
+    }
+
+    private static DeferUsageSetTable GetDeferUsageSetTable(OperationContext operationContext)
+    {
+        var table = operationContext.DeferUsageSetTable;
+        Debug.Assert(table is not null, "A selection set with incremental parts belongs to an operation with incremental parts.");
+        return table;
     }
 
     /// <summary>

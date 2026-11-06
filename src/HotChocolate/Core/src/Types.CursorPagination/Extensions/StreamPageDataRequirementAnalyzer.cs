@@ -55,19 +55,18 @@ internal static class StreamPageDataRequirementAnalyzer
             return precomputed;
         }
 
-        var deferFlags = context.Operation.CreateDeferConditionFlags(context.Variables);
-        var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags);
+        var scope = CreateDeferScope(context);
         var requirements = StreamPageDataRequirements.None;
 
         foreach (var child in context.GetSelections(connectionType))
         {
-            if (IsDeferredOrStreamed(child, context.Variables, deferFlags, connectionDeferUsage))
+            if (IsDeferredOrStreamed(child, context.Variables, scope))
             {
                 continue;
             }
 
             requirements |= child.Field.Name.Equals(ConnectionType.Names.PageInfo, StringComparison.Ordinal)
-                ? AnalyzePageInfo(context, child, deferFlags, connectionDeferUsage)
+                ? AnalyzePageInfo(context, child, scope)
                 : GetConnectionRequirements(child.Field.Name);
         }
 
@@ -77,8 +76,7 @@ internal static class StreamPageDataRequirementAnalyzer
     private static StreamPageDataRequirements AnalyzePageInfo(
         IResolverContext context,
         Selection pageInfo,
-        ConditionFlags deferFlags,
-        DeferUsage? connectionDeferUsage)
+        DeferScope scope)
     {
         if (pageInfo.Type.NamedType() is not ObjectType pageInfoType)
         {
@@ -89,7 +87,7 @@ internal static class StreamPageDataRequirementAnalyzer
 
         foreach (var child in context.GetSelections(pageInfoType, pageInfo))
         {
-            if (IsDeferredOrStreamed(child, context.Variables, deferFlags, connectionDeferUsage))
+            if (IsDeferredOrStreamed(child, context.Variables, scope))
             {
                 continue;
             }
@@ -103,10 +101,9 @@ internal static class StreamPageDataRequirementAnalyzer
     private static bool IsDeferredOrStreamed(
         Selection selection,
         IVariableValueCollection variables,
-        ConditionFlags deferFlags,
-        DeferUsage? connectionDeferUsage)
+        DeferScope scope)
     {
-        if (selection.GetPrimaryDeferUsage(deferFlags) != connectionDeferUsage)
+        if (scope.IsDeferred(selection))
         {
             return true;
         }
@@ -124,6 +121,34 @@ internal static class StreamPageDataRequirementAnalyzer
         }
 
         return false;
+    }
+
+    // the connection's children are completed in the execution branch of the connection field. Without the
+    // execution context nothing counts as deferred, which only widens the requirements.
+    private static DeferScope CreateDeferScope(IResolverContext context)
+    {
+        if (context is not MiddlewareContext middlewareContext)
+        {
+            return default;
+        }
+
+        return new DeferScope(
+            middlewareContext.DeferUsageSetTable,
+            middlewareContext.Operation.CreateDeferConditionFlags(middlewareContext.Variables),
+            middlewareContext.DeferUsage);
+    }
+
+    private readonly record struct DeferScope(
+        DeferUsageSetTable? Table,
+        ConditionFlags DeferFlags,
+        DeferUsage? BranchDeferUsage)
+    {
+        // a selection is deferred out of the branch when it has an active usage set that does not include
+        // the usage of the branch.
+        public bool IsDeferred(Selection selection)
+            => Table?.GetActive(selection) is not null
+                && (BranchDeferUsage is null
+                    || !selection.HasActiveDeferUsage(DeferFlags.Word0, DeferFlags.Overflow, BranchDeferUsage));
     }
 
     internal static bool IsStreamEnabled(DirectiveNode directive, IVariableValueCollection variables)
