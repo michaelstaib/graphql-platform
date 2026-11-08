@@ -1,5 +1,3 @@
-using HotChocolate.Utilities;
-
 namespace HotChocolate.Types.Composite;
 
 /// <summary>
@@ -32,7 +30,10 @@ public sealed class RequiresScopes
     /// </param>
     public RequiresScopes(IReadOnlyList<IReadOnlyList<string>> scopes)
     {
-        Scopes = Canonicalize(scopes);
+        Scopes = RequirementGroupHelper.Canonicalize(
+            scopes,
+            DirectiveNames.RequiresScopes.Name,
+            nameof(scopes));
     }
 
     /// <summary>
@@ -46,77 +47,4 @@ public sealed class RequiresScopes
     /// <inheritdoc />
     public override string ToString()
         => $"{Name}(scopes: [{string.Join(", ", Scopes.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
-
-    private static IReadOnlyList<IReadOnlyList<string>> Canonicalize(
-        IReadOnlyList<IReadOnlyList<string>> scopes)
-    {
-        ArgumentNullException.ThrowIfNull(scopes);
-
-        var result = new List<IReadOnlyList<string>>();
-
-        foreach (var group in scopes)
-        {
-            var canonical = CreateGroup(group, nameof(scopes));
-
-            if (!result.Exists(existing => existing.SequenceEqual(canonical)))
-            {
-                result.Add(canonical);
-            }
-        }
-
-        if (result.Count == 0)
-        {
-            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
-                DirectiveNames.RequiresScopes.Name,
-                nameof(scopes));
-        }
-
-        result.Sort(CompareGroups);
-        return result;
-    }
-
-    private static IReadOnlyList<string> CreateGroup(IEnumerable<string> values, string paramName)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-
-        var set = new SortedSet<string>(StringComparer.Ordinal);
-
-        foreach (var scope in values)
-        {
-            if (string.IsNullOrEmpty(scope))
-            {
-                throw ThrowHelper.AuthorizationDirective_ValueIsEmpty(
-                    DirectiveNames.RequiresScopes.Name,
-                    paramName);
-            }
-
-            set.Add(scope);
-        }
-
-        if (set.Count == 0)
-        {
-            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
-                DirectiveNames.RequiresScopes.Name,
-                paramName);
-        }
-
-        return [.. set];
-    }
-
-    private static int CompareGroups(IReadOnlyList<string> x, IReadOnlyList<string> y)
-    {
-        var length = Math.Min(x.Count, y.Count);
-
-        for (var i = 0; i < length; i++)
-        {
-            var result = string.CompareOrdinal(x[i], y[i]);
-
-            if (result != 0)
-            {
-                return result;
-            }
-        }
-
-        return x.Count.CompareTo(y.Count);
-    }
 }

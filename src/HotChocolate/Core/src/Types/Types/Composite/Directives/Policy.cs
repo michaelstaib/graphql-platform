@@ -1,5 +1,3 @@
-using HotChocolate.Utilities;
-
 namespace HotChocolate.Types.Composite;
 
 /// <summary>
@@ -32,7 +30,10 @@ public sealed class Policy
     /// </param>
     public Policy(IReadOnlyList<IReadOnlyList<string>> policies)
     {
-        Policies = Canonicalize(policies);
+        Policies = RequirementGroupHelper.Canonicalize(
+            policies,
+            DirectiveNames.Policy.Name,
+            nameof(policies));
     }
 
     /// <summary>
@@ -46,77 +47,4 @@ public sealed class Policy
     /// <inheritdoc />
     public override string ToString()
         => $"{Name}(policies: [{string.Join(", ", Policies.Select(g => $"[{string.Join(", ", g.Select(s => $"\"{s}\""))}]"))}])";
-
-    private static IReadOnlyList<IReadOnlyList<string>> Canonicalize(
-        IReadOnlyList<IReadOnlyList<string>> policies)
-    {
-        ArgumentNullException.ThrowIfNull(policies);
-
-        var result = new List<IReadOnlyList<string>>();
-
-        foreach (var group in policies)
-        {
-            var canonical = CreateGroup(group, nameof(policies));
-
-            if (!result.Exists(existing => existing.SequenceEqual(canonical)))
-            {
-                result.Add(canonical);
-            }
-        }
-
-        if (result.Count == 0)
-        {
-            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
-                DirectiveNames.Policy.Name,
-                nameof(policies));
-        }
-
-        result.Sort(CompareGroups);
-        return result;
-    }
-
-    private static IReadOnlyList<string> CreateGroup(IEnumerable<string> values, string paramName)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-
-        var set = new SortedSet<string>(StringComparer.Ordinal);
-
-        foreach (var policy in values)
-        {
-            if (string.IsNullOrEmpty(policy))
-            {
-                throw ThrowHelper.AuthorizationDirective_ValueIsEmpty(
-                    DirectiveNames.Policy.Name,
-                    paramName);
-            }
-
-            set.Add(policy);
-        }
-
-        if (set.Count == 0)
-        {
-            throw ThrowHelper.AuthorizationDirective_GroupIsEmpty(
-                DirectiveNames.Policy.Name,
-                paramName);
-        }
-
-        return [.. set];
-    }
-
-    private static int CompareGroups(IReadOnlyList<string> x, IReadOnlyList<string> y)
-    {
-        var length = Math.Min(x.Count, y.Count);
-
-        for (var i = 0; i < length; i++)
-        {
-            var result = string.CompareOrdinal(x[i], y[i]);
-
-            if (result != 0)
-            {
-                return result;
-            }
-        }
-
-        return x.Count.CompareTo(y.Count);
-    }
 }
