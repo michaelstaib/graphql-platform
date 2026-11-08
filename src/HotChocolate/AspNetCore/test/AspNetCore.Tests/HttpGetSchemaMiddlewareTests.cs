@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 
 namespace HotChocolate.AspNetCore;
 
@@ -43,8 +44,8 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
             configureServices: sp =>
                 sp.AddGraphQLServer()
                     .ConfigureSchemaServices(s =>
-                            s.RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>()));
+                            s.RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider())));
         var url = TestServerExtensions.CreateUrl(path);
         var request = new HttpRequestMessage(HttpMethod.Get, url);
 
@@ -60,6 +61,26 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
         response.MatchMarkdownSnapshot();
     }
 
+    [Fact]
+    public async Task Download_GraphQL_Schema_Should_UseRegisteredTimeProvider_When_TimeProviderIsAddedToSchemaServices()
+    {
+        // arrange
+        var server = CreateStarWarsServer(
+            configureServices: sp =>
+                sp.AddGraphQLServer()
+                    .ConfigureSchemaServices(s => s.AddSingleton<TimeProvider>(CreateTimeProvider())));
+        var url = TestServerExtensions.CreateUrl("/graphql/schema.graphql");
+
+        // act
+        var response = await server.CreateClient().GetAsync(url, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            new DateTimeOffset(2021, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            response.Content.Headers.LastModified);
+    }
+
     [Theory]
     [InlineData("/graphql?sdl")]
     [InlineData("/graphql/schema/")]
@@ -72,8 +93,8 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
             configureServices: sp =>
                 sp.AddGraphQLServer()
                     .ConfigureSchemaServices(s =>
-                        s.RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>())
+                        s.RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider()))
                     .ModifyPagingOptions(o => o.RequirePagingBoundaries = true));
         var url = TestServerExtensions.CreateUrl(path);
         var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -429,8 +450,8 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
                     .AddGraphQLServer()
                     .ConfigureSchemaServices(schemaServices =>
                         schemaServices
-                            .RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>())
+                            .RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider()))
                     .AddTypeExtension<TaggedQueryExtension>()
                     .AddHttpResponseFormatter<OriginalSchemaMethodsResponseFormatter>());
         var client = server.CreateClient();
@@ -491,8 +512,8 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
             configureServices: sp =>
                 sp.AddGraphQLServer()
                     .ConfigureSchemaServices(s =>
-                        s.RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>()));
+                        s.RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider())));
         var url = TestServerExtensions.CreateUrl(path);
         var client = server.CreateClient();
 
@@ -518,8 +539,8 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
                     .AddGraphQLServer()
                     .ConfigureSchemaServices(schemaServices =>
                         schemaServices
-                            .RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>())
+                            .RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider()))
                     .AddTypeExtension<TaggedQueryExtension>());
 
     private sealed class TaggedQueryExtension : ObjectTypeExtension
@@ -530,10 +551,8 @@ public class HttpGetSchemaMiddlewareTests(TestServerFactory serverFactory) : Ser
         }
     }
 
-    private sealed class StaticTimeProvider : ITimeProvider
-    {
-        public DateTimeOffset UtcNow { get; } = new(2021, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    }
+    private static FakeTimeProvider CreateTimeProvider()
+        => new(new DateTimeOffset(2021, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
     private sealed class OriginalSchemaMethodsResponseFormatter : IHttpResponseFormatter
     {

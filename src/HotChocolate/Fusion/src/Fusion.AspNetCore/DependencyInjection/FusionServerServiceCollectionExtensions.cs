@@ -58,12 +58,12 @@ public static class FusionServerServiceCollectionExtensions
     {
         builder.ConfigureSchemaServices((applicationServices, sc) =>
         {
-            sc.TryAddSingleton<ITimeProvider, DefaultTimeProvider>();
+            sc.TryAddSingleton(TimeProvider.System);
 
             sc.TryAddSingleton<IHttpResponseFormatter>(
                 sp => DefaultHttpResponseFormatter.Create(
                     new HttpResponseFormatterOptions { HttpTransportVersion = HttpTransportVersion.Latest },
-                    sp.GetRequiredService<ITimeProvider>(),
+                    sp.GetRequiredService<TimeProvider>(),
                     IncrementalDeliveryFormat.Version_0_2));
 
             sc.TryAddSingleton<IHttpRequestParser>(

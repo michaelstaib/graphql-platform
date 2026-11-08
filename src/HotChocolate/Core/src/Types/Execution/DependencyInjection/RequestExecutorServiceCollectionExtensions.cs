@@ -158,7 +158,7 @@ public static class RequestExecutorServiceCollectionExtensions
             services.AddSingleton(new SchemaName(schemaName));
         }
 
-        builder.ConfigureSchemaServices(static s => s.TryAddSingleton<ITimeProvider, DefaultTimeProvider>());
+        builder.ConfigureSchemaServices(static s => s.TryAddSingleton(TimeProvider.System));
 
         return builder;
     }
