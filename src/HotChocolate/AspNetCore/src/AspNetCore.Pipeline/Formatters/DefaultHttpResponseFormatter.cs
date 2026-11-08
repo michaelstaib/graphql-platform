@@ -72,7 +72,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
     /// Gets or sets the encoder to use when escaping strings, or null to use the default encoder.
     /// </param>
     /// <param name="timeProvider">
-    /// The time provider.
+    /// The time provider, or null to use <see cref="TimeProvider.System"/>.
     /// </param>
     /// <param name="incrementalDeliveryFormat">
     /// The default incremental delivery format to use when the Accept header does not specify one.
@@ -103,7 +103,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
     /// The JSON result formatter options
     /// </param>
     /// <param name="timeProvider">
-    /// The time provider.
+    /// The time provider, or null to use <see cref="TimeProvider.System"/>.
     /// </param>
     /// <param name="incrementalDeliveryFormat">
     /// The default incremental delivery format to use when the Accept header does not specify one.

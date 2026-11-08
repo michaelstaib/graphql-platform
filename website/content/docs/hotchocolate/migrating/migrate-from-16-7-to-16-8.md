@@ -12,9 +12,9 @@ Things that have been removed or had a change in behavior that may cause your co
 
 ## ITimeProvider and DefaultTimeProvider removed
 
-`HotChocolate.Execution.ITimeProvider` and `HotChocolate.Execution.DefaultTimeProvider` have been removed. Hot Chocolate and the Fusion gateway now use the .NET `System.TimeProvider` and register `TimeProvider.System` as the default in the schema services. A `TimeProvider` registered in the schema services replaces the default and supplies the current time and the timers that Hot Chocolate uses, including the `Last-Modified` header of schema downloads and the request and subscription event timeouts.
+`HotChocolate.Execution.ITimeProvider` and `HotChocolate.Execution.DefaultTimeProvider` have been removed. Hot Chocolate and the Fusion gateway now use the .NET `System.TimeProvider` and register `TimeProvider.System` as the default in the schema services. A `TimeProvider` registered in the schema services replaces the default. In a Hot Chocolate server, it supplies the `Last-Modified` header of schema downloads and drives the request and subscription event timeouts. In the Fusion gateway, it supplies only the `Last-Modified` header of schema downloads and does not drive the gateway's request timeout.
 
-The `timeProvider` parameter of the `DefaultHttpResponseFormatter` constructors and of `DefaultHttpResponseFormatter.Create` is now of type `TimeProvider`.
+The `timeProvider` parameter of the `DefaultHttpResponseFormatter` constructors is now of type `TimeProvider`.
 
 Replace a custom `ITimeProvider` with a `TimeProvider` registration:
 
