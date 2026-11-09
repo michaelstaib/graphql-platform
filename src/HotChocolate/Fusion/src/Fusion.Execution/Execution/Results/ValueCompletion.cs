@@ -498,8 +498,8 @@ internal sealed class ValueCompletion
 
     public void FinalizeDeniedSelections(
         CompositeResultElement resultData,
-        PolicyOutcome outcome)
-        => VisitDeniedSelections(resultData, outcome);
+        PolicyEvaluationResult policyResult)
+        => VisitDeniedSelections(resultData, policyResult);
 
     /// <summary>
     /// Applies the denial of every denied selection below <paramref name="current"/>.
@@ -509,7 +509,7 @@ internal sealed class ValueCompletion
     /// </returns>
     private bool VisitDeniedSelections(
         CompositeResultElement current,
-        PolicyOutcome outcome)
+        PolicyEvaluationResult policyResult)
     {
         if (current.IsNullOrInvalidated || current.IsNullMarker)
         {
@@ -533,9 +533,9 @@ internal sealed class ValueCompletion
                         continue;
                     }
 
-                    var canExecutionContinue = selection.HasPolicies && outcome.IsDenied(selection)
-                        ? ApplyDenial(field, selection, outcome)
-                        : VisitDeniedSelections(field, outcome);
+                    var canExecutionContinue = selection.HasPolicies && policyResult.IsDenied(selection)
+                        ? ApplyDenial(field, selection, policyResult)
+                        : VisitDeniedSelections(field, policyResult);
 
                     if (!canExecutionContinue)
                     {
@@ -553,7 +553,7 @@ internal sealed class ValueCompletion
             case JsonValueKind.Array:
                 foreach (var element in current.EnumerateArray())
                 {
-                    if (!VisitDeniedSelections(element, outcome))
+                    if (!VisitDeniedSelections(element, policyResult))
                     {
                         return false;
                     }
@@ -574,10 +574,10 @@ internal sealed class ValueCompletion
     private bool ApplyDenial(
         CompositeResultElement field,
         Selection selection,
-        PolicyOutcome outcome)
+        PolicyEvaluationResult policyResult)
     {
         var path = field.Path;
-        var error = outcome.CreateError(selection, path);
+        var error = policyResult.CreateError(selection, path);
 
         // A propagated null invalidates the parents of the field instead of nulling the field.
         if (_errorHandlingMode is ErrorHandlingMode.Propagate && selection.IsNonNull)

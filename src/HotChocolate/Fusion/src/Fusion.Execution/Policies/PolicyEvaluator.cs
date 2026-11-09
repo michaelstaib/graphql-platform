@@ -80,7 +80,7 @@ internal sealed class PolicyEvaluator
     /// <param name="cancellationToken">
     /// The token that signals that the request was aborted.
     /// </param>
-    public async ValueTask<PolicyOutcome?> EvaluateAsync(
+    public async ValueTask<PolicyEvaluationResult> EvaluateAsync(
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
@@ -197,7 +197,7 @@ internal sealed class PolicyEvaluator
 
             var denied = Freeze(deniedDescriptors);
 
-            return CreateDecisions(occurrences, denied, isAuthenticated);
+            return CreateResult(occurrences, denied, isAuthenticated);
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
@@ -299,14 +299,14 @@ internal sealed class PolicyEvaluator
     public static bool IsFault(Exception exception, CancellationToken cancellationToken)
         => exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested;
 
-    private PolicyOutcome? CreateDecisions(
+    private PolicyEvaluationResult CreateResult(
         ImmutableArray<PolicyDescriptor> occurrences,
         FrozenSet<PolicyDescriptor> deniedDescriptors,
         bool isAuthenticated)
     {
         if (deniedDescriptors.Count == 0)
         {
-            return null;
+            return PolicyEvaluationResult.Empty;
         }
 
         var kind = isAuthenticated
@@ -331,8 +331,8 @@ internal sealed class PolicyEvaluator
         }
 
         return denials.Count == 0
-            ? null
-            : new PolicyOutcome(
+            ? PolicyEvaluationResult.Empty
+            : new PolicyEvaluationResult(
                 denials.ToImmutable(),
                 _options.DenyHandling,
                 _options.EnableAttribution);

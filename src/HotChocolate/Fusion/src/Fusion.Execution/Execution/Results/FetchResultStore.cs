@@ -727,14 +727,14 @@ AddErrors_Next:
         }
     }
 
-    public void FinalizeDeniedSelections(PolicyOutcome outcome)
+    public void FinalizeDeniedSelections(PolicyEvaluationResult policyResult)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(outcome);
+        ArgumentNullException.ThrowIfNull(policyResult);
 
         lock (_lock)
         {
-            _valueCompletion.FinalizeDeniedSelections(_result.Data, outcome);
+            _valueCompletion.FinalizeDeniedSelections(_result.Data, policyResult);
         }
     }
 
