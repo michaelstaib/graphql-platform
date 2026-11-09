@@ -94,11 +94,11 @@ internal sealed class OperationPolicyMiddleware
                 new AuditScopeInfo(plan.Operation.Id, plan.Id, context.RequestIndex, i),
                 user);
 
-            PolicyEvaluation evaluation;
+            PolicyOutcome? outcome;
 
             try
             {
-                evaluation = await _evaluator.EvaluateAsync(
+                outcome = await _evaluator.EvaluateAsync(
                     context,
                     user,
                     plan,
@@ -111,6 +111,13 @@ internal sealed class OperationPolicyMiddleware
             {
                 await _evaluator.CommitFaultedScopeAsync(context, scope, ex);
 
+                if (ex is PolicyNotResolvedException)
+                {
+                    _diagnosticEvents.RequestError(context, ex);
+                    context.Result = ErrorHelper.AuthorizationFailed();
+                    return;
+                }
+
                 if (ex is OperationCanceledException)
                 {
                     throw ThrowHelper.OperationPolicyFaulted(ex);
@@ -119,23 +126,7 @@ internal sealed class OperationPolicyMiddleware
                 throw;
             }
 
-            var failure = evaluation.Failure;
-
-            if (failure is not null)
-            {
-                scope.Fail(failure);
-            }
-
             await scope.CommitAsync(context.RequestAborted);
-
-            if (failure is not null)
-            {
-                _diagnosticEvents.RequestError(context, failure);
-                context.Result = ErrorHelper.AuthorizationFailed();
-                return;
-            }
-
-            var outcome = evaluation.Outcome;
 
             if (outcome is not null
                 && outcome.TryGetRejection(_options.RejectRequestOn, out var denial))

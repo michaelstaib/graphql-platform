@@ -80,7 +80,7 @@ internal sealed class PolicyEvaluator
     /// <param name="cancellationToken">
     /// The token that signals that the request was aborted.
     /// </param>
-    public async ValueTask<PolicyEvaluation> EvaluateAsync(
+    public async ValueTask<PolicyOutcome?> EvaluateAsync(
         RequestContext context,
         ClaimsPrincipal user,
         OperationPlan plan,
@@ -167,7 +167,7 @@ internal sealed class PolicyEvaluator
                 {
                     await group.Policy.EvaluateAsync(policyContext, cancellationToken);
                 }
-                catch (InvalidOperationException ex) when (group.Policy is UnresolvedPolicy)
+                catch (PolicyNotResolvedException ex)
                 {
                     if (answered is not null)
                     {
@@ -183,7 +183,7 @@ internal sealed class PolicyEvaluator
                         RecordUnanswered(scope, occurrences, groups, answered, variables);
                     }
 
-                    return new PolicyEvaluation(null, ex);
+                    throw;
                 }
 
                 if (answered is not null)
@@ -197,7 +197,7 @@ internal sealed class PolicyEvaluator
 
             var denied = Freeze(deniedDescriptors);
 
-            return new PolicyEvaluation(CreateDecisions(occurrences, denied, isAuthenticated), null);
+            return CreateDecisions(occurrences, denied, isAuthenticated);
         }
         catch (Exception ex) when (answered is not null && IsFault(ex, cancellationToken))
         {
