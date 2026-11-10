@@ -622,8 +622,7 @@ internal sealed class ExecutionState
         return index < bitset.Length && (bitset[index] & (1UL << (nodeId & 63))) != 0;
     }
 
-    // Marks the definitions of a skipped batch as skipped. The reason of a definition comes from its own
-    // dependencies, so it does not depend on the order in which the skips of the batch arrive.
+    // Marks the definitions of a skipped batch as skipped and records the reason of each from its own dependencies.
     private void RecordBatchDefinitions(ExecutionNode node, SkipKind kind, bool isOrigin)
     {
         if (node is OperationBatchExecutionNode batch)

@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
+[Collection("KeyHopFailure")]
 public sealed class KeyHopFailureApolloTests : FusionTestBase
 {
     [Fact]
@@ -87,19 +88,115 @@ public sealed class KeyHopFailureApolloTests : FusionTestBase
             .AddType<GroupA.User>().AddType<GroupA.Account>());
         var accounts = CreateSourceSchema("accounts", b => b.AddApolloFederation()
             .AddQueryType<GroupAccounts.Query>(d => d.Name("Query")).AddType<GroupAccounts.Account>());
-        var gate = new Gate(failureArrivesFirst);
-        s_gate = gate;
+        var gate = new KeyHopFailureTests.ArrivalGate(failureArrivesFirst);
+        KeyHopFailureTests.ArrivalGate.Current = gate;
         var b = CreateSourceSchema(
             "b",
             builder => builder.AddApolloFederation().AddQueryType<GroupB.Query>(d => d.Name("Query"))
                 .AddType<GroupB.User>(),
             mockHttpResponse: async _ =>
             {
-                await (failureArrivesFirst ? Task.CompletedTask : gate.AccountsSent.Task);
+                await gate.BeforeFailureAsync();
                 var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-                gate.FailureSent.TrySetResult();
+                gate.FailureSent();
                 return response;
             });
+        var e = CreateSourceSchema("e", b => b.AddApolloFederation().AddQueryType<GroupE.Query>(d => d.Name("Query"))
+            .AddType<GroupE.Account>());
+        var k = CreateSourceSchema("k", b => b.AddApolloFederation().AddQueryType<GroupK.Query>(d => d.Name("Query"))
+            .AddType<GroupK.User>().AddType<GroupK.Account>());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("a", a), ("accounts", accounts), ("b", b), ("e", e), ("k", k)],
+            configureGatewayBuilder: builder =>
+            {
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping);
+                builder.AddDiagnosticEventListener(_ => new KeyHopFailureTests.ConditionSkipListener());
+            },
+            enableGlobalObjectIdentification: false,
+            includeOperationPlan: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        OperationResult result;
+
+        try
+        {
+            using var response = await client.PostAsync(
+                new OperationRequest(
+                    query: "query($s: Boolean!) { nullableUsers { name kayNN } "
+                    + "accounts { id code @include(if: $s) kayNN @include(if: $s) } }",
+                    variables: new Dictionary<string, object?> { ["s"] = false }),
+                new Uri("http://localhost:5000/graphql"),
+                TestContext.Current.CancellationToken);
+            result = await response.ReadAsResultAsync(TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            KeyHopFailureTests.ArrivalGate.Current = null;
+        }
+
+        // assert
+        using (result)
+        {
+            result.MatchInlineSnapshot(
+                """
+                {
+                  "data": {
+                    "nullableUsers": [
+                      null,
+                      null
+                    ],
+                    "accounts": [
+                      {
+                        "id": "5"
+                      }
+                    ]
+                  },
+                  "errors": [
+                    {
+                      "message": "Cannot return null for non-nullable field.",
+                      "path": [
+                        "nullableUsers",
+                        0,
+                        "kayNN"
+                      ],
+                      "extensions": {
+                        "code": "HC0018"
+                      }
+                    },
+                    {
+                      "message": "Cannot return null for non-nullable field.",
+                      "path": [
+                        "nullableUsers",
+                        1,
+                        "kayNN"
+                      ],
+                      "extensions": {
+                        "code": "HC0018"
+                      }
+                    }
+                  ]
+                }
+                """);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Execute_Should_ReportViolationOnlyForTheSkippedDefinition_When_ApolloBatchRunsWithAFailedDependency(
+        bool enableRequestGrouping)
+    {
+        // arrange
+        var a = CreateSourceSchema("a", b => b.AddApolloFederation().AddQueryType<GroupA.Query>(d => d.Name("Query"))
+            .AddType<GroupA.User>().AddType<GroupA.Account>());
+        var accounts = CreateSourceSchema("accounts", b => b.AddApolloFederation()
+            .AddQueryType<GroupAccounts.Query>(d => d.Name("Query")).AddType<GroupAccounts.Account>());
+        var b = CreateSourceSchema(
+            "b",
+            builder => builder.AddApolloFederation().AddQueryType<GroupB.Query>(d => d.Name("Query"))
+                .AddType<GroupB.User>(),
+            mockHttpResponse: _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)));
         var e = CreateSourceSchema("e", b => b.AddApolloFederation().AddQueryType<GroupE.Query>(d => d.Name("Query"))
             .AddType<GroupE.Account>());
         var k = CreateSourceSchema("k", b => b.AddApolloFederation().AddQueryType<GroupK.Query>(d => d.Name("Query"))
@@ -114,35 +211,54 @@ public sealed class KeyHopFailureApolloTests : FusionTestBase
 
         // act
         using var response = await client.PostAsync(
-            new OperationRequest(
-                query: "query($s: Boolean!) { nullableUsers { name kayNN } "
-                + "accounts { id code @include(if: $s) kayNN @include(if: $s) } }",
-                variables: new Dictionary<string, object?> { ["s"] = false }),
+            new OperationRequest("{ nullableUsers { name kayNN } accounts { id code kayNN } }"),
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
-        using var result = await response.ReadAsResultAsync(TestContext.Current.CancellationToken);
-        s_gate = null;
 
         // assert
-        Assert.Equal(
-            """{"nullableUsers":[null,null],"accounts":[{"id":"5"}]}""",
-            result.Data.GetRawText());
-        Assert.Equal(
+        using var result = await response.ReadAsResultAsync(TestContext.Current.CancellationToken);
+        result.MatchInlineSnapshot(
             """
-            [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"kayNN"],"extensions":{"code":"HC0018"}},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"kayNN"],"extensions":{"code":"HC0018"}}]
-            """,
-            result.Errors.GetRawText());
-    }
-
-    private static Gate? s_gate;
-
-    private sealed class Gate(bool failureArrivesFirst)
-    {
-        public TaskCompletionSource FailureSent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public TaskCompletionSource AccountsSent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public bool FailureArrivesFirst { get; } = failureArrivesFirst;
+            {
+              "data": {
+                "nullableUsers": [
+                  null,
+                  null
+                ],
+                "accounts": [
+                  {
+                    "id": "5",
+                    "code": "code-5",
+                    "kayNN": 3
+                  }
+                ]
+              },
+              "errors": [
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "nullableUsers",
+                    0,
+                    "kayNN"
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                },
+                {
+                  "message": "Cannot return null for non-nullable field.",
+                  "path": [
+                    "nullableUsers",
+                    1,
+                    "kayNN"
+                  ],
+                  "extensions": {
+                    "code": "HC0018"
+                  }
+                }
+              ]
+            }
+            """);
     }
 
     public static class GroupA
@@ -186,12 +302,7 @@ public sealed class KeyHopFailureApolloTests : FusionTestBase
             [Shareable]
             public async Task<IEnumerable<Account?>> GetAccounts()
             {
-                if (s_gate is { FailureArrivesFirst: true } gate)
-                {
-                    await gate.FailureSent.Task;
-                }
-
-                s_gate?.AccountsSent.TrySetResult();
+                await (KeyHopFailureTests.ArrivalGate.Current?.BeforeAccountsAsync() ?? Task.CompletedTask);
                 return [new Account { Id = "5" }];
             }
         }

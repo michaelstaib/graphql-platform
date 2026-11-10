@@ -2,6 +2,9 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using HotChocolate.Fusion.Diagnostics;
+using HotChocolate.Fusion.Execution;
+using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
@@ -10,10 +13,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
+[Collection("KeyHopFailure")]
 public class KeyHopFailureTests : FusionTestBase
 {
     private static readonly ConcurrentQueue<string> s_calls = new();
-    private static ArrivalGate? s_gate;
     private static int s_delayB;
     private static int s_delayC;
     private static int s_delayD;
@@ -687,16 +690,13 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
-    [Theory]
-    [InlineData("{ nullableUsers(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: {\"nullableUsers\":[null,null],\"accounts\":[{\"kayNN\":3}]}\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}},{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",1,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n")]
-    [InlineData("{ users(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: null\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"users\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n")]
-    public async Task Execute_Should_ReportTheSameViolations_When_RequestGroupingBatchesTheLookups(
-        string query,
-        string expected)
+    [Fact]
+    public async Task Execute_Should_ReportTheSameViolations_When_RequestGroupingBatchesTheLookupsOfNullableItems()
     {
         // arrange
         using var grouped = await CreateBatchedGatewayAsync(enableRequestGrouping: true);
         using var ungrouped = await CreateBatchedGatewayAsync(enableRequestGrouping: false);
+        const string query = "{ nullableUsers(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }";
 
         // act
         var groupedResult = await ExecuteQueryAsync(grouped, query);
@@ -704,7 +704,34 @@ public class KeyHopFailureTests : FusionTestBase
 
         // assert
         Assert.Equal(ungroupedResult, groupedResult);
-        Assert.Equal(expected, groupedResult);
+        groupedResult.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[null,null],"accounts":[{"kayNN":3}]}
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"kayNN"],"extensions":{"code":"HC0018"}},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"kayNN"],"extensions":{"code":"HC0018"}}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheSameViolations_When_RequestGroupingBatchesTheLookupsOfNonNullItems()
+    {
+        // arrange
+        using var grouped = await CreateBatchedGatewayAsync(enableRequestGrouping: true);
+        using var ungrouped = await CreateBatchedGatewayAsync(enableRequestGrouping: false);
+        const string query = "{ users(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }";
+
+        // act
+        var groupedResult = await ExecuteQueryAsync(grouped, query);
+        var ungroupedResult = await ExecuteQueryAsync(ungrouped, query);
+
+        // assert
+        Assert.Equal(ungroupedResult, groupedResult);
+        groupedResult.MatchInlineSnapshot(
+            """
+            data: null
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["users",0,"kayNN"],"extensions":{"code":"HC0018"}}]
+
+            """);
     }
 
     [Theory]
@@ -718,7 +745,7 @@ public class KeyHopFailureTests : FusionTestBase
     {
         // arrange
         using var gateway = await CreateSplitBatchedGatewayAsync(enableRequestGrouping);
-        s_gate = new ArrivalGate(failureArrivesFirst);
+        ArrivalGate.Current = new ArrivalGate(failureArrivesFirst);
 
         // act
         string result;
@@ -733,13 +760,16 @@ public class KeyHopFailureTests : FusionTestBase
         }
         finally
         {
-            s_gate = null;
+            ArrivalGate.Current = null;
         }
 
         // assert
-        Assert.Equal(
-            "data: {\"nullableUsers\":[null,null],\"accounts\":[{\"id\":5}]}\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}},{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",1,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n",
-            result);
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[null,null],"accounts":[{"id":5}]}
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"kayNN"],"extensions":{"code":"HC0018"}},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"kayNN"],"extensions":{"code":"HC0018"}}]
+
+            """);
     }
 
     [Fact]
@@ -930,26 +960,57 @@ public class KeyHopFailureTests : FusionTestBase
 
     private static async Task<HttpResponseMessage> GatedServerError(HttpRequestMessage request)
     {
-        await (s_gate?.BeforeFailureAsync() ?? Task.CompletedTask);
+        await (ArrivalGate.Current?.BeforeFailureAsync() ?? Task.CompletedTask);
         var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        s_gate?.FailureSent();
+        ArrivalGate.Current?.FailureSent();
         return response;
     }
 
-    // Forces which skip reaches the executor first. The failing hop answers before the accounts root is released,
-    // or the accounts root answers before the failing hop is released.
-    private sealed class ArrivalGate(bool failureArrivesFirst)
+    // Forces which skip reaches the executor first. Either the failing hop is answered before the accounts root is
+    // released, or the failing hop is answered only after the conditioned node of the accounts root has completed.
+    internal sealed class ArrivalGate(bool failureArrivesFirst)
     {
         private readonly TaskCompletionSource _failureSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource _accountsSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _conditionSkipped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task BeforeFailureAsync() => failureArrivesFirst ? Task.CompletedTask : _accountsSent.Task;
+        public static ArrivalGate? Current { get; set; }
+
+        public async Task BeforeFailureAsync()
+        {
+            if (!failureArrivesFirst)
+            {
+                await _conditionSkipped.Task;
+
+                // The node completes right after its scope is disposed, the executor reads the result shortly after.
+                await Task.Delay(100);
+            }
+        }
 
         public void FailureSent() => _failureSent.TrySetResult();
 
         public Task BeforeAccountsAsync() => failureArrivesFirst ? _failureSent.Task : Task.CompletedTask;
 
-        public void AccountsSent() => _accountsSent.TrySetResult();
+        public void ConditionSkipped() => _conditionSkipped.TrySetResult();
+    }
+
+    internal sealed class ConditionSkipListener : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+            => schemaName == "e" ? new Signal() : base.ExecuteOperationNode(context, node, schemaName);
+
+        public override IDisposable ExecuteApolloOperationExecutionNode(
+            OperationPlanContext context,
+            ApolloOperationExecutionNode node,
+            string schemaName)
+            => schemaName == "e" ? new Signal() : base.ExecuteApolloOperationExecutionNode(context, node, schemaName);
+
+        private sealed class Signal : IDisposable
+        {
+            public void Dispose() => ArrivalGate.Current?.ConditionSkipped();
+        }
     }
 
     private static async Task<HttpResponseMessage> ServerErrorAfterDelayB(HttpRequestMessage request)
@@ -1051,7 +1112,10 @@ public class KeyHopFailureTests : FusionTestBase
         return await CreateCompositeSchemaAsync(
             [("a", a), ("accounts", accounts), ("b", b), ("e", e), ("k", k)],
             configureGatewayBuilder: builder =>
-                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            {
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping);
+                builder.AddDiagnosticEventListener(_ => new ConditionSkipListener());
+            },
             includeOperationPlan: false);
     }
 
@@ -1688,8 +1752,7 @@ public class KeyHopFailureTests : FusionTestBase
         {
             public async Task<IEnumerable<Account?>> GetAccounts(int[] ids)
             {
-                await (s_gate?.BeforeAccountsAsync() ?? Task.CompletedTask);
-                s_gate?.AccountsSent();
+                await (ArrivalGate.Current?.BeforeAccountsAsync() ?? Task.CompletedTask);
                 return ids.Select(i => new Account(i));
             }
 
