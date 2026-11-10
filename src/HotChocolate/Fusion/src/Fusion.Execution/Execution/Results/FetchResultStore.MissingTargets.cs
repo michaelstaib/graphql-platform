@@ -191,30 +191,41 @@ internal sealed partial class FetchResultStore
 
     private static void SortByDependencyDepth(IOperationPlan plan, Span<int> hopIds)
     {
-        var depths = new Dictionary<int, int>();
-        var keys = new long[hopIds.Length];
+        var depths = ArrayPool<int>.Shared.Rent(plan.MaxNodeId + 1);
+        var keys = ArrayPool<long>.Shared.Rent(hopIds.Length);
 
-        for (var i = 0; i < hopIds.Length; i++)
+        try
         {
-            keys[i] = ((long)GetDependencyDepth(plan, hopIds[i], depths) << 32) | (uint)hopIds[i];
+            depths.AsSpan(0, plan.MaxNodeId + 1).Fill(-1);
+
+            for (var i = 0; i < hopIds.Length; i++)
+            {
+                keys[i] = ((long)GetDependencyDepth(plan, hopIds[i], depths) << 32) | (uint)hopIds[i];
+            }
+
+            Array.Sort(keys, 0, hopIds.Length);
+
+            for (var i = 0; i < hopIds.Length; i++)
+            {
+                hopIds[i] = (int)(keys[i] & uint.MaxValue);
+            }
         }
-
-        Array.Sort(keys);
-
-        for (var i = 0; i < keys.Length; i++)
+        finally
         {
-            hopIds[i] = (int)(keys[i] & uint.MaxValue);
+            ArrayPool<int>.Shared.Return(depths);
+            ArrayPool<long>.Shared.Return(keys);
         }
     }
 
-    private static int GetDependencyDepth(IOperationPlan plan, int nodeId, Dictionary<int, int> depths)
+    private static int GetDependencyDepth(IOperationPlan plan, int nodeId, int[] depths)
     {
-        if (depths.TryGetValue(nodeId, out var depth))
+        if (depths[nodeId] >= 0)
         {
-            return depth;
+            return depths[nodeId];
         }
 
         depths[nodeId] = 0;
+        var depth = 0;
         var node = FindPlanNode(plan, nodeId);
 
         foreach (var dependency in node.Dependencies)
