@@ -72,9 +72,7 @@ internal partial class MiddlewareContext : IMiddlewareContext
                     continue;
                 }
 
-                var errorBuilder = ErrorBuilder.FromError(error);
-                configure(errorBuilder);
-                ReportError(errorBuilder.Build());
+                ReportError(Configure(error, configure));
             }
         }
         else if (exception is AggregateException aggregateException)
@@ -94,6 +92,33 @@ internal partial class MiddlewareContext : IMiddlewareContext
 
             ReportError(errorBuilder.Build());
         }
+    }
+
+    // An error that is not a plain error keeps its type, the configured values are applied to it.
+    private static IError Configure(IError error, Action<ErrorBuilder> configure)
+    {
+        var errorBuilder = ErrorBuilder.FromError(error);
+        configure(errorBuilder);
+        var configured = errorBuilder.Build();
+
+        if (error is Error)
+        {
+            return configured;
+        }
+
+        var result = error.WithMessage(configured.Message).WithExtensions(configured.Extensions);
+
+        if (configured.Path is { } path)
+        {
+            result = result.WithPath(path);
+        }
+
+        if (configured.Locations is { } locations)
+        {
+            result = result.WithLocations(locations);
+        }
+
+        return result;
     }
 
     public void ReportError(IError error)
