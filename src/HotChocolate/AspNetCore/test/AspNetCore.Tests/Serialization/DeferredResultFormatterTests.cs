@@ -620,11 +620,11 @@ public sealed class DeferredResultFormatterTests
             new PendingResult(2, Path.Root.Append("tags")));
         var firstBatch = CreateIncrementalEnvelope(
             document,
-            new IncrementalListResult(2, errors: null, new StringItemCollection(1, enumerable: true, "b", "c")),
+            new IncrementalListResult(2, errors: null, new StringItemCollection(1, enumerable: false, "b", "c")),
             hasNext: true);
         var secondBatch = CreateIncrementalEnvelope(
             document,
-            new IncrementalListResult(2, errors: null, new StringItemCollection(3, enumerable: true, "d")),
+            new IncrementalListResult(2, errors: null, new StringItemCollection(3, enumerable: false, "d")),
             hasNext: false,
             completedId: 2);
 
