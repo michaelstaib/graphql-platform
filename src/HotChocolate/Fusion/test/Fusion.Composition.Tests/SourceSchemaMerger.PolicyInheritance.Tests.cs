@@ -1,8 +1,8 @@
 namespace HotChocolate.Fusion;
 
-public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSchemaMergerTestBase
+public sealed class SourceSchemaMergerPolicyInheritanceTests : SourceSchemaMergerTestBase
 {
-    private const string AuthorizationDirectives =
+    private const string PolicyDirectives =
         """
         directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
 
@@ -34,7 +34,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     name: String
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -80,7 +80,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     name: String
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -132,7 +132,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     email: String @policy(policies: [["Owner"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -150,7 +150,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                 @fusion__field(schema: A)
               id: ID! @fusion__policy(scopes: [["account"]]) @fusion__field(schema: A)
             }
-
             """);
     }
 
@@ -181,7 +180,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     url: String
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -211,7 +210,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             interface SearchResult @fusion__type(schema: A) {
               title: String @fusion__policy(authenticated: true) @fusion__field(schema: A)
             }
-
             """);
     }
 
@@ -241,7 +239,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     url: String
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -271,7 +269,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             interface SearchResult @fusion__type(schema: A) {
               title: String @fusion__policy(authenticated: true) @fusion__field(schema: A)
             }
-
             """);
     }
 
@@ -296,7 +293,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     url: String
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -321,7 +318,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
               @fusion__type(schema: A) {
               title: String @fusion__policy(authenticated: true) @fusion__field(schema: A)
             }
-
             """);
     }
 
@@ -355,7 +351,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     id: ID!
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -396,7 +392,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
             scalar Token
               @fusion__policy(policies: [["TokenPolicy"]])
               @fusion__type(schema: A)
-
             """);
     }
 
@@ -423,7 +418,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     pages: Int @requiresScopes(scopes: [["pages"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """,
                 $$"""
                 # Schema B
@@ -432,7 +427,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     reviews: [String!]! @requiresScopes(scopes: [["reviews"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -465,7 +460,6 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                 @fusion__field(schema: B)
               title: String @fusion__field(schema: A)
             }
-
             """);
     }
 
@@ -495,7 +489,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     name: String
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -548,7 +542,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     id: ID! @requiresScopes(scopes: [["a"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """,
                 $$"""
                 # Schema B
@@ -564,7 +558,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     id: ID! @requiresScopes(scopes: [["b"], ["c"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -619,7 +613,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     id: ID!
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -690,7 +684,7 @@ public sealed class SourceSchemaMergerAuthorizationInheritanceTests : SourceSche
                     id: ID!
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """

@@ -18,7 +18,7 @@ namespace HotChocolate.Fusion.Policies;
 /// the request selects and does not skip, and records the requests it received. A subscription
 /// delivers the events published to the client in the same reduced form.
 /// </summary>
-internal sealed class AuthorizationTestClient(string data) : ISourceSchemaClient
+internal sealed class PolicyTestClient(string data) : ISourceSchemaClient
 {
     private readonly ConcurrentQueue<string> _requests = [];
     private readonly Channel<string> _events = Channel.CreateUnbounded<string>();

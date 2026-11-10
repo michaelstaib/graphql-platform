@@ -3,10 +3,10 @@ using HotChocolate.Fusion.Types;
 
 namespace HotChocolate.Fusion.Policies;
 
-internal sealed class AuthorizationTestClientFactory(ISourceSchemaClient client) : ISourceSchemaClientFactory
+internal sealed class PolicyTestClientFactory(ISourceSchemaClient client) : ISourceSchemaClientFactory
 {
     public bool CanHandle(ISourceSchemaClientConfiguration configuration)
-        => configuration is AuthorizationTestClientConfiguration;
+        => configuration is PolicyTestClientConfiguration;
 
     public ISourceSchemaClient CreateClient(
         FusionSchemaDefinition schema,

@@ -1,8 +1,8 @@
 namespace HotChocolate.Fusion;
 
-public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchemaMergerTestBase
+public sealed class SourceSchemaMergerPolicyDirectiveTests : SourceSchemaMergerTestBase
 {
-    private const string AuthorizationDirectives =
+    private const string PolicyDirectives =
         """
         directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | ENUM | SCALAR
 
@@ -14,7 +14,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
         """;
 
     [Fact]
-    public void Merge_Should_EmitFusionAuthorization_When_MembersCarrySourceDirectives()
+    public void Merge_Should_EmitFusionPolicy_When_MembersCarrySourceDirectives()
     {
         // arrange & act & assert
         AssertMatches(
@@ -38,7 +38,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
 
                 scalar FooScalar @requiresScopes(scopes: [["scalar"]])
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -72,7 +72,6 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
             }
 
             scalar FooScalar @fusion__policy(scopes: [["scalar"]]) @fusion__type(schema: A)
-
             """);
     }
 
@@ -89,7 +88,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     other: Int
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """,
                 $$"""
                 # Schema B
@@ -98,7 +97,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     other: Int
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -128,7 +127,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     field: Int @requiresScopes(scopes: [["a"], ["b"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """,
                 $$"""
                 # Schema B
@@ -136,7 +135,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     field: Int @requiresScopes(scopes: [["c"], ["d"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -150,7 +149,6 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                 @fusion__field(schema: A)
                 @fusion__field(schema: B)
             }
-
             """);
     }
 
@@ -166,7 +164,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     field: Int @policy(policies: [["z", "a"], ["a"], ["m", "b"], ["b", "m"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """,
                 $$"""
                 # Schema B
@@ -174,7 +172,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     field: Int @policy(policies: [["x"], ["a", "b"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -203,7 +201,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     field: Int @authenticated @requiresScopes(scopes: [["read"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """,
                 $$"""
                 # Schema B
@@ -211,7 +209,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     field: Int @policy(policies: [["Admin"]])
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """
@@ -271,7 +269,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
                     policed: Int @policy(policies: "p")
                 }
 
-                {{AuthorizationDirectives}}
+                {{PolicyDirectives}}
                 """
             ],
             """

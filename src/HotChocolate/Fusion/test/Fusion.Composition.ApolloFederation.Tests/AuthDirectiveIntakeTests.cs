@@ -257,7 +257,7 @@ public sealed class AuthDirectiveIntakeTests
     }
 
     [Fact]
-    public void Compose_Should_MergeToFusionAuthorization_When_SubgraphUsesApolloDirectives()
+    public void Compose_Should_MergeToFusionPolicy_When_SubgraphUsesApolloDirectives()
     {
         // arrange
         const string a =

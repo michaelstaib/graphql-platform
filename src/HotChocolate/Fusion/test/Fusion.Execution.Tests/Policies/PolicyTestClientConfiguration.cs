@@ -2,7 +2,7 @@ using HotChocolate.Fusion.Execution.Clients;
 
 namespace HotChocolate.Fusion.Policies;
 
-internal sealed class AuthorizationTestClientConfiguration(string name) : ISourceSchemaClientConfiguration
+internal sealed class PolicyTestClientConfiguration(string name) : ISourceSchemaClientConfiguration
 {
     public string Name { get; } = name;
 

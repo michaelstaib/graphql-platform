@@ -8,7 +8,7 @@ using static HotChocolate.Fusion.Policies.PolicyTestHelper;
 
 namespace HotChocolate.Fusion.Policies;
 
-public class AuthorizationOptionsTests : FusionTestBase
+public class PolicyOptionsTests : FusionTestBase
 {
     [Fact]
     public async Task ModifyPolicyOptions_Should_ExposeDefaults_When_NoModifierIsRegistered()

@@ -3,7 +3,7 @@ using HotChocolate.Fusion.Options;
 
 namespace HotChocolate.Fusion.SourceSchemaValidationRules;
 
-public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
+public sealed class PolicyDirectiveArgumentRuleTests : RuleTestBase
 {
     protected override object Rule { get; } = new PolicyDirectiveArgumentRule();
 

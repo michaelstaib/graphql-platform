@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
-public class AuthorizationHttpTests : FusionTestBase
+public class PolicyHttpTests : FusionTestBase
 {
     private const string SimpleSchema =
         """
@@ -185,7 +185,7 @@ public class AuthorizationHttpTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Fail_When_SchemaUsesAuthorizationAndNoAuthenticationIsRegistered()
+    public async Task Startup_Should_Fail_When_SchemaUsesPolicyAndNoAuthenticationIsRegistered()
     {
         // arrange
         using var server = CreateSourceSchema("A", ProtectedSchema);
@@ -202,7 +202,7 @@ public class AuthorizationHttpTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Gateway_Should_ReturnOk_When_SchemaUsesAuthorizationAndSchemeIsRegistered()
+    public async Task Gateway_Should_ReturnOk_When_SchemaUsesPolicyAndSchemeIsRegistered()
     {
         // arrange
         using var server = CreateSourceSchema("A", ProtectedSchema);

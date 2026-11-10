@@ -4,9 +4,9 @@ using HotChocolate.Fusion.Options;
 
 namespace HotChocolate.Fusion.PostMergeValidationRules;
 
-public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
+public sealed class PolicyTransitiveRequirementsRuleTests : RuleTestBase
 {
-    protected override object Rule { get; } = new AuthorizationTransitiveRequirementsRule();
+    protected override object Rule { get; } = new PolicyTransitiveRequirementsRule();
 
     private const string Directives =
         """
@@ -1110,7 +1110,7 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         Assert.True(log.IsEmpty);
     }
 
-    private static SourceSchemaText[] ProductSchemas([StringSyntax("graphql")] string authorization)
+    private static SourceSchemaText[] ProductSchemas([StringSyntax("graphql")] string policy)
     {
         return
         [
@@ -1119,7 +1119,7 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
                 $$"""
                 type Query { products: [Product] }
 
-                type Product @key(fields: "id") {{authorization}} {
+                type Product @key(fields: "id") {{policy}} {
                     id: ID!
                 }
 

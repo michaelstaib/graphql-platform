@@ -1,6 +1,6 @@
 namespace HotChocolate.Fusion.PostMergeValidationRules;
 
-public sealed class AuthorizationInheritedRuleTests : RuleTestBase
+public sealed class PolicyInheritedRuleTests : RuleTestBase
 {
     protected override object Rule { get; } = new PolicyInheritedRule();
 

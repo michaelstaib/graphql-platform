@@ -1,4 +1,4 @@
-# Response_Should_RenderAttributionOnlyOnAuthorizationErrors_When_AttributionIsOn
+# Response_Should_RenderAttributionOnlyOnPolicyErrors_When_AttributionIsOn
 
 ## Error with attribution: Unauthenticated nullable field (anonymous) -> 200 OK
 

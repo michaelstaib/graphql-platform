@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Policies;
 
-public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
+public class PolicyEscalationTests : PolicyExecutionTestBase
 {
     private const string Schema =
         """
@@ -34,7 +34,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
     public async Task Execute_Should_RejectWithChallenge_When_UnauthenticatedDenialMeetsTheLadder()
     {
         // arrange
-        var client = new AuthorizationTestClient(Data);
+        var client = new PolicyTestClient(Data);
         var executor = await CreateEscalatingExecutorAsync(client, RejectRequestOn.OnUnauthenticated);
 
         // act
@@ -54,7 +54,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
     public async Task Execute_Should_ReturnPartialData_When_UnauthorizedDenialIsBelowTheLadder()
     {
         // arrange
-        var client = new AuthorizationTestClient(Data);
+        var client = new PolicyTestClient(Data);
         var executor = await CreateEscalatingExecutorAsync(client, RejectRequestOn.OnUnauthenticated);
         var user = Authenticated();
 
@@ -75,7 +75,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
     public async Task Execute_Should_RejectWithoutChallenge_When_UnauthorizedDenialMeetsTheLadder()
     {
         // arrange
-        var client = new AuthorizationTestClient(Data);
+        var client = new PolicyTestClient(Data);
         var executor = await CreateEscalatingExecutorAsync(client, RejectRequestOn.OnUnauthorized);
         var user = Authenticated();
 
@@ -96,7 +96,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
     public async Task Execute_Should_RejectUnauthenticatedWithoutChallenge_When_NoSchemeIsAvailable()
     {
         // arrange
-        var client = new AuthorizationTestClient(Data);
+        var client = new PolicyTestClient(Data);
         var executor = await CreateEscalatingExecutorAsync(
             client,
             RejectRequestOn.OnUnauthorized,
@@ -123,7 +123,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
     public async Task Execute_Should_NameCoordinateDirectiveAndScopes_When_RejectionIsAttributed()
     {
         // arrange
-        var client = new AuthorizationTestClient(Data);
+        var client = new PolicyTestClient(Data);
         var executor = await CreateEscalatingExecutorAsync(
             client,
             RejectRequestOn.OnUnauthorized,
@@ -163,7 +163,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
     public async Task Execute_Should_RejectTheWholeBatch_When_OneVariableSetIsDenied()
     {
         // arrange
-        var client = new AuthorizationTestClient(Data);
+        var client = new PolicyTestClient(Data);
         var executor = await CreateEscalatingExecutorAsync(
             client,
             RejectRequestOn.OnUnauthorized,
@@ -206,7 +206,7 @@ public class AuthorizationEscalationTests : AuthorizationExecutionTestBase
             : "<absent>";
 
     private static Task<IRequestExecutor> CreateEscalatingExecutorAsync(
-        AuthorizationTestClient client,
+        PolicyTestClient client,
         RejectRequestOn rejectRequestOn,
         Action<InMemoryPolicyBuilder>? policies = null,
         Action<IFusionGatewayBuilder>? configure = null)

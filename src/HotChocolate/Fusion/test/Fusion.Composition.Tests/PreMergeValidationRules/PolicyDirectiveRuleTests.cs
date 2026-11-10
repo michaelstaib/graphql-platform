@@ -1,6 +1,6 @@
 namespace HotChocolate.Fusion.PreMergeValidationRules;
 
-public sealed class AuthorizationDirectiveRuleTests : RuleTestBase
+public sealed class PolicyDirectiveRuleTests : RuleTestBase
 {
     protected override object Rule { get; } = new PolicyDirectiveRule();
 

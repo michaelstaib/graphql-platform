@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Policies;
 
-public abstract class AuthorizationExecutionTestBase : FusionTestBase
+public abstract class PolicyExecutionTestBase : FusionTestBase
 {
     protected const string Directives =
         """
@@ -26,7 +26,7 @@ public abstract class AuthorizationExecutionTestBase : FusionTestBase
 
     internal static async Task<IRequestExecutor> CreateExecutorAsync(
         string sourceSchema,
-        AuthorizationTestClient client,
+        PolicyTestClient client,
         InMemoryPolicyRecorder recorder,
         Action<InMemoryPolicyBuilder>? policies = null,
         Action<IFusionGatewayBuilder>? configure = null)
@@ -47,14 +47,14 @@ public abstract class AuthorizationExecutionTestBase : FusionTestBase
         builder.AddInMemoryPolicies(fallback => fallback.Allow("finance").Allow("owner").Allow("editor").Allow("admin"));
 
         builder.AddInMemoryConfiguration(ComposeSchemaDocument(defaultListSize: 1, sourceSchema + "\n" + Directives));
-        builder.Services.AddSingleton<ISourceSchemaClientFactory>(new AuthorizationTestClientFactory(client));
+        builder.Services.AddSingleton<ISourceSchemaClientFactory>(new PolicyTestClientFactory(client));
         builder.ConfigureSchemaServices(
             (_, sc) => sc.AddSingleton<IAuthenticationSchemeLookup>(
                 new TestAuthenticationSchemeLookup("Bearer") { Challenges = s_challenges }));
 
         FusionSetupUtilities.Configure(
             builder,
-            setup => setup.ClientConfigurationModifiers.Add(_ => new AuthorizationTestClientConfiguration("a")));
+            setup => setup.ClientConfigurationModifiers.Add(_ => new PolicyTestClientConfiguration("a")));
 
         configure?.Invoke(builder);
 

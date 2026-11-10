@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Policies;
 
-public class AuthorizationStartupValidationTests : FusionTestBase
+public class PolicyStartupValidationTests : FusionTestBase
 {
     private const string Directives =
         """
@@ -25,7 +25,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     [InlineData("secret: String @authenticated")]
     [InlineData("""secret: String @requiresScopes(scopes: [["read"]])""")]
     [InlineData("""secret: String @policy(policies: [["admin"]])""")]
-    public async Task Startup_Should_Fail_When_SchemaUsesAuthorizationAndNoSchemeIsRegistered(string field)
+    public async Task Startup_Should_Fail_When_SchemaUsesPolicyAndNoSchemeIsRegistered(string field)
     {
         // arrange
         var provider = CreateProvider(
@@ -43,7 +43,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_SchemaUsesAuthorizationAndSchemeIsRegistered()
+    public async Task Startup_Should_Succeed_When_SchemaUsesPolicyAndSchemeIsRegistered()
     {
         // arrange
         var provider = CreateProvider(
@@ -80,7 +80,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Fail_When_ListedSchemeIsNotRegisteredAndSchemaUsesNoAuthorization()
+    public async Task Startup_Should_Fail_When_ListedSchemeIsNotRegisteredAndSchemaUsesNoPolicy()
     {
         // arrange
         var provider = CreateProvider(
@@ -147,7 +147,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_SchemaUsesNoAuthorizationAndListedSchemesAreRegistered()
+    public async Task Startup_Should_Succeed_When_SchemaUsesNoPolicyAndListedSchemesAreRegistered()
     {
         // arrange
         var provider = CreateProvider(
@@ -181,7 +181,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Succeed_When_SchemaUsesNoAuthorizationAndNoSchemeIsRegistered()
+    public async Task Startup_Should_Succeed_When_SchemaUsesNoPolicyAndNoSchemeIsRegistered()
     {
         // arrange
         var provider = CreateProvider(
@@ -197,7 +197,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Startup_Should_Fail_When_SchemaUsesAuthorizationAndHostHasNoAuthenticationSchemeLookup()
+    public async Task Startup_Should_Fail_When_SchemaUsesPolicyAndHostHasNoAuthenticationSchemeLookup()
     {
         // arrange
         var provider = CreateProvider("secret: String @authenticated", lookup: null);

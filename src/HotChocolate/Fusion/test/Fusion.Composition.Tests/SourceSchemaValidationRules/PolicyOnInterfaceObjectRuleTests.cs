@@ -1,6 +1,6 @@
 namespace HotChocolate.Fusion.SourceSchemaValidationRules;
 
-public sealed class AuthorizationOnInterfaceObjectRuleTests : RuleTestBase
+public sealed class PolicyOnInterfaceObjectRuleTests : RuleTestBase
 {
     protected override object Rule { get; } = new PolicyOnInterfaceObjectRule();
 

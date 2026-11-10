@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
-public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
+public class PolicyErrorSemanticsMatrixTests : FusionTestBase
 {
     private const string UserHeader = "X-Test-User";
     private const string Member = "member";
@@ -108,7 +108,7 @@ public class AuthorizationErrorSemanticsMatrixTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Response_Should_RenderAttributionOnlyOnAuthorizationErrors_When_AttributionIsOn()
+    public async Task Response_Should_RenderAttributionOnlyOnPolicyErrors_When_AttributionIsOn()
     {
         // arrange
         var snapshot = Snapshot.Create();

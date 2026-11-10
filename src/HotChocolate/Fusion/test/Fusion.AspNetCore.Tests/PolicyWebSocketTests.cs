@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
-public class AuthorizationWebSocketTests : FusionTestBase
+public class PolicyWebSocketTests : FusionTestBase
 {
     private const string Schema =
         """

@@ -5,7 +5,7 @@ using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Execution.Types;
 
-public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
+public sealed class FusionPolicyDirectiveTests : FusionTestBase
 {
     private const string Directives =
         """
@@ -51,14 +51,14 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
         """;
 
     [Fact]
-    public void Create_Should_ParseAuthorization_When_MembersCarryFusionAuthorization()
+    public void Create_Should_ParsePolicy_When_MembersCarryFusionPolicy()
     {
         // arrange
         var schema = ComposeSchema(SchemaA, SchemaB);
 
         // act
         var query = schema.Types.GetType<FusionObjectTypeDefinition>("Query");
-        var members = new (string Coordinate, PolicyDirective? Authorization)[]
+        var members = new (string Coordinate, PolicyDirective? Policy)[]
         {
             ("Query", query.Policy),
             ("Query.secured", query.Fields["secured"].Policy),
@@ -73,7 +73,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
             .Select(static m => new
             {
                 m.Coordinate,
-                Authorization = m.Policy is null
+                Policy = m.Policy is null
                     ? null
                     : new
                     {
@@ -88,7 +88,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
             [
               {
                 "Coordinate": "Query",
-                "Authorization": {
+                "Policy": {
                   "Authenticated": true,
                   "Scopes": [],
                   "Policies": []
@@ -96,7 +96,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
               },
               {
                 "Coordinate": "Query.secured",
-                "Authorization": {
+                "Policy": {
                   "Authenticated": true,
                   "Scopes": [
                     [
@@ -119,7 +119,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
               },
               {
                 "Coordinate": "Query.open",
-                "Authorization": {
+                "Policy": {
                   "Authenticated": true,
                   "Scopes": [],
                   "Policies": []
@@ -127,7 +127,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
               },
               {
                 "Coordinate": "FooInterface",
-                "Authorization": {
+                "Policy": {
                   "Authenticated": false,
                   "Scopes": [],
                   "Policies": [
@@ -139,7 +139,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
               },
               {
                 "Coordinate": "FooEnum",
-                "Authorization": {
+                "Policy": {
                   "Authenticated": true,
                   "Scopes": [],
                   "Policies": []
@@ -147,7 +147,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
               },
               {
                 "Coordinate": "FooScalar",
-                "Authorization": {
+                "Policy": {
                   "Authenticated": false,
                   "Scopes": [
                     [
@@ -162,7 +162,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
-    public void Create_Should_SetHasAuthorization_When_FieldCarriesOrInheritsFusionAuthorization()
+    public void Create_Should_SetHasPolicy_When_FieldCarriesOrInheritsFusionPolicy()
     {
         // arrange
         var schema = ComposeSchema(SchemaA, SchemaB);
@@ -188,7 +188,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
-    public void Create_Should_SetHasAuthorization_When_InterfaceFieldCarriesFusionAuthorization()
+    public void Create_Should_SetHasPolicy_When_InterfaceFieldCarriesFusionPolicy()
     {
         // arrange
         var schema = ComposeSchema(
@@ -228,7 +228,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
-    public void Create_Should_CollectAuthorizationUsage_When_SchemaUsesAuthorization()
+    public void Create_Should_CollectPolicyUsage_When_SchemaUsesPolicy()
     {
         // arrange
         var schema = ComposeSchema(SchemaA, SchemaB);
@@ -261,7 +261,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
-    public void Create_Should_ReportNoAuthorizationUsage_When_SchemaHasNoAuthorization()
+    public void Create_Should_ReportNoPolicyUsage_When_SchemaHasNoPolicy()
     {
         // arrange
         var schema = ComposeSchema(
@@ -295,7 +295,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     }
 
     [Fact]
-    public void Create_Should_HideFusionAuthorization_When_LoadingSchema()
+    public void Create_Should_HideFusionPolicy_When_LoadingSchema()
     {
         // arrange
         var schema = ComposeSchema(SchemaA, SchemaB);

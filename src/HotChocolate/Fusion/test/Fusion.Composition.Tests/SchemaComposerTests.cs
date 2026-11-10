@@ -52,7 +52,7 @@ public sealed class SchemaComposerTests
     }
 
     [Fact]
-    public void Compose_Should_WarnAboutInheritedAuthorization_When_ImplementationFieldIsProtected()
+    public void Compose_Should_WarnAboutInheritedPolicy_When_ImplementationFieldIsProtected()
     {
         // arrange
         var log = new CompositionLog();

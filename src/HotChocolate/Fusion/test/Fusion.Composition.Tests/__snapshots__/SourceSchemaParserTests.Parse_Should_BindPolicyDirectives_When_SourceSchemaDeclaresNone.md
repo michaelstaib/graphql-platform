@@ -1,4 +1,4 @@
-# Parse_Should_BindAuthorizationDirectives_When_SourceSchemaDeclaresNone
+# Parse_Should_BindPolicyDirectives_When_SourceSchemaDeclaresNone
 
 ```graphql
 "The @authenticated directive requires the client to be authenticated."
