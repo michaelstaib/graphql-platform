@@ -45,4 +45,10 @@ internal static class ThrowHelper
 
         return new GraphQLException(builder.Build());
     }
+
+    public static GraphQLException OperationId_NoOperationFound(DocumentNode document)
+        => new(ErrorBuilder.New()
+            .SetMessage("There are no operations in the GraphQL document.")
+            .AddLocation(document)
+            .Build());
 }

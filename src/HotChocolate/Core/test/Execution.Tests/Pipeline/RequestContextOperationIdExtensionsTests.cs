@@ -86,6 +86,25 @@ public sealed class RequestContextOperationIdExtensionsTests
     }
 
     [Fact]
+    public void GetOperationId_Should_Throw_When_DocumentHasNoOperation_And_NameIsOmitted()
+    {
+        // arrange
+        var context = CreateContext(
+            "fragment F on Query { foo }",
+            new OperationDocumentId("abc123"),
+            operationName: null);
+
+        // act
+        void Act() => context.GetOperationId();
+
+        // assert
+        var exception = Assert.Throws<GraphQLException>(Act);
+        var error = Assert.Single(exception.Errors);
+        Assert.Equal("There are no operations in the GraphQL document.", error.Message);
+        Assert.Equal(1, Assert.Single(error.Locations!).Line);
+    }
+
+    [Fact]
     public void GetOperationId_Should_BuildIdDotOperationName_When_MultipleOperations()
     {
         // arrange

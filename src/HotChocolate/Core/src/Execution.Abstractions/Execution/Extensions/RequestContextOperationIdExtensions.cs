@@ -67,6 +67,15 @@ public static class RequestContextOperationIdExtensions
             throw ThrowHelper.OperationId_DocumentIdEmpty();
         }
 
+        if (documentInfo.OperationCount == 0)
+        {
+            var requestedName = context.Request.OperationName;
+
+            throw string.IsNullOrEmpty(requestedName)
+                ? ThrowHelper.OperationId_NoOperationFound(documentInfo.Document)
+                : ThrowHelper.OperationId_OperationNotFound(documentInfo.Document, requestedName);
+        }
+
         if (documentInfo.OperationCount == 1)
         {
             var requestedName = context.Request.OperationName;
