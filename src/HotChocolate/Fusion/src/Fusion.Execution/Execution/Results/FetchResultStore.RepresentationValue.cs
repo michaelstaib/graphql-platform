@@ -1706,7 +1706,20 @@ internal sealed partial class FetchResultStore
             return true;
         }
 
-        var listError = errorTrie is { Count: 0, Error: not null } && CountNullEntities(dataElement) == 1;
+        var listError = false;
+
+        if (errorTrie is { Count: 0, Error: { } entitiesError })
+        {
+            var nullEntities = CountNullEntities(dataElement);
+            listError = nullEntities == 1;
+
+            // The error cannot be tied to one entity, so it is reported once without a path.
+            if (nullEntities > 1)
+            {
+                AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(entitiesError)));
+            }
+        }
+
         var index = 0;
 
         foreach (var entity in dataElement.EnumerateArray())

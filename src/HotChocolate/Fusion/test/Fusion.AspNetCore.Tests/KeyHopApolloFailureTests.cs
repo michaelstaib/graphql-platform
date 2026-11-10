@@ -188,7 +188,7 @@ public sealed class KeyHopApolloFailureTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Execute_Should_AttributeNothing_When_AListErrorHasSeveralNullEntities()
+    public async Task Execute_Should_ReportTheListErrorOnceWithoutAPath_When_AListErrorHasSeveralNullEntities()
     {
         // arrange
         using var gateway = await CreateGatewayAsync(
@@ -203,6 +203,7 @@ public sealed class KeyHopApolloFailureTests : FusionTestBase
             """
             ## ids [2, 3]
             data: {"users":[{"name":"user-2","total":null},{"name":"user-3","total":null}]}
+            errors: [{"message":"list failure"}]
             lookups: B:2 B:3
 
             """);
