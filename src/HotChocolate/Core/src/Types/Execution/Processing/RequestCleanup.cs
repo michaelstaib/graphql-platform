@@ -13,8 +13,35 @@ internal sealed class RequestCleanup
 #else
     private readonly object _sync = new();
 #endif
+    private readonly CancellationTokenSource? _cancellation;
+    private readonly CancellationTokenRegistration _registration;
     private List<Func<ValueTask>>? _actions;
     private bool _drained;
+
+    /// <summary>
+    /// Initializes a collector that cannot cancel the work of the operation.
+    /// </summary>
+    public RequestCleanup()
+    {
+    }
+
+    /// <summary>
+    /// Initializes a collector that cancels <paramref name="cancellation"/> when <paramref name="requestAborted"/>
+    /// is canceled.
+    /// </summary>
+    public RequestCleanup(CancellationTokenSource cancellation, CancellationToken requestAborted)
+    {
+        ArgumentNullException.ThrowIfNull(cancellation);
+
+        _cancellation = cancellation;
+
+        if (requestAborted.CanBeCanceled)
+        {
+            _registration = requestAborted.UnsafeRegister(
+                static (state, _) => ((CancellationTokenSource)state!).Cancel(),
+                cancellation);
+        }
+    }
 
     /// <summary>
     /// Registers a cleanup action that runs when the collector is executed,
@@ -38,6 +65,19 @@ internal sealed class RequestCleanup
     }
 
     /// <summary>
+    /// Stops listening for the cancellation of the request. The collector no longer cancels
+    /// its cancellation source afterwards.
+    /// </summary>
+    public void DetachCancellation()
+        => _registration.Dispose();
+
+    /// <summary>
+    /// Cancels the work of the operation.
+    /// </summary>
+    public void Cancel()
+        => _cancellation?.Cancel();
+
+    /// <summary>
     /// Runs all registered cleanup actions and marks the collector as executed.
     /// </summary>
     public async ValueTask ExecuteAsync()
@@ -50,6 +90,8 @@ internal sealed class RequestCleanup
             _actions = null;
             _drained = true;
         }
+
+        _registration.Dispose();
 
         if (actions is null)
         {
