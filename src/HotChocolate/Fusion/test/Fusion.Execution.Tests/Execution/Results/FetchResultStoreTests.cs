@@ -51,7 +51,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
     public void AddError_Should_KeepBothErrors_When_TwoDifferentErrorsShareAPath()
     {
         // arrange
-        var path = Path.Root.Append("a");
+        var path = HotChocolate.Path.Root.Append("a");
         var first = ErrorBuilder.New().SetMessage("same").SetCode("A").SetPath(path).Build();
         var second = ErrorBuilder.New().SetMessage("same").SetCode("B").SetPath(path).Build();
         var third = ErrorBuilder.New().SetMessage("same").SetCode("A").SetPath(path).SetExtension("x", 1).Build();
