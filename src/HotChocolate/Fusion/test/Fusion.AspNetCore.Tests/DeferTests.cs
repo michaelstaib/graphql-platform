@@ -4391,38 +4391,49 @@ public class DeferTests : FusionTestBase
                 data = initial.DeepClone();
             }
 
-            foreach (var completed in response["completed"]?.AsArray() ?? [])
-            {
-                if (completed!["errors"] is JsonArray errors)
-                {
-                    Assert.Fail(
-                        $"The delivery group '{completed["id"]}' completed with errors: {errors.ToJsonString()}");
-                }
-            }
-
             foreach (var pending in response["pending"]?.AsArray() ?? [])
             {
                 pendingPaths[pending!["id"]!.GetValue<string>()] = pending["path"]!.AsArray();
             }
 
-            var entries = (response["incremental"]?.AsArray() ?? [])
-                .Select(incremental => (
-                    Incremental: incremental!,
-                    Segments: pendingPaths[incremental!["id"]!.GetValue<string>()]
-                        .Concat(incremental["subPath"]?.AsArray() ?? [])
-                        .ToList()))
-                .OrderBy(entry => entry.Segments.Count);
-
-            foreach (var (incremental, segments) in entries)
+            foreach (var completed in response["completed"]?.AsArray() ?? [])
             {
+                var completedId = completed!["id"]!.GetValue<string>();
+
+                if (!pendingPaths.ContainsKey(completedId))
+                {
+                    throw new InvalidOperationException(
+                        $"The delivery group '{completedId}' completed but was never announced as pending.");
+                }
+
+                if (completed["errors"] is JsonArray errors)
+                {
+                    Assert.Fail(
+                        $"The delivery group '{completedId}' completed with errors: {errors.ToJsonString()}");
+                }
+            }
+
+            foreach (var incremental in response["incremental"]?.AsArray() ?? [])
+            {
+                var id = incremental!["id"]!.GetValue<string>();
+
+                if (!pendingPaths.TryGetValue(id, out var pendingPath))
+                {
+                    throw new InvalidOperationException(
+                        $"An incremental entry references the delivery group '{id}' that was never announced as pending.");
+                }
+
                 var target = data!;
 
-                foreach (var segment in segments)
+                foreach (var segment in pendingPath.Concat(incremental["subPath"]?.AsArray() ?? []))
                 {
                     var value = segment!.GetValue<JsonElement>();
-                    target = value.ValueKind == JsonValueKind.Number
-                        ? target[value.GetInt32()]!
-                        : target[value.GetString()!]!;
+                    var next = value.ValueKind == JsonValueKind.Number
+                        ? (target as JsonArray)?.ElementAtOrDefault(value.GetInt32())
+                        : (target as JsonObject)?[value.GetString()!];
+
+                    target = next ?? throw new InvalidOperationException(
+                        $"The path segment '{value}' of the delivery group '{id}' does not exist yet when its entry is applied.");
                 }
 
                 MergeInto(target.AsObject(), incremental["data"]!.AsObject());
