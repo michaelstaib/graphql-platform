@@ -1473,8 +1473,16 @@ public class KeyHopFailureTests : FusionTestBase
             [iError, bError],
             [aError]);
 
+        var sequence = new HopSequence();
+        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        sequence.Start(["B", "I", "C"]);
+        var inFlightOrder = await ExecuteWithSortedErrorsAsync(gateway, query);
+        sequence.Start(["I", "B", "C"]);
+        var nulledFirstOrder = await ExecuteWithSortedErrorsAsync(gateway, query);
+        sequence.Start([]);
+
         // assert
-        new[] { requestInFlight, listNullFirst }.MatchInlineSnapshots(
+        new[] { requestInFlight, listNullFirst, inFlightOrder, nulledFirstOrder }.MatchInlineSnapshots(
         [
             """
             data: {"a":null,"b":[{"total":null}]}
@@ -1482,6 +1490,16 @@ public class KeyHopFailureTests : FusionTestBase
             """,
             """
             data: {"a":null,"b":[{"total":null}]}
+
+            """,
+            """
+            data: {"a":null,"b":[{"total":null}]}
+            errors: [{"message":"C hop failed for sku-96","path":["a",0,"total"]},{"message":"C hop failed for sku-96","path":["b",0,"total"]},{"message":"I hop failed for 93","path":["a",1,"badNN"]}]
+
+            """,
+            """
+            data: {"a":null,"b":[{"total":null}]}
+            errors: [{"message":"C hop failed for sku-96","path":["b",0,"total"]},{"message":"I hop failed for 93","path":["a",1,"badNN"]}]
 
             """
         ]);

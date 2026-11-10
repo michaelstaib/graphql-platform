@@ -1334,8 +1334,7 @@ AddErrors_Next:
 
         Debug.Assert(element.ValueKind is JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined);
 
-        // The row of an additional target can be intact below a null value, its errors are reported as for a null target.
-        if (element.IsNullOrInvalidated || (errorTrie is not null && !HasReachableAncestorsUnsafe(element)))
+        if (element.IsNullOrInvalidated)
         {
             if (errorTrie?.FindFirstError() is { } nulledError)
             {
