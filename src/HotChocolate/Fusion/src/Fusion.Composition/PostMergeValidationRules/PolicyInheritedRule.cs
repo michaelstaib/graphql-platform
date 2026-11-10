@@ -6,14 +6,14 @@ using static HotChocolate.Fusion.Logging.LogEntryHelper;
 namespace HotChocolate.Fusion.PostMergeValidationRules;
 
 /// <summary>
-/// Warns about every merged member that requires authorization through interface inheritance
+/// Warns about every merged member that requires a policy through interface inheritance
 /// although none of its source schemas annotated it directly.
 /// </summary>
-internal sealed class AuthorizationInheritedRule : IEventHandler<SchemaEvent>
+internal sealed class PolicyInheritedRule : IEventHandler<SchemaEvent>
 {
     public void Handle(SchemaEvent @event, CompositionContext context)
     {
-        if (@event.Schema.Features.Get<AuthorizationInheritanceMetadata>() is not { } metadata)
+        if (@event.Schema.Features.Get<PolicyInheritanceMetadata>() is not { } metadata)
         {
             return;
         }
@@ -21,7 +21,7 @@ internal sealed class AuthorizationInheritedRule : IEventHandler<SchemaEvent>
         foreach (var entry in metadata.Entries)
         {
             context.Log.Write(
-                AuthorizationInherited(entry.Coordinate, entry.Paths, entry.SourceSchemas));
+                PolicyInherited(entry.Coordinate, entry.Paths, entry.SourceSchemas));
         }
     }
 }

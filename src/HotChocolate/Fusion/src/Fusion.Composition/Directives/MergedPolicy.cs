@@ -4,7 +4,7 @@ using DirectiveNames = HotChocolate.Fusion.WellKnownDirectiveNames;
 namespace HotChocolate.Fusion.Directives;
 
 /// <summary>
-/// The merged authorization requirement of a type system member across source schemas.
+/// The merged policy requirement of a type system member across source schemas.
 /// </summary>
 /// <param name="Authenticated">
 /// <c>true</c> if any source schema marks the member with <c>@authenticated</c>.
@@ -16,19 +16,19 @@ namespace HotChocolate.Fusion.Directives;
 /// <param name="Policies">
 /// The reduced policy requirement, with the same semantics as the scope requirement.
 /// </param>
-internal sealed record MergedAuthorization(
+internal sealed record MergedPolicy(
     bool Authenticated,
     PolicyRequirement Scopes,
     PolicyRequirement Policies)
 {
-    public static MergedAuthorization Empty { get; } = new(false, PolicyRequirement.Empty, PolicyRequirement.Empty);
+    public static MergedPolicy Empty { get; } = new(false, PolicyRequirement.Empty, PolicyRequirement.Empty);
 
     public bool IsEmpty => !Authenticated && Scopes.IsEmpty && Policies.IsEmpty;
 
     /// <summary>
     /// Combines this requirement with <paramref name="other"/> so that both must be satisfied.
     /// </summary>
-    public MergedAuthorization And(MergedAuthorization other)
+    public MergedPolicy And(MergedPolicy other)
     {
         if (other.IsEmpty)
         {
@@ -40,7 +40,7 @@ internal sealed record MergedAuthorization(
             return other;
         }
 
-        return new MergedAuthorization(
+        return new MergedPolicy(
             Authenticated || other.Authenticated,
             Scopes.And(other.Scopes),
             Policies.And(other.Policies));
@@ -49,7 +49,7 @@ internal sealed record MergedAuthorization(
     /// <summary>
     /// Determines whether <paramref name="other"/> carries the same requirement.
     /// </summary>
-    public bool Matches(MergedAuthorization other)
+    public bool Matches(MergedPolicy other)
     {
         return Authenticated == other.Authenticated
             && Scopes.Equals(other.Scopes)
@@ -60,7 +60,7 @@ internal sealed record MergedAuthorization(
     /// Gets the names of the directives of <paramref name="dependency"/> that this requirement
     /// does not cover.
     /// </summary>
-    public ImmutableArray<string> GetUncovered(MergedAuthorization dependency)
+    public ImmutableArray<string> GetUncovered(MergedPolicy dependency)
     {
         var uncovered = ImmutableArray.CreateBuilder<string>();
 

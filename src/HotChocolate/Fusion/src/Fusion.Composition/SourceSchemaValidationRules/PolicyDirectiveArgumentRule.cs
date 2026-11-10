@@ -14,7 +14,7 @@ namespace HotChocolate.Fusion.SourceSchemaValidationRules;
 /// not a string, a list of strings or a list of string lists, or contains an empty list, an empty
 /// group or a blank string.
 /// </summary>
-internal sealed class AuthorizationDirectiveArgumentRule
+internal sealed class PolicyDirectiveArgumentRule
     : IEventHandler<OutputFieldEvent>
     , IEventHandler<TypeEvent>
 {
@@ -74,7 +74,7 @@ internal sealed class AuthorizationDirectiveArgumentRule
             if (!IsValid(value))
             {
                 context.Log.Write(
-                    AuthorizationDirectiveArgumentInvalid(
+                    PolicyDirectiveArgumentInvalid(
                         directive.Name,
                         argumentName,
                         value,

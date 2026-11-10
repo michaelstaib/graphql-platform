@@ -58,14 +58,14 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
 
         // act
         var query = schema.Types.GetType<FusionObjectTypeDefinition>("Query");
-        var members = new (string Coordinate, AuthorizationDirective? Authorization)[]
+        var members = new (string Coordinate, PolicyDirective? Authorization)[]
         {
-            ("Query", query.Authorization),
-            ("Query.secured", query.Fields["secured"].Authorization),
-            ("Query.open", query.Fields["open"].Authorization),
-            ("FooInterface", schema.Types.GetType<FusionInterfaceTypeDefinition>("FooInterface").Authorization),
-            ("FooEnum", schema.Types.GetType<FusionEnumTypeDefinition>("FooEnum").Authorization),
-            ("FooScalar", schema.Types.GetType<FusionScalarTypeDefinition>("FooScalar").Authorization)
+            ("Query", query.Policy),
+            ("Query.secured", query.Fields["secured"].Policy),
+            ("Query.open", query.Fields["open"].Policy),
+            ("FooInterface", schema.Types.GetType<FusionInterfaceTypeDefinition>("FooInterface").Policy),
+            ("FooEnum", schema.Types.GetType<FusionEnumTypeDefinition>("FooEnum").Policy),
+            ("FooScalar", schema.Types.GetType<FusionScalarTypeDefinition>("FooScalar").Policy)
         };
 
         // assert
@@ -73,13 +73,13 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
             .Select(static m => new
             {
                 m.Coordinate,
-                Authorization = m.Authorization is null
+                Authorization = m.Policy is null
                     ? null
                     : new
                     {
-                        m.Authorization.Authenticated,
-                        m.Authorization.Scopes,
-                        m.Authorization.Policies
+                        m.Policy.Authenticated,
+                        m.Policy.Scopes,
+                        m.Policy.Policies
                     }
             })
             .ToArray()
@@ -174,9 +174,9 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
         // assert
         new
         {
-            Secured = query.Fields["secured"].HasAuthorization,
-            Open = query.Fields["open"].HasAuthorization,
-            InterfaceField = iface.Fields["id"].HasAuthorization
+            Secured = query.Fields["secured"].HasPolicy,
+            Open = query.Fields["open"].HasPolicy,
+            InterfaceField = iface.Fields["id"].HasPolicy
         }.MatchInlineSnapshot(
             """
             {
@@ -216,8 +216,8 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
         // assert
         new
         {
-            Id = node.Fields["id"].HasAuthorization,
-            Name = node.Fields["name"].HasAuthorization
+            Id = node.Fields["id"].HasPolicy,
+            Name = node.Fields["name"].HasPolicy
         }.MatchInlineSnapshot(
             """
             {
@@ -234,7 +234,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
         var schema = ComposeSchema(SchemaA, SchemaB);
 
         // act
-        var usage = schema.Features.Get<FusionAuthorizationUsage>()!;
+        var usage = schema.Features.Get<FusionPolicyUsage>()!;
 
         // assert
         new
@@ -272,7 +272,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
             """);
 
         // act
-        var usage = schema.Features.Get<FusionAuthorizationUsage>()!;
+        var usage = schema.Features.Get<FusionPolicyUsage>()!;
 
         // assert
         new
@@ -306,7 +306,7 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
         // assert
         new
         {
-            DefinitionLoaded = schema.DirectiveDefinitions.ContainsName("fusion__authorization"),
+            DefinitionLoaded = schema.DirectiveDefinitions.ContainsName("fusion__policy"),
             TypeDirectives = query.Directives.WithInternals.AsEnumerable().Select(static d => d.Name).ToArray(),
             FieldDirectives = query.Fields["secured"].Directives.WithInternals
                 .AsEnumerable()
@@ -327,16 +327,16 @@ public sealed class FusionAuthorizationDirectiveTests : FusionTestBase
     {
         // arrange
         var directive = Utf8GraphQLParser.Syntax
-            .ParseObjectTypeDefinition("type Foo @fusion__authorization(scopes: [\"read\"]) { a: Int }")
+            .ParseObjectTypeDefinition("type Foo @fusion__policy(scopes: [\"read\"]) { a: Int }")
             .Directives[0];
 
         // act
-        var exception = Record.Exception(() => AuthorizationDirectiveParser.Parse(directive));
+        var exception = Record.Exception(() => PolicyDirectiveParser.Parse(directive));
 
         // assert
         Assert.IsType<DirectiveParserException>(exception);
         Assert.Equal(
-            "The `scopes` argument of @fusion__authorization must be a list of string lists.",
+            "The `scopes` argument of @fusion__policy must be a list of string lists.",
             exception.Message);
     }
 }

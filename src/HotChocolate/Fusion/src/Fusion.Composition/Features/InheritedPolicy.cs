@@ -10,7 +10,7 @@ namespace HotChocolate.Fusion.Features;
 /// The paths from the members that contribute the requirement to the protected member.
 /// </param>
 /// <param name="SourceSchemas">The source schemas that annotated the contributing members.</param>
-internal sealed record InheritedAuthorization(
+internal sealed record InheritedPolicy(
     SchemaCoordinate Coordinate,
     ImmutableArray<string> Paths,
     ImmutableArray<string> SourceSchemas);

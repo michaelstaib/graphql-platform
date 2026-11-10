@@ -261,8 +261,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.weight'. Not covered: @requiresScopes.",
-                  "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.weight'. Not covered: @requiresScopes.",
+                  "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
                   "severity": "Error",
                   "coordinate": "Product.delivery",
                   "schema": "A",
@@ -283,8 +283,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.weight'. Not covered: @requiresScopes.",
-                  "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.weight'. Not covered: @requiresScopes.",
+                  "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
                   "severity": "Error",
                   "coordinate": "Product.delivery",
                   "schema": "A",
@@ -305,8 +305,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.weight'. Not covered: @requiresScopes.",
-                  "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.weight'. Not covered: @requiresScopes.",
+                  "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
                   "severity": "Error",
                   "coordinate": "Product.delivery",
                   "schema": "A",
@@ -327,8 +327,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.weight'. Not covered: @authenticated.",
-                  "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.weight'. Not covered: @authenticated.",
+                  "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
                   "severity": "Error",
                   "coordinate": "Product.delivery",
                   "schema": "A",
@@ -349,8 +349,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.weight'. Not covered: @policy.",
-                  "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.weight'. Not covered: @policy.",
+                  "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
                   "severity": "Error",
                   "coordinate": "Product.delivery",
                   "schema": "A",
@@ -376,8 +376,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.weight'. Not covered: @authenticated, @requiresScopes, @policy.",
-                  "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+                  "message": "The field 'Product.delivery' depends on 'Product.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.weight'. Not covered: @authenticated, @requiresScopes, @policy.",
+                  "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
                   "severity": "Error",
                   "coordinate": "Product.delivery",
                   "schema": "A",
@@ -419,8 +419,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Product.delivery' depends on 'Dimension.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Dimension.weight'. Not covered: @authenticated.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.delivery' depends on 'Dimension.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Dimension.weight'. Not covered: @authenticated.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.delivery",
               "schema": "A",
@@ -429,8 +429,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             """,
             """
             {
-              "message": "The field 'Product.delivery' depends on 'Product.dimension' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Product.dimension'. Not covered: @authenticated.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.delivery' depends on 'Product.dimension' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Product.dimension'. Not covered: @authenticated.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.delivery",
               "schema": "A",
@@ -473,8 +473,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Product.delivery' depends on 'Dimension.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all authorization requirements of 'Dimension.weight'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.delivery' depends on 'Dimension.weight' through 'Product.delivery(weight:)' in schema 'A', but does not declare all policy requirements of 'Dimension.weight'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.delivery",
               "schema": "A",
@@ -525,8 +525,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Product.delivery' depends on 'Dimension.weight' through 'Product.delivery(dimension:)' in schema 'A', but does not declare all authorization requirements of 'Dimension.weight'. Not covered: @authenticated.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.delivery' depends on 'Dimension.weight' through 'Product.delivery(dimension:)' in schema 'A', but does not declare all policy requirements of 'Dimension.weight'. Not covered: @authenticated.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.delivery",
               "schema": "A",
@@ -593,8 +593,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Product.headline' depends on 'Movie.title' through 'Product.headline(title:)' in schema 'A', but does not declare all authorization requirements of 'Movie.title'. Not covered: @authenticated.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.headline' depends on 'Movie.title' through 'Product.headline(title:)' in schema 'A', but does not declare all policy requirements of 'Movie.title'. Not covered: @authenticated.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.headline",
               "schema": "A",
@@ -643,8 +643,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Product.price' depends on 'Product.cost' through 'Product.price(cost:)' in schema 'B', but does not declare all authorization requirements of 'Product.cost'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.price' depends on 'Product.cost' through 'Product.price(cost:)' in schema 'B', but does not declare all policy requirements of 'Product.cost'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.price",
               "schema": "B",
@@ -685,8 +685,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Product.name' depends on 'Product.id' through 'Query.productById' in schema 'B', but does not declare all authorization requirements of 'Product.id'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Product.name' depends on 'Product.id' through 'Query.productById' in schema 'B', but does not declare all policy requirements of 'Product.id'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Product.name",
               "schema": "B",
@@ -733,8 +733,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all authorization requirements of 'Dog.id'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all policy requirements of 'Dog.id'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Dog.name",
               "schema": "B",
@@ -815,8 +815,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all authorization requirements of 'Dog.id'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all policy requirements of 'Dog.id'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Dog.name",
               "schema": "B",
@@ -902,8 +902,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all authorization requirements of 'Dog.id'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Dog.name' depends on 'Dog.id' through 'Query.animalById' in schema 'B', but does not declare all policy requirements of 'Dog.id'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Dog.name",
               "schema": "B",
@@ -959,8 +959,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
         [
             """
             {
-              "message": "The field 'Cat.age' depends on 'Cat.id' through 'Query.animalByKey' in schema 'B', but does not declare all authorization requirements of 'Cat.id'. Not covered: @requiresScopes.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Cat.age' depends on 'Cat.id' through 'Query.animalByKey' in schema 'B', but does not declare all policy requirements of 'Cat.id'. Not covered: @requiresScopes.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Cat.age",
               "schema": "B",
@@ -1039,8 +1039,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             """,
             """
             {
-              "message": "The member 'Node.id' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.id -> Node.id in the source schemas 'A'.",
-              "code": "AUTHORIZATION_INHERITED",
+              "message": "The member 'Node.id' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from Article.id -> Node.id in the source schemas 'A'.",
+              "code": "POLICY_INHERITED",
               "severity": "Warning",
               "coordinate": "Node.id",
               "extensions": {}
@@ -1048,8 +1048,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             """,
             """
             {
-              "message": "The member 'Video.id' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.id -> Node.id -> Video.id in the source schemas 'A'.",
-              "code": "AUTHORIZATION_INHERITED",
+              "message": "The member 'Video.id' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from Article.id -> Node.id -> Video.id in the source schemas 'A'.",
+              "code": "POLICY_INHERITED",
               "severity": "Warning",
               "coordinate": "Video.id",
               "extensions": {}
@@ -1057,8 +1057,8 @@ public sealed class AuthorizationTransitiveRequirementsRuleTests : RuleTestBase
             """,
             """
             {
-              "message": "The field 'Video.duration' depends on 'Video.id' through 'Query.videoById' in schema 'B', but does not declare all authorization requirements of 'Video.id'. Not covered: @authenticated.",
-              "code": "AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING",
+              "message": "The field 'Video.duration' depends on 'Video.id' through 'Query.videoById' in schema 'B', but does not declare all policy requirements of 'Video.id'. Not covered: @authenticated.",
+              "code": "POLICY_TRANSITIVE_REQUIREMENTS_MISSING",
               "severity": "Error",
               "coordinate": "Video.duration",
               "schema": "B",

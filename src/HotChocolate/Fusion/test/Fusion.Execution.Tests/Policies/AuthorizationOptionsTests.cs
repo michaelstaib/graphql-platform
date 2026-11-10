@@ -86,7 +86,7 @@ public class AuthorizationOptionsTests : FusionTestBase
 
         // assert
         var exception = Assert.Throws<InvalidOperationException>(act);
-        Assert.Equal("The authorization options are read-only.", exception.Message);
+        Assert.Equal("The policy options are read-only.", exception.Message);
     }
 
     [Fact]

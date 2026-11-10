@@ -46,38 +46,33 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
               query: Query
             }
 
-            type Query @fusion__authorization(authenticated: true) @fusion__type(schema: A) {
+            type Query @fusion__policy(authenticated: true) @fusion__type(schema: A) {
               enumField: FooEnum
-                @fusion__authorization(authenticated: true)
+                @fusion__policy(authenticated: true)
                 @fusion__field(schema: A)
               field: Int
-                @fusion__authorization(authenticated: true, scopes: [["read"]])
+                @fusion__policy(authenticated: true, scopes: [["read"]])
                 @fusion__field(schema: A)
               interfaceField: FooInterface
-                @fusion__authorization(authenticated: true, policies: [["Admin"]])
+                @fusion__policy(authenticated: true, policies: [["Admin"]])
                 @fusion__field(schema: A)
               scalarField: FooScalar
-                @fusion__authorization(authenticated: true, scopes: [["scalar"]])
+                @fusion__policy(authenticated: true, scopes: [["scalar"]])
                 @fusion__field(schema: A)
             }
 
             interface FooInterface
-              @fusion__authorization(policies: [["Admin"]])
+              @fusion__policy(policies: [["Admin"]])
               @fusion__type(schema: A) {
-              id: Int
-                @fusion__authorization(policies: [["Admin"]])
-                @fusion__field(schema: A)
+              id: Int @fusion__policy(policies: [["Admin"]]) @fusion__field(schema: A)
             }
 
-            enum FooEnum
-              @fusion__authorization(authenticated: true)
-              @fusion__type(schema: A) {
+            enum FooEnum @fusion__policy(authenticated: true) @fusion__type(schema: A) {
               ONE @fusion__enumValue(schema: A)
             }
 
-            scalar FooScalar
-              @fusion__authorization(scopes: [["scalar"]])
-              @fusion__type(schema: A)
+            scalar FooScalar @fusion__policy(scopes: [["scalar"]]) @fusion__type(schema: A)
+
             """);
     }
 
@@ -113,7 +108,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
 
             type Query @fusion__type(schema: A) @fusion__type(schema: B) {
               field: Int
-                @fusion__authorization(authenticated: true)
+                @fusion__policy(authenticated: true)
                 @fusion__field(schema: A)
                 @fusion__field(schema: B)
               other: Int @fusion__field(schema: A) @fusion__field(schema: B)
@@ -151,12 +146,11 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
 
             type Query @fusion__type(schema: A) @fusion__type(schema: B) {
               field: Int
-                @fusion__authorization(
-                  scopes: [["a", "c"], ["a", "d"], ["b", "c"], ["b", "d"]]
-                )
+                @fusion__policy(scopes: [["a", "c"], ["a", "d"], ["b", "c"], ["b", "d"]])
                 @fusion__field(schema: A)
                 @fusion__field(schema: B)
             }
+
             """);
     }
 
@@ -190,7 +184,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
 
             type Query @fusion__type(schema: A) @fusion__type(schema: B) {
               field: Int
-                @fusion__authorization(policies: [["a", "b"], ["a", "x"], ["b", "m", "x"]])
+                @fusion__policy(policies: [["a", "b"], ["a", "x"], ["b", "m", "x"]])
                 @fusion__field(schema: A)
                 @fusion__field(schema: B)
             }
@@ -227,7 +221,7 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
 
             type Query @fusion__type(schema: A) @fusion__type(schema: B) {
               field: Int
-                @fusion__authorization(
+                @fusion__policy(
                   authenticated: true
                   scopes: [["read"]]
                   policies: [["Admin"]]
@@ -286,12 +280,8 @@ public sealed class SourceSchemaMergerAuthorizationDirectiveTests : SourceSchema
             }
 
             type Query @fusion__type(schema: A) {
-              policed: Int
-                @fusion__authorization(policies: [["p"]])
-                @fusion__field(schema: A)
-              scoped: Int
-                @fusion__authorization(scopes: [["read"]])
-                @fusion__field(schema: A)
+              policed: Int @fusion__policy(policies: [["p"]]) @fusion__field(schema: A)
+              scoped: Int @fusion__policy(scopes: [["read"]]) @fusion__field(schema: A)
             }
             """);
     }

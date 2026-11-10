@@ -11,14 +11,14 @@ using DirectiveNames = HotChocolate.Fusion.WellKnownDirectiveNames;
 
 namespace HotChocolate.Fusion.DirectiveMergers;
 
-internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fusionAuthorization)
+internal sealed class PolicyDirectiveMerger(MutableDirectiveDefinition fusionPolicy)
     : DirectiveMergerBase(DirectiveMergeBehavior.Ignore)
 {
-    public override string DirectiveName => DirectiveNames.FusionAuthorization;
+    public override string DirectiveName => DirectiveNames.FusionPolicy;
 
     public override MutableDirectiveDefinition GetCanonicalDirectiveDefinition(MutableSchemaDefinition schema)
     {
-        return fusionAuthorization;
+        return fusionPolicy;
     }
 
     public override void MergeDirectives(
@@ -33,15 +33,15 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
             return;
         }
 
-        mergedMember.AddDirective(CreateDirective(fusionAuthorization, merged));
+        mergedMember.AddDirective(CreateDirective(fusionPolicy, merged));
     }
 
     /// <summary>
-    /// Creates the <c>@fusion__authorization</c> directive that carries <paramref name="merged"/>.
+    /// Creates the <c>@fusion__policy</c> directive that carries <paramref name="merged"/>.
     /// </summary>
     public static Directive CreateDirective(
-        MutableDirectiveDefinition fusionAuthorization,
-        MergedAuthorization merged)
+        MutableDirectiveDefinition fusionPolicy,
+        MergedPolicy merged)
     {
         var arguments = new List<ArgumentAssignment>();
 
@@ -60,13 +60,13 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
             arguments.Add(new ArgumentAssignment(ArgumentNames.Policies, ToValueNode(merged.Policies.Groups)));
         }
 
-        return new Directive(fusionAuthorization, arguments);
+        return new Directive(fusionPolicy, arguments);
     }
 
     /// <summary>
-    /// Merges the authorization directives of source schema members.
+    /// Merges the policy directives of source schema members.
     /// </summary>
-    internal static MergedAuthorization Merge(IEnumerable<DirectivesProviderInfo> memberDefinitions)
+    internal static MergedPolicy Merge(IEnumerable<DirectivesProviderInfo> memberDefinitions)
     {
         var authenticated = false;
         var scopes = PolicyRequirement.Empty;
@@ -93,18 +93,18 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
             }
         }
 
-        return new MergedAuthorization(authenticated, scopes, policies);
+        return new MergedPolicy(authenticated, scopes, policies);
     }
 
     /// <summary>
-    /// Reads the requirement carried by a <c>@fusion__authorization</c> directive.
+    /// Reads the requirement carried by a <c>@fusion__policy</c> directive.
     /// </summary>
-    internal static MergedAuthorization FromFusionDirective(IDirective directive)
+    internal static MergedPolicy FromFusionDirective(IDirective directive)
     {
         var authenticated = directive.Arguments.TryGetValue(ArgumentNames.Authenticated, out var value)
             && value is BooleanValueNode { Value: true };
 
-        return new MergedAuthorization(
+        return new MergedPolicy(
             authenticated,
             ReadRequirement(directive, ArgumentNames.Scopes),
             ReadRequirement(directive, ArgumentNames.Policies));
@@ -123,7 +123,7 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
     {
         if (!directive.Arguments.TryGetValue(argumentName, out var argument))
         {
-            throw ThrowHelper.AuthorizationDirectiveArgumentInvalid(directive.Name, argumentName);
+            throw ThrowHelper.PolicyDirectiveArgumentInvalid(directive.Name, argumentName);
         }
 
         // A single string coerces to a list of one group of one.
@@ -134,7 +134,7 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
 
         if (argument is not ListValueNode outer)
         {
-            throw ThrowHelper.AuthorizationDirectiveArgumentInvalid(directive.Name, argumentName);
+            throw ThrowHelper.PolicyDirectiveArgumentInvalid(directive.Name, argumentName);
         }
 
         var groups = ImmutableArray.CreateBuilder<ImmutableArray<string>>(outer.Items.Count);
@@ -155,7 +155,7 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
                     {
                         if (value is not StringValueNode stringValue)
                         {
-                            throw ThrowHelper.AuthorizationDirectiveArgumentInvalid(
+                            throw ThrowHelper.PolicyDirectiveArgumentInvalid(
                                 directive.Name,
                                 argumentName);
                         }
@@ -167,7 +167,7 @@ internal sealed class AuthorizationDirectiveMerger(MutableDirectiveDefinition fu
                     break;
 
                 default:
-                    throw ThrowHelper.AuthorizationDirectiveArgumentInvalid(
+                    throw ThrowHelper.PolicyDirectiveArgumentInvalid(
                         directive.Name,
                         argumentName);
             }

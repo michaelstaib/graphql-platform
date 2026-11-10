@@ -13,7 +13,7 @@ namespace HotChocolate.Fusion.PreMergeValidationRules;
 /// Warns when source schemas disagree on <c>@authenticated</c> for a shared type or field, and
 /// when the merged scopes or policies requirement of a member exceeds the group count threshold.
 /// </summary>
-internal sealed class AuthorizationDirectiveRule
+internal sealed class PolicyDirectiveRule
     : IEventHandler<TypeGroupEvent>
     , IEventHandler<OutputFieldGroupEvent>
 {
@@ -68,13 +68,13 @@ internal sealed class AuthorizationDirectiveRule
                     memberDefinitions.Except(marked).Select(static m => m.Schema.Name)));
         }
 
-        var merged = AuthorizationDirectiveMerger.Merge(memberDefinitions);
+        var merged = PolicyDirectiveMerger.Merge(memberDefinitions);
         var schema = memberDefinitions[0].Schema;
 
         if (merged.Scopes.Groups.Length > GroupCountThreshold)
         {
             context.Log.Write(
-                AuthorizationGroupCountExceeded(
+                PolicyGroupCountExceeded(
                     "scopes",
                     coordinate,
                     schema,
@@ -85,7 +85,7 @@ internal sealed class AuthorizationDirectiveRule
         if (merged.Policies.Groups.Length > GroupCountThreshold)
         {
             context.Log.Write(
-                AuthorizationGroupCountExceeded(
+                PolicyGroupCountExceeded(
                     "policies",
                     coordinate,
                     schema,

@@ -3,10 +3,10 @@ using System.Collections.Immutable;
 namespace HotChocolate.Fusion.Types.Directives;
 
 /// <summary>
-/// The merged authorization requirement of a type system member as written by composition.
+/// The merged policy requirement of a type system member as written by composition.
 /// The authenticated, scopes and policies parts are independent and all must be satisfied.
 /// </summary>
-internal sealed class AuthorizationDirective(
+internal sealed class PolicyDirective(
     bool authenticated,
     ImmutableArray<ImmutableArray<string>> scopes,
     ImmutableArray<ImmutableArray<string>> policies)

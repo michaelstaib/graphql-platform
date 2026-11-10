@@ -2,7 +2,7 @@ namespace HotChocolate.Fusion.PostMergeValidationRules;
 
 public sealed class AuthorizationInheritedRuleTests : RuleTestBase
 {
-    protected override object Rule { get; } = new AuthorizationInheritedRule();
+    protected override object Rule { get; } = new PolicyInheritedRule();
 
     private const string Directives =
         """
@@ -63,8 +63,8 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The member 'SearchResult.title' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title in the source schemas 'A'.",
-                  "code": "AUTHORIZATION_INHERITED",
+                  "message": "The member 'SearchResult.title' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title in the source schemas 'A'.",
+                  "code": "POLICY_INHERITED",
                   "severity": "Warning",
                   "coordinate": "SearchResult.title",
                   "extensions": {}
@@ -72,8 +72,8 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
                 """,
                 """
                 {
-                  "message": "The member 'Video.title' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title -> Video.title in the source schemas 'A'.",
-                  "code": "AUTHORIZATION_INHERITED",
+                  "message": "The member 'Video.title' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title -> Video.title in the source schemas 'A'.",
+                  "code": "POLICY_INHERITED",
                   "severity": "Warning",
                   "coordinate": "Video.title",
                   "extensions": {}
@@ -106,8 +106,8 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The member 'SearchResult.title' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title in the source schemas 'A'.",
-                  "code": "AUTHORIZATION_INHERITED",
+                  "message": "The member 'SearchResult.title' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title in the source schemas 'A'.",
+                  "code": "POLICY_INHERITED",
                   "severity": "Warning",
                   "coordinate": "SearchResult.title",
                   "extensions": {}
@@ -115,8 +115,8 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
                 """,
                 """
                 {
-                  "message": "The member 'Video.title' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title -> Video.title in the source schemas 'A'.",
-                  "code": "AUTHORIZATION_INHERITED",
+                  "message": "The member 'Video.title' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from Article.title -> SearchResult.title -> Video.title in the source schemas 'A'.",
+                  "code": "POLICY_INHERITED",
                   "severity": "Warning",
                   "coordinate": "Video.title",
                   "extensions": {}
@@ -145,8 +145,8 @@ public sealed class AuthorizationInheritedRuleTests : RuleTestBase
             [
                 """
                 {
-                  "message": "The member 'Video' requires authorization through interface inheritance, but no source schema annotated it. The requirement comes from SearchResult -> Video in the source schemas 'A'.",
-                  "code": "AUTHORIZATION_INHERITED",
+                  "message": "The member 'Video' requires a policy through interface inheritance, but no source schema annotated it. The requirement comes from SearchResult -> Video in the source schemas 'A'.",
+                  "code": "POLICY_INHERITED",
                   "severity": "Warning",
                   "coordinate": "Video",
                   "extensions": {}

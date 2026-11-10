@@ -3,12 +3,12 @@ using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Types.Directives;
 
-internal static class AuthorizationDirectiveParser
+internal static class PolicyDirectiveParser
 {
     public static bool CanParse(DirectiveNode directiveNode)
-        => directiveNode.Name.Value.Equals(FusionBuiltIns.Authorization, StringComparison.Ordinal);
+        => directiveNode.Name.Value.Equals(FusionBuiltIns.Policy, StringComparison.Ordinal);
 
-    public static AuthorizationDirective? Parse(IReadOnlyList<DirectiveNode> directiveNodes)
+    public static PolicyDirective? Parse(IReadOnlyList<DirectiveNode> directiveNodes)
     {
         for (var i = 0; i < directiveNodes.Count; i++)
         {
@@ -21,7 +21,7 @@ internal static class AuthorizationDirectiveParser
         return null;
     }
 
-    public static AuthorizationDirective Parse(DirectiveNode directiveNode)
+    public static PolicyDirective Parse(DirectiveNode directiveNode)
     {
         var authenticated = false;
         ImmutableArray<ImmutableArray<string>> scopes = [];
@@ -44,11 +44,11 @@ internal static class AuthorizationDirectiveParser
                     break;
 
                 default:
-                    throw ThrowHelper.AuthorizationDirectiveArgumentNotSupported(argument.Name.Value);
+                    throw ThrowHelper.PolicyDirectiveArgumentNotSupported(argument.Name.Value);
             }
         }
 
-        return new AuthorizationDirective(authenticated, scopes, policies);
+        return new PolicyDirective(authenticated, scopes, policies);
     }
 
     private static ImmutableArray<ImmutableArray<string>> ParseGroups(ArgumentNode argument)
@@ -60,7 +60,7 @@ internal static class AuthorizationDirectiveParser
 
         if (argument.Value is not ListValueNode outer)
         {
-            throw ThrowHelper.AuthorizationDirectiveGroupsInvalid(argument.Name.Value);
+            throw ThrowHelper.PolicyDirectiveGroupsInvalid(argument.Name.Value);
         }
 
         var groups = ImmutableArray.CreateBuilder<ImmutableArray<string>>(outer.Items.Count);
@@ -69,7 +69,7 @@ internal static class AuthorizationDirectiveParser
         {
             if (item is not ListValueNode inner)
             {
-                throw ThrowHelper.AuthorizationDirectiveGroupsInvalid(argument.Name.Value);
+                throw ThrowHelper.PolicyDirectiveGroupsInvalid(argument.Name.Value);
             }
 
             var values = ImmutableArray.CreateBuilder<string>(inner.Items.Count);
@@ -78,7 +78,7 @@ internal static class AuthorizationDirectiveParser
             {
                 if (value is not StringValueNode stringValue)
                 {
-                    throw ThrowHelper.AuthorizationDirectiveGroupsInvalid(argument.Name.Value);
+                    throw ThrowHelper.PolicyDirectiveGroupsInvalid(argument.Name.Value);
                 }
 
                 values.Add(stringValue.Value);

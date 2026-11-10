@@ -130,7 +130,7 @@ internal sealed class SourceSchemaParser(
             }
         }
 
-        // Renamed and namespaced Apollo authorization directives are rewritten before validation
+        // Renamed and namespaced Apollo policy directives are rewritten before validation
         // so they bind to the Fusion definitions even when the subgraph does not declare them.
         if (!isApolloFederationV1
             && !_log.HasErrors

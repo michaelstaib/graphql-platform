@@ -16,19 +16,19 @@ using static HotChocolate.Fusion.WellKnownDirectiveNames;
 namespace HotChocolate.Fusion.PostMergeValidationRules;
 
 /// <summary>
-/// Fails composition with <c>AUTHORIZATION_TRANSITIVE_REQUIREMENTS_MISSING</c> when a field reads
+/// Fails composition with <c>POLICY_TRANSITIVE_REQUIREMENTS_MISSING</c> when a field reads
 /// other fields through <c>@require</c> or a lookup key without declaring all of their
-/// authorization requirements. A requirement is declared when every alternative group of it
+/// policy requirements. A requirement is declared when every alternative group of it
 /// contains a group of the dependency and <c>@authenticated</c> is present whenever the dependency
 /// has it.
 /// </summary>
-internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<SchemaEvent>
+internal sealed class PolicyTransitiveRequirementsRule : IEventHandler<SchemaEvent>
 {
     public void Handle(SchemaEvent @event, CompositionContext context)
     {
         var schema = @event.Schema;
 
-        if (!HasAuthorization(schema))
+        if (!HasPolicy(schema))
         {
             return;
         }
@@ -42,13 +42,13 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
         }
     }
 
-    private static bool HasAuthorization(MutableSchemaDefinition schema)
+    private static bool HasPolicy(MutableSchemaDefinition schema)
     {
         foreach (var type in schema.Types.OfType<MutableComplexTypeDefinition>())
         {
             foreach (var field in type.Fields)
             {
-                if (field.Directives.ContainsName(FusionAuthorization))
+                if (field.Directives.ContainsName(FusionPolicy))
                 {
                     return true;
                 }
@@ -336,7 +336,7 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
                 }
 
                 context.Log.Write(
-                    AuthorizationTransitiveRequirementsMissing(
+                    PolicyTransitiveRequirementsMissing(
                         requiring.Coordinate,
                         dependency.Coordinate,
                         via,
@@ -345,11 +345,11 @@ internal sealed class AuthorizationTransitiveRequirementsRule : IEventHandler<Sc
             }
         }
 
-        private static MergedAuthorization GetRequirement(IOutputFieldDefinition field)
+        private static MergedPolicy GetRequirement(IOutputFieldDefinition field)
         {
-            return field.Directives.FirstOrDefault(FusionAuthorization) is { } directive
-                ? AuthorizationDirectiveMerger.FromFusionDirective(directive)
-                : MergedAuthorization.Empty;
+            return field.Directives.FirstOrDefault(FusionPolicy) is { } directive
+                ? PolicyDirectiveMerger.FromFusionDirective(directive)
+                : MergedPolicy.Empty;
         }
     }
 }

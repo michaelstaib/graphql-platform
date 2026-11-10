@@ -2,7 +2,7 @@ namespace HotChocolate.Fusion.SourceSchemaValidationRules;
 
 public sealed class AuthorizationOnInterfaceObjectRuleTests : RuleTestBase
 {
-    protected override object Rule { get; } = new AuthorizationOnInterfaceObjectRule();
+    protected override object Rule { get; } = new PolicyOnInterfaceObjectRule();
 
     private const string Directives =
         """
@@ -73,7 +73,7 @@ public sealed class AuthorizationOnInterfaceObjectRuleTests : RuleTestBase
                 """
                 {
                   "message": "The @interfaceObject type 'Media' in schema 'A' cannot be annotated with @authenticated. Annotate its fields instead.",
-                  "code": "AUTHORIZATION_ON_INTERFACE_OBJECT",
+                  "code": "POLICY_ON_INTERFACE_OBJECT",
                   "severity": "Error",
                   "coordinate": "Media",
                   "member": "Media",
@@ -84,7 +84,7 @@ public sealed class AuthorizationOnInterfaceObjectRuleTests : RuleTestBase
                 """
                 {
                   "message": "The @interfaceObject type 'Media' in schema 'A' cannot be annotated with @requiresScopes. Annotate its fields instead.",
-                  "code": "AUTHORIZATION_ON_INTERFACE_OBJECT",
+                  "code": "POLICY_ON_INTERFACE_OBJECT",
                   "severity": "Error",
                   "coordinate": "Media",
                   "member": "Media",
@@ -95,7 +95,7 @@ public sealed class AuthorizationOnInterfaceObjectRuleTests : RuleTestBase
                 """
                 {
                   "message": "The @interfaceObject type 'Media' in schema 'A' cannot be annotated with @policy. Annotate its fields instead.",
-                  "code": "AUTHORIZATION_ON_INTERFACE_OBJECT",
+                  "code": "POLICY_ON_INTERFACE_OBJECT",
                   "severity": "Error",
                   "coordinate": "Media",
                   "member": "Media",

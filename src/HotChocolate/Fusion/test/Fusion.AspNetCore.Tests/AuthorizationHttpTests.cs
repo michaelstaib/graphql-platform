@@ -196,8 +196,8 @@ public class AuthorizationHttpTests : FusionTestBase
         // assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
         Assert.Equal(
-            "The schema uses authorization directives but no authentication scheme is registered. "
-            + "Register an authentication scheme, or disable the authorization validation.",
+            "The schema uses policy directives but no authentication scheme is registered. "
+            + "Register an authentication scheme, or disable the policy validation.",
             exception.Message);
     }
 
@@ -234,8 +234,8 @@ public class AuthorizationHttpTests : FusionTestBase
         // assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
         Assert.Equal(
-            "The authentication scheme 'Bearer' of the authorization options is not registered. "
-            + "Register it, remove it from the schemes, or disable the authorization validation.",
+            "The authentication scheme 'Bearer' of the policy options is not registered. "
+            + "Register it, remove it from the schemes, or disable the policy validation.",
             exception.Message);
     }
 

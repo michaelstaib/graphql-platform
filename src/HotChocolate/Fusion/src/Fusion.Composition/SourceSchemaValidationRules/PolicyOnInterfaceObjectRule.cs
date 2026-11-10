@@ -10,7 +10,7 @@ namespace HotChocolate.Fusion.SourceSchemaValidationRules;
 /// Reports <c>@authenticated</c>, <c>@requiresScopes</c> and <c>@policy</c> on a type that is
 /// marked with <c>@interfaceObject</c>. The fields of such a type can be annotated.
 /// </summary>
-internal sealed class AuthorizationOnInterfaceObjectRule : IEventHandler<ComplexTypeEvent>
+internal sealed class PolicyOnInterfaceObjectRule : IEventHandler<ComplexTypeEvent>
 {
     public void Handle(ComplexTypeEvent @event, CompositionContext context)
     {
@@ -28,7 +28,7 @@ internal sealed class AuthorizationOnInterfaceObjectRule : IEventHandler<Complex
                 or DirectiveNames.RequiresScopes
                 or DirectiveNames.Policy)
             {
-                context.Log.Write(AuthorizationOnInterfaceObject(standIn, directive.Name, schema));
+                context.Log.Write(PolicyOnInterfaceObject(standIn, directive.Name, schema));
             }
         }
     }

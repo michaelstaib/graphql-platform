@@ -9,23 +9,23 @@ using DirectiveLocation = HotChocolate.Types.DirectiveLocation;
 namespace HotChocolate.Fusion.Definitions;
 
 /// <summary>
-/// The <c>@fusion__authorization</c> directive carries the merged authorization requirement of a
+/// The <c>@fusion__policy</c> directive carries the merged policy requirement of a
 /// type system member.
 /// </summary>
-internal sealed class FusionAuthorizationMutableDirectiveDefinition : MutableDirectiveDefinition
+internal sealed class FusionPolicyMutableDirectiveDefinition : MutableDirectiveDefinition
 {
-    public FusionAuthorizationMutableDirectiveDefinition(
+    public FusionPolicyMutableDirectiveDefinition(
         MutableScalarTypeDefinition stringType,
         MutableScalarTypeDefinition booleanType)
-        : base(FusionAuthorization)
+        : base(FusionPolicy)
     {
-        Description = FusionAuthorizationMutableDirectiveDefinition_Description;
+        Description = FusionPolicyMutableDirectiveDefinition_Description;
 
         Arguments.Add(
             new MutableInputFieldDefinition(ArgumentNames.Authenticated, new NonNullType(booleanType))
             {
                 DefaultValue = BooleanValueNode.False,
-                Description = FusionAuthorizationMutableDirectiveDefinition_Argument_Authenticated_Description
+                Description = FusionPolicyMutableDirectiveDefinition_Argument_Authenticated_Description
             });
 
         Arguments.Add(
@@ -33,7 +33,7 @@ internal sealed class FusionAuthorizationMutableDirectiveDefinition : MutableDir
                 ArgumentNames.Scopes,
                 new ListType(new NonNullType(new ListType(new NonNullType(stringType)))))
             {
-                Description = FusionAuthorizationMutableDirectiveDefinition_Argument_Scopes_Description
+                Description = FusionPolicyMutableDirectiveDefinition_Argument_Scopes_Description
             });
 
         Arguments.Add(
@@ -41,7 +41,7 @@ internal sealed class FusionAuthorizationMutableDirectiveDefinition : MutableDir
                 ArgumentNames.Policies,
                 new ListType(new NonNullType(new ListType(new NonNullType(stringType)))))
             {
-                Description = FusionAuthorizationMutableDirectiveDefinition_Argument_Policies_Description
+                Description = FusionPolicyMutableDirectiveDefinition_Argument_Policies_Description
             });
 
         Locations =

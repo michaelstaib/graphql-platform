@@ -2,7 +2,7 @@ namespace HotChocolate.Fusion.PreMergeValidationRules;
 
 public sealed class AuthorizationDirectiveRuleTests : RuleTestBase
 {
-    protected override object Rule { get; } = new AuthorizationDirectiveRule();
+    protected override object Rule { get; } = new PolicyDirectiveRule();
 
     private const string Directives =
         """
@@ -159,7 +159,7 @@ public sealed class AuthorizationDirectiveRuleTests : RuleTestBase
                 """
                 {
                     "message": "The merged scopes requirement of 'Query.field' has 72 alternative groups, which exceeds the threshold of 64.",
-                    "code": "AUTHORIZATION_GROUP_COUNT_EXCEEDED",
+                    "code": "POLICY_GROUP_COUNT_EXCEEDED",
                     "severity": "Warning",
                     "coordinate": "Query.field",
                     "schema": "A",
@@ -196,7 +196,7 @@ public sealed class AuthorizationDirectiveRuleTests : RuleTestBase
                 """
                 {
                     "message": "The merged policies requirement of 'Query.field' has 72 alternative groups, which exceeds the threshold of 64.",
-                    "code": "AUTHORIZATION_GROUP_COUNT_EXCEEDED",
+                    "code": "POLICY_GROUP_COUNT_EXCEEDED",
                     "severity": "Warning",
                     "coordinate": "Query.field",
                     "schema": "A",

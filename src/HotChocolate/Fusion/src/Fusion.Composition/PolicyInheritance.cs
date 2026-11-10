@@ -11,7 +11,7 @@ using DirectiveNames = HotChocolate.Fusion.WellKnownDirectiveNames;
 namespace HotChocolate.Fusion;
 
 /// <summary>
-/// Flattens the authorization requirements of the merged schema so that every field carries its
+/// Flattens the policy requirements of the merged schema so that every field carries its
 /// complete requirement.
 /// </summary>
 /// <remarks>
@@ -19,14 +19,14 @@ namespace HotChocolate.Fusion;
 /// declaring type and its return type requirements and shares the result with same-named fields
 /// across the implements relation.
 /// </remarks>
-internal static class AuthorizationInheritance
+internal static class PolicyInheritance
 {
     private static readonly ImmutableSortedSet<string> s_noSources =
         ImmutableSortedSet.Create<string>(StringComparer.Ordinal);
 
     public static void Apply(
         MutableSchemaDefinition mergedSchema,
-        MutableDirectiveDefinition fusionAuthorization,
+        MutableDirectiveDefinition fusionPolicy,
         IEnumerable<MutableSchemaDefinition> sourceSchemas)
     {
         var sources = sourceSchemas.ToArray();
@@ -110,13 +110,13 @@ internal static class AuthorizationInheritance
 
         Close(fieldNodes.Values, static n => n.Base);
 
-        var entries = ImmutableArray.CreateBuilder<InheritedAuthorization>();
+        var entries = ImmutableArray.CreateBuilder<InheritedPolicy>();
 
         foreach (var complexType in complexTypes)
         {
             var typeNode = typeNodes[complexType.Name];
 
-            Write(typeNode, fusionAuthorization);
+            Write(typeNode, fusionPolicy);
 
             if (typeNode.Own.Auth.IsEmpty && !typeNode.Closed.Auth.IsEmpty)
             {
@@ -127,7 +127,7 @@ internal static class AuthorizationInheritance
             {
                 var fieldNode = fieldNodes[(complexType.Name, field.Name)];
 
-                Write(fieldNode, fusionAuthorization);
+                Write(fieldNode, fusionPolicy);
 
                 if (fieldNode.Own.Auth.IsEmpty && !fieldNode.Closed.Auth.Matches(fieldNode.Base.Auth))
                 {
@@ -138,7 +138,7 @@ internal static class AuthorizationInheritance
 
         if (entries.Count > 0)
         {
-            mergedSchema.Features.Set(new AuthorizationInheritanceMetadata(entries.ToImmutable()));
+            mergedSchema.Features.Set(new PolicyInheritanceMetadata(entries.ToImmutable()));
         }
     }
 
@@ -147,10 +147,10 @@ internal static class AuthorizationInheritance
         DirectiveCollection directives,
         ImmutableSortedSet<string> directSources)
     {
-        var directive = directives.FirstOrDefault(DirectiveNames.FusionAuthorization);
+        var directive = directives.FirstOrDefault(DirectiveNames.FusionPolicy);
         var auth = directive is null
-            ? MergedAuthorization.Empty
-            : AuthorizationDirectiveMerger.FromFusionDirective(directive);
+            ? MergedPolicy.Empty
+            : PolicyDirectiveMerger.FromFusionDirective(directive);
 
         return new Node(coordinate, directives, new Tracked(auth, auth.IsEmpty ? s_noSources : directSources));
     }
@@ -199,17 +199,17 @@ internal static class AuthorizationInheritance
         }
     }
 
-    private static void Write(Node node, MutableDirectiveDefinition fusionAuthorization)
+    private static void Write(Node node, MutableDirectiveDefinition fusionPolicy)
     {
         if (node.Closed.Auth.Matches(node.Own.Auth))
         {
             return;
         }
 
-        var directive = AuthorizationDirectiveMerger.CreateDirective(
-            fusionAuthorization,
+        var directive = PolicyDirectiveMerger.CreateDirective(
+            fusionPolicy,
             node.Closed.Auth);
-        var existing = node.Directives.FirstOrDefault(DirectiveNames.FusionAuthorization);
+        var existing = node.Directives.FirstOrDefault(DirectiveNames.FusionPolicy);
 
         if (existing is null)
         {
@@ -222,7 +222,7 @@ internal static class AuthorizationInheritance
     }
 
     private static void ReportType(
-        ImmutableArray<InheritedAuthorization>.Builder entries,
+        ImmutableArray<InheritedPolicy>.Builder entries,
         Node member,
         MutableComplexTypeDefinition complexType,
         Dictionary<string, Node> typeNodes)
@@ -246,12 +246,12 @@ internal static class AuthorizationInheritance
         if (paths.Count > 0)
         {
             entries.Add(
-                new InheritedAuthorization(member.Coordinate, [.. paths], [.. sourceNames]));
+                new InheritedPolicy(member.Coordinate, [.. paths], [.. sourceNames]));
         }
     }
 
     private static void ReportField(
-        ImmutableArray<InheritedAuthorization>.Builder entries,
+        ImmutableArray<InheritedPolicy>.Builder entries,
         Node member)
     {
         var paths = new SortedSet<string>(StringComparer.Ordinal);
@@ -275,7 +275,7 @@ internal static class AuthorizationInheritance
         if (paths.Count > 0)
         {
             entries.Add(
-                new InheritedAuthorization(member.Coordinate, [.. paths], [.. sourceNames]));
+                new InheritedPolicy(member.Coordinate, [.. paths], [.. sourceNames]));
         }
     }
 
@@ -379,7 +379,7 @@ internal static class AuthorizationInheritance
                 directives = field.Directives.AsEnumerable();
             }
 
-            if (directives?.Any(IsSourceAuthorizationDirective) is true)
+            if (directives?.Any(IsSourcePolicyDirective) is true)
             {
                 names.Add(schema.Name);
             }
@@ -388,14 +388,14 @@ internal static class AuthorizationInheritance
         return names.ToImmutable();
     }
 
-    private static bool IsSourceAuthorizationDirective(Directive directive)
+    private static bool IsSourcePolicyDirective(Directive directive)
         => directive.Name is DirectiveNames.Authenticated
             or DirectiveNames.RequiresScopes
             or DirectiveNames.Policy;
 
-    private readonly record struct Tracked(MergedAuthorization Auth, ImmutableSortedSet<string> Sources)
+    private readonly record struct Tracked(MergedPolicy Auth, ImmutableSortedSet<string> Sources)
     {
-        public static Tracked Empty { get; } = new(MergedAuthorization.Empty, s_noSources);
+        public static Tracked Empty { get; } = new(MergedPolicy.Empty, s_noSources);
 
         public Tracked And(Tracked other)
         {

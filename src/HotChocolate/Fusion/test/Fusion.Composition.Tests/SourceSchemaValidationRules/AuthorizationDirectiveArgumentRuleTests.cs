@@ -5,7 +5,7 @@ namespace HotChocolate.Fusion.SourceSchemaValidationRules;
 
 public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
 {
-    protected override object Rule { get; } = new AuthorizationDirectiveArgumentRule();
+    protected override object Rule { get; } = new PolicyDirectiveArgumentRule();
 
     private const string Directives =
         """
@@ -53,7 +53,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'scopes' argument of the @requiresScopes directive on 'Query.field' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value 1.",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Query.field",
                     "schema": "A",
@@ -85,7 +85,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'scopes' argument of the @requiresScopes directive on 'Query.field' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value [].",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Query.field",
                     "schema": "A",
@@ -95,7 +95,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'policies' argument of the @policy directive on 'Foo' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value [].",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Foo",
                     "schema": "A",
@@ -127,7 +127,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'scopes' argument of the @requiresScopes directive on 'Query.field' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value [[\"read\"], []].",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Query.field",
                     "schema": "A",
@@ -137,7 +137,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'policies' argument of the @policy directive on 'Foo' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value [[]].",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Foo",
                     "schema": "A",
@@ -169,7 +169,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'scopes' argument of the @requiresScopes directive on 'Query.field' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value [[\"read\", \" \"]].",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Query.field",
                     "schema": "A",
@@ -179,7 +179,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'policies' argument of the @policy directive on 'Foo' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value \"\".",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Foo",
                     "schema": "A",
@@ -213,7 +213,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'scopes' argument of the @requiresScopes directive on 'Query' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value undefined.",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Query",
                     "schema": "A",
@@ -223,7 +223,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'policies' argument of the @policy directive on 'Foo' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value null.",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Foo",
                     "schema": "A",
@@ -233,7 +233,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
                 """
                 {
                     "message": "The 'policies' argument of the @policy directive on 'Bar' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value [[1]].",
-                    "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                    "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                     "severity": "Error",
                     "coordinate": "Bar",
                     "schema": "A",
@@ -273,7 +273,7 @@ public sealed class AuthorizationDirectiveArgumentRuleTests : RuleTestBase
             """
             {
                 "message": "The 'scopes' argument of the @requiresScopes directive on 'Query.field' in schema 'A' must be a non-blank string or a non-empty list of non-blank strings and non-empty lists of non-blank strings, but has the value undefined.",
-                "code": "INVALID_AUTHORIZATION_DIRECTIVE_ARGUMENT",
+                "code": "INVALID_POLICY_DIRECTIVE_ARGUMENT",
                 "severity": "Error",
                 "coordinate": "Query.field",
                 "schema": "A",

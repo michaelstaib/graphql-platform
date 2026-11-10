@@ -18,8 +18,8 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         """;
 
     private const string NoSchemeMessage =
-        "The schema uses authorization directives but no authentication scheme is registered. "
-        + "Register an authentication scheme, or disable the authorization validation.";
+        "The schema uses policy directives but no authentication scheme is registered. "
+        + "Register an authentication scheme, or disable the policy validation.";
 
     [Theory]
     [InlineData("secret: String @authenticated")]
@@ -74,8 +74,8 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
         Assert.Equal(
-            "The authentication scheme 'Cookie' of the authorization options is not registered. "
-            + "Register it, remove it from the schemes, or disable the authorization validation.",
+            "The authentication scheme 'Cookie' of the policy options is not registered. "
+            + "Register it, remove it from the schemes, or disable the policy validation.",
             exception.Message);
     }
 
@@ -95,8 +95,8 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
         Assert.Equal(
-            "The authentication scheme 'Bearer' of the authorization options is not registered. "
-            + "Register it, remove it from the schemes, or disable the authorization validation.",
+            "The authentication scheme 'Bearer' of the policy options is not registered. "
+            + "Register it, remove it from the schemes, or disable the policy validation.",
             exception.Message);
     }
 
@@ -209,7 +209,7 @@ public class AuthorizationStartupValidationTests : FusionTestBase
         // assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
         Assert.Equal(
-            "The schema uses authorization directives but the host exposes no authentication schemes. "
+            "The schema uses policy directives but the host exposes no authentication schemes. "
             + "Add the gateway through HotChocolate.Fusion.AspNetCore, or set DisablePolicyValidation.",
             exception.Message);
     }
