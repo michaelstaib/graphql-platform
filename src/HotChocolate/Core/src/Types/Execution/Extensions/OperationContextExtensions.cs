@@ -1,5 +1,4 @@
 using HotChocolate.Execution.Processing;
-using HotChocolate.Text.Json;
 
 // ReSharper disable once CheckNamespace
 namespace HotChocolate.Execution;
@@ -70,19 +69,6 @@ internal static class OperationContextExtensions
                     document.Data.IsNullOrInvalidated,
                     document,
                     document));
-        }
-
-        public OperationResult BuildStreamItemsResult()
-        {
-            var document = context.Result.Data;
-            var items = new ResultDocumentItemCollection(document);
-
-            return context.BuildResult(
-                new OperationResultData(
-                    items,
-                    document.Data.IsNullOrInvalidated,
-                    items,
-                    items));
         }
 
         private OperationResult BuildResult(OperationResultData data)
