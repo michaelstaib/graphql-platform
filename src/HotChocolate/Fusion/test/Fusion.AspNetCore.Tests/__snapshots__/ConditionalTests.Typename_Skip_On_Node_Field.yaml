@@ -3,11 +3,7 @@ request:
   document: |
     query testQuery($skip: Boolean!) {
       node(id: "Q2F0OjE=") {
-        id
         __typename @skip(if: $skip)
-        ... on Cat {
-          name
-        }
       }
     }
   variables: |
@@ -18,10 +14,7 @@ response:
   body: |
     {
       "data": {
-        "node": {
-          "id": "Q2F0OjE=",
-          "name": "Cat: Q2F0OjE="
-        }
+        "node": {}
       }
     }
 sourceSchemas:
@@ -47,14 +40,10 @@ sourceSchemas:
       - request:
           accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
           document: |
-            query testQuery_121137fe_3($skip: Boolean!) {
+            query testQuery_93452e63_2($skip: Boolean!) {
               node(id: "Q2F0OjE=") {
                 __typename
-                ... on Cat {
-                  id
-                  __typename @skip(if: $skip)
-                  name
-                }
+                __typename @skip(if: $skip)
               }
             }
           variables: |
@@ -67,9 +56,7 @@ sourceSchemas:
               {
                 "data": {
                   "node": {
-                    "__typename": "Cat",
-                    "id": "Q2F0OjE=",
-                    "name": "Cat: Q2F0OjE="
+                    "__typename": "Cat"
                   }
                 }
               }
@@ -96,16 +83,12 @@ operationPlan:
     - document: |
         query testQuery($skip: Boolean!) {
           node(id: "Q2F0OjE=") {
-            id
             __typename @fusion__requirement
-            ... on Cat {
-              name
-            }
             __typename @skip(if: $skip)
           }
         }
       name: testQuery
-      hash: d83525f8396acf7fbd0dd66424cd723b
+      hash: ce10fae1e193295cd5f9285f6925c8d3
       searchSpace: 1
       expandedNodes: 1
   nodes:
@@ -113,35 +96,14 @@ operationPlan:
       type: Node
       idValue: "Q2F0OjE="
       responseName: node
-      branches:
-        - Cat: 3
       fallback: 2
     - id: 2
       type: Operation
       operation: |
-        query testQuery_121137fe_2($skip: Boolean!) {
+        query testQuery_93452e63_2($skip: Boolean!) {
           node(id: "Q2F0OjE=") {
             __typename
-            id
             __typename @skip(if: $skip)
-          }
-        }
-      forwardedVariables:
-        - skip
-      dependencies:
-        - id: 1
-    - id: 3
-      type: Operation
-      schema: A
-      operation: |
-        query testQuery_121137fe_3($skip: Boolean!) {
-          node(id: "Q2F0OjE=") {
-            __typename
-            ... on Cat {
-              id
-              __typename @skip(if: $skip)
-              name
-            }
           }
         }
       forwardedVariables:

@@ -2441,8 +2441,7 @@ public sealed partial class OperationPlanner
         }
         else
         {
-            if (sharedSelections.Count < 1 || !sharedSelections.Any(
-                    s => s is FieldNode field && IsTypeNameSelection(field) && IsUnconditionallySelected(field)))
+            if (sharedSelections.Count < 1 || !sharedSelections.Any(IsUnconditionalTypeNameSelection))
             {
                 sharedSelections = [new FieldNode(IntrospectionFieldNames.TypeName), .. sharedSelections];
             }
@@ -3999,8 +3998,7 @@ public sealed partial class OperationPlanner
 
                 var type = path.Peek();
 
-                if (type.IsAbstractType() && !selectionSet.Selections.Any(
-                        s => s is FieldNode field && IsTypeNameSelection(field) && IsUnconditionallySelected(field)))
+                if (type.IsAbstractType() && !selectionSet.Selections.Any(IsUnconditionalTypeNameSelection))
                 {
                     // we add the __typename field to all selection sets that have
                     // an abstract type context as we need the type context for
@@ -4011,8 +4009,6 @@ public sealed partial class OperationPlanner
                     var typenameNode = new FieldNode(IntrospectionFieldNames.TypeName)
                         .WithDirectives([new DirectiveNode("fusion__requirement")]);
 
-                    // A conditional __typename of the user keeps its position in the result,
-                    // so the requirement goes right behind it.
                     var selections = selectionSet.Selections.ToList();
                     var conditionalIndex = selections.FindIndex(IsTypeNameSelection);
                     selections.Insert(conditionalIndex + 1, typenameNode);
@@ -4051,6 +4047,9 @@ public sealed partial class OperationPlanner
 
         return (OperationDefinitionNode)rewriter.Rewrite(operation, context)!;
     }
+
+    private static bool IsUnconditionalTypeNameSelection(ISelectionNode selection)
+        => selection is FieldNode field && IsTypeNameSelection(field) && IsUnconditionallySelected(field);
 
     private static bool IsTypeNameSelection(ISelectionNode selection)
     {

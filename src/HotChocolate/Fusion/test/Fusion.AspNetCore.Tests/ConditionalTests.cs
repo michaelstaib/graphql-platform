@@ -3212,11 +3212,7 @@ public class ConditionalTests : FusionTestBase
             """
             query testQuery($skip: Boolean!) {
               node(id: "Q2F0OjE=") {
-                id
                 __typename @skip(if: $skip)
-                ... on Cat {
-                  name
-                }
               }
             }
             """,
