@@ -13,7 +13,7 @@ namespace HotChocolate.Fusion;
 public class KeyHopFailureTests : FusionTestBase
 {
     private static readonly ConcurrentQueue<string> s_calls = new();
-    private static int s_delayA;
+    private static ArrivalGate? s_gate;
     private static int s_delayB;
     private static int s_delayC;
     private static int s_delayD;
@@ -708,18 +708,17 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Theory]
-    [InlineData(true, 400, 0)]
-    [InlineData(true, 0, 400)]
-    [InlineData(false, 400, 0)]
-    [InlineData(false, 0, 400)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
     public async Task Execute_Should_ReportViolationOfTheFailedDefinition_When_SkipsOfTheBatchArriveInAnyOrder(
         bool enableRequestGrouping,
-        int delayAccounts,
-        int delayB)
+        bool failureArrivesFirst)
     {
         // arrange
         using var gateway = await CreateSplitBatchedGatewayAsync(enableRequestGrouping);
-        (s_delayA, s_delayB) = (delayAccounts, delayB);
+        s_gate = new ArrivalGate(failureArrivesFirst);
 
         // act
         string result;
@@ -734,7 +733,7 @@ public class KeyHopFailureTests : FusionTestBase
         }
         finally
         {
-            (s_delayA, s_delayB) = (0, 0);
+            s_gate = null;
         }
 
         // assert
@@ -929,6 +928,30 @@ public class KeyHopFailureTests : FusionTestBase
     private static Task<HttpResponseMessage> ServerError(HttpRequestMessage request)
         => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
 
+    private static async Task<HttpResponseMessage> GatedServerError(HttpRequestMessage request)
+    {
+        await (s_gate?.BeforeFailureAsync() ?? Task.CompletedTask);
+        var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        s_gate?.FailureSent();
+        return response;
+    }
+
+    // Forces which skip reaches the executor first. The failing hop answers before the accounts root is released,
+    // or the accounts root answers before the failing hop is released.
+    private sealed class ArrivalGate(bool failureArrivesFirst)
+    {
+        private readonly TaskCompletionSource _failureSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _accountsSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task BeforeFailureAsync() => failureArrivesFirst ? Task.CompletedTask : _accountsSent.Task;
+
+        public void FailureSent() => _failureSent.TrySetResult();
+
+        public Task BeforeAccountsAsync() => failureArrivesFirst ? _failureSent.Task : Task.CompletedTask;
+
+        public void AccountsSent() => _accountsSent.TrySetResult();
+    }
+
     private static async Task<HttpResponseMessage> ServerErrorAfterDelayB(HttpRequestMessage request)
     {
         await Task.Delay(s_delayB);
@@ -1021,7 +1044,7 @@ public class KeyHopFailureTests : FusionTestBase
     {
         var a = CreateSourceSchema("a", b => b.AddQueryType<SplitUsers.Query>());
         var accounts = CreateSourceSchema("accounts", b => b.AddQueryType<SplitAccounts.Query>());
-        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: ServerErrorAfterDelayB);
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: GatedServerError);
         var e = CreateSourceSchema("e", b => b.AddQueryType<BatchE.Query>());
         var k = CreateSourceSchema("k", b => b.AddQueryType<BatchK.Query>());
 
@@ -1665,7 +1688,8 @@ public class KeyHopFailureTests : FusionTestBase
         {
             public async Task<IEnumerable<Account?>> GetAccounts(int[] ids)
             {
-                await Task.Delay(s_delayA);
+                await (s_gate?.BeforeAccountsAsync() ?? Task.CompletedTask);
+                s_gate?.AccountsSent();
                 return ids.Select(i => new Account(i));
             }
 
