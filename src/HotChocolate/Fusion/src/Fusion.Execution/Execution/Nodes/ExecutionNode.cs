@@ -96,8 +96,6 @@ public abstract class ExecutionNode : IOperationPlanNode, IEquatable<ExecutionNo
             else
             {
                 status = await OnExecuteAsync(context, cancellationToken).ConfigureAwait(false);
-
-                skippedByCondition = status is ExecutionStatus.Skipped && IsSkippedByOperationConditions(context);
             }
         }
         catch (Exception ex)
@@ -122,6 +120,7 @@ public abstract class ExecutionNode : IOperationPlanNode, IEquatable<ExecutionNo
                 error,
                 context.GetDependentsToExecute(this),
                 context.GetSkippedDefinitions(this),
+                context.GetConditionSkippedDefinitions(this),
                 context.GetVariableValueSets(this),
                 skippedByCondition,
                 context.GetTransportDetails(this));
@@ -133,12 +132,6 @@ public abstract class ExecutionNode : IOperationPlanNode, IEquatable<ExecutionNo
     protected abstract ValueTask<ExecutionStatus> OnExecuteAsync(
         OperationPlanContext context,
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets whether every operation of this node is skipped by its own condition, which is what a node that
-    /// returns <see cref="ExecutionStatus.Skipped"/> from its execution has to report.
-    /// </summary>
-    protected virtual bool IsSkippedByOperationConditions(OperationPlanContext context) => false;
 
     protected virtual IDisposable? CreateScope(OperationPlanContext context) => null;
 

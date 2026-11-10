@@ -288,7 +288,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
         {
             if (IsSkipped(context, operation))
             {
-                context.TrackSkippedDefinition(this, operation);
+                context.TrackConditionSkippedDefinition(this, operation);
                 continue;
             }
 
@@ -369,19 +369,6 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
                 && IsSkipped(context, _operations[3]);
         }
 
-        foreach (var operation in _operations)
-        {
-            if (!IsSkipped(context, operation))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    protected override bool IsSkippedByOperationConditions(OperationPlanContext context)
-    {
         foreach (var operation in _operations)
         {
             if (!IsSkipped(context, operation))

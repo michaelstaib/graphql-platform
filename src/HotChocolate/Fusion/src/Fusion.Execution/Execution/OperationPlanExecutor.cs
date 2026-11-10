@@ -1513,6 +1513,7 @@ internal static partial class OperationPlanExecutor
                             Exception: null,
                             DependentsToExecute: eventArgs.DependentsToExecute,
                             SkippedDefinitions: [],
+                            ConditionSkippedDefinitions: [],
                             VariableValueSets: eventArgs.VariableValueSets,
                             SkippedByCondition: false));
 

@@ -686,6 +686,46 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
+    [Theory]
+    [InlineData("{ nullableUsers(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: {\"nullableUsers\":[null,null],\"accounts\":[{\"kayNN\":3}]}\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}},{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",1,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n")]
+    [InlineData("{ users(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: null\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"users\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n")]
+    public async Task Execute_Should_ReportTheSameViolations_When_RequestGroupingBatchesTheLookups(
+        string query,
+        string expected)
+    {
+        // arrange
+        using var grouped = await CreateBatchedGatewayAsync(enableRequestGrouping: true);
+        using var ungrouped = await CreateBatchedGatewayAsync(enableRequestGrouping: false);
+
+        // act
+        var groupedResult = await ExecuteQueryAsync(grouped, query);
+        var ungroupedResult = await ExecuteQueryAsync(ungrouped, query);
+
+        // assert
+        Assert.Equal(ungroupedResult, groupedResult);
+        Assert.Equal(expected, groupedResult);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotReportViolation_When_BatchedDefinitionIsExcludedByAVariable()
+    {
+        // arrange
+        using var grouped = await CreateBatchedGatewayAsync(enableRequestGrouping: true);
+
+        // act
+        var result = await ExecuteQueryAsync(
+            grouped,
+            "query($s: Boolean!) { nullableUsers(ids: [2, 3]) { name kayNN @include(if: $s) } accounts(ids: [5]) { kayNN } }",
+            false);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"name":"user-2"},{"name":"user-3"}],"accounts":[{"kayNN":3}]}
+
+            """);
+    }
+
     [Fact]
     public async Task Execute_Should_ReportViolationOnlyForTheItemWithoutKey_When_SingleHopMissesTheKey()
     {
@@ -924,6 +964,20 @@ public class KeyHopFailureTests : FusionTestBase
         var text = new StringBuilder(await ExecuteQueryAsync(gateway, query));
         text.AppendLine($"calls: {string.Join(" ", s_calls.Order(StringComparer.Ordinal))}");
         return text.ToString();
+    }
+
+    private async Task<Gateway> CreateBatchedGatewayAsync(bool enableRequestGrouping)
+    {
+        var a = CreateSourceSchema("a", b => b.AddQueryType<BatchA.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: ServerError);
+        var e = CreateSourceSchema("e", b => b.AddQueryType<BatchE.Query>());
+        var k = CreateSourceSchema("k", b => b.AddQueryType<BatchK.Query>());
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("e", e), ("k", k)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
     }
 
     private async Task<Gateway> CreateOneHopGatewayAsync()
@@ -1466,6 +1520,73 @@ public class KeyHopFailureTests : FusionTestBase
             [Lookup, Internal]
             public User? GetUserByNick(string nick)
                 => new(nick, int.Parse(nick[5..]), int.Parse(nick[5..]) * 7);
+        }
+    }
+
+    public static class BatchA
+    {
+        [EntityKey("id")]
+        public record User(int Id, string Name);
+
+        [EntityKey("id")]
+        public record Account(int Id);
+
+        public class Query
+        {
+            public IEnumerable<User?> GetNullableUsers(int[] ids) => ids.Select(i => new User(i, $"user-{i}"));
+
+            public IEnumerable<User> GetUsers(int[] ids) => ids.Select(i => new User(i, $"user-{i}"));
+
+            public IEnumerable<Account?> GetAccounts(int[] ids) => ids.Select(i => new Account(i));
+
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, $"user-{id}");
+
+            [Lookup, Internal]
+            public Account? GetAccountById(int id) => new(id);
+        }
+    }
+
+    public static class BatchE
+    {
+        public record Account(int Id, [property: Shareable] string Code);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public Account? GetAccountById(int id) => new(id, $"code-{id}");
+        }
+    }
+
+    public static class BatchK
+    {
+        public record Info([property: Shareable] string Sku);
+
+        public record User([property: Shareable] Info Info, int KayNN);
+
+        public record Account([property: Shareable] string Code, int KayNN);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserBySku([Is("info.sku")] string sku) => new(new Info(sku), 2);
+
+            [Lookup, Internal]
+            public Account? GetAccountByCode(string code) => new(code, 3);
         }
     }
 }

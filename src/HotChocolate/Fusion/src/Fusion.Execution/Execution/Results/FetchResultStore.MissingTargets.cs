@@ -145,6 +145,10 @@ internal sealed partial class FetchResultStore
             finally
             {
                 ArrayPool<int>.Shared.Return(hops);
+
+                // The next pass of a mutation only looks at what its root field adds.
+                _missingTargetCount = 0;
+                state.ClearCompletingSkips();
             }
         }
     }

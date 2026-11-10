@@ -33,6 +33,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private Uri?[] _transportUris = [];
     private string?[] _transportContentTypes = [];
     private List<IOperationPlanNode>?[] _skippedDefinitions = [];
+    private List<IOperationPlanNode>?[] _conditionSkippedDefinitions = [];
     private Dictionary<int, Exception>?[] _batchRequestErrors = [];
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly FetchResultStore _resultStore;
@@ -239,10 +240,22 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         list.Add(skippedDefinition);
     }
 
-    internal ImmutableArray<IOperationPlanNode> GetSkippedDefinitions(ExecutionNode node)
+    internal void TrackConditionSkippedDefinition(ExecutionNode node, IOperationPlanNode skippedDefinition)
     {
-        var list = _skippedDefinitions[node.Id];
+        TrackSkippedDefinition(node, skippedDefinition);
 
+        var list = _conditionSkippedDefinitions[node.Id] ??= [];
+        list.Add(skippedDefinition);
+    }
+
+    internal ImmutableArray<IOperationPlanNode> GetConditionSkippedDefinitions(ExecutionNode node)
+        => ToImmutableArray(_conditionSkippedDefinitions[node.Id]);
+
+    internal ImmutableArray<IOperationPlanNode> GetSkippedDefinitions(ExecutionNode node)
+        => ToImmutableArray(_skippedDefinitions[node.Id]);
+
+    private static ImmutableArray<IOperationPlanNode> ToImmutableArray(List<IOperationPlanNode>? list)
+    {
         if (list is null or { Count: 0 })
         {
             return [];
@@ -1080,6 +1093,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         if (_usesBatchNodes)
         {
             Array.Clear(_skippedDefinitions, 0, activeNodeSlotCount);
+            Array.Clear(_conditionSkippedDefinitions, 0, activeNodeSlotCount);
             Array.Clear(_batchRequestErrors, 0, activeNodeSlotCount);
         }
 

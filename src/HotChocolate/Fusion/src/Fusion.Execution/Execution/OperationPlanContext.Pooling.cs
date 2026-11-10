@@ -153,6 +153,7 @@ public sealed partial class OperationPlanContext
             if (_usesBatchNodes)
             {
                 Array.Clear(_skippedDefinitions, 0, activeNodeSlotCount);
+                Array.Clear(_conditionSkippedDefinitions, 0, activeNodeSlotCount);
                 Array.Clear(_batchRequestErrors, 0, activeNodeSlotCount);
             }
 
@@ -242,6 +243,7 @@ public sealed partial class OperationPlanContext
             _nodesToComplete = new NodeCompletionSet?[nodeSlotCount];
             _schemaNames = new string?[nodeSlotCount];
             _skippedDefinitions = new List<IOperationPlanNode>?[nodeSlotCount];
+            _conditionSkippedDefinitions = new List<IOperationPlanNode>?[nodeSlotCount];
             _batchRequestErrors = new Dictionary<int, Exception>?[nodeSlotCount];
             _variableValueSets = new ImmutableArray<VariableValues>[nodeSlotCount];
             _transportUris = new Uri?[nodeSlotCount];

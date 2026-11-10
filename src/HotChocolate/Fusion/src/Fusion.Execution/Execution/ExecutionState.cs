@@ -290,6 +290,8 @@ internal sealed class ExecutionState
             {
                 MarkNodeAsSkipped(def.Id);
             }
+
+            RecordSkippedDefinitions(result);
         }
 
         if (result.Status is ExecutionStatus.Success or ExecutionStatus.PartialSuccess)
@@ -370,6 +372,19 @@ internal sealed class ExecutionState
     /// reached it that does not complete its dependent fields.
     /// </summary>
     public bool HasCompletingSkips => _hasCompletingSkip;
+
+    /// <summary>
+    /// Forgets the completing skips that a pass has consumed.
+    /// </summary>
+    public void ClearCompletingSkips()
+    {
+        if (_completingSkipBitset.Length > 0)
+        {
+            _completingSkipBitset.AsSpan().Clear();
+        }
+
+        _hasCompletingSkip = false;
+    }
 
     /// <summary>
     /// Gets whether <paramref name="nodeId"/> is a node, or an operation definition inside a batch, that was skipped
@@ -567,6 +582,56 @@ internal sealed class ExecutionState
                 }
             }
         }
+    }
+
+    // A definition skipped by its own condition is a non-completing skip. A definition skipped because a dependency
+    // was skipped takes the reasons of its dependencies, a dependency that failed or skipped itself after it ran
+    // completes. A definition that ran and had no variables is not recorded, its missing targets were recorded when
+    // its variables were created.
+    private void RecordSkippedDefinitions(ExecutionNodeResult result)
+    {
+        if (_cts is { IsCancellationRequested: true })
+        {
+            return;
+        }
+
+        foreach (var def in result.ConditionSkippedDefinitions)
+        {
+            RecordSkip(def.Id, SkipKind.NonCompleting, isOrigin: false);
+        }
+
+        foreach (var def in result.SkippedDefinitions)
+        {
+            if (result.ConditionSkippedDefinitions.Contains(def))
+            {
+                continue;
+            }
+
+            RecordSkippedDependencies(def, def.Dependencies);
+            RecordSkippedDependencies(def, def.OptionalDependencies);
+        }
+    }
+
+    private void RecordSkippedDependencies(IOperationPlanNode def, ReadOnlySpan<IOperationPlanNode> dependencies)
+    {
+        foreach (var dependency in dependencies)
+        {
+            if (!IsNodeSkipped(dependency.Id))
+            {
+                continue;
+            }
+
+            var kind = HasBit(_nonCompletingSkipBitset, dependency.Id)
+                ? SkipKind.NonCompleting
+                : SkipKind.Completing;
+            RecordSkip(def.Id, kind, isOrigin: false);
+        }
+    }
+
+    private static bool HasBit(ulong[] bitset, int nodeId)
+    {
+        var index = nodeId >> 6;
+        return index < bitset.Length && (bitset[index] & (1UL << (nodeId & 63))) != 0;
     }
 
     // Records why a node was skipped. A node that ran and then failed or skipped itself is the origin of a

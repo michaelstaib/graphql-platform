@@ -156,7 +156,13 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
         var operation = _operations[0];
         var lookup = _lookups[0];
 
-        if (IsSkipped(context, operation) || HasSkippedDependencies(context, operation))
+        if (IsSkipped(context, operation))
+        {
+            context.TrackConditionSkippedDefinition(this, operation);
+            return ExecutionStatus.Skipped;
+        }
+
+        if (HasSkippedDependencies(context, operation))
         {
             context.TrackSkippedDefinition(this, operation);
             return ExecutionStatus.Skipped;
@@ -482,7 +488,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
 
             if (IsSkipped(context, operation))
             {
-                context.TrackSkippedDefinition(this, operation);
+                context.TrackConditionSkippedDefinition(this, operation);
                 continue;
             }
 
@@ -560,19 +566,6 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
                 && IsSkipped(context, _operations[3]);
         }
 
-        foreach (var operation in _operations)
-        {
-            if (!IsSkipped(context, operation))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    protected override bool IsSkippedByOperationConditions(OperationPlanContext context)
-    {
         foreach (var operation in _operations)
         {
             if (!IsSkipped(context, operation))
