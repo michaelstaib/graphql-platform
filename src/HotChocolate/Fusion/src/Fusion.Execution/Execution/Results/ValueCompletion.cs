@@ -323,6 +323,7 @@ internal sealed class ValueCompletion
     {
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
+        _store.RecordKeyFetchErrors(errorPath, resultSelectionSet, error);
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -336,7 +337,8 @@ internal sealed class ValueCompletion
             }
 
             if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+                || fieldResult.IsInternal
+                || fieldResult.IsExcluded)
             {
                 continue;
             }
@@ -391,6 +393,86 @@ internal sealed class ValueCompletion
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/>
+    /// of a target that is already <c>null</c>, unless an ancestor of the target is null as well.
+    /// </summary>
+    public void ReportErrorOnNulledTarget(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        IError error)
+    {
+        _store.RecordKeyFetchErrors(target.Path, resultSelectionSet, error);
+
+        if (_store.HasReachableAncestorsUnsafe(target) && TryGetNulledSelectionSet(target, out var selectionSet))
+        {
+            AddNulledTargetErrors(target, resultSelectionSet, selectionSet, error);
+        }
+    }
+
+    /// <summary>
+    /// Adds the <paramref name="error"/> of the field <paramref name="originName"/> to the client-visible
+    /// fields of <paramref name="resultSelectionSet"/> of a target that is already <c>null</c>, unless an
+    /// ancestor of the target is null as well or the failure of a non-null origin field is what nulled the target.
+    /// </summary>
+    public void ReportDependentErrorOnNulledTarget(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        string originName,
+        IError error)
+    {
+        if (TryGetNulledSelectionSet(target, out var selectionSet)
+            && selectionSet.TryGetSelection(originName, out var originSelection)
+            && (originSelection.IsInternal || !originSelection.IsNonNull))
+        {
+            ReportErrorOnNulledTarget(target, resultSelectionSet, error);
+        }
+    }
+
+    private static bool TryGetNulledSelectionSet(
+        CompositeResultElement target,
+        [NotNullWhen(true)] out SelectionSet? selectionSet)
+    {
+        var current = target;
+
+        while (current.Selection is null)
+        {
+            current = current.Parent;
+
+            if (current.IsRoot)
+            {
+                selectionSet = null;
+                return false;
+            }
+        }
+
+        selectionSet = current.Selection.Type.NamedType() is IComplexTypeDefinition complexType
+            ? current.Selection.GetSelectionSet(complexType)
+            : null;
+        return selectionSet is not null;
+    }
+
+    private void AddNulledTargetErrors(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        SelectionSet selectionSet,
+        IError error)
+    {
+        var errorPath = target.Path;
+        var includeFlags = _store.IncludeFlags;
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (selectionSet.TryGetSelection(responseName, out var selection)
+                && !selection.IsInternal
+                && selection.IsIncluded(includeFlags))
+            {
+                var fieldPath = errorPath.Append(responseName);
+                _store.AddError(_errorHandler.Handle(ErrorBuilder.FromError(error).SetPath(fieldPath).Build()));
+            }
+        }
     }
 
     public bool BuildErrorResult(Path path, IError error)
@@ -837,8 +919,17 @@ internal sealed class ValueCompletion
 
     private void PocketErrors(Path path, ResultSelectionSet resultSelectionSet, IError error)
     {
+        var hasEntity = _store.TryGetResult(path, out var entity) && entity.ValueKind is JsonValueKind.Object;
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
+            if (hasEntity
+                && entity.TryGetProperty(responseName, out var field)
+                && field.IsInternal)
+            {
+                _store.RecordKeyFetchError(path, responseName, error);
+            }
+
             _store.PocketError(path.Append(responseName), error);
         }
     }
@@ -998,6 +1089,13 @@ internal sealed class ValueCompletion
         // or with a path below it.
         if (errorTrie?.FindFirstError() is { } nullErrorFromPath)
         {
+            _store.RecordKeyFetchError(target.Path.Parent, selection.ResponseName, nullErrorFromPath);
+
+            if (selection.IsInternal)
+            {
+                return true;
+            }
+
             var errorWithPath = ErrorBuilder.FromError(nullErrorFromPath)
                 .SetPath(target.Path)
                 .Build();

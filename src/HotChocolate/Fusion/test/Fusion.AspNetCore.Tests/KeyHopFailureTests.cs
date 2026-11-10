@@ -37,6 +37,7 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 98, 3] defer
             data: {"users":[{"name":"user-2"},{"name":"user-98"},{"name":"user-3"}]}
             incremental: [0]{"total":2} [1]{"total":null} [2]{"total":3}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
             lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
             ## ids [2, 3, 98] plain
             data: {"users":[{"name":"user-2","total":2},{"name":"user-3","total":3},{"name":"user-98","total":null}]}
@@ -44,6 +45,7 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 3, 98] defer
             data: {"users":[{"name":"user-2"},{"name":"user-3"},{"name":"user-98"}]}
             incremental: [0]{"total":2} [1]{"total":3} [2]{"total":null}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",2,"total"]}]
             lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
             ## ids [98, 2, 3] plain
             data: {"users":[{"name":"user-98","total":null},{"name":"user-2","total":2},{"name":"user-3","total":3}]}
@@ -51,6 +53,7 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [98, 2, 3] defer
             data: {"users":[{"name":"user-98"},{"name":"user-2"},{"name":"user-3"}]}
             incremental: [0]{"total":null} [1]{"total":2} [2]{"total":3}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",0,"total"]}]
             lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
 
             """);
@@ -74,6 +77,7 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 98, 3] defer
             data: {"users":[{"name":"user-2"},{"name":"user-98"},{"name":"user-3"}]}
             incremental: [0]{"total":2} [1]{"total":null} [2]{"total":3}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
             ## ids [2, 3, 98] plain
             data: {"users":[{"name":"user-2","total":2},{"name":"user-3","total":3},{"name":"user-98","total":null}]}
@@ -81,6 +85,7 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 3, 98] defer
             data: {"users":[{"name":"user-2"},{"name":"user-3"},{"name":"user-98"}]}
             incremental: [0]{"total":2} [1]{"total":3} [2]{"total":null}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",2,"total"]}]
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
             ## ids [98, 2, 3] plain
             data: {"users":[{"name":"user-98","total":null},{"name":"user-2","total":2},{"name":"user-3","total":3}]}
@@ -88,6 +93,7 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [98, 2, 3] defer
             data: {"users":[{"name":"user-98"},{"name":"user-2"},{"name":"user-3"}]}
             incremental: [0]{"total":null} [1]{"total":2} [2]{"total":3}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",0,"total"]}]
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
 
             """);
@@ -203,7 +209,7 @@ public class KeyHopFailureTests : FusionTestBase
             """
             ## ids [2, 98, 3] plain
             data: {"users":[{"name":"user-2","total":null},{"name":"user-98","total":null},{"name":"user-3","total":null}]}
-            errors: [{"message":"Unexpected Execution Error","path":["users",0,"total"]},{"message":"Unexpected Execution Error","path":["users",2,"total"]}]
+            errors: [{"message":"Unexpected Execution Error","path":["users",0,"total"]},{"message":"B hop failed for 98","path":["users",1,"total"]},{"message":"Unexpected Execution Error","path":["users",2,"total"]}]
             lookups: B:2 B:3 B:98
 
             """);
@@ -227,6 +233,123 @@ public class KeyHopFailureTests : FusionTestBase
             data: {"users":[{"name":"user-2","total":null},{"name":"user-3","total":null}]}
             errors: [{"message":"Unexpected Execution Error","path":["users",0,"total"]},{"message":"Unexpected Execution Error","path":["users",1,"total"]}]
             lookups: B:2 B:3
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnceAtTheDependentField_When_MiddleHopThrowsForNestedKey()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType);
+
+        // act
+        var result = await ExecuteAsync(gateway, true, false, [2, 98, 3], [98, 2, 3], [2, 3, 98]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98, 3] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-98","total":null},{"name":"user-3","total":3}]}
+            errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
+            lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
+            ## ids [98, 2, 3] plain
+            data: {"users":[{"name":"user-98","total":null},{"name":"user-2","total":2},{"name":"user-3","total":3}]}
+            errors: [{"message":"B hop failed for 98","path":["users",0,"total"]}]
+            lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
+            ## ids [2, 3, 98] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-3","total":3},{"name":"user-98","total":null}]}
+            errors: [{"message":"B hop failed for 98","path":["users",2,"total"]}]
+            lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnceAtTheDependentField_When_MiddleHopThrowsForCompositeKey()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(CompositeKeyType);
+
+        // act
+        var result = await ExecuteAsync(gateway, true, false, [2, 98, 3]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98, 3] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-98","total":null},{"name":"user-3","total":3}]}
+            errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
+            lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorAtTheDependentField_When_KeyFieldFailsWithPartialData()
+    {
+        // arrange
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<BFlat.Query>());
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CFlat.Query>());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c)],
+            includeOperationPlan: false);
+
+        // act
+        var result = await ExecuteAsync(gateway, true, false, [2, 98, 3]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98, 3] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-98","total":null},{"name":"user-3","total":3}]}
+            errors: [{"message":"sku failed for 98","path":["users",1,"total"]}]
+            lookups: C:sku-2 C:sku-3
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportOneErrorPerAffectedPath_When_MiddleHopFailsWithServerError()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(
+            NestedKeyType,
+            mockMiddleHop: _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)));
+
+        // act
+        var result = await ExecuteAsync(gateway, true, false, [2, 3]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 3] plain
+            data: {"users":[{"name":"user-2","total":null},{"name":"user-3","total":null}]}
+            errors: [{"message":"Unexpected Execution Error","path":["users",0,"total"]},{"message":"Unexpected Execution Error","path":["users",1,"total"]}]
+            lookups: 
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportOneErrorPerAffectedPath_When_MiddleHopFailsWithTransportError()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(
+            NestedKeyType,
+            mockMiddleHop: _ => throw new HttpRequestException("transport failure"));
+
+        // act
+        var result = await ExecuteAsync(gateway, true, false, [2, 98, 3]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98, 3] plain
+            data: {"users":[{"name":"user-2","total":null},{"name":"user-98","total":null},{"name":"user-3","total":null}]}
+            errors: [{"message":"Unexpected Execution Error","path":["users",0,"total"]},{"message":"Unexpected Execution Error","path":["users",1,"total"]},{"message":"Unexpected Execution Error","path":["users",2,"total"]}]
+            lookups: 
 
             """);
     }
@@ -294,6 +417,114 @@ public class KeyHopFailureTests : FusionTestBase
             lookups: C:sku-2 C:sku-3
 
             """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorAtTheDependentField_When_DeferredMiddleHopThrows()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType);
+
+        // act
+        var result = await ExecuteAsync(gateway, true, true, [2, 98, 3]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98, 3] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-98","total":null},{"name":"user-3","total":3}]}
+            errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
+            lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
+            ## ids [2, 98, 3] defer
+            data: {"users":[{"name":"user-2"},{"name":"user-98"},{"name":"user-3"}]}
+            incremental: [0]{"total":2} [1]{"total":null} [2]{"total":3}
+            incremental errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
+            lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotReportTheErrorOnAFieldThatDependsOnAnotherHop_When_ASiblingKeyHopThrows()
+    {
+        // arrange
+        using var gateway = await CreateFiveSchemaGatewayAsync();
+
+        // act
+        var result = await ExecuteAsync(gateway, "{ users(ids: [$ids]) { total score } }", [2, 98]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98]
+            data: {"users":[{"total":2,"score":6},{"total":null,"score":null}]}
+            errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
+            lookups: B:2 B:98 C:sku-2
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotReportTheErrorOnADescendantField_When_TheParentKeyHopThrows()
+    {
+        // arrange
+        using var gateway = await CreateFiveSchemaGatewayAsync();
+
+        // act
+        var result = await ExecuteAsync(gateway, "{ users(ids: [$ids]) { total friend { score } } }", [2, 98]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98]
+            data: {"users":[{"total":2,"friend":{"score":9}},{"total":null,"friend":{"score":null}}]}
+            errors: [{"message":"B hop failed for 98","path":["users",1,"total"]}]
+            lookups: B:2 B:98 C:sku-2
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheSameErrors_When_TheSiblingHopsFinishInEitherOrder()
+    {
+        // arrange
+        using var gateway = await CreateFiveSchemaGatewayAsync();
+        const string query = "{ nullableUsers(ids: [$ids]) { total scoreNN } }";
+
+        // act
+        s_delayB = 0;
+        s_delayE = 300;
+        var errorHopFirst = await ExecuteAsync(gateway, query, [2, 98]);
+
+        s_delayB = 300;
+        s_delayE = 0;
+        var violationHopFirst = await ExecuteAsync(gateway, query, [2, 98]);
+        s_delayB = 0;
+        s_delayE = 0;
+
+        // assert
+        Assert.Equal(errorHopFirst, violationHopFirst);
+        errorHopFirst.MatchInlineSnapshot(
+            """
+            ## ids [2, 98]
+            data: {"nullableUsers":[{"total":2,"scoreNN":6},null]}
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"scoreNN"],"extensions":{"code":"HC0018"}},{"message":"B hop failed for 98","path":["nullableUsers",1,"total"]}]
+            lookups: B:2 B:98 C:sku-2
+
+            """);
+    }
+
+    private async Task<Gateway> CreateFiveSchemaGatewayAsync()
+    {
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>());
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>());
+        var d = CreateSourceSchema("d", b => b.AddQueryType<D.Query>());
+        var e = CreateSourceSchema("e", b => b.AddQueryType<E.Query>());
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c), ("d", d), ("e", e)],
+            includeOperationPlan: false);
     }
 
     [Fact]
@@ -377,7 +608,7 @@ public class KeyHopFailureTests : FusionTestBase
             """
             ## ids [2, 3, 4, 5]
             data: {"userList":null}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["userList",0,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"Unexpected Execution Error","path":["userList",0,"totalNN"]}]
             lookups: 
 
             """);
@@ -398,7 +629,7 @@ public class KeyHopFailureTests : FusionTestBase
         results[0].MatchInlineSnapshot(
             """
             data: null
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["users",0,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"Unexpected Execution Error","path":["users",0,"totalNN"]}]
 
             """);
     }
@@ -420,7 +651,7 @@ public class KeyHopFailureTests : FusionTestBase
         results[0].MatchInlineSnapshot(
             """
             data: {"nullableUsers":[null,null],"other":[{"score":6},{"score":6}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"totalNN"],"extensions":{"code":"HC0018"}},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"Unexpected Execution Error","path":["nullableUsers",0,"totalNN"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"totalNN"]}]
 
             """);
         plain.MatchInlineSnapshot(
@@ -640,6 +871,7 @@ public class KeyHopFailureTests : FusionTestBase
         result.MatchInlineSnapshot(
             """
             data: {"nullableUsers":[{"name":"user-2","total":null},{"name":"user-3","total":null}]}
+            errors: [{"message":"Unexpected Execution Error","path":["nullableUsers",0,"total"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"total"]}]
 
             """);
     }
@@ -687,9 +919,9 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Theory]
-    [InlineData("{ nullableUsers(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: {\"nullableUsers\":[null,null],\"accounts\":[{\"kayNN\":3}]}\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}},{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",1,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n")]
-    [InlineData("{ users(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: null\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"users\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n")]
-    public async Task Execute_Should_ReportTheSameViolations_When_RequestGroupingBatchesTheLookups(
+    [InlineData("{ nullableUsers(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: {\"nullableUsers\":[null,null],\"accounts\":[{\"kayNN\":3}]}\nerrors: [{\"message\":\"Unexpected Execution Error\",\"path\":[\"nullableUsers\",0,\"kayNN\"]},{\"message\":\"Unexpected Execution Error\",\"path\":[\"nullableUsers\",1,\"kayNN\"]}]\n")]
+    [InlineData("{ users(ids: [2, 3]) { name kayNN } accounts(ids: [5]) { kayNN } }", "data: null\nerrors: [{\"message\":\"Unexpected Execution Error\",\"path\":[\"users\",0,\"kayNN\"]}]\n")]
+    public async Task Execute_Should_ReportTheSameErrors_When_RequestGroupingBatchesTheLookups(
         string query,
         string expected)
     {
@@ -778,15 +1010,15 @@ public class KeyHopFailureTests : FusionTestBase
             """
             ## ids [98, 2, 3]
             data: {"nullableUsers":[null,{"name":"user-2","totalNN":200},{"name":"user-3","totalNN":300}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",0,"totalNN"]}]
             lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
             ## ids [2, 98, 3]
             data: {"nullableUsers":[{"name":"user-2","totalNN":200},null,{"name":"user-3","totalNN":300}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",1,"totalNN"]}]
             lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
             ## ids [2, 3, 98]
             data: {"nullableUsers":[{"name":"user-2","totalNN":200},{"name":"user-3","totalNN":300},null]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",2,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",2,"totalNN"]}]
             lookups: B:2 B:3 B:98 C:sku-2 C:sku-3
 
             """);
@@ -811,15 +1043,15 @@ public class KeyHopFailureTests : FusionTestBase
             """
             ## ids [98, 2, 3]
             data: {"nullableUsers":[null,{"name":"user-2","totalNN":200},{"name":"user-3","totalNN":300}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",0,"totalNN"]}]
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
             ## ids [2, 98, 3]
             data: {"nullableUsers":[{"name":"user-2","totalNN":200},null,{"name":"user-3","totalNN":300}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",1,"totalNN"]}]
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
             ## ids [2, 3, 98]
             data: {"nullableUsers":[{"name":"user-2","totalNN":200},{"name":"user-3","totalNN":300},null]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",2,"totalNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",2,"totalNN"]}]
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
 
             """);
@@ -1349,7 +1581,7 @@ public class KeyHopFailureTests : FusionTestBase
 
     public static class E
     {
-        public record User(int Id, [property: Shareable] string? Code);
+        public record User(int Id, [property: Shareable] string? Code, User? Friend);
 
         public class Query
         {
@@ -1367,7 +1599,10 @@ public class KeyHopFailureTests : FusionTestBase
 
                 return id == 93
                     ? throw new GraphQLException("E hop failed for 93")
-                    : new User(id, id == 98 ? null : $"code-{id}");
+                    : new User(
+                        id,
+                        id == 98 ? null : $"code-{id}",
+                        new User(id + 1000, id == 98 ? null : $"code-{id + 1000}", null));
             }
         }
     }
@@ -1414,6 +1649,8 @@ public class KeyHopFailureTests : FusionTestBase
 
     public static class BFlat
     {
+        public record User(int Id, string? Sku);
+
         public class Query
         {
             [Internal]
@@ -1433,7 +1670,12 @@ public class KeyHopFailureTests : FusionTestBase
             public int Id => id;
 
             [Shareable]
-            public string? Sku => id == 94 ? null : $"sku-{id}";
+            public string? Sku => id switch
+            {
+                98 => throw new GraphQLException("sku failed for 98"),
+                94 => null,
+                _ => $"sku-{id}"
+            };
         }
     }
 
