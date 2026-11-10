@@ -21,6 +21,12 @@ internal sealed record OperationWorkItem(
     /// </summary>
     public bool AllowSourceSchemaReentry { get; init; }
 
+    /// <summary>
+    /// Indicates that the key of this lookup may only be provided by steps whose conditions
+    /// the lookup conditions imply.
+    /// </summary>
+    public bool RequireImpliedSupplierConditions { get; init; }
+
     public override int EstimatedDepth
         => Kind is OperationWorkItemKind.Root
             ? 1
