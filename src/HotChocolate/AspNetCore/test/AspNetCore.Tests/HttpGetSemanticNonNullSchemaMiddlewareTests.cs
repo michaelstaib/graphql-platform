@@ -1,11 +1,11 @@
 using System.Net;
 using HotChocolate.AspNetCore.Tests.Utilities;
-using HotChocolate.Execution;
 using HotChocolate.Types;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 
 namespace HotChocolate.AspNetCore;
 
@@ -20,8 +20,8 @@ public class HttpGetSemanticNonNullSchemaMiddlewareTests(TestServerFactory serve
             configureServices: sp =>
                 sp.AddGraphQLServer()
                     .ConfigureSchemaServices(s =>
-                        s.RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>()));
+                        s.RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider())));
         var url = TestServerExtensions.CreateUrl("/graphql/semantic-non-null-schema.graphql");
         var request = new HttpRequestMessage(HttpMethod.Get, url);
 
@@ -253,8 +253,8 @@ public class HttpGetSemanticNonNullSchemaMiddlewareTests(TestServerFactory serve
             configureServices: sp =>
                 sp.AddGraphQLServer()
                     .ConfigureSchemaServices(s =>
-                        s.RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>()));
+                        s.RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider())));
         var url = TestServerExtensions.CreateUrl("/graphql/semantic-non-null-schema.graphql");
         var client = server.CreateClient();
 
@@ -280,8 +280,8 @@ public class HttpGetSemanticNonNullSchemaMiddlewareTests(TestServerFactory serve
                     .AddGraphQLServer()
                     .ConfigureSchemaServices(schemaServices =>
                         schemaServices
-                            .RemoveAll<ITimeProvider>()
-                            .AddSingleton<ITimeProvider, StaticTimeProvider>())
+                            .RemoveAll<TimeProvider>()
+                            .AddSingleton<TimeProvider>(CreateTimeProvider()))
                     .AddTypeExtension<TaggedQueryExtension>());
 
     private sealed class TaggedQueryExtension : ObjectTypeExtension
@@ -292,10 +292,8 @@ public class HttpGetSemanticNonNullSchemaMiddlewareTests(TestServerFactory serve
         }
     }
 
-    private sealed class StaticTimeProvider : ITimeProvider
-    {
-        public DateTimeOffset UtcNow { get; } = new(2021, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    }
+    private static FakeTimeProvider CreateTimeProvider()
+        => new(new DateTimeOffset(2021, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
     public class DirectiveQueryType : ObjectType
     {

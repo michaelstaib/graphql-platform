@@ -39,7 +39,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
 
     private readonly ConcurrentDictionary<SchemaCacheKey, CachedSchemaOutput> _schemaCache = [];
     private readonly ConcurrentDictionary<SchemaCacheKey, CachedSemanticNonNullSchemaOutput> _semanticNonNullSchemaCache = [];
-    private readonly ITimeProvider _timeProvider;
+    private readonly TimeProvider _timeProvider;
     private readonly FormatInfo _defaultFormat;
     private readonly FormatInfo _graphqlResponseFormat;
     private readonly FormatInfo _graphqlResponseStreamFormat;
@@ -72,7 +72,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
     /// Gets or sets the encoder to use when escaping strings, or null to use the default encoder.
     /// </param>
     /// <param name="timeProvider">
-    /// The time provider.
+    /// The time provider, or null to use <see cref="TimeProvider.System"/>.
     /// </param>
     /// <param name="incrementalDeliveryFormat">
     /// The default incremental delivery format to use when the Accept header does not specify one.
@@ -80,7 +80,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
     public DefaultHttpResponseFormatter(
         bool indented = false,
         JavaScriptEncoder? encoder = null,
-        ITimeProvider? timeProvider = null,
+        TimeProvider? timeProvider = null,
         IncrementalDeliveryFormat incrementalDeliveryFormat = IncrementalDeliveryFormat.Version_0_2)
         : this(
             new HttpResponseFormatterOptions
@@ -103,17 +103,17 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
     /// The JSON result formatter options
     /// </param>
     /// <param name="timeProvider">
-    /// The time provider.
+    /// The time provider, or null to use <see cref="TimeProvider.System"/>.
     /// </param>
     /// <param name="incrementalDeliveryFormat">
     /// The default incremental delivery format to use when the Accept header does not specify one.
     /// </param>
     public DefaultHttpResponseFormatter(
         HttpResponseFormatterOptions options,
-        ITimeProvider? timeProvider = null,
+        TimeProvider? timeProvider = null,
         IncrementalDeliveryFormat incrementalDeliveryFormat = IncrementalDeliveryFormat.Version_0_2)
     {
-        _timeProvider = timeProvider ?? new DefaultTimeProvider();
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         var jsonFormatter = new JsonResultFormatter(options.Json);
         var multiPartFormatter = new MultiPartResultFormatter(jsonFormatter);
@@ -617,7 +617,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
         return;
 
         CachedSchemaOutput Update(SchemaCacheKey _)
-            => new(schema, version, specVersion, _timeProvider.UtcNow);
+            => new(schema, version, specVersion, _timeProvider.GetUtcNow());
     }
 
     public ValueTask FormatSemanticNonNullSchemaAsync(
@@ -660,7 +660,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
         return;
 
         CachedSemanticNonNullSchemaOutput Update(SchemaCacheKey _)
-            => new(schema, version, specVersion, _timeProvider.UtcNow);
+            => new(schema, version, specVersion, _timeProvider.GetUtcNow());
     }
 
     /// <summary>
@@ -1265,7 +1265,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
 
     internal static DefaultHttpResponseFormatter Create(
         HttpResponseFormatterOptions options,
-        ITimeProvider timeProvider,
+        TimeProvider timeProvider,
         IncrementalDeliveryFormat incrementalDeliveryFormat)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
@@ -1316,7 +1316,7 @@ public class DefaultHttpResponseFormatter : IHttpResponseFormatter
 
     private sealed class SealedDefaultHttpResponseFormatter(
         HttpResponseFormatterOptions options,
-        ITimeProvider timeProvider,
+        TimeProvider timeProvider,
         IncrementalDeliveryFormat incrementalDeliveryFormat)
         : DefaultHttpResponseFormatter(options, timeProvider, incrementalDeliveryFormat);
 

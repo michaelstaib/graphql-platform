@@ -142,7 +142,7 @@ public static partial class HotChocolateAspNetCoreServiceCollectionExtensions
                                 Indented = indented
                             }
                         },
-                        sp.GetRequiredService<ITimeProvider>(),
+                        sp.GetRequiredService<TimeProvider>(),
                         incrementalDeliveryFormat)));
         return builder;
     }
@@ -179,7 +179,7 @@ public static partial class HotChocolateAspNetCoreServiceCollectionExtensions
                 .AddSingleton<IHttpResponseFormatter>(
                     sp => DefaultHttpResponseFormatter.Create(
                     options,
-                    sp.GetRequiredService<ITimeProvider>(),
+                    sp.GetRequiredService<TimeProvider>(),
                     incrementalDeliveryFormat)));
         return builder;
     }
