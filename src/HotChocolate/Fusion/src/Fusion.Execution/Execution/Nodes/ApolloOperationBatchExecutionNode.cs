@@ -571,6 +571,19 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
         return true;
     }
 
+    protected override bool IsSkippedByOperationConditions(OperationPlanContext context)
+    {
+        foreach (var operation in _operations)
+        {
+            if (!IsSkipped(context, operation))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool IsSkipped(OperationPlanContext context, OperationDefinition operation)
     {
         if (operation.Conditions.Length == 0)

@@ -2491,7 +2491,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
         // assert
         Assert.Empty(remaining);
         Assert.Equal(10, reusedCount);
-        Assert.Equal(0, GetMissingTargetCount(store));
+        Assert.Equal(0, store.MissingTargetCount);
     }
 
     [Theory]
@@ -2532,13 +2532,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // assert
         Assert.Equal(2, variables.Length);
-        Assert.Equal(expectedCount, GetMissingTargetCount(store));
+        Assert.Equal(expectedCount, store.MissingTargetCount);
     }
-
-    private static int GetMissingTargetCount(FetchResultStore store)
-        => (int)typeof(FetchResultStore)
-            .GetField("_missingTargetCount", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(store)!;
 
     private static void AddResults(
         FetchResultStore store,

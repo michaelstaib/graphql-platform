@@ -18,6 +18,11 @@ internal sealed partial class FetchResultStore
     private int _missingTargetCount;
     private int _missingHopId = NoHop;
 
+    /// <summary>
+    /// Gets the number of targets that hops could not fetch and that the next completion pass looks at.
+    /// </summary>
+    internal int MissingTargetCount => _missingTargetCount;
+
     // Records a reachable target that the hop currently creating its variables could neither fetch nor reuse.
     private void RecordMissingTargetUnsafe(CompositeResultElement target)
     {

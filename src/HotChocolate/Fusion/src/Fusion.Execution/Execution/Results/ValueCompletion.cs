@@ -374,6 +374,7 @@ internal sealed class ValueCompletion
 
             if (!target.TryGetProperty(responseName, out var fieldResult)
                 || fieldResult.IsInternal
+                || fieldResult.IsExcluded
                 || fieldResult.ValueKind is not JsonValueKind.Undefined
                 || fieldResult.Selection is not { IsNonNull: true } selection)
             {

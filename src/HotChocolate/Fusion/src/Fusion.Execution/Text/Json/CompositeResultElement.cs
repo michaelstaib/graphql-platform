@@ -284,6 +284,20 @@ public readonly partial struct CompositeResultElement
     }
 
     /// <summary>
+    /// Gets a value indicating whether this property value is excluded from the response
+    /// by a <c>@skip</c> or <c>@include</c> condition.
+    /// </summary>
+    public bool IsExcluded
+    {
+        get
+        {
+            CheckValidInstance();
+
+            return _parent.IsExcludedProperty(_cursor);
+        }
+    }
+
+    /// <summary>
     /// Gets a value indicating whether this element represents an enum value.
     /// </summary>
     public bool IsEnumValue

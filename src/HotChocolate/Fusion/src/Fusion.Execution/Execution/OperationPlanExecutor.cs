@@ -1417,6 +1417,10 @@ internal static partial class OperationPlanExecutor
                 await executionState.Signal;
             }
 
+            // Every serial root field is complete, including its null propagation, before the next one starts.
+            // A pass that nulls the data cancels the execution, so the remaining root fields do not run.
+            context.CompleteDependentFields(plan, cancellationToken);
+
             if (cancellationToken.IsCancellationRequested)
             {
                 break;
@@ -1424,7 +1428,6 @@ internal static partial class OperationPlanExecutor
         }
 
         await DrainActiveNodesAsync(plan, executionState);
-        context.CompleteDependentFields(plan, cancellationToken);
 
         if (context.CollectTelemetry)
         {

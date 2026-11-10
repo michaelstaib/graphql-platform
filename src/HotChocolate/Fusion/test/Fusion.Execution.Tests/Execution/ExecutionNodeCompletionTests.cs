@@ -423,6 +423,33 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
         Assert.Empty(GetCompletingSkippedNodes(fixture));
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task CompleteNode_Should_ClassifyTheSkip_When_NodeReturnsSkippedFromItsExecution(
+        bool bySkippedOperationConditions,
+        bool expectCompleting)
+    {
+        // arrange
+        var source = new TestExecutionNode(0, TestOutcome.SkippedInside)
+        {
+            SkippedByOperationConditions = bySkippedOperationConditions
+        };
+        var dependent = new TestExecutionNode(1, TestOutcome.Success);
+        Chain(source, dependent);
+
+        await using var fixture = await CreateSealedAsync(source, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var result = await ExecuteNodeAsync(fixture, source, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, source, result);
+
+        // assert
+        Assert.Equal(bySkippedOperationConditions, result.SkippedByCondition);
+        Assert.Equal(expectCompleting, fixture.State.HasCompletingSkips);
+    }
+
     private static Task<ExecutionTestFixture> CreateSealedAsync(params TestExecutionNode[] nodes)
     {
         foreach (var node in nodes)
@@ -475,7 +502,8 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
         Success,
         Skipped,
         Failed,
-        Canceled
+        Canceled,
+        SkippedInside
     }
 
     private sealed class TestExecutionNode : ExecutionNode
@@ -505,6 +533,11 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
         public override string SchemaName => "test";
 
         public TestOutcome Outcome { get; }
+
+        public bool SkippedByOperationConditions { get; init; }
+
+        protected override bool IsSkippedByOperationConditions(OperationPlanContext context)
+            => SkippedByOperationConditions;
 
         public int ExecutionCount => _executionCount;
 
@@ -543,6 +576,7 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
             return Outcome switch
             {
                 TestOutcome.Success => ExecutionStatus.Success,
+                TestOutcome.SkippedInside => ExecutionStatus.Skipped,
                 TestOutcome.Failed => throw _failure ?? new InvalidOperationException("execution failed"),
                 TestOutcome.Canceled => throw new OperationCanceledException(cancellationToken),
                 _ => throw new InvalidOperationException("The skipped node must not execute.")

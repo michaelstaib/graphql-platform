@@ -567,6 +567,126 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Execute_Should_NotReportViolation_When_FieldIsExcludedByAVariable()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType);
+
+        // act
+        var include = await ExecuteQueryAsync(
+            gateway,
+            "query($s: Boolean!) { nullableUsers(ids: [2, 97]) { name total totalNN @include(if: $s) } }",
+            false);
+        var skip = await ExecuteQueryAsync(
+            gateway,
+            "query($s: Boolean!) { nullableUsers(ids: [2, 97]) { name total totalNN @skip(if: $s) } }",
+            true);
+
+        // assert
+        include.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"name":"user-2","total":2},{"name":"user-97","total":null}]}
+
+            """);
+        skip.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"name":"user-2","total":2},{"name":"user-97","total":null}]}
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotReportViolation_When_FragmentIsExcludedByAVariable()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType);
+
+        // act
+        var include = await ExecuteQueryAsync(
+            gateway,
+            "query($s: Boolean!) { nullableUsers(ids: [2, 97]) { name ... @include(if: $s) { totalNN } } }",
+            false);
+        var skip = await ExecuteQueryAsync(
+            gateway,
+            "query($s: Boolean!) { nullableUsers(ids: [2, 97]) { name ... @skip(if: $s) { totalNN } } }",
+            true);
+
+        // assert
+        include.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"name":"user-2"},{"name":"user-97"}]}
+
+            """);
+        skip.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"name":"user-2"},{"name":"user-97"}]}
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotReportViolation_When_ExcludedFieldDependsOnAFailedHop()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType, mockMiddleHop: ServerError);
+
+        // act
+        var result = await ExecuteQueryAsync(
+            gateway,
+            "query($s: Boolean!) { nullableUsers(ids: [2, 3]) { name total totalNN @include(if: $s) } }",
+            false);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"name":"user-2","total":null},{"name":"user-3","total":null}]}
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotRunTheNextMutationRoot_When_ViolationOfTheFirstRootNullsTheData()
+    {
+        // arrange
+        using var gateway = await CreateOneHopMutationGatewayAsync();
+
+        // act
+        var result = await ExecuteMutationAsync(
+            gateway,
+            "mutation { first: createUserNN(id: 94) { name nickRankNN } second: touch }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: null
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["first","nickRankNN"],"extensions":{"code":"HC0018"}}]
+            calls: A:create-94
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_RunTheNextMutationRootOnce_When_ViolationOfTheFirstRootNullsANullableField()
+    {
+        // arrange
+        using var gateway = await CreateOneHopMutationGatewayAsync();
+
+        // act
+        var result = await ExecuteMutationAsync(
+            gateway,
+            "mutation { first: createUser(id: 94) { name nickRankNN } second: touch }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"first":null,"second":1}
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["first","nickRankNN"],"extensions":{"code":"HC0018"}}]
+            calls: A:create-94 A:touch
+
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_ReportViolationOnlyForTheItemWithoutKey_When_SingleHopMissesTheKey()
     {
         // arrange
@@ -788,6 +908,24 @@ public class KeyHopFailureTests : FusionTestBase
             includeOperationPlan: false);
     }
 
+    private async Task<Gateway> CreateOneHopMutationGatewayAsync()
+    {
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>().AddMutationType<A.Mutation>());
+        var j = CreateSourceSchema("j", b => b.AddQueryType<J.Query>());
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("j", j)],
+            includeOperationPlan: false);
+    }
+
+    private static async Task<string> ExecuteMutationAsync(Gateway gateway, string query)
+    {
+        s_calls.Clear();
+        var text = new StringBuilder(await ExecuteQueryAsync(gateway, query));
+        text.AppendLine($"calls: {string.Join(" ", s_calls.Order(StringComparer.Ordinal))}");
+        return text.ToString();
+    }
+
     private async Task<Gateway> CreateOneHopGatewayAsync()
     {
         var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
@@ -869,6 +1007,23 @@ public class KeyHopFailureTests : FusionTestBase
             .Where(line => line.StartsWith('{'));
 
         return string.Join("\n", payloads) + "\n";
+    }
+
+    private static async Task<string> ExecuteQueryAsync(Gateway gateway, string query, bool condition)
+    {
+        var text = new StringBuilder();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var response = await client.PostAsync(
+            new OperationRequest(query, variables: new Dictionary<string, object?> { ["s"] = condition }),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        await foreach (var result in response.ReadAsResultStreamAsync())
+        {
+            AppendResult(text, result, includeErrors: true);
+        }
+
+        return text.ToString();
     }
 
     private static async Task<string> ExecuteQueryAsync(Gateway gateway, string query)
@@ -1020,6 +1175,28 @@ public class KeyHopFailureTests : FusionTestBase
             public User? GetUserById(int id) => Create(id);
 
             private static User Create(int id) => new(id, $"user-{id}", id == 94 ? null : $"nick-{id}");
+        }
+
+        public class Mutation
+        {
+            public User? CreateUser(int id)
+            {
+                s_calls.Enqueue("A:create-" + id);
+                return new User(id, $"user-{id}", id == 94 ? null : $"nick-{id}");
+            }
+
+            [GraphQLType<NonNullType<ObjectType<User>>>]
+            public User CreateUserNN(int id)
+            {
+                s_calls.Enqueue("A:create-" + id);
+                return new User(id, $"user-{id}", id == 94 ? null : $"nick-{id}");
+            }
+
+            public int Touch()
+            {
+                s_calls.Enqueue("A:touch");
+                return 1;
+            }
         }
     }
 
