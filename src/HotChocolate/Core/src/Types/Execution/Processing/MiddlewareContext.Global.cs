@@ -94,7 +94,9 @@ internal partial class MiddlewareContext : IMiddlewareContext
         }
     }
 
-    // An error that is not a plain error keeps its type, the configured values are applied to it.
+    // Returns the configured error. An error that is not a plain error keeps its type and gets the changed message,
+    // code, extensions, exception, path and locations through its With methods. A removed path or removed locations
+    // are not applied to such an error because the interface cannot express them.
     private static IError Configure(IError error, Action<ErrorBuilder> configure)
     {
         var errorBuilder = ErrorBuilder.FromError(error);
@@ -106,13 +108,53 @@ internal partial class MiddlewareContext : IMiddlewareContext
             return configured;
         }
 
-        // The interface has no way to remove a path or locations, so null is passed to the type to clear them.
-        return error
-            .WithMessage(configured.Message)
-            .WithExtensions(configured.Extensions)
-            .WithException(configured.Exception)
-            .WithPath(configured.Path!)
-            .WithLocations(configured.Locations!);
+        var result = error;
+
+        if (error.Message != configured.Message)
+        {
+            result = result.WithMessage(configured.Message);
+        }
+
+        if (error.Code != configured.Code)
+        {
+            result = result.WithCode(configured.Code);
+        }
+
+        if (!HaveSameExtensions(error.Extensions, configured.Extensions))
+        {
+            result = result.WithExtensions(configured.Extensions);
+        }
+
+        if (!ReferenceEquals(error.Exception, configured.Exception))
+        {
+            result = result.WithException(configured.Exception);
+        }
+
+        if (configured.Path is { } path && !path.Equals(error.Path))
+        {
+            result = result.WithPath(path);
+        }
+
+        if (configured.Locations is { } locations
+            && !locations.SequenceEqual(error.Locations ?? []))
+        {
+            result = result.WithLocations(locations);
+        }
+
+        return result;
+    }
+
+    private static bool HaveSameExtensions(
+        IReadOnlyDictionary<string, object?>? first,
+        IReadOnlyDictionary<string, object?>? second)
+    {
+        if (first is null || second is null)
+        {
+            return first is null && second is null;
+        }
+
+        return first.Count == second.Count
+            && first.All(pair => second.TryGetValue(pair.Key, out var value) && Equals(pair.Value, value));
     }
 
     public void ReportError(IError error)

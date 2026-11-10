@@ -151,13 +151,14 @@ public class ReportErrorTests
     public async Task ReportError_Should_ApplyEveryChangeOfConfigure_When_ErrorIsACustomError()
     {
         // arrange
-        var reported = new List<IError>();
-        var exception = new InvalidOperationException("cause");
+        var reported = new List<string>();
         var executor = await new ServiceCollection()
             .AddGraphQL()
             .AddErrorFilter(error =>
             {
-                reported.Add(error);
+                reported.Add(
+                    $"{error.GetType().Name} {error.Code} {error.Exception?.Message} {error.Path} "
+                    + string.Join(",", (error.Locations ?? []).Select(l => $"{l.Line}:{l.Column}")));
                 return error;
             })
             .AddQueryType(d => d
@@ -166,13 +167,12 @@ public class ReportErrorTests
                 .Resolve(context =>
                 {
                     context.ReportError(
-                        new GraphQLException(
-                            new CustomError("item failed", context.Path) { Locations = [new Location(1, 1)] }),
+                        new GraphQLException(new CustomError("item failed", context.Path)),
                         error => error
                             .SetCode("CUSTOM")
-                            .SetException(exception)
-                            .SetPath(null)
-                            .ClearLocations());
+                            .SetException(new InvalidOperationException("cause"))
+                            .SetPath(context.Path.Append(1))
+                            .AddLocation(new Location(2, 3)));
                     return new string?[] { "a" };
                 }))
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
@@ -181,12 +181,7 @@ public class ReportErrorTests
         await executor.ExecuteAsync("{ items }", TestContext.Current.CancellationToken);
 
         // assert
-        var error = Assert.Single(reported);
-        Assert.IsType<CustomError>(error);
-        Assert.Equal("CUSTOM", error.Code);
-        Assert.Same(exception, error.Exception);
-        Assert.Null(error.Path);
-        Assert.Empty(error.Locations ?? []);
+        reported.MatchInlineSnapshots(["CustomError CUSTOM cause items[1] 2:3"]);
     }
 
     private sealed record CustomError(
