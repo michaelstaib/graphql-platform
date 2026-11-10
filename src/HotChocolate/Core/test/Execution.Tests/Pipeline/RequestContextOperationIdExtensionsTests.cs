@@ -100,25 +100,28 @@ public sealed class RequestContextOperationIdExtensionsTests
         Assert.Equal("abc123.B", operationId);
     }
 
-    [Fact]
-    public void GetOperationId_Should_BuildIdDotDefault_When_MultipleOperations_And_OperationNameIsNull()
-    {
-        // arrange
-        var documentId = new OperationDocumentId("abc123");
-        const string document = "query A { foo } query B { bar }";
-        var context = CreateContext(document, documentId, operationName: null);
-
-        // act
-        var operationId = context.GetOperationId();
-
-        // assert
-        Assert.Equal("abc123.Default", operationId);
-    }
-
     [Theory]
     [InlineData(null)]
-    [InlineData("NamedOperation")]
-    public void GetOperationId_Should_MatchFormula_When_IdExceedsStackallocThreshold(string? operationName)
+    [InlineData("")]
+    public void GetOperationId_Should_Throw_When_MultipleOperations_And_OperationNameIsOmitted(
+        string? operationName)
+    {
+        // arrange
+        const string document = "query Default { foo } query B { bar }";
+        var context = CreateContext(document, new OperationDocumentId("abc123"), operationName);
+
+        // act
+        void Act() => context.GetOperationId();
+
+        // assert
+        var exception = Assert.Throws<GraphQLException>(Act);
+        Assert.Equal(
+            "The operation name can only be omitted if there is just one operation in a GraphQL document.",
+            Assert.Single(exception.Errors).Message);
+    }
+
+    [Fact]
+    public void GetOperationId_Should_MatchFormula_When_IdExceedsStackallocThreshold()
     {
         // arrange
         // 400 characters comfortably exceeds the 256 char stackalloc threshold used by the
@@ -126,13 +129,13 @@ public sealed class RequestContextOperationIdExtensionsTests
         var idValue = new string('a', 400);
         var documentId = new OperationDocumentId(idValue);
         const string document = "query A { foo } query B { bar }";
-        var context = CreateContext(document, documentId, operationName);
+        var context = CreateContext(document, documentId, operationName: "B");
 
         // act
         var operationId = context.GetOperationId();
 
         // assert
-        var expected = $"{idValue}.{operationName ?? "Default"}";
+        var expected = $"{idValue}.B";
         Assert.Equal(expected, operationId);
     }
 

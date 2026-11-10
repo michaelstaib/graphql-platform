@@ -1,3 +1,5 @@
+using HotChocolate.Language;
+
 namespace HotChocolate.Execution.Pipeline;
 
 internal static class ThrowHelper
@@ -18,11 +20,29 @@ internal static class ThrowHelper
         => new("The operation document must have a document ID before an operation id can be computed.");
 
     public static GraphQLException OperationId_OperationNotFound(
-        Language.DocumentNode document,
+        DocumentNode document,
         string operationName)
         => new(ErrorBuilder.New()
             .SetMessage("The specified operation `{0}` cannot be found.", operationName)
             .AddLocation(document)
             .SetExtension("operationName", operationName)
             .Build());
+
+    public static GraphQLException OperationId_OperationNameRequired(DocumentNode document)
+    {
+        var builder = ErrorBuilder.New()
+            .SetMessage("The operation name can only be omitted if there is just one operation in a GraphQL document.");
+        var count = 0;
+
+        for (var i = 0; i < document.Definitions.Count && count < 2; i++)
+        {
+            if (document.Definitions[i] is OperationDefinitionNode operation)
+            {
+                builder.AddLocation(operation);
+                count++;
+            }
+        }
+
+        return new GraphQLException(builder.Build());
+    }
 }

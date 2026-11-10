@@ -84,6 +84,52 @@ public class OperationNameResolutionTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_RejectOmittedOperationName_When_DefaultOperationRanBefore()
+    {
+        // arrange
+        var executor = await CreateExecutorAsync();
+        const string document = "query Default { __typename } query Other { __typename }";
+
+        // act
+        var first = await executor.ExecuteAsync(
+            OperationRequestBuilder.New().SetDocument(document).SetOperationName("Default").Build(),
+            TestContext.Current.CancellationToken);
+        var second = await executor.ExecuteAsync(
+            OperationRequestBuilder.New().SetDocument(document).Build(),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        first.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "__typename": "Query"
+              }
+            }
+            """);
+        second.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "The operation name can only be omitted if there is just one operation in a GraphQL document.",
+                  "locations": [
+                    {
+                      "line": 1,
+                      "column": 1
+                    },
+                    {
+                      "line": 1,
+                      "column": 30
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+    }
+
     private async Task<IRequestExecutor> CreateExecutorAsync()
     {
         var services = new ServiceCollection();

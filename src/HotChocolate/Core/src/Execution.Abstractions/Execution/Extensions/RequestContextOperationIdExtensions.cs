@@ -12,7 +12,6 @@ public static class RequestContextOperationIdExtensions
 {
     // The '.' separator between the operation document id and the operation name.
     private const int OperationIdSeparatorLength = 1;
-    private const string DefaultOperationName = "Default";
 
     /// <summary>
     /// Tries to get the operation id without computing it.
@@ -38,6 +37,8 @@ public static class RequestContextOperationIdExtensions
 
     /// <summary>
     /// Gets the unique id for the selected operation.
+    /// Throws a <see cref="GraphQLException"/> (a request error) when the requested operation name is not
+    /// defined, or when the name is omitted in a document with several operations.
     /// </summary>
     /// <param name="context">
     /// The request context.
@@ -68,12 +69,10 @@ public static class RequestContextOperationIdExtensions
 
         if (documentInfo.OperationCount == 1)
         {
-            // The id of a single operation document does not contain the operation name,
-            // so a requested name must be checked against the document on every request.
             var requestedName = context.Request.OperationName;
 
             if (!string.IsNullOrEmpty(requestedName)
-                && !DefinesOperation(documentInfo.Document, requestedName))
+                && !documentInfo.Document.TryGetOperationDefinition(requestedName, out _))
             {
                 throw ThrowHelper.OperationId_OperationNotFound(documentInfo.Document, requestedName);
             }
@@ -83,7 +82,13 @@ public static class RequestContextOperationIdExtensions
         else
         {
             var idValue = documentInfo.Id.Value;
-            var operationName = context.Request.OperationName ?? DefaultOperationName;
+            var operationName = context.Request.OperationName;
+
+            if (string.IsNullOrEmpty(operationName))
+            {
+                throw ThrowHelper.OperationId_OperationNameRequired(documentInfo.Document);
+            }
+
             var maxLength = idValue.Length + OperationIdSeparatorLength + operationName.Length;
 
             char[]? rented = null;
@@ -113,21 +118,5 @@ public static class RequestContextOperationIdExtensions
 
         documentInfo.OperationId = operationId;
         return operationId;
-    }
-
-    private static bool DefinesOperation(Language.DocumentNode document, string operationName)
-    {
-        var definitions = document.Definitions;
-
-        for (var i = 0; i < definitions.Count; i++)
-        {
-            if (definitions[i] is Language.OperationDefinitionNode { Name: { } name }
-                && name.Value.Equals(operationName, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
