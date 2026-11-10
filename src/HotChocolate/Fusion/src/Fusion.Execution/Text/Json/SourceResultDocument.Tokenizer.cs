@@ -1,6 +1,9 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text.Json;
 using HotChocolate.Buffers;
 
@@ -124,7 +127,8 @@ public sealed partial class SourceResultDocument
         where TMode : struct, IWindowMode
         where TDocuments : struct, IDocumentMode
     {
-        Span<Container> containers = stackalloc Container[MaxSourceDepth];
+        Unsafe.SkipInit(out ContainerStack containerStack);
+        Span<Container> containers = containerStack;
         var containerIsArrayBits = 0UL;
         var containerHasComplexBits = 0UL;
         var stackIndex = 0;
@@ -736,6 +740,25 @@ NextWindow:
     private static int ReadString(ReadOnlySpan<byte> data, int start, int offset)
     {
         var position = start + 1;
+
+        // The first bytes of the string are checked with one vector compare.
+        if (Vector128.IsHardwareAccelerated && position <= data.Length - Vector128<byte>.Count)
+        {
+            var value = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(data), (nuint)position);
+            var stops = (Vector128.Equals(value, Vector128.Create((byte)'"'))
+                | Vector128.Equals(value, Vector128.Create((byte)'\\'))
+                | Vector128.Equals(value & Vector128.Create((byte)0xE0), Vector128<byte>.Zero))
+                .ExtractMostSignificantBits();
+
+            if (stops == 0)
+            {
+                return ReadStringRemainder(data, position + Vector128<byte>.Count, offset);
+            }
+
+            position += BitOperations.TrailingZeroCount(stops);
+            return data[position] == (byte)'"' ? position + 1 : ReadStringRemainder(data, position, offset);
+        }
+
         var scalarEnd = Math.Min(data.Length, position + ScalarStringStartScanLength);
 
         while (position < scalarEnd)
@@ -1201,6 +1224,15 @@ NextWindow:
                 document.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// The open containers of the parser.
+    /// </summary>
+    [InlineArray(MaxSourceDepth)]
+    private struct ContainerStack
+    {
+        private Container _element0;
     }
 
     /// <summary>

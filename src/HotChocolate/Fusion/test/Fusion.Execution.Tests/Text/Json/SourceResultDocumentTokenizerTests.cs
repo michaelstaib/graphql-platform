@@ -219,6 +219,29 @@ public partial class SourceResultDocumentTokenizerTests
     }
 
     [Fact]
+    public void Parse_Should_FindClosingQuote_When_StringEndsAroundSixteenBytes()
+    {
+        // act
+        var rows = Parse(
+            "[\"" + new string('a', 14) + "\",\"" + new string('b', 15) + "\",\"" + new string('c', 16)
+            + "\",\"" + new string('d', 31) + "\",\"" + new string('e', 32) + "\",\"" + new string('f', 15)
+            + "\\n\"]");
+
+        // assert
+        rows.MatchInlineSnapshot(
+            """
+            StartArray @0 items=6 rows=8
+              String @1 "aaaaaaaaaaaaaa"
+              String @18 "bbbbbbbbbbbbbbb"
+              String @36 "cccccccccccccccc"
+              String @55 "ddddddddddddddddddddddddddddddd"
+              String @89 "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+              String @124 "fffffffffffffff\n" escaped
+            EndArray @143
+            """);
+    }
+
+    [Fact]
     public void Parse_Should_CountLocationsInBytes_When_StringsHaveMultiByteCharacters()
     {
         // act
@@ -650,7 +673,12 @@ public partial class SourceResultDocumentTokenizerTests
             // an unescaped NUL
             "[\"a\u0000b\"]",
             // an unescaped unit separator, the last control character
-            "[\"\u001f\"]"
+            "[\"\u001f\"]",
+            // an unescaped tab, an unescaped NUL and an unknown escape sequence in the first bytes of a
+            // string that more input follows
+            "[\"tab\there\",\"" + new string('x', 40) + "\"]",
+            "[\"a\u0000b\",\"" + new string('x', 40) + "\"]",
+            "[\"a\\x\",\"" + new string('x', 40) + "\"]"
         ];
 
     [Theory]
