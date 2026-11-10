@@ -325,6 +325,9 @@ internal sealed class ValueCompletion
         var errorPath = path.ToPath(operation);
         _store.RecordKeyFetchErrors(errorPath, resultSelectionSet, error);
 
+        // Below a null value the error is reported, the null propagation already happened above the target.
+        var propagate = _store.HasReachableAncestorsUnsafe(target);
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             // A prior field's error may have propagated a null up to this target
@@ -344,6 +347,13 @@ internal sealed class ValueCompletion
             }
 
             var selection = fieldResult.AssertSelection();
+
+            if (!propagate)
+            {
+                _store.AddError(
+                    _errorHandler.Handle(ErrorBuilder.FromError(error).SetPath(errorPath.Append(responseName)).Build()));
+                continue;
+            }
 
             if (!ApplyFieldError(fieldResult, selection, error, errorPath.Append(responseName)))
             {
@@ -420,9 +430,11 @@ internal sealed class ValueCompletion
         var errorPath = targetPath.ToPath(operation);
         _store.RecordKeyFetchErrors(errorPath, resultSelectionSet, error);
 
-        if (TryGetTargetSelectionSet(element, targetPath, out var selectionSet))
+        var selectionSets = GetTargetSelectionSets(element, targetPath);
+
+        if (selectionSets.Count > 0)
         {
-            AddNulledTargetErrors(errorPath, resultSelectionSet, selectionSet, error);
+            AddNulledTargetErrors(errorPath, resultSelectionSet, selectionSets, error);
         }
     }
 
@@ -437,46 +449,55 @@ internal sealed class ValueCompletion
         string originName,
         IError error)
     {
-        if (TryGetNulledSelectionSet(target, out var selectionSet)
-            && selectionSet.TryGetSelection(originName, out var originSelection)
-            && (originSelection.IsInternal || !originSelection.IsNonNull))
+        foreach (var selectionSet in GetTargetSelectionSets(target, target.CompactPath))
         {
-            ReportErrorOnNulledTarget(target, resultSelectionSet, error);
+            if (selectionSet.TryGetSelection(originName, out var originSelection)
+                && (originSelection.IsInternal || !originSelection.IsNonNull))
+            {
+                ReportErrorOnNulledTarget(target, resultSelectionSet, error);
+                return;
+            }
         }
     }
 
-    private static bool TryGetTargetSelectionSet(
-        CompositeResultElement element,
-        CompactPath targetPath,
-        [NotNullWhen(true)] out SelectionSet? selectionSet)
+    // The target may be null, so its concrete type is unknown. The selection sets of all possible types of its
+    // field are returned.
+    private static List<SelectionSet> GetTargetSelectionSets(CompositeResultElement element, CompactPath targetPath)
     {
-        if (element.CompactPath.Length == targetPath.Length)
+        var selectionSets = new List<SelectionSet>();
+        var selection = element.CompactPath.Length == targetPath.Length
+            ? GetFieldSelection(element)
+            : GetFieldSelection(element.Operation, targetPath);
+
+        if (selection is null)
         {
-            return TryGetNulledSelectionSet(element, out selectionSet);
+            return selectionSets;
         }
 
-        // The element is a null value above the target, the type of the target is the type of its field.
+        var operation = selection.DeclaringSelectionSet.DeclaringOperation;
+
+        foreach (var possibleType in operation.GetPossibleTypes(selection))
+        {
+            selectionSets.Add(operation.GetSelectionSet(selection, possibleType));
+        }
+
+        return selectionSets;
+    }
+
+    private static Selection? GetFieldSelection(Operation operation, CompactPath targetPath)
+    {
         for (var i = targetPath.Length - 1; i >= 0; i--)
         {
-            if (targetPath[i] < 0)
+            if (targetPath[i] >= 0)
             {
-                continue;
+                return operation.GetSelectionById(targetPath[i]);
             }
-
-            var selection = element.Operation.GetSelectionById(targetPath[i]);
-            selectionSet = selection.Type.NamedType() is IComplexTypeDefinition complexType
-                ? selection.GetSelectionSet(complexType)
-                : null;
-            return selectionSet is not null;
         }
 
-        selectionSet = null;
-        return false;
+        return null;
     }
 
-    private static bool TryGetNulledSelectionSet(
-        CompositeResultElement target,
-        [NotNullWhen(true)] out SelectionSet? selectionSet)
+    private static Selection? GetFieldSelection(CompositeResultElement target)
     {
         var current = target;
 
@@ -486,33 +507,33 @@ internal sealed class ValueCompletion
 
             if (current.IsRoot)
             {
-                selectionSet = null;
-                return false;
+                return null;
             }
         }
 
-        selectionSet = current.Selection.Type.NamedType() is IComplexTypeDefinition complexType
-            ? current.Selection.GetSelectionSet(complexType)
-            : null;
-        return selectionSet is not null;
+        return current.Selection;
     }
 
     private void AddNulledTargetErrors(
         Path errorPath,
         ResultSelectionSet resultSelectionSet,
-        SelectionSet selectionSet,
+        List<SelectionSet> selectionSets,
         IError error)
     {
         var includeFlags = _store.IncludeFlags;
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            if (selectionSet.TryGetSelection(responseName, out var selection)
-                && !selection.IsInternal
-                && selection.IsIncluded(includeFlags))
+            foreach (var selectionSet in selectionSets)
             {
-                var fieldPath = errorPath.Append(responseName);
-                _store.AddError(_errorHandler.Handle(ErrorBuilder.FromError(error).SetPath(fieldPath).Build()));
+                if (selectionSet.TryGetSelection(responseName, out var selection)
+                    && !selection.IsInternal
+                    && selection.IsIncluded(includeFlags))
+                {
+                    var fieldPath = errorPath.Append(responseName);
+                    _store.AddError(_errorHandler.Handle(ErrorBuilder.FromError(error).SetPath(fieldPath).Build()));
+                    break;
+                }
             }
         }
     }

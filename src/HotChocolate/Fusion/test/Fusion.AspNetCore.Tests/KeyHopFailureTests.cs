@@ -600,7 +600,7 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Execute_Should_ReportOneViolationAtTheFirstItem_When_MiddleHopFailsForNullableListOfNonNullItems()
+    public async Task Execute_Should_ReportTheErrorOfEveryItem_When_MiddleHopFailsForNullableListOfNonNullItems()
     {
         // arrange
         using var gateway = await CreateGatewayAsync(NestedKeyType, mockMiddleHop: ServerError);
@@ -613,7 +613,7 @@ public class KeyHopFailureTests : FusionTestBase
             """
             ## ids [2, 3, 4, 5]
             data: {"userList":null}
-            errors: [{"message":"Unexpected Execution Error","path":["userList",0,"totalNN"]}]
+            errors: [{"message":"Unexpected Execution Error","path":["userList",0,"totalNN"]},{"message":"Unexpected Execution Error","path":["userList",1,"totalNN"]},{"message":"Unexpected Execution Error","path":["userList",2,"totalNN"]},{"message":"Unexpected Execution Error","path":["userList",3,"totalNN"]}]
             lookups: 
 
             """);
@@ -1196,7 +1196,7 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")], [], []);
+        var result = await ExecuteInEveryHopOrderAsync(CreateSequencedGatewayAsync, query, hops, [("B", "C"), ("E", "D")], [], []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1215,7 +1215,7 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")], [], []);
+        var result = await ExecuteInEveryHopOrderAsync(CreateSequencedGatewayAsync, query, hops, [("B", "C"), ("E", "D")], [], []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1234,7 +1234,7 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E", "F"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D"), ("D", "F")], [], []);
+        var result = await ExecuteInEveryHopOrderAsync(CreateSequencedGatewayAsync, query, hops, [("B", "C"), ("E", "D"), ("D", "F")], [], []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1368,7 +1368,7 @@ public class KeyHopFailureTests : FusionTestBase
         // arrange
         string[][] orders = [["B", "C", "I"], ["B", "I", "C"]];
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence);
+        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
         var results = new List<string>();
 
         // act
@@ -1382,13 +1382,21 @@ public class KeyHopFailureTests : FusionTestBase
         }
 
         // assert
-        results.MatchInlineSnapshot(
+        results.MatchInlineSnapshots(
+        [
             """
-            [
-              "## B C I\ndata: {\"userList\":null}\nerrors: [{\"message\":\"C hop failed for sku-96\",\"path\":[\"userList\",0,\"total\"]},{\"message\":\"I hop failed for 93\",\"path\":[\"userList\",1,\"badNN\"]}]\n",
-              "## B I C\ndata: {\"userList\":null}\nerrors: [{\"message\":\"C hop failed for sku-96\",\"path\":[\"userList\",0,\"total\"]},{\"message\":\"I hop failed for 93\",\"path\":[\"userList\",1,\"badNN\"]}]\n"
-            ]
-            """);
+            ## B C I
+            data: {"userList":null}
+            errors: [{"message":"C hop failed for sku-96","path":["userList",0,"total"]},{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
+
+            """,
+            """
+            ## B I C
+            data: {"userList":null}
+            errors: [{"message":"C hop failed for sku-96","path":["userList",0,"total"]},{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
+
+            """
+        ]);
     }
 
     [Fact]
@@ -1396,7 +1404,7 @@ public class KeyHopFailureTests : FusionTestBase
     {
         // arrange
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence);
+        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
         sequence.Start(["I", "B", "C"]);
 
         // act
@@ -1411,7 +1419,165 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
-    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence)
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedErrorsOfAbstractTargets_When_ASiblingErrorNulledTheList()
+    {
+        // arrange
+        string[] nulling =
+        [
+            """{"message":"Z2 hop failed for 93","path":["petList",1,"barkNN"]}""",
+            """{"message":"Z3 hop failed for 96","path":["petList",0,"bark"]}"""
+        ];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreatePetSequencedGatewayAsync,
+            "{ petList(ids: [96, 93]) { ... on Dog { bark barkNN } } }",
+            ["Z2", "Z3"],
+            [],
+            nulling,
+            []);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"petList":null}
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedErrorOfASharedEntity_When_ASiblingErrorNulledTheListOfItsPrimaryPath()
+    {
+        // arrange
+        const string query = "{ a: userList(ids: [96, 93]) { total badNN } b: userList(ids: [96]) { total } }";
+        const string iError = """{"message":"I hop failed for 93","path":["a",1,"badNN"]}""";
+        const string bError = """{"message":"C hop failed for sku-96","path":["b",0,"total"]}""";
+        const string aError = """{"message":"C hop failed for sku-96","path":["a",0,"total"]}""";
+
+        // act
+        var requestInFlight = await ExecuteInEveryHopOrderAsync(
+            CreateRaisedErrorSequencedGatewayAsync,
+            query,
+            ["B", "C", "I"],
+            [("B", "C"), ("B", "I")],
+            [iError, aError, bError],
+            []);
+
+        // When the list a is null before the hop starts, the entity below a is not a target of the hop.
+        var listNullFirst = await ExecuteInEveryHopOrderAsync(
+            CreateRaisedErrorSequencedGatewayAsync,
+            query,
+            ["B", "C", "I"],
+            [("I", "B"), ("B", "C")],
+            [iError, bError],
+            [aError]);
+
+        // assert
+        new[] { requestInFlight, listNullFirst }.MatchInlineSnapshots(
+        [
+            """
+            data: {"a":null,"b":[{"total":null}]}
+
+            """,
+            """
+            data: {"a":null,"b":[{"total":null}]}
+
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheKeyFetchErrorOnTheDependentField_When_ASiblingErrorNulledTheList()
+    {
+        // arrange
+        string[] nulling =
+        [
+            """{"message":"B hop failed for 98","path":["userList",0,"totalNN"]}""",
+            """{"message":"E hop failed for 93","path":["userList",1,"scoreNN"]}"""
+        ];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreateSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { totalNN scoreNN } }",
+            ["B", "E"],
+            [],
+            nulling,
+            []);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"userList":null}
+
+            """);
+    }
+
+    public static class PetZ1
+    {
+        [InterfaceType("Pet")]
+        public interface IPet
+        {
+            int Id { get; }
+        }
+
+        [EntityKey("id")]
+        public record Dog(int Id) : IPet;
+
+        [EntityKey("id")]
+        public record Cat(int Id) : IPet;
+
+        public class Query
+        {
+            [GraphQLType<ListType<NonNullType<InterfaceType<IPet>>>>]
+            public IEnumerable<IPet> GetPetList(int[] ids)
+                => ids.Select(i => i > 500 ? (IPet)new Cat(i) : new Dog(i));
+
+            [Lookup, Internal]
+            public Dog? GetDogById(int id) => new(id);
+        }
+    }
+
+    public static class PetZ2
+    {
+        public record Dog(int Id, int BarkNN);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public Dog? GetDogById(int id)
+                => id == 93 ? throw new GraphQLException("Z2 hop failed for 93") : new Dog(id, id);
+        }
+    }
+
+    public static class PetZ3
+    {
+        public record Dog(int Id, int? Bark);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public Dog? GetDogById(int id)
+                => id == 96 ? throw new GraphQLException("Z3 hop failed for 96") : new Dog(id, id);
+        }
+    }
+
+    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
     {
         var hopB = new SequencedHop(sequence, "B");
         var hopC = new SequencedHop(sequence, "C");
@@ -1426,6 +1592,27 @@ public class KeyHopFailureTests : FusionTestBase
 
         return await CreateCompositeSchemaAsync(
             [("a", a), ("b", b), ("c", c), ("i", i)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    private async Task<Gateway> CreatePetSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+    {
+        var hopZ2 = new SequencedHop(sequence, "Z2");
+        var hopZ3 = new SequencedHop(sequence, "Z3");
+        var z1 = CreateSourceSchema(
+            "z1",
+            b => b.AddQueryType<PetZ1.Query>().AddType<PetZ1.Dog>().AddType<PetZ1.Cat>());
+        var z2 = CreateSourceSchema("z2", b => b.AddQueryType<PetZ2.Query>(), mockHttpResponse: hopZ2.SendAsync);
+        var z3 = CreateSourceSchema("z3", b => b.AddQueryType<PetZ3.Query>(), mockHttpResponse: hopZ3.SendAsync);
+        hopZ2.Connect(z2);
+        hopZ3.Connect(z3);
+
+        return await CreateCompositeSchemaAsync(
+            [("z1", z1), ("z2", z2), ("z3", z3)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
             includeOperationPlan: false);
     }
 
@@ -1593,6 +1780,7 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     private async Task<string> ExecuteInEveryHopOrderAsync(
+        Func<HopSequence, bool, Task<Gateway>> createGateway,
         string query,
         string[] hops,
         (string First, string Second)[] precedences,
@@ -1604,7 +1792,7 @@ public class KeyHopFailureTests : FusionTestBase
 
         foreach (var enableRequestGrouping in new[] { true, false })
         {
-            using var gateway = await CreateSequencedGatewayAsync(sequence, enableRequestGrouping);
+            using var gateway = await createGateway(sequence, enableRequestGrouping);
 
             foreach (var order in GetHopOrders(hops, precedences))
             {

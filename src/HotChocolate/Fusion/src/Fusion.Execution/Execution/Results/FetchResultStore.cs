@@ -602,7 +602,12 @@ internal sealed partial class FetchResultStore : IDisposable
                 var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
                 if (element.IsNullOrInvalidated)
                 {
-                    _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                    // The start element is an ancestor when the target is below a null value.
+                    if (element.CompactPath.Length == path.Length)
+                    {
+                        _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                    }
+
                     goto AddErrors_Next;
                 }
 
@@ -774,11 +779,6 @@ AddErrors_Next:
         string originName,
         IError error)
     {
-        if (!HasReachableAncestorsUnsafe(element))
-        {
-            return true;
-        }
-
         _reportedKeyFetches ??= [];
 
         if (!_reportedKeyFetches.Add((element.CompactPath, resultSelectionSet)))
@@ -1334,7 +1334,8 @@ AddErrors_Next:
 
         Debug.Assert(element.ValueKind is JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined);
 
-        if (element.IsNullOrInvalidated)
+        // The row of an additional target can be intact below a null value, its errors are reported as for a null target.
+        if (element.IsNullOrInvalidated || (errorTrie is not null && !HasReachableAncestorsUnsafe(element)))
         {
             if (errorTrie?.FindFirstError() is { } nulledError)
             {
