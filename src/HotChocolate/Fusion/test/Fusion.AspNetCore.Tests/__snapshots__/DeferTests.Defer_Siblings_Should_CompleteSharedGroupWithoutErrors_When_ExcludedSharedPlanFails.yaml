@@ -1,0 +1,302 @@
+title: Defer_Siblings_Should_CompleteSharedGroupWithoutErrors_When_ExcludedSharedPlanFails
+request:
+  document: |
+    query($skipEmail: Boolean!) {
+      user(id: "1") {
+        id
+        ... @defer(label: "a") {
+          email @skip(if: $skipEmail)
+          ... @defer(label: "inner") {
+            address
+          }
+        }
+        ... @defer(label: "b") {
+          email @skip(if: $skipEmail)
+          name
+        }
+      }
+    }
+  variables: |
+    {
+      "skipEmail": true
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 3,
+    "initial": {
+      "data": {
+        "user": {
+          "id": "1"
+        }
+      }
+    },
+    "pending": [
+      {
+        "id": "1",
+        "path": [
+          "user"
+        ],
+        "label": "inner"
+      },
+      {
+        "id": "2",
+        "path": [
+          "user"
+        ],
+        "label": "b"
+      }
+    ],
+    "incremental": [
+      {
+        "id": "2",
+        "path": [
+          "user"
+        ],
+        "data": {
+          "name": "User 1"
+        }
+      }
+    ],
+    "completed": [
+      {
+        "id": "1",
+        "errors": [
+          {
+            "message": "User key lookup failed.",
+            "path": [
+              "user"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "2"
+      }
+    ],
+    "final": {
+      "data": {
+        "user": {
+          "id": "1",
+          "name": "User 1"
+        }
+      }
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user(id: ID!): User @lookup
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_6395e4a2_1 {
+              user(id: "1") {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "id": "1"
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_2 {
+              user(id: "1") {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "errors": [
+                  {
+                    "message": "User key lookup failed.",
+                    "path": [
+                      "user"
+                    ]
+                  }
+                ],
+                "data": {
+                  "user": null
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              user(id: $__fusion_1_id) {
+                name
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "name": "User 1"
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        email: String!
+        address: String!
+      }
+operationPlan:
+  operation:
+    - document: |
+        query($skipEmail: Boolean!) {
+          user(id: "1") {
+            id
+            id @fusion__requirement
+          }
+        }
+      hash: 847d7ce91b99ca160d03639b242de22a
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_6395e4a2_1 {
+          user(id: "1") {
+            id
+          }
+        }
+  deliveryGroups:
+    - id: 0
+      path: $.user
+      label: a
+    - id: 1
+      path: $.user
+      label: inner
+      parentId: 0
+    - id: 2
+      path: $.user
+      label: b
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+        - 2
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                email
+              }
+            }
+          source: $.userById
+          target: $.user
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          conditions:
+            - variable: $skipEmail
+              passingValue: false
+          dependencies:
+            - parentNodeId: 1
+        - id: 2
+          type: Operation
+          schema: A
+          operation: |
+            query Op_defer_2 {
+              user(id: "1") {
+                id
+              }
+            }
+    - deliveryGroupIds:
+        - 1
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                address
+              }
+            }
+          source: $.userById
+          target: $.user
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 2
+    - deliveryGroupIds:
+        - 2
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: A
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              user(id: $__fusion_1_id) {
+                name
+              }
+            }
+          source: $.user
+          target: $.user
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1

@@ -130,21 +130,33 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
-            var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(operationPlan, activeDeliveryGroupIds);
+            var excludedIncrementalPlans = FindExcludedIncrementalPlans(operationPlan, variables);
+
+            var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(
+                operationPlan,
+                activeDeliveryGroupIds);
+
+            var silentDeliveryGroupIds = excludedIncrementalPlans is null
+                ? null
+                : FindSilentDeliveryGroups(deliveryGroupsByPlan, excludedIncrementalPlans);
 
             // Mark top-level active delivery groups as pending on the initial
-            // result. A group whose enclosing groups are all disabled is top-level.
+            // result. A group whose enclosing groups are all disabled or silent is top-level.
             // Nested delivery groups are marked pending after their enclosing
             // delivery group completes.
             var pendingResults = ImmutableList.CreateBuilder<PendingResult>();
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
-                if (!activeDeliveryGroupIds.Contains(deliveryGroup.Id))
+                if (!activeDeliveryGroupIds.Contains(deliveryGroup.Id)
+                    || silentDeliveryGroupIds?.Contains(deliveryGroup.Id) is true)
                 {
                     continue;
                 }
 
-                if (GetEnabledDeliveryGroup(deliveryGroup.Parent, activeDeliveryGroupIds) is not null)
+                if (GetAnnouncingDeliveryGroup(
+                    deliveryGroup.Parent,
+                    activeDeliveryGroupIds,
+                    silentDeliveryGroupIds) is not null)
                 {
                     continue;
                 }
@@ -180,6 +192,8 @@ internal static partial class OperationPlanExecutor
                     initialResult,
                     activeDeliveryGroupIds,
                     deliveryGroupsByPlan,
+                    excludedIncrementalPlans,
+                    silentDeliveryGroupIds,
                     rootContext,
                     cancellationToken),
                 ExecutionResultKind.DeferredResult);
@@ -208,6 +222,8 @@ internal static partial class OperationPlanExecutor
         OperationResult initialResult,
         HashSet<int> activeDeliveryGroupIds,
         Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> deliveryGroupsByPlan,
+        HashSet<IncrementalPlan>? excludedIncrementalPlans,
+        HashSet<int>? silentDeliveryGroupIds,
         OperationPlanContext rootContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -246,7 +262,10 @@ internal static partial class OperationPlanExecutor
                 continue;
             }
 
-            if (GetEnabledDeliveryGroup(deliveryGroup.Parent, activeDeliveryGroupIds) is not null)
+            if (GetAnnouncingDeliveryGroup(
+                deliveryGroup.Parent,
+                activeDeliveryGroupIds,
+                silentDeliveryGroupIds) is not null)
             {
                 if (enclosingDeliveryGroupIds is null)
                 {
@@ -319,7 +338,11 @@ internal static partial class OperationPlanExecutor
             foreach (var deliveryGroup in operationPlan.DeliveryGroups)
             {
                 if (activeDeliveryGroupIds.Contains(deliveryGroup.Id)
-                    && GetEnabledDeliveryGroup(deliveryGroup.Parent, activeDeliveryGroupIds) is null)
+                    && silentDeliveryGroupIds?.Contains(deliveryGroup.Id) is not true
+                    && GetAnnouncingDeliveryGroup(
+                        deliveryGroup.Parent,
+                        activeDeliveryGroupIds,
+                        silentDeliveryGroupIds) is null)
                 {
                     announcedDeliveryGroupIds.Add(deliveryGroup.Id);
                 }
@@ -363,6 +386,9 @@ internal static partial class OperationPlanExecutor
                     incrementalPlanContexts[incrementalPlan] = incrementalPlanContext;
                 }
 
+                var isExcludedPlan = incrementalPlan is not null
+                    && excludedIncrementalPlans?.Contains(incrementalPlan) is true;
+
                 var scopeContext = incrementalPlanContext;
                 if (incrementalPlan is null)
                 {
@@ -389,6 +415,16 @@ internal static partial class OperationPlanExecutor
                         .Build();
                     payload = OperationResult.FromError(errorObj);
                     MarkDeliveryGroupsFailed(deliveryGroups, [errorObj], ref failedDeliveryGroups);
+                    CompleteAnnouncedGroupsOfFailedSilentGroups(
+                        operationPlan,
+                        deliveryGroups,
+                        activeDeliveryGroupIds,
+                        silentDeliveryGroupIds,
+                        announcedDeliveryGroupIds,
+                        pendingCountByDeliveryGroup,
+                        failedDeliveryGroups,
+                        completed,
+                        [errorObj]);
                     CompleteDeliveryGroups(
                         deliveryGroups,
                         pendingCountByDeliveryGroup,
@@ -402,7 +438,8 @@ internal static partial class OperationPlanExecutor
 
                     // Use the selected delivery group's path to produce the
                     // incremental result data for this plan.
-                    if (bestDeliveryGroup is not null
+                    if (!isExcludedPlan
+                        && bestDeliveryGroup is not null
                         && result.Data.HasValue
                         && !result.Data.Value.IsValueNull
                         && TryCreateIncrementalResults(
@@ -415,10 +452,27 @@ internal static partial class OperationPlanExecutor
                         payload.Incremental = incrementalResults;
                     }
 
-                    var failed = result.Errors.Count > 0 && payload.Incremental.Count == 0;
+                    // An excluded plan delivers no data, so its errors only fail the silent
+                    // groups it runs for. Groups that another plan delivers keep their result.
+                    var failedPlanDeliveryGroups = isExcludedPlan
+                        ? GetSilentDeliveryGroups(deliveryGroups, silentDeliveryGroupIds)
+                        : deliveryGroups;
+
+                    var failed = result.Errors.Count > 0
+                        && (isExcludedPlan ? !failedPlanDeliveryGroups.IsEmpty : payload.Incremental.Count == 0);
                     if (failed)
                     {
-                        MarkDeliveryGroupsFailed(deliveryGroups, result.Errors, ref failedDeliveryGroups);
+                        MarkDeliveryGroupsFailed(failedPlanDeliveryGroups, result.Errors, ref failedDeliveryGroups);
+                        CompleteAnnouncedGroupsOfFailedSilentGroups(
+                            operationPlan,
+                            failedPlanDeliveryGroups,
+                            activeDeliveryGroupIds,
+                            silentDeliveryGroupIds,
+                            announcedDeliveryGroupIds,
+                            pendingCountByDeliveryGroup,
+                            failedDeliveryGroups,
+                            completed,
+                            result.Errors);
                     }
 
                     CompleteDeliveryGroups(
@@ -426,7 +480,7 @@ internal static partial class OperationPlanExecutor
                         pendingCountByDeliveryGroup,
                         failedDeliveryGroups,
                         completed,
-                        errors: failed ? result.Errors : null);
+                        errors: failed && !isExcludedPlan ? result.Errors : null);
                 }
                 else
                 {
@@ -488,7 +542,8 @@ internal static partial class OperationPlanExecutor
 
                     foreach (var deliveryGroup in candidateGroups)
                     {
-                        if (!announcedDeliveryGroupIds.Add(deliveryGroup.Id))
+                        if (silentDeliveryGroupIds?.Contains(deliveryGroup.Id) is true
+                            || !announcedDeliveryGroupIds.Add(deliveryGroup.Id))
                         {
                             continue;
                         }
@@ -497,6 +552,35 @@ internal static partial class OperationPlanExecutor
                             deliveryGroup.Id,
                             operationPlan.GetDeliveryPath(deliveryGroup.Id).PendingPath,
                             deliveryGroup.Label));
+                    }
+                }
+
+                if (silentDeliveryGroupIds is not null)
+                {
+                    foreach (var announcedPlan in incrementalPlans)
+                    {
+                        foreach (var deliveryGroup in deliveryGroupsByPlan[announcedPlan])
+                        {
+                            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id)
+                                || announcedDeliveryGroupIds.Contains(deliveryGroup.Id)
+                                || !IsDeliveryGroupCompleted(
+                                    GetAnnouncingDeliveryGroup(
+                                        deliveryGroup.Parent,
+                                        activeDeliveryGroupIds,
+                                        silentDeliveryGroupIds),
+                                    deliveryGroups,
+                                    pendingCountByDeliveryGroup,
+                                    failedDeliveryGroups))
+                            {
+                                continue;
+                            }
+
+                            announcedDeliveryGroupIds.Add(deliveryGroup.Id);
+                            childPending.Add(new PendingResult(
+                                deliveryGroup.Id,
+                                operationPlan.GetDeliveryPath(deliveryGroup.Id).PendingPath,
+                                deliveryGroup.Label));
+                        }
                     }
                 }
 
@@ -527,6 +611,17 @@ internal static partial class OperationPlanExecutor
                     }
                 }
 
+                if (silentDeliveryGroupIds is not null)
+                {
+                    for (var i = completed.Count - 1; i >= 0; i--)
+                    {
+                        if (silentDeliveryGroupIds.Contains(completed[i].Id))
+                        {
+                            completed.RemoveAt(i);
+                        }
+                    }
+                }
+
                 // Set Completed before clearing top-level errors.
                 if (completed.Count > 0)
                 {
@@ -546,6 +641,16 @@ internal static partial class OperationPlanExecutor
                 }
 
                 payload.HasNext = pendingIncrementalPlanCount > 0;
+
+                if (isExcludedPlan
+                    && pendingIncrementalPlanCount > 0
+                    && payload.Incremental.Count == 0
+                    && payload.Completed.Count == 0
+                    && payload.Pending.Count == 0)
+                {
+                    continue;
+                }
+
                 yield return payload;
             }
 
@@ -817,6 +922,130 @@ internal static partial class OperationPlanExecutor
         return deliveryGroup;
     }
 
+    private static DeliveryGroup? GetAnnouncingDeliveryGroup(
+        DeliveryGroup? deliveryGroup,
+        HashSet<int> activeDeliveryGroupIds,
+        HashSet<int>? silentDeliveryGroupIds)
+    {
+        while (deliveryGroup is not null
+            && (!activeDeliveryGroupIds.Contains(deliveryGroup.Id)
+                || silentDeliveryGroupIds?.Contains(deliveryGroup.Id) is true))
+        {
+            deliveryGroup = deliveryGroup.Parent;
+        }
+
+        return deliveryGroup;
+    }
+
+    private static HashSet<IncrementalPlan>? FindExcludedIncrementalPlans(
+        OperationPlan operationPlan,
+        IVariableValueCollection variables)
+    {
+        HashSet<IncrementalPlan>? excludedIncrementalPlans = null;
+
+        foreach (var incrementalPlan in operationPlan.IncrementalPlans)
+        {
+            var selections = incrementalPlan.ConditionalFieldSelections;
+
+            if (selections.IsDefaultOrEmpty)
+            {
+                continue;
+            }
+
+            var includeFlags = incrementalPlan.Operation.CreateIncludeConditionFlags(variables);
+            var included = false;
+
+            foreach (var selection in selections)
+            {
+                if (selection.IsIncluded(includeFlags))
+                {
+                    included = true;
+                    break;
+                }
+            }
+
+            if (!included)
+            {
+                (excludedIncrementalPlans ??= []).Add(incrementalPlan);
+            }
+        }
+
+        return excludedIncrementalPlans;
+    }
+
+    private static HashSet<int> FindSilentDeliveryGroups(
+        Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> deliveryGroupsByPlan,
+        HashSet<IncrementalPlan> excludedIncrementalPlans)
+    {
+        var silent = new HashSet<int>();
+
+        foreach (var (incrementalPlan, deliveryGroups) in deliveryGroupsByPlan)
+        {
+            if (excludedIncrementalPlans.Contains(incrementalPlan))
+            {
+                foreach (var deliveryGroup in deliveryGroups)
+                {
+                    silent.Add(deliveryGroup.Id);
+                }
+            }
+        }
+
+        foreach (var (incrementalPlan, deliveryGroups) in deliveryGroupsByPlan)
+        {
+            if (!excludedIncrementalPlans.Contains(incrementalPlan))
+            {
+                foreach (var deliveryGroup in deliveryGroups)
+                {
+                    silent.Remove(deliveryGroup.Id);
+                }
+            }
+        }
+
+        return silent;
+    }
+
+    private static ImmutableArray<DeliveryGroup> GetSilentDeliveryGroups(
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        HashSet<int>? silentDeliveryGroupIds)
+    {
+        if (silentDeliveryGroupIds is null)
+        {
+            return [];
+        }
+
+        var silentCount = 0;
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id))
+            {
+                silentCount++;
+            }
+        }
+
+        if (silentCount == deliveryGroups.Length)
+        {
+            return deliveryGroups;
+        }
+
+        if (silentCount == 0)
+        {
+            return [];
+        }
+
+        var builder = ImmutableArray.CreateBuilder<DeliveryGroup>(silentCount);
+
+        foreach (var deliveryGroup in deliveryGroups)
+        {
+            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id))
+            {
+                builder.Add(deliveryGroup);
+            }
+        }
+
+        return builder.MoveToImmutable();
+    }
+
     private static Dictionary<IncrementalPlan, ImmutableArray<DeliveryGroup>> ResolveDeliveryGroupsByPlan(
         OperationPlan operationPlan,
         HashSet<int> activeDeliveryGroupIds)
@@ -904,19 +1133,28 @@ internal static partial class OperationPlanExecutor
         HashSet<int> activeDeliveryGroupIds,
         Dictionary<int, int> pendingCountByDeliveryGroup,
         Dictionary<int, IReadOnlyList<IError>>? failedDeliveryGroups)
-    {
-        var enclosing = GetEnabledDeliveryGroup(deliveryGroup.Parent, activeDeliveryGroupIds);
+        => IsDeliveryGroupCompleted(
+            GetEnabledDeliveryGroup(deliveryGroup.Parent, activeDeliveryGroupIds),
+            completedDeliveryGroups,
+            pendingCountByDeliveryGroup,
+            failedDeliveryGroups);
 
-        if (enclosing is null || failedDeliveryGroups?.ContainsKey(enclosing.Id) is true)
+    private static bool IsDeliveryGroupCompleted(
+        DeliveryGroup? deliveryGroup,
+        ImmutableArray<DeliveryGroup> completedDeliveryGroups,
+        Dictionary<int, int> pendingCountByDeliveryGroup,
+        Dictionary<int, IReadOnlyList<IError>>? failedDeliveryGroups)
+    {
+        if (deliveryGroup is null || failedDeliveryGroups?.ContainsKey(deliveryGroup.Id) is true)
         {
             return false;
         }
 
         foreach (var completed in completedDeliveryGroups)
         {
-            if (completed.Id == enclosing.Id)
+            if (completed.Id == deliveryGroup.Id)
             {
-                return !pendingCountByDeliveryGroup.ContainsKey(enclosing.Id);
+                return !pendingCountByDeliveryGroup.ContainsKey(deliveryGroup.Id);
             }
         }
 
@@ -1013,6 +1251,68 @@ internal static partial class OperationPlanExecutor
         foreach (var deliveryGroup in deliveryGroups)
         {
             failedDeliveryGroups.TryAdd(deliveryGroup.Id, errors);
+        }
+    }
+
+    private static void CompleteAnnouncedGroupsOfFailedSilentGroups(
+        OperationPlan operationPlan,
+        ImmutableArray<DeliveryGroup> failedPlanDeliveryGroups,
+        HashSet<int> activeDeliveryGroupIds,
+        HashSet<int>? silentDeliveryGroupIds,
+        HashSet<int> announcedDeliveryGroupIds,
+        Dictionary<int, int> pendingCountByDeliveryGroup,
+        Dictionary<int, IReadOnlyList<IError>>? failedDeliveryGroups,
+        ImmutableList<CompletedResult>.Builder completed,
+        IReadOnlyList<IError> errors)
+    {
+        if (silentDeliveryGroupIds is null || failedDeliveryGroups is null)
+        {
+            return;
+        }
+
+        var hasFailedSilentGroup = false;
+
+        foreach (var deliveryGroup in failedPlanDeliveryGroups)
+        {
+            if (silentDeliveryGroupIds.Contains(deliveryGroup.Id))
+            {
+                hasFailedSilentGroup = true;
+                break;
+            }
+        }
+
+        if (!hasFailedSilentGroup)
+        {
+            return;
+        }
+
+        foreach (var deliveryGroup in operationPlan.DeliveryGroups)
+        {
+            if (!announcedDeliveryGroupIds.Contains(deliveryGroup.Id)
+                || silentDeliveryGroupIds.Contains(deliveryGroup.Id)
+                || !pendingCountByDeliveryGroup.ContainsKey(deliveryGroup.Id)
+                || failedDeliveryGroups.ContainsKey(deliveryGroup.Id))
+            {
+                continue;
+            }
+
+            for (var ancestor = deliveryGroup.Parent; ancestor is not null; ancestor = ancestor.Parent)
+            {
+                var isSilent = silentDeliveryGroupIds.Contains(ancestor.Id);
+
+                if (isSilent && failedDeliveryGroups.ContainsKey(ancestor.Id))
+                {
+                    completed.Add(new CompletedResult(deliveryGroup.Id, errors));
+                    pendingCountByDeliveryGroup.Remove(deliveryGroup.Id);
+                    failedDeliveryGroups.Add(deliveryGroup.Id, errors);
+                    break;
+                }
+
+                if (!isSilent && activeDeliveryGroupIds.Contains(ancestor.Id))
+                {
+                    break;
+                }
+            }
         }
     }
 
