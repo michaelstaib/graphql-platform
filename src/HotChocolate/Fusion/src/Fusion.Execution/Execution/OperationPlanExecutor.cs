@@ -712,6 +712,7 @@ internal static partial class OperationPlanExecutor
         }
 
         var parentValues = parentResultStore.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             anchor,
             requestVariables: [],
             requirementSpan);
@@ -1348,6 +1349,7 @@ internal static partial class OperationPlanExecutor
         }
 
         await DrainActiveNodesAsync(plan, executionState);
+        context.CompleteDependentFields(plan, cancellationToken);
 
         if (context.CollectTelemetry)
         {
@@ -1414,6 +1416,10 @@ internal static partial class OperationPlanExecutor
                 // from the async wait to go through the completed results.
                 await executionState.Signal;
             }
+
+            // Every serial root field is complete, including its null propagation, before the next one starts.
+            // A pass that nulls the data cancels the execution, so the remaining root fields do not run.
+            context.CompleteDependentFields(plan, cancellationToken);
 
             if (cancellationToken.IsCancellationRequested)
             {
@@ -1507,7 +1513,9 @@ internal static partial class OperationPlanExecutor
                             Exception: null,
                             DependentsToExecute: eventArgs.DependentsToExecute,
                             SkippedDefinitions: [],
-                            VariableValueSets: eventArgs.VariableValueSets));
+                            ConditionSkippedDefinitions: [],
+                            VariableValueSets: eventArgs.VariableValueSets,
+                            SkippedByCondition: false));
 
                     while (!eventToken.IsCancellationRequested && executionState.IsProcessing())
                     {
@@ -1548,6 +1556,7 @@ internal static partial class OperationPlanExecutor
                     // finish and account for their completions before that reset. Otherwise
                     // a late completion would poison the next event.
                     await DrainActiveNodesAsync(plan, executionState);
+                    context.CompleteDependentFields(plan, eventToken);
 
                     // If the original CancellationToken of the request was cancelled,
                     // the Execution nodes and the PlanExecutor should have been gracefully cancelled,

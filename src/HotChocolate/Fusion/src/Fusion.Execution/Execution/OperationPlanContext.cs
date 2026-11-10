@@ -33,6 +33,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private Uri?[] _transportUris = [];
     private string?[] _transportContentTypes = [];
     private List<IOperationPlanNode>?[] _skippedDefinitions = [];
+    private List<IOperationPlanNode>?[] _conditionSkippedDefinitions = [];
     private Dictionary<int, Exception>?[] _batchRequestErrors = [];
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly FetchResultStore _resultStore;
@@ -239,10 +240,22 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         list.Add(skippedDefinition);
     }
 
-    internal ImmutableArray<IOperationPlanNode> GetSkippedDefinitions(ExecutionNode node)
+    internal void TrackConditionSkippedDefinition(ExecutionNode node, IOperationPlanNode skippedDefinition)
     {
-        var list = _skippedDefinitions[node.Id];
+        TrackSkippedDefinition(node, skippedDefinition);
 
+        var list = _conditionSkippedDefinitions[node.Id] ??= [];
+        list.Add(skippedDefinition);
+    }
+
+    internal ImmutableArray<IOperationPlanNode> GetConditionSkippedDefinitions(ExecutionNode node)
+        => ToImmutableArray(_conditionSkippedDefinitions[node.Id]);
+
+    internal ImmutableArray<IOperationPlanNode> GetSkippedDefinitions(ExecutionNode node)
+        => ToImmutableArray(_skippedDefinitions[node.Id]);
+
+    private static ImmutableArray<IOperationPlanNode> ToImmutableArray(List<IOperationPlanNode>? list)
+    {
         if (list is null or { Count: 0 })
         {
             return [];
@@ -387,6 +400,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         => _executionState.EnqueueMerge(merge);
 
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         SelectionPath selectionSet,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements)
@@ -414,7 +428,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             if (importedMatchCount == 0)
             {
                 var variableValues = GetPathThroughVariables(forwardedVariables);
-                return _resultStore.CreateVariableValueSets(selectionSet, variableValues, requirements);
+                return _resultStore.CreateVariableValueSets(hopId, selectionSet, variableValues, requirements);
             }
 
             if (importedMatchCount != requirements.Length)
@@ -452,6 +466,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// already holds. <paramref name="reusedCount"/> is the number of entities that were filled.
     /// </summary>
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requiredData,
@@ -465,10 +480,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             || forwardedVariables.Length > 0
             || CountImportedRequirementKeys(requiredData) > 0)
         {
-            return CreateVariableValueSets(selectionSets, forwardedVariables, requiredData);
+            return CreateVariableValueSets(hopId, selectionSets, forwardedVariables, requiredData);
         }
 
         return _resultStore.CreateVariableValueSets(
+            hopId,
             selectionSets,
             GetPathThroughVariables(forwardedVariables),
             requiredData,
@@ -477,6 +493,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requiredData)
@@ -497,7 +514,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             if (importedMatchCount == 0)
             {
                 var variableValues = GetPathThroughVariables(forwardedVariables);
-                return _resultStore.CreateVariableValueSets(selectionSets, variableValues, requiredData);
+                return _resultStore.CreateVariableValueSets(hopId, selectionSets, variableValues, requiredData);
             }
 
             if (importedMatchCount != requiredData.Length)
@@ -524,6 +541,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         SelectionPath selectionSet,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements,
@@ -541,6 +559,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
             var variableValues = GetPathThroughVariables(forwardedVariables);
             return _resultStore.CreateRepresentationVariableValue(
+                hopId,
                 selectionSet,
                 variableValues,
                 requirements,
@@ -554,6 +573,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         {
             var variableValues = GetPathThroughVariables(forwardedVariables);
             return _resultStore.CreateRepresentationVariableValue(
+                hopId,
                 selectionSet,
                 variableValues,
                 requirements,
@@ -581,6 +601,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements,
@@ -598,6 +619,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         {
             var variableValues = GetPathThroughVariables(forwardedVariables);
             return _resultStore.CreateRepresentationVariableValue(
+                hopId,
                 selectionSets,
                 variableValues,
                 requirements,
@@ -626,6 +648,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// the result already holds. <paramref name="reusedCount"/> is the number of entities that were filled.
     /// </summary>
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements,
@@ -642,6 +665,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             || CountImportedRequirementKeys(requirements) > 0)
         {
             return CreateRepresentationVariableValue(
+                hopId,
                 selectionSets,
                 forwardedVariables,
                 requirements,
@@ -650,6 +674,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         }
 
         return _resultStore.CreateRepresentationVariableValue(
+            hopId,
             selectionSets,
             GetPathThroughVariables(forwardedVariables),
             requirements,
@@ -881,6 +906,24 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         }
     }
 
+    /// <summary>
+    /// Completes the non-null fields of the hops of <paramref name="plan"/> that never received a value
+    /// with a non-null violation, once every node of the plan completed. Nothing is written when the
+    /// execution was cancelled or halted.
+    /// </summary>
+    internal void CompleteDependentFields(IOperationPlan plan, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested || ExecutionState.ProcessingCompletedEarly)
+        {
+            return;
+        }
+
+        if (!_resultStore.CompleteDependentFields(plan, ExecutionState))
+        {
+            ExecutionState.CancelProcessing();
+        }
+    }
+
     internal ImmutableArray<CompactPath> GetResultPaths(SelectionPath selectionSet)
         => _resultStore.GetResultPaths(selectionSet);
 
@@ -1050,6 +1093,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         if (_usesBatchNodes)
         {
             Array.Clear(_skippedDefinitions, 0, activeNodeSlotCount);
+            Array.Clear(_conditionSkippedDefinitions, 0, activeNodeSlotCount);
             Array.Clear(_batchRequestErrors, 0, activeNodeSlotCount);
         }
 

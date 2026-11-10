@@ -156,7 +156,13 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
         var operation = _operations[0];
         var lookup = _lookups[0];
 
-        if (IsSkipped(context, operation) || HasSkippedDependencies(context, operation))
+        if (IsSkipped(context, operation))
+        {
+            context.TrackConditionSkippedDefinition(this, operation);
+            return ExecutionStatus.Skipped;
+        }
+
+        if (HasSkippedDependencies(context, operation))
         {
             context.TrackSkippedDefinition(this, operation);
             return ExecutionStatus.Skipped;
@@ -482,7 +488,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
 
             if (IsSkipped(context, operation))
             {
-                context.TrackSkippedDefinition(this, operation);
+                context.TrackConditionSkippedDefinition(this, operation);
                 continue;
             }
 
@@ -662,6 +668,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
             case SingleOperationDefinition single when candidates is null:
                 reusedCount = 0;
                 return context.CreateRepresentationVariableValue(
+                    single.Id,
                     single.Target,
                     single.ForwardedVariables,
                     single.Requirements,
@@ -670,6 +677,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
 
             case SingleOperationDefinition single:
                 return context.CreateRepresentationVariableValue(
+                    single.Id,
                     [single.Target],
                     single.ForwardedVariables,
                     single.Requirements,
@@ -680,6 +688,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
 
             case BatchOperationDefinition batch:
                 return context.CreateRepresentationVariableValue(
+                    batch.Id,
                     batch.Targets,
                     batch.ForwardedVariables,
                     batch.Requirements,

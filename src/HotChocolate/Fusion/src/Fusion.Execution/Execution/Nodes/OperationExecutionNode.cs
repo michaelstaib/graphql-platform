@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution.Clients;
+using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
@@ -123,8 +124,14 @@ public sealed class OperationExecutionNode : ExecutionNode
         var diagnosticEvents = context.DiagnosticEvents;
         var reusedCount = 0;
         var variables = context.GetEntityReuseCandidates(Id) is { } candidates
-            ? context.CreateVariableValueSets([_target], _forwardedVariables, _requirements, candidates, out reusedCount)
-            : context.CreateVariableValueSets(_target, _forwardedVariables, _requirements);
+            ? context.CreateVariableValueSets(
+                Id,
+                [_target],
+                _forwardedVariables,
+                _requirements,
+                candidates,
+                out reusedCount)
+            : context.CreateVariableValueSets(Id, _target, _forwardedVariables, _requirements);
 
         if (variables.Length == 0 && (_requirements.Length > 0 || _forwardedVariables.Length > 0))
         {
@@ -270,7 +277,11 @@ public sealed class OperationExecutionNode : ExecutionNode
 
     internal SubscriptionResult Subscribe(OperationPlanContext context)
     {
-        var variables = context.CreateVariableValueSets(_target, _forwardedVariables, _requirements);
+        var variables = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
+            _target,
+            _forwardedVariables,
+            _requirements);
 
         var schemaName = _schemaName ?? context.GetDynamicSchemaName(this);
 

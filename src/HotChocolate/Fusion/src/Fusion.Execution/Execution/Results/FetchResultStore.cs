@@ -1090,6 +1090,7 @@ AddErrors_Next:
     }
 
     public ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         SelectionPath selectionSet,
         IReadOnlyList<ObjectFieldNode> requestVariables,
         ReadOnlySpan<OperationRequirement> requiredData)
@@ -1114,6 +1115,7 @@ AddErrors_Next:
                 return [];
             }
 
+            _missingHopId = hopId;
             return BuildVariableValueSetsUnsafe(elements, selectionSet.Length, requestVariables, requiredData);
         }
     }
@@ -1125,6 +1127,7 @@ AddErrors_Next:
     /// into a single <see cref="VariableValues"/> entry via <see cref="VariableValues.AdditionalPaths"/>.
     /// </summary>
     public ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         IReadOnlyList<ObjectFieldNode> requestVariables,
         ReadOnlySpan<OperationRequirement> requiredData)
@@ -1148,6 +1151,7 @@ AddErrors_Next:
                 return [];
             }
 
+            _missingHopId = hopId;
             return BuildVariableValueSetsUnsafe(
                 _collectTargetCombined.AsSpan(0, combinedCount),
                 selectionSets[0].Length,
@@ -1164,6 +1168,7 @@ AddErrors_Next:
     /// The variable value sets of the entities that still have to be fetched.
     /// </returns>
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         IReadOnlyList<ObjectFieldNode> requestVariables,
         ReadOnlySpan<OperationRequirement> requiredData,
@@ -1191,6 +1196,8 @@ AddErrors_Next:
             {
                 return [];
             }
+
+            _missingHopId = hopId;
 
             // Entities are only reused while the result has no errors.
             if (_errors is { Count: > 0 } || _pocketedErrors is { Count: > 0 })
@@ -1229,6 +1236,9 @@ AddErrors_Next:
             {
                 return variableValueSets;
             }
+
+            // The producers are not targets of the hop.
+            _missingHopId = NoHop;
 
             var producerValueSets = BuildVariableValueSetsUnsafe(
                 producers[..producerCount],
@@ -1424,6 +1434,7 @@ AddErrors_Next:
 
                 if (producerIndex < 0)
                 {
+                    RecordMissingTargetUnsafe(targets[i]);
                     continue;
                 }
 
@@ -2247,6 +2258,7 @@ AddErrors_Next:
             if (failed)
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2397,6 +2409,7 @@ AddErrors_Next:
 
             if (!result.TryGetProperty(lookupName, ref lookupMemo, out var value))
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2404,11 +2417,13 @@ AddErrors_Next:
 
             if (valueKind is JsonValueKind.Undefined)
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
             if (valueKind is JsonValueKind.Null && isNonNullRequirement)
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2480,6 +2495,7 @@ AddErrors_Next:
                 _jsonWriter))
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2549,6 +2565,7 @@ AddErrors_Next:
                 || (value1.ValueKind is JsonValueKind.Null
                     && requirement1.Type.Kind == SyntaxKind.NonNullType))
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2557,6 +2574,7 @@ AddErrors_Next:
                 || (value2.ValueKind is JsonValueKind.Null
                     && requirement2.Type.Kind == SyntaxKind.NonNullType))
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2626,6 +2644,7 @@ AddErrors_Next:
                 _jsonWriter))
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2640,6 +2659,7 @@ AddErrors_Next:
                 _jsonWriter))
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2718,6 +2738,7 @@ AddErrors_Next:
                 || (value1.ValueKind is JsonValueKind.Null
                     && requirement1.Type.Kind == SyntaxKind.NonNullType))
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2726,6 +2747,7 @@ AddErrors_Next:
                 || (value2.ValueKind is JsonValueKind.Null
                     && requirement2.Type.Kind == SyntaxKind.NonNullType))
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2734,6 +2756,7 @@ AddErrors_Next:
                 || (value3.ValueKind is JsonValueKind.Null
                     && requirement3.Type.Kind == SyntaxKind.NonNullType))
             {
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2808,6 +2831,7 @@ AddErrors_Next:
                 _jsonWriter))
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2822,6 +2846,7 @@ AddErrors_Next:
                 _jsonWriter))
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -2836,6 +2861,7 @@ AddErrors_Next:
                 _jsonWriter))
             {
                 _variableWriter.ResetTo(startPosition);
+                RecordMissingTargetUnsafe(result);
                 continue;
             }
 
@@ -3987,6 +4013,7 @@ AddErrors_Next:
         ReturnPooled(ref _reuseProducerHits);
         ReturnPooled(ref _leafRowOffsets);
         ReturnPooled(ref _leafRowOffsetEntries);
+        ReturnPooled(ref _missingTargets);
 
         foreach (var memory in _memory)
         {

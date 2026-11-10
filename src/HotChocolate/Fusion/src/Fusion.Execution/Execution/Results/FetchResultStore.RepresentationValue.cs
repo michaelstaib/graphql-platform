@@ -120,6 +120,7 @@ internal sealed partial class FetchResultStore
     }
 
     public RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         SelectionPath selectionSet,
         IReadOnlyList<ObjectFieldNode> requestVariables,
         ReadOnlySpan<OperationRequirement> requiredData,
@@ -144,6 +145,7 @@ internal sealed partial class FetchResultStore
                 return RepresentationValue.Empty;
             }
 
+            _missingHopId = hopId;
             return BuildRepresentationValueUnsafe(
                 elements,
                 requestVariables,
@@ -157,6 +159,7 @@ internal sealed partial class FetchResultStore
     /// Entities that produce identical representations share a single representation entry.
     /// </summary>
     public RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         IReadOnlyList<ObjectFieldNode> requestVariables,
         ReadOnlySpan<OperationRequirement> requiredData,
@@ -180,6 +183,7 @@ internal sealed partial class FetchResultStore
                 return RepresentationValue.Empty;
             }
 
+            _missingHopId = hopId;
             return BuildRepresentationValueUnsafe(
                 _collectTargetCombined.AsSpan(0, combinedCount),
                 requestVariables,
@@ -196,6 +200,7 @@ internal sealed partial class FetchResultStore
     /// The representations of the entities that still have to be fetched.
     /// </returns>
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         IReadOnlyList<ObjectFieldNode> requestVariables,
         ReadOnlySpan<OperationRequirement> requiredData,
@@ -224,6 +229,7 @@ internal sealed partial class FetchResultStore
                 return RepresentationValue.Empty;
             }
 
+            _missingHopId = hopId;
             var targets = _collectTargetCombined.AsSpan(0, targetCount);
 
             // Entities are only reused while the result has no errors.
@@ -454,6 +460,7 @@ internal sealed partial class FetchResultStore
                     representationJsonWriter,
                     out var startPosition))
                 {
+                    RecordMissingTargetUnsafe(result);
                     continue;
                 }
 

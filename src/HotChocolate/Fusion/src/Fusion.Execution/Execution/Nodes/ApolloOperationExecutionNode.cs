@@ -196,6 +196,7 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
         var reusedCount = 0;
         var representation = context.GetEntityReuseCandidates(Id) is { } candidates
             ? context.CreateRepresentationVariableValue(
+                Id,
                 [_target],
                 _forwardedVariables,
                 _requirements,
@@ -204,6 +205,7 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
                 candidates,
                 out reusedCount)
             : context.CreateRepresentationVariableValue(
+                Id,
                 _target,
                 _forwardedVariables,
                 _requirements,

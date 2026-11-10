@@ -352,6 +352,47 @@ internal sealed class ValueCompletion
         return true;
     }
 
+    /// <summary>
+    /// Completes every client-visible non-null field of <paramref name="resultSelectionSet"/> that is still undefined
+    /// on <paramref name="target"/> with a non-null violation at the path of the field.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c>, if the null propagated to the root.
+    /// </returns>
+    public bool CompleteUndefinedFields(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet)
+    {
+        Path? targetPath = null;
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (!_store.IsReachableObjectUnsafe(target))
+            {
+                return true;
+            }
+
+            if (!target.TryGetProperty(responseName, out var fieldResult)
+                || fieldResult.IsInternal
+                || fieldResult.IsExcluded
+                || fieldResult.ValueKind is not JsonValueKind.Undefined
+                || fieldResult.Selection is not { IsNonNull: true } selection)
+            {
+                continue;
+            }
+
+            targetPath ??= target.CompactPath.ToPath(target.Operation);
+            var fieldPath = targetPath.Append(responseName);
+
+            if (!ApplyFieldError(fieldResult, selection, ErrorHelper.NonNullViolation(fieldPath), fieldPath))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public bool BuildErrorResult(Path path, IError error)
     {
         var reachablePath = path;
@@ -928,12 +969,7 @@ internal sealed class ValueCompletion
             }
             else
             {
-                var path = target.CompactPath.ToPath(target.Operation);
-                error = ErrorBuilder.New()
-                    .SetMessage("Cannot return null for non-nullable field.")
-                    .SetCode(ErrorCodes.Execution.NonNullViolation)
-                    .SetPath(path)
-                    .Build();
+                error = ErrorHelper.NonNullViolation(target.CompactPath.ToPath(target.Operation));
             }
 
             error = _errorHandler.Handle(error);

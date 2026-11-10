@@ -81,6 +81,7 @@ public abstract class ExecutionNode : IOperationPlanNode, IEquatable<ExecutionNo
         var activity = collectTelemetry ? Activity.Current : null;
         IDisposable? scope = null;
         var status = ExecutionStatus.Failed;
+        var skippedByCondition = false;
         Exception? error = null;
 
         try
@@ -90,6 +91,7 @@ public abstract class ExecutionNode : IOperationPlanNode, IEquatable<ExecutionNo
             if (IsSkipped(context))
             {
                 status = ExecutionStatus.Skipped;
+                skippedByCondition = true;
             }
             else
             {
@@ -118,7 +120,9 @@ public abstract class ExecutionNode : IOperationPlanNode, IEquatable<ExecutionNo
                 error,
                 context.GetDependentsToExecute(this),
                 context.GetSkippedDefinitions(this),
+                context.GetConditionSkippedDefinitions(this),
                 context.GetVariableValueSets(this),
+                skippedByCondition,
                 context.GetTransportDetails(this));
 
             context.CompleteNode(result);

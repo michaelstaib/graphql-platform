@@ -11,5 +11,7 @@ internal readonly record struct ExecutionNodeResult(
     Exception? Exception,
     ImmutableArray<ExecutionNode> DependentsToExecute,
     ImmutableArray<IOperationPlanNode> SkippedDefinitions,
+    ImmutableArray<IOperationPlanNode> ConditionSkippedDefinitions,
     ImmutableArray<VariableValues> VariableValueSets,
+    bool SkippedByCondition,
     (Uri? Uri, string? ContentType) TransportDetails = default);

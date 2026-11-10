@@ -1941,6 +1941,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [Requirement(schema, "__fusion_1_key", "{ name }", new NamedTypeNode("FooKeyInput"))]);
@@ -1985,6 +1986,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [
                 Field("first", new IntValueNode(10)),
@@ -2034,6 +2036,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [
                 Field("first", new IntValueNode(10)),
@@ -2076,6 +2079,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [Field("first", new IntValueNode(10))],
             [Requirement(schema, "__fusion_1_id", "id", new NonNullTypeNode(new NamedTypeNode("ID")))]);
@@ -2394,16 +2398,23 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // the first request retains the array that the producers of the lookup rent next
         Initialize(firstArena);
-        var producerArray = ImmutableCollectionsMarshal.AsArray(store.CreateVariableValueSets(bars, [], [requirement]));
+        var producerArray = ImmutableCollectionsMarshal.AsArray(
+            store.CreateVariableValueSets(FetchResultStore.NoHop, bars, [], [requirement]));
         store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
 
         Initialize(secondArena);
-        var remaining = store.CreateVariableValueSets([foos], [], [requirement], candidates, out var reusedCount);
+        var remaining = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
+            [foos],
+            [],
+            [requirement],
+            candidates,
+            out var reusedCount);
 
         // act
         store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
         Initialize(thirdArena);
-        var nextProducers = store.CreateVariableValueSets(bars, [], [requirement]);
+        var nextProducers = store.CreateVariableValueSets(FetchResultStore.NoHop, bars, [], [requirement]);
 
         // assert
         Assert.Empty(remaining);
@@ -2430,6 +2441,125 @@ public sealed class FetchResultStoreTests : FusionTestBase
                 node.ResultSelectionSet,
                 containsErrors: false);
         }
+    }
+
+    [Fact]
+    public void CreateVariableValueSets_Should_RecordNoMissingTarget_When_EveryTargetIsReused()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              foos: [Foo]
+              bars: [Foo]
+            }
+
+            type Foo {
+              key: String
+              name: String
+            }
+            """);
+        var plan = PlanOperation(schema, "{ foos { key name } bars { key name } }");
+        var node = (OperationExecutionNode)plan.RootNodes.Single();
+        var requirement = Requirement(
+            schema,
+            "__fusion_1_key",
+            "key",
+            new NonNullTypeNode(new NamedTypeNode("String")));
+        var foos = SelectionPath.Root.AppendField("foos");
+        var bars = SelectionPath.Root.AppendField("bars");
+        var candidates = new EntityReuseCandidateList([bars], ["name"], ["key"], []);
+        var foosJson = string.Join(",", Enumerable.Range(0, 10).Select(i => $$"""{"key":"{{i}}","name":"foo"}"""));
+        var barsJson = string.Join(",", Enumerable.Range(0, 10).Select(i => $$"""{"key":"{{i}}","name":"bar"}"""));
+        var payload = Encoding.UTF8.GetBytes($$$"""{"data":{"foos":[{{{foosJson}}}],"bars":[{{{barsJson}}}]}}""");
+
+        using var sourceArena = new MemoryArena();
+        using var resultArena = new MemoryArena();
+        using var store = new FetchResultStore();
+        AddResults(store, schema, plan, node, resultArena, sourceArena, payload);
+
+        // act
+        var remaining = store.CreateVariableValueSets(
+            node.Id,
+            [foos],
+            [],
+            [requirement],
+            candidates,
+            out var reusedCount);
+
+        // assert
+        Assert.Empty(remaining);
+        Assert.Equal(10, reusedCount);
+        Assert.Equal(0, store.MissingTargetCount);
+    }
+
+    [Theory]
+    [InlineData(7, 2)]
+    [InlineData(FetchResultStore.NoHop, 0)]
+    public void CreateVariableValueSets_Should_RecordTheTargetsWithoutKey_When_HopCreatesItsVariables(
+        int hopId,
+        int expectedCount)
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              foos: [Foo]
+            }
+
+            type Foo {
+              key: String
+            }
+            """);
+        var plan = PlanOperation(schema, "{ foos { key } }");
+        var node = (OperationExecutionNode)plan.RootNodes.Single();
+        var requirement = Requirement(
+            schema,
+            "__fusion_1_key",
+            "key",
+            new NonNullTypeNode(new NamedTypeNode("String")));
+        var payload = """{"data":{"foos":[{"key":"a"},{"key":null},{"key":"b"},{"key":null}]}}"""u8.ToArray();
+
+        using var sourceArena = new MemoryArena();
+        using var resultArena = new MemoryArena();
+        using var store = new FetchResultStore();
+        AddResults(store, schema, plan, node, resultArena, sourceArena, payload);
+
+        // act
+        var variables = store.CreateVariableValueSets(hopId, SelectionPath.Root.AppendField("foos"), [], [requirement]);
+
+        // assert
+        Assert.Equal(2, variables.Length);
+        Assert.Equal(expectedCount, store.MissingTargetCount);
+    }
+
+    private static void AddResults(
+        FetchResultStore store,
+        FusionSchemaDefinition schema,
+        OperationPlan plan,
+        OperationExecutionNode node,
+        MemoryArena resultArena,
+        MemoryArena sourceArena,
+        byte[] payload)
+    {
+        store.Initialize(
+            resultArena,
+            schema,
+            DefaultErrorHandler.Default,
+            plan.Operation,
+            ErrorHandlingMode.Propagate,
+            includeFlags: default,
+            deferFlags: default,
+            pathSegmentLocalPoolCapacity: 16);
+
+        var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
+        store.AddPartialResults(
+            SelectionPath.Root,
+            [new SourceSchemaResult(CompactPath.Root, document)],
+            node.ResultSelectionSet,
+            containsErrors: false);
     }
 
     [Fact]
@@ -2571,6 +2701,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("nodes").AppendField("target"),
             [],
             [
@@ -2645,6 +2776,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("nodes"),
             [],
             [Requirement(schema, "__fusion_1_only_b", "onlyB", new NamedTypeNode("String"))]);
@@ -2692,6 +2824,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [requirement]);
@@ -2738,6 +2871,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [Requirement(schema, "__fusion_1_key", "{ name }", new NamedTypeNode("FooKeyInput"))]);
@@ -2784,6 +2918,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -2832,6 +2967,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             products,
             [],
             [
@@ -2895,6 +3031,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             products,
             [],
             [
@@ -2957,6 +3094,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             items,
             [],
             [
@@ -3016,6 +3154,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             [products, SelectionPath.Root.AppendField("featured")],
             [],
             [
@@ -3075,6 +3214,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             products,
             [],
             [
@@ -3119,6 +3259,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3167,6 +3308,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3217,6 +3359,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3271,6 +3414,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [Requirement(schema, "__fusion_1_size", "meta.size", new NamedTypeNode("JSON"))]);
@@ -3310,6 +3454,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID"))]);
@@ -3353,6 +3498,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3398,6 +3544,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3444,6 +3591,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3498,6 +3646,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3552,6 +3701,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3604,6 +3754,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3657,6 +3808,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [
@@ -3704,7 +3856,11 @@ public sealed class FetchResultStoreTests : FusionTestBase
             deferFlags: default,
             pathSegmentLocalPoolCapacity: 16);
         AddKeyResults(store, node, sourceArena, count: 1);
-        store.CreateVariableValueSets(SelectionPath.Root.AppendField("foos"), [], [requirement]);
+        store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
+            SelectionPath.Root.AppendField("foos"),
+            [],
+            [requirement]);
 
         // the first event completes and releases its memory
         var firstEventMemory = store.MemoryOwners.ToArray();
@@ -3718,6 +3874,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [requirement]);
@@ -3764,7 +3921,11 @@ public sealed class FetchResultStoreTests : FusionTestBase
             deferFlags: default,
             pathSegmentLocalPoolCapacity: 16);
         AddKeyResults(store, node, sourceArena, count: 1);
-        store.CreateVariableValueSets(SelectionPath.Root.AppendField("foos"), [], [requirement]);
+        store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
+            SelectionPath.Root.AppendField("foos"),
+            [],
+            [requirement]);
         store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
         firstArena.Dispose();
 
@@ -3783,6 +3944,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [requirement]);
@@ -3830,6 +3992,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             pathSegmentLocalPoolCapacity: 16);
         AddKeyResults(store, node, sourceArena, count: 1);
         var requestValues = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [requirement]);
@@ -3854,6 +4017,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var eventValues = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [requirement]);
@@ -3933,6 +4097,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
 
         // act
         var result = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID"))]);
@@ -3985,6 +4150,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             sourceArena);
         var entry = Assert.Single(
             store.CreateVariableValueSets(
+                FetchResultStore.NoHop,
                 SelectionPath.Root.AppendField("foos"),
                 [],
                 [Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID"))]));
@@ -4411,6 +4577,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             sourceArena);
         var entry = Assert.Single(
             store.CreateVariableValueSets(
+                FetchResultStore.NoHop,
                 SelectionPath.Root.AppendField("foos"),
                 [],
                 [Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID"))]));
@@ -4495,6 +4662,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             resultArena,
             sourceArena);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             [Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID"))]);
@@ -4559,6 +4727,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             sourceArena);
         var entry = Assert.Single(
             store.CreateVariableValueSets(
+                FetchResultStore.NoHop,
                 SelectionPath.Root.AppendField("foos"),
                 [],
                 [Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID"))]));
@@ -4755,7 +4924,11 @@ public sealed class FetchResultStoreTests : FusionTestBase
                 [new SourceSchemaResult(CompactPath.Root, document)],
                 node.ResultSelectionSet,
                 containsErrors: false));
-        store.CreateVariableValueSets(SelectionPath.Root.AppendField("foos"), [], [requirement]);
+        store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
+            SelectionPath.Root.AppendField("foos"),
+            [],
+            [requirement]);
 
         var page = new WeakReference(resultArena.Rent(0).Buffer);
         store.Clean(maxCollectTargetRetainLength: 256, maxDictionaryRetainCapacity: 256);
