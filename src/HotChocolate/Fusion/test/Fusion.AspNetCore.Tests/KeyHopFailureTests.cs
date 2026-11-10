@@ -1530,30 +1530,34 @@ public class KeyHopFailureTests : FusionTestBase
         }
     }
 
-    // Whether a hop that has not started runs after data is null depends on timing. Under data: null every error
-    // appears at most once, the errors of the root chain appear in every order, and every other error is one of the
-    // allowed errors with exactly its message and path.
-    private static void AssertNullDataResults(
+    // Whether a hop that has not started runs below a null value depends on timing. For results below a nulled
+    // ancestor the data is identical, the errors that nulled it appear in every order, every error appears at most
+    // once, and every other error is one of the allowed errors with exactly its message and path.
+    private static void AssertNulledResults(
         IEnumerable<string> results,
-        string[] rootChainErrors,
+        string[] nullingErrors,
         string[] allowedErrors)
     {
-        foreach (var result in results.Where(r => r.StartsWith("data: null", StringComparison.Ordinal)))
+        var list = results.ToList();
+        var datas = list.Select(r => r.Split('\n')[0]).Distinct().ToList();
+        Assert.Single(datas);
+
+        foreach (var result in list)
         {
             var line = result.Split('\n').First(l => l.StartsWith("errors:", StringComparison.Ordinal));
             using var document = JsonDocument.Parse(line["errors:".Length..]);
             var errors = document.RootElement.EnumerateArray().Select(e => e.GetRawText()).ToList();
 
             Assert.Equal(errors.Count, errors.Distinct().Count());
-            Assert.All(rootChainErrors, e => Assert.Contains(e, errors));
+            Assert.All(nullingErrors, e => Assert.Contains(e, errors));
             Assert.All(errors, e => Assert.True(
-                rootChainErrors.Contains(e) || allowedErrors.Contains(e),
-                $"Unexpected error under data: null: {e}"));
+                nullingErrors.Contains(e) || allowedErrors.Contains(e),
+                $"Unexpected error below a null value: {e}"));
         }
     }
 
     [Fact]
-    public void AssertNullDataResults_Should_Throw_When_AnExtraErrorHasAWrongPath()
+    public void AssertNulledResults_Should_Throw_When_AnExtraErrorHasAWrongPath()
     {
         // arrange
         const string root = """{"message":"m","path":["users",0,"kayNN"]}""";
@@ -1561,18 +1565,18 @@ public class KeyHopFailureTests : FusionTestBase
         const string wrong = """{"message":"m","path":["nullableAccounts",1,"kayNN"]}""";
 
         // act
-        AssertNullDataResults([$"data: null\nerrors: [{root},{extra}]\n"], [root], [extra]);
+        AssertNulledResults([$"data: null\nerrors: [{root},{extra}]\n"], [root], [extra]);
 
         // assert
         Assert.ThrowsAny<Exception>(
-            () => AssertNullDataResults([$"data: null\nerrors: [{root},{wrong}]\n"], [root], [extra]));
+            () => AssertNulledResults([$"data: null\nerrors: [{root},{wrong}]\n"], [root], [extra]));
     }
 
     private async Task<string> ExecuteInEveryHopOrderAsync(
         string query,
         string[] hops,
         (string First, string Second)[] precedences,
-        string[] rootChainErrors,
+        string[] nullingErrors,
         string[] allowedErrors)
     {
         var sequence = new HopSequence();
@@ -1591,11 +1595,13 @@ public class KeyHopFailureTests : FusionTestBase
 
         sequence.Start([]);
 
-        AssertNullDataResults(results, rootChainErrors, allowedErrors);
+        if (nullingErrors.Length > 0 || results.Any(r => r.StartsWith("data: null", StringComparison.Ordinal)))
+        {
+            AssertNulledResults(results, nullingErrors, allowedErrors);
+            return results[0].Split('\n')[0] + "\n";
+        }
 
-        return Assert.Single(results.Select(r => r.StartsWith("data: null", StringComparison.Ordinal)
-            ? "data: null"
-            : r).Distinct());
+        return Assert.Single(results.Distinct());
     }
 
     private static List<string[]> GetHopOrders(string[] hops, (string First, string Second)[] precedences)
