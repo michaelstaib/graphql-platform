@@ -98,7 +98,7 @@ internal sealed partial class FetchResultStore
         ClearMissingTargets();
         _keyFetchErrors?.Clear();
         _reportedKeyFetches?.Clear();
-        _errorKeys?.Clear();
+        _errorsByPath?.Clear();
 
         _valueCompletion.Initialize(_schema, _errorHandler, _errorHandlingMode);
 
@@ -152,7 +152,7 @@ internal sealed partial class FetchResultStore
         ClearMissingTargets();
         _keyFetchErrors?.Clear();
         _reportedKeyFetches?.Clear();
-        _errorKeys?.Clear();
+        _errorsByPath?.Clear();
 
         // drop the arena memory of the variable and leaf key writers
         _variableWriter.Release();

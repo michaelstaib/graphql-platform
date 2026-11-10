@@ -48,6 +48,27 @@ public sealed class FetchResultStoreTests : FusionTestBase
     private static readonly Operation s_snapshotOperation = PlanOperation(s_snapshotSchema, "{ noop }").Operation;
 
     [Fact]
+    public void AddError_Should_KeepBothErrors_When_TwoDifferentErrorsShareAPath()
+    {
+        // arrange
+        var path = Path.Root.Append("a");
+        var first = ErrorBuilder.New().SetMessage("same").SetCode("A").SetPath(path).Build();
+        var second = ErrorBuilder.New().SetMessage("same").SetCode("B").SetPath(path).Build();
+        var third = ErrorBuilder.New().SetMessage("same").SetCode("A").SetPath(path).SetExtension("x", 1).Build();
+        var duplicate = ErrorBuilder.New().SetMessage("same").SetCode("A").SetPath(path).Build();
+        var store = new FetchResultStore();
+
+        // act
+        store.AddError(first);
+        store.AddError(second);
+        store.AddError(third);
+        store.AddError(duplicate);
+
+        // assert
+        Assert.Equal([first, second, third], store.Errors);
+    }
+
+    [Fact]
     public void GetResultPaths_Should_ThrowInvalidOperationException_When_TargetTraversesScalar()
     {
         // arrange

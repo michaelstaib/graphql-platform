@@ -1362,6 +1362,53 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedErrorOnce_When_ASiblingErrorNulledTheListInAnyOrder()
+    {
+        // arrange
+        string[][] orders = [["B", "C", "I"], ["B", "I", "C"]];
+        var sequence = new HopSequence();
+        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence);
+        var results = new List<string>();
+
+        // act
+        foreach (var order in orders)
+        {
+            sequence.Start(order);
+            var result = await ExecuteWithSortedErrorsAsync(
+                gateway,
+                "{ userList(ids: [96, 93]) { total badNN } }");
+            results.Add($"## {string.Join(" ", order)}\n{result}");
+        }
+
+        // assert
+        results.MatchInlineSnapshot(
+            """
+            [
+              "## B C I\ndata: {\"userList\":null}\nerrors: [{\"message\":\"C hop failed for sku-96\",\"path\":[\"userList\",0,\"total\"]},{\"message\":\"I hop failed for 93\",\"path\":[\"userList\",1,\"badNN\"]}]\n",
+              "## B I C\ndata: {\"userList\":null}\nerrors: [{\"message\":\"C hop failed for sku-96\",\"path\":[\"userList\",0,\"total\"]},{\"message\":\"I hop failed for 93\",\"path\":[\"userList\",1,\"badNN\"]}]\n"
+            ]
+            """);
+    }
+
+    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence)
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopC = new SequencedHop(sequence, "C");
+        var hopI = new SequencedHop(sequence, "I");
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: hopB.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>(), mockHttpResponse: hopC.SendAsync);
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopC.Connect(c);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c), ("i", i)],
+            includeOperationPlan: false);
+    }
+
     private async Task<string> ExecuteKeyHopRaceAsync(string[] order)
     {
         var sequence = new HopSequence();

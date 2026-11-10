@@ -397,18 +397,32 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/>
-    /// of a target that is already <c>null</c>, unless an ancestor of the target is null as well.
+    /// of a target that is already <c>null</c>.
     /// </summary>
     public void ReportErrorOnNulledTarget(
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet,
         IError error)
-    {
-        _store.RecordKeyFetchErrors(target.Path, resultSelectionSet, error);
+        => ReportErrorOnNulledTarget(target, target.CompactPath, resultSelectionSet, error);
 
-        if (_store.HasReachableAncestorsUnsafe(target) && TryGetNulledSelectionSet(target, out var selectionSet))
+    /// <summary>
+    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/>
+    /// of the target at <paramref name="targetPath"/>. The <paramref name="element"/> is the target or the
+    /// null value above it.
+    /// </summary>
+    public void ReportErrorOnNulledTarget(
+        CompositeResultElement element,
+        CompactPath targetPath,
+        ResultSelectionSet resultSelectionSet,
+        IError error)
+    {
+        var operation = element.Operation;
+        var errorPath = targetPath.ToPath(operation);
+        _store.RecordKeyFetchErrors(errorPath, resultSelectionSet, error);
+
+        if (TryGetTargetSelectionSet(element, targetPath, out var selectionSet))
         {
-            AddNulledTargetErrors(target, resultSelectionSet, selectionSet, error);
+            AddNulledTargetErrors(errorPath, resultSelectionSet, selectionSet, error);
         }
     }
 
@@ -429,6 +443,35 @@ internal sealed class ValueCompletion
         {
             ReportErrorOnNulledTarget(target, resultSelectionSet, error);
         }
+    }
+
+    private static bool TryGetTargetSelectionSet(
+        CompositeResultElement element,
+        CompactPath targetPath,
+        [NotNullWhen(true)] out SelectionSet? selectionSet)
+    {
+        if (element.CompactPath.Length == targetPath.Length)
+        {
+            return TryGetNulledSelectionSet(element, out selectionSet);
+        }
+
+        // The element is a null value above the target, the type of the target is the type of its field.
+        for (var i = targetPath.Length - 1; i >= 0; i--)
+        {
+            if (targetPath[i] < 0)
+            {
+                continue;
+            }
+
+            var selection = element.Operation.GetSelectionById(targetPath[i]);
+            selectionSet = selection.Type.NamedType() is IComplexTypeDefinition complexType
+                ? selection.GetSelectionSet(complexType)
+                : null;
+            return selectionSet is not null;
+        }
+
+        selectionSet = null;
+        return false;
     }
 
     private static bool TryGetNulledSelectionSet(
@@ -455,12 +498,11 @@ internal sealed class ValueCompletion
     }
 
     private void AddNulledTargetErrors(
-        CompositeResultElement target,
+        Path errorPath,
         ResultSelectionSet resultSelectionSet,
         SelectionSet selectionSet,
         IError error)
     {
-        var errorPath = target.Path;
         var includeFlags = _store.IncludeFlags;
 
         foreach (var responseName in resultSelectionSet.ResponseNames)

@@ -99,7 +99,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private Dictionary<Path, IError>? _pocketedErrors;
     private Dictionary<(Path, string), IError>? _keyFetchErrors;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
-    private HashSet<(Path, string)>? _errorKeys;
+    private Dictionary<Path, List<IError>>? _errorsByPath;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -533,16 +533,52 @@ internal sealed partial class FetchResultStore : IDisposable
     {
         if (error.Path is { } path)
         {
-            _errorKeys ??= [];
+            _errorsByPath ??= [];
 
-            if (!_errorKeys.Add((path, error.Message)))
+            if (!_errorsByPath.TryGetValue(path, out var errorsAtPath))
+            {
+                errorsAtPath = [];
+                _errorsByPath.Add(path, errorsAtPath);
+            }
+
+            if (errorsAtPath.Any(existing => IsSameError(existing, error)))
             {
                 return;
             }
+
+            errorsAtPath.Add(error);
         }
 
         _errors ??= [];
         _errors.Add(error);
+    }
+
+    private static bool IsSameError(IError first, IError second)
+    {
+        if (first.Message != second.Message || first.Code != second.Code)
+        {
+            return false;
+        }
+
+        if (first.Extensions is null || second.Extensions is null)
+        {
+            return first.Extensions is null && second.Extensions is null;
+        }
+
+        if (first.Extensions.Count != second.Extensions.Count)
+        {
+            return false;
+        }
+
+        foreach (var (key, value) in first.Extensions)
+        {
+            if (!second.Extensions.TryGetValue(key, out var other) || !Equals(value, other))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public bool AddErrors(
@@ -566,12 +602,7 @@ internal sealed partial class FetchResultStore : IDisposable
                 var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
                 if (element.IsNullOrInvalidated)
                 {
-                    // The start element is an ancestor when the target is below a null value.
-                    if (element.CompactPath.Length == path.Length)
-                    {
-                        _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
-                    }
-
+                    _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
                     goto AddErrors_Next;
                 }
 
@@ -616,12 +647,7 @@ AddErrors_Next:
                 var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
                 if (element.IsNullOrInvalidated)
                 {
-                    // The start element is an ancestor when the target is below a null value.
-                    if (element.CompactPath.Length == path.Length)
-                    {
-                        _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
-                    }
-
+                    _valueCompletion.ReportErrorOnNulledTarget(element, path, resultSelectionSet, error);
                     goto AddErrors_Next;
                 }
 
@@ -1035,7 +1061,7 @@ AddErrors_Next:
         var errorCount = _errors?.Count ?? 0;
         var primary = path.IsRoot ? resultData : GetStartResult(path);
 
-        if (!SaveSafeResult(resultData, primary, path.Length, dataElement, errorTrie: null, resultSelectionSet))
+        if (!SaveSafeResult(resultData, primary, path, dataElement, errorTrie: null, resultSelectionSet))
         {
             return false;
         }
@@ -1069,7 +1095,7 @@ AddErrors_Next:
                 if (!SaveSafeResult(
                         resultData,
                         target,
-                        additionalTargets.GetPathLength(i),
+                        additionalTargets.GetPath(i),
                         dataElement,
                         errorTrie: null,
                         resultSelectionSet))
@@ -1289,15 +1315,14 @@ AddErrors_Next:
         }
 
         var element = path.IsRoot ? resultData : GetStartResult(path);
-        return SaveSafeResult(resultData, element, path.Length, dataElement, errorTrie, resultSelectionSet);
+        return SaveSafeResult(resultData, element, path, dataElement, errorTrie, resultSelectionSet);
     }
 
-    // The path length is the length of the path of the target, or negative when the element is the target.
     // The start element is an ancestor of the target when a value above the target is null.
     private bool SaveSafeResult(
         CompositeResultElement resultData,
         CompositeResultElement element,
-        int pathLength,
+        CompactPath path,
         SourceResultElement dataElement,
         ErrorTrie? errorTrie,
         ResultSelectionSet resultSelectionSet)
@@ -1311,10 +1336,13 @@ AddErrors_Next:
 
         if (element.IsNullOrInvalidated)
         {
-            if (errorTrie?.FindFirstError() is { } nulledError
-                && (pathLength < 0 || element.CompactPath.Length == pathLength))
+            if (errorTrie?.FindFirstError() is { } nulledError)
             {
-                _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, nulledError);
+                _valueCompletion.ReportErrorOnNulledTarget(
+                    element,
+                    path.IsRoot ? element.CompactPath : path,
+                    resultSelectionSet,
+                    nulledError);
             }
 
             return true;
@@ -1352,7 +1380,7 @@ AddErrors_Next:
         return SaveSafeResult(
             resultData,
             additionalTargets[index],
-            additionalTargets.GetPathLength(index),
+            additionalTargets.GetPath(index),
             dataElement,
             errorTrie,
             resultSelectionSet);
@@ -4413,9 +4441,9 @@ AddErrors_Next:
 
         public int Length => _segment.Length;
 
-        // The length is negative for targets that come from the cursors, those are the target elements themselves.
-        public int GetPathLength(int index)
-            => _cursors is { IsCurrent: true } ? -1 : _segment[index].Length;
+        // The path is the root path for targets that come from the cursors, those are the target elements themselves.
+        public CompactPath GetPath(int index)
+            => _cursors is { IsCurrent: true } ? default : _segment[index];
 
         public CompositeResultElement this[int index]
             => _cursors is { IsCurrent: true } cursors
