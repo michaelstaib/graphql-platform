@@ -591,6 +591,12 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
     {
+        if (target.ValueKind is JsonValueKind.Undefined
+            && !TryInitializeTargetObject(target))
+        {
+            return true;
+        }
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             if (!target.TryGetProperty(responseName, out var fieldResult)
