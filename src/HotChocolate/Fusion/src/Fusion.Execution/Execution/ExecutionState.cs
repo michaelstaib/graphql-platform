@@ -21,6 +21,9 @@ internal sealed class ExecutionState
     private readonly ConcurrentQueue<PendingMerge> _pendingMerges = new();
     private Dictionary<int, Exception?>? _mergeFailures;
     private ulong[] _failedOrSkippedBitset = [];
+    private ulong[] _completingSkipBitset = [];
+    private ulong[] _nonCompletingSkipBitset = [];
+    private bool _hasCompletingSkip;
 
     private bool _collectTelemetry;
     private bool _processingCompletedEarly;
@@ -73,11 +76,9 @@ internal sealed class ExecutionState
             _remainingDependencies = [];
         }
 
-        if (_failedOrSkippedBitset.Length > 0)
-        {
-            ArrayPool<ulong>.Shared.Return(_failedOrSkippedBitset);
-            _failedOrSkippedBitset = [];
-        }
+        ReturnBitset(ref _failedOrSkippedBitset);
+        ReturnBitset(ref _completingSkipBitset);
+        ReturnBitset(ref _nonCompletingSkipBitset);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -306,7 +307,7 @@ internal sealed class ExecutionState
 
                     if (!ContainsDependent(dependentsToExecute, executionDependent))
                     {
-                        SkipNode(plan, executionDependent);
+                        SkipNode(plan, executionDependent, SkipKind.NonCompleting);
                     }
                 }
             }
@@ -346,18 +347,103 @@ internal sealed class ExecutionState
 
         if (result.Status is ExecutionStatus.Skipped or ExecutionStatus.Failed)
         {
-            SkipNode(plan, node);
+            SkipNode(plan, node, GetSkipKind(result));
         }
     }
 
-    public void SkipNode(IOperationPlan plan, ExecutionNode node)
+    // A node that failed or skipped itself after it ran completes its dependents. A node skipped by its own
+    // condition does not, and a cancelled node is neither.
+    private SkipKind GetSkipKind(ExecutionNodeResult result)
+    {
+        if (_cts is { IsCancellationRequested: true })
+        {
+            return SkipKind.Cancelled;
+        }
+
+        return result.Status is ExecutionStatus.Skipped && result.SkippedByCondition
+            ? SkipKind.NonCompleting
+            : SkipKind.Completing;
+    }
+
+    /// <summary>
+    /// Gets whether a node was skipped without running because a dependency failed or was skipped, and no skip
+    /// reached it that does not complete its dependent fields.
+    /// </summary>
+    public bool HasCompletingSkips => _hasCompletingSkip;
+
+    /// <summary>
+    /// Gets whether <paramref name="nodeId"/> is a node, or an operation definition inside a batch, that was skipped
+    /// without running, and only skips that complete its dependent fields reached it.
+    /// </summary>
+    public bool IsCompletingSkip(IOperationPlan plan, int nodeId)
+    {
+        var index = nodeId >> 6;
+
+        if (index >= _completingSkipBitset.Length)
+        {
+            return false;
+        }
+
+        var mask = 1UL << (nodeId & 63);
+
+        if ((_completingSkipBitset[index] & mask) == 0
+            || (index < _nonCompletingSkipBitset.Length && (_nonCompletingSkipBitset[index] & mask) != 0))
+        {
+            return false;
+        }
+
+        // Operation definitions inside a batch have no node state, only execution nodes can have run.
+        return plan.GetNodeById(nodeId).Id != nodeId || WasSkippedWithoutRunning(nodeId);
+    }
+
+    /// <summary>
+    /// Appends the ids of the nodes for which <see cref="IsCompletingSkip"/> is <c>true</c> to
+    /// <paramref name="nodeIds"/>, growing the pooled array when needed.
+    /// </summary>
+    /// <returns>
+    /// The number of ids in <paramref name="nodeIds"/>.
+    /// </returns>
+    public int AppendCompletingSkippedNodes(IOperationPlan plan, ref int[] nodeIds, int count)
+    {
+        for (var word = 0; word < _completingSkipBitset.Length; word++)
+        {
+            var bits = _completingSkipBitset[word];
+
+            while (bits != 0)
+            {
+                var nodeId = (word << 6) + System.Numerics.BitOperations.TrailingZeroCount(bits);
+                bits &= bits - 1;
+
+                if (!IsCompletingSkip(plan, nodeId))
+                {
+                    continue;
+                }
+
+                if (count == nodeIds.Length)
+                {
+                    var grown = ArrayPool<int>.Shared.Rent(count * 2);
+                    nodeIds.AsSpan(0, count).CopyTo(grown);
+                    ArrayPool<int>.Shared.Return(nodeIds);
+                    nodeIds = grown;
+                }
+
+                nodeIds[count++] = nodeId;
+            }
+        }
+
+        return count;
+    }
+
+    internal void SkipNode(IOperationPlan plan, ExecutionNode node, SkipKind kind)
     {
         _stack.Clear();
         _stack.Push(node);
 
         while (_stack.TryPop(out var current))
         {
+            var isOrigin = ReferenceEquals(current, node);
             MarkNodeAsSkipped(current.Id);
+            RecordSkip(current.Id, kind, isOrigin);
 
             // When a batch node is skipped without executing, every operation
             // definition inside it is also skipped. We mark each of their
@@ -368,6 +454,7 @@ internal sealed class ExecutionState
                 foreach (var op in batchNode.Operations)
                 {
                     MarkNodeAsSkipped(op.Id);
+                    RecordSkip(op.Id, kind, isOrigin);
                 }
             }
 
@@ -376,6 +463,7 @@ internal sealed class ExecutionState
                 foreach (var op in apolloBatchNode.Operations)
                 {
                     MarkNodeAsSkipped(op.Id);
+                    RecordSkip(op.Id, kind, isOrigin);
                 }
             }
 
@@ -408,14 +496,27 @@ internal sealed class ExecutionState
                 if (dependent is not ExecutionNode)
                 {
                     MarkNodeAsSkipped(dependent.Id);
+                    RecordSkip(dependent.Id, kind, isOrigin: false);
                     continue;
                 }
 
                 var dependentNode = plan.GetExecutionNode(dependent);
 
-                if (dependentNode.Id >= _remainingDependencies.Length
-                    || _remainingDependencies[dependentNode.Id] < 0)
+                if (dependentNode.Id >= _remainingDependencies.Length)
                 {
+                    continue;
+                }
+
+                if (_remainingDependencies[dependentNode.Id] < 0)
+                {
+                    // A node that another skip already reached records this reason as well and passes it on,
+                    // so that whether its dependent fields are completed does not depend on the order of the skips.
+                    if (WasSkippedWithoutRunning(dependentNode.Id)
+                        && RecordSkip(dependentNode.Id, kind, isOrigin: false))
+                    {
+                        _stack.Push(dependentNode);
+                    }
+
                     continue;
                 }
 
@@ -435,6 +536,8 @@ internal sealed class ExecutionState
                 if (IsOptionalDependency(dependentNode, current))
                 {
                     // Optional dependency failed: decrement counter but don't cascade skip.
+                    // The dependent keeps the reason in case every optional dependency fails.
+                    RecordSkip(dependentNode.Id, kind, isOrigin: false);
                     var remaining = _remainingDependencies[dependentNode.Id];
 
                     if (remaining == 1)
@@ -465,6 +568,28 @@ internal sealed class ExecutionState
             }
         }
     }
+
+    // Records why a node was skipped. A node that ran and then failed or skipped itself is the origin of a
+    // completing skip, its own dependent fields are not completed by it.
+    private bool RecordSkip(int nodeId, SkipKind kind, bool isOrigin)
+    {
+        switch (kind)
+        {
+            case SkipKind.NonCompleting:
+                return SetBit(ref _nonCompletingSkipBitset, nodeId);
+
+            case SkipKind.Completing when !isOrigin:
+                _hasCompletingSkip = true;
+                return SetBit(ref _completingSkipBitset, nodeId);
+
+            default:
+                return false;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool WasSkippedWithoutRunning(int nodeId)
+        => nodeId < _nodeStates.Length && _nodeStates[nodeId] == NodeStateSkipped;
 
     private bool ShouldSkipDueToAllOptionalDepsFailed(ExecutionNode node)
     {
@@ -744,20 +869,27 @@ internal sealed class ExecutionState
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void MarkNodeAsSkipped(int nodeId)
+        => SetBit(ref _failedOrSkippedBitset, nodeId);
+
+    // Sets the bit of the node and returns whether it was not set before.
+    private static bool SetBit(ref ulong[] bitset, int nodeId)
     {
         var index = nodeId >> 6;
 
-        if (index >= _failedOrSkippedBitset.Length)
+        if (index >= bitset.Length)
         {
-            EnsureFailedOrSkippedCapacity(index + 1);
+            EnsureBitsetCapacity(ref bitset, index + 1);
         }
 
-        _failedOrSkippedBitset[index] |= 1UL << (nodeId & 63);
+        var mask = 1UL << (nodeId & 63);
+        var wasSet = (bitset[index] & mask) != 0;
+        bitset[index] |= mask;
+        return !wasSet;
     }
 
-    private void EnsureFailedOrSkippedCapacity(int minWordCount)
+    private static void EnsureBitsetCapacity(ref ulong[] bitset, int minWordCount)
     {
-        var newCapacity = _failedOrSkippedBitset.Length == 0 ? 2 : _failedOrSkippedBitset.Length;
+        var newCapacity = bitset.Length == 0 ? 2 : bitset.Length;
 
         while (newCapacity < minWordCount)
         {
@@ -767,13 +899,22 @@ internal sealed class ExecutionState
         var newBitset = ArrayPool<ulong>.Shared.Rent(newCapacity);
         newBitset.AsSpan().Clear();
 
-        if (_failedOrSkippedBitset.Length > 0)
+        if (bitset.Length > 0)
         {
-            _failedOrSkippedBitset.AsSpan().CopyTo(newBitset);
-            ArrayPool<ulong>.Shared.Return(_failedOrSkippedBitset);
+            bitset.AsSpan().CopyTo(newBitset);
+            ArrayPool<ulong>.Shared.Return(bitset);
         }
 
-        _failedOrSkippedBitset = newBitset;
+        bitset = newBitset;
+    }
+
+    private static void ReturnBitset(ref ulong[] bitset)
+    {
+        if (bitset.Length > 0)
+        {
+            ArrayPool<ulong>.Shared.Return(bitset);
+            bitset = [];
+        }
     }
 
     private void ClearFailedOrSkippedBitset()
@@ -782,5 +923,38 @@ internal sealed class ExecutionState
         {
             _failedOrSkippedBitset.AsSpan().Clear();
         }
+
+        if (_completingSkipBitset.Length > 0)
+        {
+            _completingSkipBitset.AsSpan().Clear();
+        }
+
+        if (_nonCompletingSkipBitset.Length > 0)
+        {
+            _nonCompletingSkipBitset.AsSpan().Clear();
+        }
+
+        _hasCompletingSkip = false;
     }
+}
+
+/// <summary>
+/// The reason a node is skipped without running.
+/// </summary>
+internal enum SkipKind
+{
+    /// <summary>
+    /// The node was skipped by its own condition, or it was not chosen to run. Its dependent fields are not completed.
+    /// </summary>
+    NonCompleting,
+
+    /// <summary>
+    /// A node that ran failed or skipped itself. The dependent fields of the nodes it skips are completed.
+    /// </summary>
+    Completing,
+
+    /// <summary>
+    /// The node failed because the execution was cancelled. Nothing is recorded.
+    /// </summary>
+    Cancelled
 }

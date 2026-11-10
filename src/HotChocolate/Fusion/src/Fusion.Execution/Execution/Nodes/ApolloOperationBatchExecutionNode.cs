@@ -662,6 +662,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
             case SingleOperationDefinition single when candidates is null:
                 reusedCount = 0;
                 return context.CreateRepresentationVariableValue(
+                    single.Id,
                     single.Target,
                     single.ForwardedVariables,
                     single.Requirements,
@@ -670,6 +671,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
 
             case SingleOperationDefinition single:
                 return context.CreateRepresentationVariableValue(
+                    single.Id,
                     [single.Target],
                     single.ForwardedVariables,
                     single.Requirements,
@@ -680,6 +682,7 @@ public sealed class ApolloOperationBatchExecutionNode : ExecutionNode
 
             case BatchOperationDefinition batch:
                 return context.CreateRepresentationVariableValue(
+                    batch.Id,
                     batch.Targets,
                     batch.ForwardedVariables,
                     batch.Requirements,

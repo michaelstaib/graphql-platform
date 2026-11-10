@@ -160,6 +160,7 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
             DependentsToExecute: [],
             SkippedDefinitions: [],
             VariableValueSets: [],
+            SkippedByCondition: false,
             TransportDetails: (new Uri("https://example.com/graphql"), "application/json"));
 
         state.EnqueueForCompletion(result);
@@ -186,6 +187,266 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
             failed);
         Assert.Equal(ExecutionStatus.Success, result.Status);
         Assert.Null(result.Exception);
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_RecordDependentsAsCompletingSkips_When_RequiredDependencyFails()
+    {
+        // arrange
+        var failed = new TestExecutionNode(0, TestOutcome.Failed);
+        var middle = new TestExecutionNode(1, TestOutcome.Success);
+        var last = new TestExecutionNode(2, TestOutcome.Success);
+        Chain(failed, middle, last);
+
+        await using var fixture = await CreateSealedAsync(failed, middle, last);
+        fixture.State.FillBacklog(fixture.Plan);
+        var result = await ExecuteNodeAsync(fixture, failed, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, failed, result);
+
+        // assert
+        Assert.True(fixture.State.HasCompletingSkips);
+        Assert.Equal([1, 2], GetCompletingSkippedNodes(fixture));
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_RecordDependentsAsCompletingSkips_When_NodeSkipsItselfAfterRunning()
+    {
+        // arrange
+        var source = new TestExecutionNode(0, TestOutcome.Success);
+        var dependent = new TestExecutionNode(1, TestOutcome.Success);
+        Chain(source, dependent);
+
+        await using var fixture = await CreateSealedAsync(source, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var result = await ExecuteNodeAsync(fixture, source, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, source, result with { Status = ExecutionStatus.Skipped });
+
+        // assert
+        Assert.Equal([1], GetCompletingSkippedNodes(fixture));
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_RecordNothing_When_NodeIsSkippedByItsOwnCondition()
+    {
+        // arrange
+        var skipped = new TestExecutionNode(0, TestOutcome.Skipped);
+        var dependent = new TestExecutionNode(1, TestOutcome.Success);
+        Chain(skipped, dependent);
+
+        await using var fixture = await CreateSealedAsync(skipped, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var result = await ExecuteNodeAsync(fixture, skipped, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, skipped, result);
+
+        // assert
+        Assert.True(result.SkippedByCondition);
+        Assert.False(fixture.State.HasCompletingSkips);
+        Assert.True(fixture.State.IsNodeSkipped(dependent.Id));
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_RecordNothing_When_FailureIsACancellation()
+    {
+        // arrange
+        var failed = new TestExecutionNode(0, TestOutcome.Failed);
+        var dependent = new TestExecutionNode(1, TestOutcome.Success);
+        Chain(failed, dependent);
+
+        await using var fixture = await CreateSealedAsync(failed, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var result = await ExecuteNodeAsync(fixture, failed, CancellationToken.None);
+        fixture.State.CancelProcessing();
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, failed, result);
+
+        // assert
+        Assert.False(fixture.State.HasCompletingSkips);
+        Assert.True(fixture.State.IsNodeSkipped(dependent.Id));
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_RecordNothing_When_DependentWasNotChosenToRun()
+    {
+        // arrange
+        var source = new TestExecutionNode(0, TestOutcome.Success);
+        var selected = new TestExecutionNode(1, TestOutcome.Success);
+        var notChosen = new TestExecutionNode(2, TestOutcome.Success);
+        var notChosenDependent = new TestExecutionNode(3, TestOutcome.Success);
+        Chain(source, selected);
+        Chain(source, notChosen, notChosenDependent);
+        source.DependentToExecute = selected;
+
+        await using var fixture = await CreateSealedAsync(source,
+            selected,
+            notChosen,
+            notChosenDependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var result = await ExecuteNodeAsync(fixture, source, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, source, result);
+
+        // assert
+        Assert.False(fixture.State.HasCompletingSkips);
+        Assert.True(fixture.State.IsNodeSkipped(notChosenDependent.Id));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CompleteNode_Should_NotCompleteNodeReachedByBothKindsOfSkip_When_SkipsArriveInAnyOrder(
+        bool failedFirst)
+    {
+        // arrange
+        var failed = new TestExecutionNode(0, TestOutcome.Failed);
+        var skipped = new TestExecutionNode(1, TestOutcome.Skipped);
+        var both = new TestExecutionNode(2, TestOutcome.Success);
+        var bothDependent = new TestExecutionNode(3, TestOutcome.Success);
+        Chain(failed, both, bothDependent);
+        skipped.AddDependent(both);
+        both.AddDependency(skipped);
+
+        await using var fixture = await CreateSealedAsync(failed, skipped, both, bothDependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var failedResult = await ExecuteNodeAsync(fixture, failed, CancellationToken.None);
+        var skippedResult = await ExecuteNodeAsync(fixture, skipped, CancellationToken.None);
+
+        // act
+        if (failedFirst)
+        {
+            fixture.State.CompleteNode(fixture.Plan, failed, failedResult);
+            fixture.State.CompleteNode(fixture.Plan, skipped, skippedResult);
+        }
+        else
+        {
+            fixture.State.CompleteNode(fixture.Plan, skipped, skippedResult);
+            fixture.State.CompleteNode(fixture.Plan, failed, failedResult);
+        }
+
+        // assert
+        Assert.True(fixture.State.IsNodeSkipped(bothDependent.Id));
+        Assert.Empty(GetCompletingSkippedNodes(fixture));
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_RecordNodeWithOnlyOptionalDependencies_When_EveryOptionalDependencyFails()
+    {
+        // arrange
+        var first = new TestExecutionNode(0, TestOutcome.Failed);
+        var second = new TestExecutionNode(1, TestOutcome.Failed);
+        var dependent = new TestExecutionNode(2, TestOutcome.Success);
+        first.AddDependent(dependent);
+        second.AddDependent(dependent);
+        dependent.AddOptionalDependency(first);
+        dependent.AddOptionalDependency(second);
+
+        await using var fixture = await CreateSealedAsync(first, second, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var firstResult = await ExecuteNodeAsync(fixture, first, CancellationToken.None);
+        var secondResult = await ExecuteNodeAsync(fixture, second, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, first, firstResult);
+        fixture.State.CompleteNode(fixture.Plan, second, secondResult);
+
+        // assert
+        Assert.Equal([2], GetCompletingSkippedNodes(fixture));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CompleteNode_Should_NotCompleteNodeWithOnlyOptionalDependencies_When_OneFailsAndOneIsSkipped(
+        bool failedFirst)
+    {
+        // arrange
+        var failed = new TestExecutionNode(0, TestOutcome.Failed);
+        var skipped = new TestExecutionNode(1, TestOutcome.Skipped);
+        var dependent = new TestExecutionNode(2, TestOutcome.Success);
+        failed.AddDependent(dependent);
+        skipped.AddDependent(dependent);
+        dependent.AddOptionalDependency(failed);
+        dependent.AddOptionalDependency(skipped);
+
+        await using var fixture = await CreateSealedAsync(failed, skipped, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var failedResult = await ExecuteNodeAsync(fixture, failed, CancellationToken.None);
+        var skippedResult = await ExecuteNodeAsync(fixture, skipped, CancellationToken.None);
+
+        // act
+        if (failedFirst)
+        {
+            fixture.State.CompleteNode(fixture.Plan, failed, failedResult);
+            fixture.State.CompleteNode(fixture.Plan, skipped, skippedResult);
+        }
+        else
+        {
+            fixture.State.CompleteNode(fixture.Plan, skipped, skippedResult);
+            fixture.State.CompleteNode(fixture.Plan, failed, failedResult);
+        }
+
+        // assert
+        Assert.True(fixture.State.IsNodeSkipped(dependent.Id));
+        Assert.Empty(GetCompletingSkippedNodes(fixture));
+    }
+
+    [Fact]
+    public async Task CompleteNode_Should_NotRecordNodeWithOptionalDependencies_When_AnotherOptionalDependencySucceeds()
+    {
+        // arrange
+        var failed = new TestExecutionNode(0, TestOutcome.Failed);
+        var succeeded = new TestExecutionNode(1, TestOutcome.Success);
+        var dependent = new TestExecutionNode(2, TestOutcome.Success);
+        failed.AddDependent(dependent);
+        succeeded.AddDependent(dependent);
+        dependent.AddOptionalDependency(failed);
+        dependent.AddOptionalDependency(succeeded);
+
+        await using var fixture = await CreateSealedAsync(failed, succeeded, dependent);
+        fixture.State.FillBacklog(fixture.Plan);
+        var failedResult = await ExecuteNodeAsync(fixture, failed, CancellationToken.None);
+        var succeededResult = await ExecuteNodeAsync(fixture, succeeded, CancellationToken.None);
+
+        // act
+        fixture.State.CompleteNode(fixture.Plan, failed, failedResult);
+        fixture.State.CompleteNode(fixture.Plan, succeeded, succeededResult);
+
+        // assert
+        Assert.False(fixture.State.IsNodeSkipped(dependent.Id));
+        Assert.Empty(GetCompletingSkippedNodes(fixture));
+    }
+
+    private static Task<ExecutionTestFixture> CreateSealedAsync(params TestExecutionNode[] nodes)
+    {
+        foreach (var node in nodes)
+        {
+            node.Seal();
+        }
+
+        return ExecutionTestFixture.CreateAsync(false, nodes);
+    }
+
+    private static void Chain(params TestExecutionNode[] nodes)
+    {
+        for (var i = 1; i < nodes.Length; i++)
+        {
+            nodes[i - 1].AddDependent(nodes[i]);
+            nodes[i].AddDependency(nodes[i - 1]);
+        }
+    }
+
+    private static int[] GetCompletingSkippedNodes(ExecutionTestFixture fixture)
+    {
+        var nodeIds = new int[8];
+        var count = fixture.State.AppendCompletingSkippedNodes(fixture.Plan, ref nodeIds, 0);
+        return [.. nodeIds.AsSpan(0, count)];
     }
 
     private static async Task<ExecutionNodeResult> ExecuteNodeAsync(

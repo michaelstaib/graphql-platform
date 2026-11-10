@@ -461,6 +461,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
         if (operation is SingleOperationDefinition single)
         {
             return context.CreateVariableValueSets(
+                single.Id,
                 [single.Target],
                 single.ForwardedVariables,
                 single.Requirements,
@@ -471,6 +472,7 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
         if (operation is BatchOperationDefinition batch)
         {
             return context.CreateVariableValueSets(
+                batch.Id,
                 batch.Targets,
                 batch.ForwardedVariables,
                 batch.Requirements,
@@ -488,11 +490,13 @@ public sealed class OperationBatchExecutionNode : ExecutionNode
         {
             SingleOperationDefinition single
                 => context.CreateVariableValueSets(
+                    single.Id,
                     single.Target,
                     single.ForwardedVariables,
                     single.Requirements),
             BatchOperationDefinition batch
                 => context.CreateVariableValueSets(
+                    batch.Id,
                     batch.Targets,
                     batch.ForwardedVariables,
                     batch.Requirements),

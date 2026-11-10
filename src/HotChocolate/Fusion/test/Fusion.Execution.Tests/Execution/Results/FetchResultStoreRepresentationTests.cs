@@ -2019,6 +2019,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Product",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("products"),
             [],
             requirements);
@@ -2089,6 +2090,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -2157,6 +2159,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -2236,6 +2239,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -2313,6 +2317,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Product",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("products"),
             [],
             requirements);
@@ -2385,6 +2390,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -2457,6 +2463,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -2536,6 +2543,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Product",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("products"),
             [],
             requirements);
@@ -2612,6 +2620,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -2684,6 +2693,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
             "Foo",
             lookupField);
         var entries = store.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root.AppendField("foos"),
             [],
             requirements);
@@ -3293,6 +3303,7 @@ public sealed class FetchResultStoreRepresentationTests : FusionTestBase
         string entityTypeName,
         FieldNode lookupField)
         => store.CreateRepresentationVariableValue(
+            FetchResultStore.NoHop,
             selectionSet,
             requestVariables,
             requirements,

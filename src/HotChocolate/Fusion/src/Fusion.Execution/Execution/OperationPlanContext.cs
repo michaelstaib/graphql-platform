@@ -387,6 +387,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         => _executionState.EnqueueMerge(merge);
 
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         SelectionPath selectionSet,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements)
@@ -414,7 +415,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             if (importedMatchCount == 0)
             {
                 var variableValues = GetPathThroughVariables(forwardedVariables);
-                return _resultStore.CreateVariableValueSets(selectionSet, variableValues, requirements);
+                return _resultStore.CreateVariableValueSets(hopId, selectionSet, variableValues, requirements);
             }
 
             if (importedMatchCount != requirements.Length)
@@ -452,6 +453,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// already holds. <paramref name="reusedCount"/> is the number of entities that were filled.
     /// </summary>
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requiredData,
@@ -465,10 +467,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             || forwardedVariables.Length > 0
             || CountImportedRequirementKeys(requiredData) > 0)
         {
-            return CreateVariableValueSets(selectionSets, forwardedVariables, requiredData);
+            return CreateVariableValueSets(hopId, selectionSets, forwardedVariables, requiredData);
         }
 
         return _resultStore.CreateVariableValueSets(
+            hopId,
             selectionSets,
             GetPathThroughVariables(forwardedVariables),
             requiredData,
@@ -477,6 +480,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requiredData)
@@ -497,7 +501,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             if (importedMatchCount == 0)
             {
                 var variableValues = GetPathThroughVariables(forwardedVariables);
-                return _resultStore.CreateVariableValueSets(selectionSets, variableValues, requiredData);
+                return _resultStore.CreateVariableValueSets(hopId, selectionSets, variableValues, requiredData);
             }
 
             if (importedMatchCount != requiredData.Length)
@@ -524,6 +528,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         SelectionPath selectionSet,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements,
@@ -541,6 +546,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
             var variableValues = GetPathThroughVariables(forwardedVariables);
             return _resultStore.CreateRepresentationVariableValue(
+                hopId,
                 selectionSet,
                 variableValues,
                 requirements,
@@ -554,6 +560,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         {
             var variableValues = GetPathThroughVariables(forwardedVariables);
             return _resultStore.CreateRepresentationVariableValue(
+                hopId,
                 selectionSet,
                 variableValues,
                 requirements,
@@ -581,6 +588,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements,
@@ -598,6 +606,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         {
             var variableValues = GetPathThroughVariables(forwardedVariables);
             return _resultStore.CreateRepresentationVariableValue(
+                hopId,
                 selectionSets,
                 variableValues,
                 requirements,
@@ -626,6 +635,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// the result already holds. <paramref name="reusedCount"/> is the number of entities that were filled.
     /// </summary>
     internal RepresentationValue CreateRepresentationVariableValue(
+        int hopId,
         ReadOnlySpan<SelectionPath> selectionSets,
         ReadOnlySpan<string> forwardedVariables,
         ReadOnlySpan<OperationRequirement> requirements,
@@ -642,6 +652,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             || CountImportedRequirementKeys(requirements) > 0)
         {
             return CreateRepresentationVariableValue(
+                hopId,
                 selectionSets,
                 forwardedVariables,
                 requirements,
@@ -650,6 +661,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         }
 
         return _resultStore.CreateRepresentationVariableValue(
+            hopId,
             selectionSets,
             GetPathThroughVariables(forwardedVariables),
             requirements,
@@ -876,6 +888,24 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         var canExecutionContinue = _resultStore.AddErrors(error, resultSelectionSet, paths);
 
         if (!canExecutionContinue)
+        {
+            ExecutionState.CancelProcessing();
+        }
+    }
+
+    /// <summary>
+    /// Completes the non-null fields of the hops of <paramref name="plan"/> that never received a value
+    /// with a non-null violation, once every node of the plan completed. Nothing is written when the
+    /// execution was cancelled or halted.
+    /// </summary>
+    internal void CompleteDependentFields(IOperationPlan plan, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested || ExecutionState.ProcessingCompletedEarly)
+        {
+            return;
+        }
+
+        if (!_resultStore.CompleteDependentFields(plan, ExecutionState))
         {
             ExecutionState.CancelProcessing();
         }

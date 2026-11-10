@@ -3,6 +3,7 @@ using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Transport.Http;
@@ -41,8 +42,8 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = multipleTargets
-            ? context.CreateVariableValueSets([SelectionPath.Root], forwardedVariables, [])
-            : context.CreateVariableValueSets(SelectionPath.Root, forwardedVariables, []);
+            ? context.CreateVariableValueSets(FetchResultStore.NoHop, [SelectionPath.Root], forwardedVariables, [])
+            : context.CreateVariableValueSets(FetchResultStore.NoHop, SelectionPath.Root, forwardedVariables, []);
 
         // assert
         var entry = Assert.Single(result);
@@ -75,8 +76,8 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = multipleTargets
-            ? context.CreateVariableValueSets([SelectionPath.Root], forwardedVariables, [])
-            : context.CreateVariableValueSets(SelectionPath.Root, forwardedVariables, []);
+            ? context.CreateVariableValueSets(FetchResultStore.NoHop, [SelectionPath.Root], forwardedVariables, [])
+            : context.CreateVariableValueSets(FetchResultStore.NoHop, SelectionPath.Root, forwardedVariables, []);
 
         // assert
         var entry = Assert.Single(result);
@@ -99,8 +100,8 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = multipleTargets
-            ? context.CreateVariableValueSets([SelectionPath.Root], [], [])
-            : context.CreateVariableValueSets(SelectionPath.Root, [], []);
+            ? context.CreateVariableValueSets(FetchResultStore.NoHop, [SelectionPath.Root], [], [])
+            : context.CreateVariableValueSets(FetchResultStore.NoHop, SelectionPath.Root, [], []);
 
         // assert
         Assert.True(result.IsDefaultOrEmpty);
@@ -115,6 +116,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root,
             forwardedVariables: [],
             requirements: [Requirement("__fusion_1_id")]);
@@ -133,6 +135,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root,
             forwardedVariables: [],
             requirements: [Requirement("__fusion_2_other")]);
@@ -152,6 +155,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
         // act
         var exception = Assert.Throws<InvalidOperationException>(
             () => context.CreateVariableValueSets(
+                FetchResultStore.NoHop,
                 SelectionPath.Root,
                 forwardedVariables: [],
                 requirements:
@@ -214,6 +218,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var first = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root,
             forwardedVariables: [],
             requirements:
@@ -222,6 +227,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
                 Requirement("__fusion_2_sku")
             ]);
         var second = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root,
             forwardedVariables: [],
             requirements:
@@ -258,6 +264,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root,
             forwardedVariables: ["limit"],
             requirements: [Requirement("__fusion_1_id")]);
@@ -284,6 +291,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
 
         // act
         var result = context.CreateVariableValueSets(
+            FetchResultStore.NoHop,
             SelectionPath.Root,
             forwardedVariables: [],
             requirements: [Requirement("__fusion_1_id")]);
@@ -307,6 +315,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
         // act
         var exception = Assert.Throws<InvalidOperationException>(
             () => context.CreateVariableValueSets(
+                FetchResultStore.NoHop,
                 selectionSets: [SelectionPath.Root],
                 forwardedVariables: [],
                 requiredData:
@@ -344,6 +353,7 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             exception.Message);
         Assert.True(
             context.CreateVariableValueSets(
+                FetchResultStore.NoHop,
                 SelectionPath.Root,
                 forwardedVariables: [],
                 requirements: [Requirement("__fusion_1_id")]).IsDefaultOrEmpty);

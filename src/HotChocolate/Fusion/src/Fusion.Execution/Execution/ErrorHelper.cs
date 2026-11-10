@@ -15,6 +15,13 @@ internal static class ErrorHelper
             ExecutionContextData.ValidationErrors,
             true);
 
+    public static IError NonNullViolation(Path path)
+        => ErrorBuilder.New()
+            .SetMessage("Cannot return null for non-nullable field.")
+            .SetCode(ErrorCodes.Execution.NonNullViolation)
+            .SetPath(path)
+            .Build();
+
     public static OperationResult EmptyVariableBatch()
         => RequestError(
             ErrorBuilder.New()

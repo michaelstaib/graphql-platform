@@ -491,6 +491,26 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Execute_Should_NotWriteViolations_When_ARaisedErrorNulledTheRootBeforeThePass()
+    {
+        // arrange
+        using var gateway = await CreateRaisedErrorGatewayAsync();
+
+        // act
+        var result = await ExecuteQueryAsync(
+            gateway,
+            "{ users(ids: [93, 97, 3]) { badNN totalNN } }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: null
+            errors: [{"message":"I hop failed for 93","path":["users",0,"badNN"]}]
+
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_NotNullTheRoot_When_SecondViolationMeetsANulledList()
     {
         // arrange
