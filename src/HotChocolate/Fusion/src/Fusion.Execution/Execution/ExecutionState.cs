@@ -584,10 +584,8 @@ internal sealed class ExecutionState
         }
     }
 
-    // A definition skipped by its own condition is a non-completing skip. A definition skipped because a dependency
-    // was skipped takes the reasons of its dependencies, a dependency that failed or skipped itself after it ran
-    // completes. A definition that ran and had no variables is not recorded, its missing targets were recorded when
-    // its variables were created.
+    // Records a non-completing skip for each definition skipped by its own condition, and for each other skipped
+    // definition the reason of every skipped dependency.
     private void RecordSkippedDefinitions(ExecutionNodeResult result)
     {
         if (_cts is { IsCancellationRequested: true })
