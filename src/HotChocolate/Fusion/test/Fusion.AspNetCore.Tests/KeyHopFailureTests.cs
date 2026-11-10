@@ -6,6 +6,7 @@ using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
 using HotChocolate.Types.Composite;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
@@ -1121,6 +1122,305 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheSameErrors_When_HopsFinishInAnyOrderAndAFieldErrorMeetsAViolation()
+    {
+        // arrange
+        const string query = "{ nullableUsers(ids: [2, 98]) { total scoreNN } }";
+        string[] hops = ["B", "C", "D", "E"];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"total":2,"scoreNN":6},null]}
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",1,"total"]},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"scoreNN"],"extensions":{"code":"HC0018"}}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheSameErrors_When_HopsFinishInAnyOrderAndANulledTargetFailsInTheKeyChain()
+    {
+        // arrange
+        const string query = "{ nullableUsers(ids: [2, 93]) { code score totalNN } }";
+        string[] hops = ["B", "C", "D", "E"];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"code":"code-2","score":6,"totalNN":200},null]}
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"totalNN"],"extensions":{"code":"HC0018"}},{"message":"E hop failed for 93","path":["nullableUsers",1,"code"]},{"message":"E hop failed for 93","path":["nullableUsers",1,"score"]}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheSameErrors_When_HopsFinishInAnyOrderAndTheErrorMustReachTheThirdHop()
+    {
+        // arrange
+        const string query = "{ nullableUsers(ids: [2, 93]) { rank totalNN } }";
+        string[] hops = ["B", "C", "D", "E", "F"];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D"), ("D", "F")]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"rank":12,"totalNN":200},null]}
+            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"totalNN"],"extensions":{"code":"HC0018"}},{"message":"E hop failed for 93","path":["nullableUsers",1,"rank"]}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotReportTheErrorOnAnExcludedField_When_TheHopOfItFailsForTheWholeRequest()
+    {
+        // arrange
+        using var gateway = await CreateFiveSchemaGatewayAsync(mockCodeHop: ServerError);
+        const string query = "query($s: Boolean!) { nullableUsers(ids: [2, 3]) { code @include(if: $s) score } }";
+
+        // act
+        var excluded = await ExecuteQueryAsync(gateway, query, false);
+        var included = await ExecuteQueryAsync(gateway, query, true);
+
+        // assert
+        excluded.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"score":null},{"score":null}]}
+            errors: [{"message":"Unexpected Execution Error","path":["nullableUsers",0,"score"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"score"]}]
+
+            """);
+        included.MatchInlineSnapshot(
+            """
+            data: {"nullableUsers":[{"score":null,"code":null},{"score":null,"code":null}]}
+            errors: [{"message":"Unexpected Execution Error","path":["nullableUsers",0,"code"]},{"message":"Unexpected Execution Error","path":["nullableUsers",0,"score"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"code"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"score"]}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_NotRepeatTheErrorOnTheDependentField_When_ANonNullPublicOriginFieldFails()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType);
+
+        // act
+        var result = await ExecuteAsync(
+            gateway,
+            "{ nullableUsers(ids: [$ids]) { info { sku } total } }",
+            [2, 98]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 98]
+            data: {"nullableUsers":[{"info":{"sku":"sku-2"},"total":2},null]}
+            errors: [{"message":"B hop failed for 98","path":["nullableUsers",1,"info"]}]
+            lookups: B:2 B:98 C:sku-2
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_CompleteTheRequest_When_ReportingTheFailureOfTheMiddleHopThrows()
+    {
+        // arrange
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: ServerError);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c)],
+            configureGatewayBuilder: builder => builder.AddErrorFilter(error =>
+                error.Path?.ToString().EndsWith("total", StringComparison.Ordinal) == true
+                    ? throw new InvalidOperationException("reporting failed")
+                    : error),
+            includeOperationPlan: false);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(20));
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var response = await client.PostAsync(
+            new OperationRequest("{ users(ids: [2, 3]) { name total } }"),
+            new Uri("http://localhost:5000/graphql"),
+            cts.Token);
+        using var result = await response.ReadAsResultAsync(cts.Token);
+
+        // assert
+        result.Data.GetRawText().MatchInlineSnapshot(
+            """
+            {"users":[{"name":"user-2","total":null},{"name":"user-3","total":null}]}
+            """);
+    }
+
+    private async Task<string> ExecuteInEveryHopOrderAsync(
+        string query,
+        string[] hops,
+        (string First, string Second)[] precedences)
+    {
+        var sequence = new HopSequence();
+        var results = new List<string>();
+
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateSequencedGatewayAsync(sequence, enableRequestGrouping);
+
+            foreach (var order in GetHopOrders(hops, precedences))
+            {
+                sequence.Start(order);
+                results.Add(await ExecuteWithSortedErrorsAsync(gateway, query));
+            }
+        }
+
+        sequence.Start([]);
+        return Assert.Single(results.Distinct());
+    }
+
+    private static List<string[]> GetHopOrders(string[] hops, (string First, string Second)[] precedences)
+    {
+        var orders = new List<string[]>();
+        var current = new List<string>();
+
+        void Extend()
+        {
+            if (current.Count == hops.Length)
+            {
+                orders.Add([.. current]);
+                return;
+            }
+
+            foreach (var hop in hops)
+            {
+                if (current.Contains(hop)
+                    || precedences.Any(p => p.Second == hop && !current.Contains(p.First)))
+                {
+                    continue;
+                }
+
+                current.Add(hop);
+                Extend();
+                current.RemoveAt(current.Count - 1);
+            }
+        }
+
+        Extend();
+        return orders;
+    }
+
+    private static async Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query)
+    {
+        var text = new StringBuilder();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var response = await client.PostAsync(
+            new OperationRequest(query),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        await foreach (var result in response.ReadAsResultStreamAsync())
+        {
+            text.AppendLine($"data: {result.Data.GetRawText()}");
+
+            if (result.Errors.ValueKind is not JsonValueKind.Undefined)
+            {
+                var errors = result.Errors.EnumerateArray().Select(e => e.GetRawText()).Order(StringComparer.Ordinal);
+                text.AppendLine($"errors: [{string.Join(",", errors)}]");
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private async Task<Gateway> CreateSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopC = new SequencedHop(sequence, "C");
+        var hopD = new SequencedHop(sequence, "D");
+        var hopE = new SequencedHop(sequence, "E");
+        var hopF = new SequencedHop(sequence, "F");
+
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: hopB.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>(), mockHttpResponse: hopC.SendAsync);
+        var d = CreateSourceSchema("d", b => b.AddQueryType<D.Query>(), mockHttpResponse: hopD.SendAsync);
+        var e = CreateSourceSchema("e", b => b.AddQueryType<E.Query>(), mockHttpResponse: hopE.SendAsync);
+        var f = CreateSourceSchema("f", b => b.AddQueryType<F.Query>(), mockHttpResponse: hopF.SendAsync);
+
+        hopB.Connect(b);
+        hopC.Connect(c);
+        hopD.Connect(d);
+        hopE.Connect(e);
+        hopF.Connect(f);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c), ("d", d), ("e", e), ("f", f)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    private sealed class HopSequence
+    {
+        private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(30);
+
+        private string[] _order = [];
+        private TaskCompletionSource[] _delivered = [];
+
+        public void Start(string[] order)
+        {
+            _order = order;
+            _delivered = order
+                .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+                .ToArray();
+        }
+
+        public async Task WaitForTurnAsync(string hop, CancellationToken cancellationToken)
+        {
+            var index = Array.IndexOf(_order, hop);
+
+            if (index > 0)
+            {
+                await _delivered[index - 1].Task.WaitAsync(s_timeout, cancellationToken);
+            }
+        }
+
+        public void MarkDelivered(string hop)
+        {
+            var index = Array.IndexOf(_order, hop);
+
+            if (index >= 0)
+            {
+                _delivered[index].TrySetResult();
+            }
+        }
+    }
+
+    private sealed class SequencedHop(HopSequence sequence, string hop)
+    {
+        private HttpMessageInvoker? _invoker;
+
+        public void Connect(TestServer server)
+            => _invoker = new HttpMessageInvoker(server.CreateHandler());
+
+        public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
+        {
+            var cancellationToken = TestContext.Current.CancellationToken;
+
+            await sequence.WaitForTurnAsync(hop, cancellationToken);
+            var response = await _invoker!.SendAsync(request, cancellationToken);
+            await response.Content.LoadIntoBufferAsync(cancellationToken);
+            sequence.MarkDelivered(hop);
+
+            return response;
+        }
+    }
+
     private static Task<HttpResponseMessage> ServerError(HttpRequestMessage request)
         => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
 
@@ -1131,13 +1431,14 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     private async Task<Gateway> CreateFiveSchemaGatewayAsync(
-        Func<HttpRequestMessage, Task<HttpResponseMessage>>? mockMiddleHop = null)
+        Func<HttpRequestMessage, Task<HttpResponseMessage>>? mockMiddleHop = null,
+        Func<HttpRequestMessage, Task<HttpResponseMessage>>? mockCodeHop = null)
     {
         var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
         var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: mockMiddleHop);
         var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>());
         var d = CreateSourceSchema("d", b => b.AddQueryType<D.Query>());
-        var e = CreateSourceSchema("e", b => b.AddQueryType<E.Query>());
+        var e = CreateSourceSchema("e", b => b.AddQueryType<E.Query>(), mockHttpResponse: mockCodeHop);
 
         return await CreateCompositeSchemaAsync(
             [("a", a), ("b", b), ("c", c), ("d", d), ("e", e)],

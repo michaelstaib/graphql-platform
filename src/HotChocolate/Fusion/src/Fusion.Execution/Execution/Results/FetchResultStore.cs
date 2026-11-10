@@ -566,7 +566,12 @@ internal sealed partial class FetchResultStore : IDisposable
                 var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
                 if (element.IsNullOrInvalidated)
                 {
-                    _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                    // The start element is an ancestor when the target is below a null value.
+                    if (element.CompactPath.Length == path.Length)
+                    {
+                        _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                    }
+
                     goto AddErrors_Next;
                 }
 
@@ -611,7 +616,12 @@ AddErrors_Next:
                 var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
                 if (element.IsNullOrInvalidated)
                 {
-                    _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                    // The start element is an ancestor when the target is below a null value.
+                    if (element.CompactPath.Length == path.Length)
+                    {
+                        _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                    }
+
                     goto AddErrors_Next;
                 }
 
@@ -1025,7 +1035,7 @@ AddErrors_Next:
         var errorCount = _errors?.Count ?? 0;
         var primary = path.IsRoot ? resultData : GetStartResult(path);
 
-        if (!SaveSafeResult(resultData, primary, dataElement, errorTrie: null, resultSelectionSet))
+        if (!SaveSafeResult(resultData, primary, path.Length, dataElement, errorTrie: null, resultSelectionSet))
         {
             return false;
         }
@@ -1056,7 +1066,13 @@ AddErrors_Next:
                     continue;
                 }
 
-                if (!SaveSafeResult(resultData, target, dataElement, errorTrie: null, resultSelectionSet))
+                if (!SaveSafeResult(
+                        resultData,
+                        target,
+                        additionalTargets.GetPathLength(i),
+                        dataElement,
+                        errorTrie: null,
+                        resultSelectionSet))
                 {
                     return false;
                 }
@@ -1273,12 +1289,15 @@ AddErrors_Next:
         }
 
         var element = path.IsRoot ? resultData : GetStartResult(path);
-        return SaveSafeResult(resultData, element, dataElement, errorTrie, resultSelectionSet);
+        return SaveSafeResult(resultData, element, path.Length, dataElement, errorTrie, resultSelectionSet);
     }
 
+    // The path length is the length of the path of the target, or negative when the element is the target.
+    // The start element is an ancestor of the target when a value above the target is null.
     private bool SaveSafeResult(
         CompositeResultElement resultData,
         CompositeResultElement element,
+        int pathLength,
         SourceResultElement dataElement,
         ErrorTrie? errorTrie,
         ResultSelectionSet resultSelectionSet)
@@ -1292,7 +1311,8 @@ AddErrors_Next:
 
         if (element.IsNullOrInvalidated)
         {
-            if (errorTrie?.FindFirstError() is { } nulledError)
+            if (errorTrie?.FindFirstError() is { } nulledError
+                && (pathLength < 0 || element.CompactPath.Length == pathLength))
             {
                 _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, nulledError);
             }
@@ -1329,7 +1349,13 @@ AddErrors_Next:
             return false;
         }
 
-        return SaveSafeResult(resultData, additionalTargets[index], dataElement, errorTrie, resultSelectionSet);
+        return SaveSafeResult(
+            resultData,
+            additionalTargets[index],
+            additionalTargets.GetPathLength(index),
+            dataElement,
+            errorTrie,
+            resultSelectionSet);
     }
 
     public ImmutableArray<VariableValues> CreateVariableValueSets(
@@ -4386,6 +4412,10 @@ AddErrors_Next:
         }
 
         public int Length => _segment.Length;
+
+        // The length is negative for targets that come from the cursors, those are the target elements themselves.
+        public int GetPathLength(int index)
+            => _cursors is { IsCurrent: true } ? -1 : _segment[index].Length;
 
         public CompositeResultElement this[int index]
             => _cursors is { IsCurrent: true } cursors

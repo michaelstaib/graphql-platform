@@ -110,12 +110,22 @@ internal sealed partial class FetchResultStore
     /// fields, any other target completes its undefined non-null fields with a non-null violation. The hops are
     /// completed in the order of their ids.
     /// </summary>
+    /// <param name="plan">The plan whose hops are completed.</param>
+    /// <param name="state">The execution state of the plan.</param>
+    /// <param name="failure">
+    /// The execution node of the first hop that could not be completed and the exception that was thrown for it.
+    /// The remaining hops are still completed.
+    /// </param>
     /// <returns>
     /// <c>false</c>, if the null propagated to the root.
     /// </returns>
-    internal bool CompleteDependentFields(IOperationPlan plan, ExecutionState state)
+    internal bool CompleteDependentFields(
+        IOperationPlan plan,
+        ExecutionState state,
+        out (ExecutionNode Node, Exception Error)? failure)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        failure = null;
 
         lock (_lock)
         {
@@ -143,9 +153,12 @@ internal sealed partial class FetchResultStore
                 {
                     // A failed key fetch is also reported on the targets that were already null before a hop ran.
                     hopCount = AppendHopIds(plan, ref hops, hopCount);
+                    SortByDependencyDepth(plan, hops.AsSpan(0, hopCount));
                 }
-
-                Array.Sort(hops, 0, hopCount);
+                else
+                {
+                    Array.Sort(hops, 0, hopCount);
+                }
 
                 for (var i = 0; i < hopCount; i++)
                 {
@@ -154,9 +167,16 @@ internal sealed partial class FetchResultStore
                         continue;
                     }
 
-                    if (!CompleteHopUnsafe(plan, state, hops[i]))
+                    try
                     {
-                        return false;
+                        if (!CompleteHopUnsafe(plan, state, hops[i]))
+                        {
+                            return false;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        failure ??= (plan.GetNodeById(hops[i]), ex);
                     }
                 }
 
@@ -171,6 +191,83 @@ internal sealed partial class FetchResultStore
                 state.ClearCompletingSkips();
             }
         }
+    }
+
+    // The error of a failed key fetch reaches the hops behind the hop that reports it, so a hop is completed after
+    // the hops it depends on. The ids of a plan do not follow its dependencies.
+    private static void SortByDependencyDepth(IOperationPlan plan, Span<int> hopIds)
+    {
+        var depths = new Dictionary<int, int>();
+        var keys = new long[hopIds.Length];
+
+        for (var i = 0; i < hopIds.Length; i++)
+        {
+            keys[i] = ((long)GetDependencyDepth(plan, hopIds[i], depths) << 32) | (uint)hopIds[i];
+        }
+
+        Array.Sort(keys);
+
+        for (var i = 0; i < keys.Length; i++)
+        {
+            hopIds[i] = (int)(keys[i] & uint.MaxValue);
+        }
+    }
+
+    private static int GetDependencyDepth(IOperationPlan plan, int nodeId, Dictionary<int, int> depths)
+    {
+        if (depths.TryGetValue(nodeId, out var depth))
+        {
+            return depth;
+        }
+
+        depths[nodeId] = 0;
+        var node = FindPlanNode(plan, nodeId);
+
+        foreach (var dependency in node.Dependencies)
+        {
+            depth = Math.Max(depth, GetDependencyDepth(plan, dependency.Id, depths) + 1);
+        }
+
+        foreach (var dependency in node.OptionalDependencies)
+        {
+            depth = Math.Max(depth, GetDependencyDepth(plan, dependency.Id, depths) + 1);
+        }
+
+        depths[nodeId] = depth;
+        return depth;
+    }
+
+    private static IOperationPlanNode FindPlanNode(IOperationPlan plan, int nodeId)
+    {
+        var node = plan.GetNodeById(nodeId);
+
+        if (node.Id == nodeId)
+        {
+            return node;
+        }
+
+        // The id belongs to an operation definition inside a batch.
+        var definition = node switch
+        {
+            OperationBatchExecutionNode batch => FindDefinition(batch.Operations, nodeId),
+            ApolloOperationBatchExecutionNode batch => FindDefinition(batch.Operations, nodeId),
+            _ => null
+        };
+
+        return (IOperationPlanNode?)definition ?? node;
+    }
+
+    private static OperationDefinition? FindDefinition(ReadOnlySpan<OperationDefinition> operations, int nodeId)
+    {
+        foreach (var operation in operations)
+        {
+            if (operation.Id == nodeId)
+            {
+                return operation;
+            }
+        }
+
+        return null;
     }
 
     private static int AppendHopIds(IOperationPlan plan, ref int[] hops, int count)
