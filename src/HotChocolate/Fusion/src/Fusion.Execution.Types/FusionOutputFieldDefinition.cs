@@ -142,7 +142,7 @@ public sealed class FusionOutputFieldDefinition : IOutputFieldDefinition, IInacc
     }
 
     /// <summary>
-    /// Gets a value indicating whether this field carries an policy requirement.
+    /// Gets a value indicating whether this field carries a policy requirement.
     /// </summary>
     public bool HasPolicy => (_flags & FieldDefinitionFlags.HasPolicy) == FieldDefinitionFlags.HasPolicy;
 

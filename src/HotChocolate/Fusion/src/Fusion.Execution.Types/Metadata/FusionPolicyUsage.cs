@@ -26,7 +26,7 @@ internal sealed class FusionPolicyUsage(
     public bool UsesPolicies => (flags & FusionPolicyUsageFlags.Policies) != 0;
 
     /// <summary>
-    /// Gets a value indicating whether any member carries an policy requirement.
+    /// Gets a value indicating whether any member carries a policy requirement.
     /// </summary>
     public bool IsUsed => flags != FusionPolicyUsageFlags.None;
 
