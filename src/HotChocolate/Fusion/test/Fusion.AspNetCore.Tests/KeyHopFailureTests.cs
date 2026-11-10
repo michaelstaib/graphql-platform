@@ -1391,6 +1391,26 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportOnlyTheNullingError_When_TheListIsNullBeforeTheKeyHopsStart()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence);
+        sequence.Start(["I", "B", "C"]);
+
+        // act
+        var result = await ExecuteWithSortedErrorsAsync(gateway, "{ userList(ids: [96, 93]) { total badNN } }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"userList":null}
+            errors: [{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
+
+            """);
+    }
+
     private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence)
     {
         var hopB = new SequencedHop(sequence, "B");
