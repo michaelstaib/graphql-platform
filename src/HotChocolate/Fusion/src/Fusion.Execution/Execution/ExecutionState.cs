@@ -464,23 +464,7 @@ internal sealed class ExecutionState
             // definition inside it is also skipped. We mark each of their
             // identifiers so that downstream nodes that depend on a specific
             // operation inside the batch will see it as skipped.
-            if (current is OperationBatchExecutionNode batchNode)
-            {
-                foreach (var op in batchNode.Operations)
-                {
-                    MarkNodeAsSkipped(op.Id);
-                    RecordSkip(op.Id, kind, isOrigin);
-                }
-            }
-
-            if (current is ApolloOperationBatchExecutionNode apolloBatchNode)
-            {
-                foreach (var op in apolloBatchNode.Operations)
-                {
-                    MarkNodeAsSkipped(op.Id);
-                    RecordSkip(op.Id, kind, isOrigin);
-                }
-            }
+            RecordBatchDefinitions(current, kind, isOrigin);
 
             if (current.Id < _remainingDependencies.Length)
             {
@@ -526,10 +510,16 @@ internal sealed class ExecutionState
                 {
                     // A node that another skip already reached records this reason as well and passes it on,
                     // so that whether its dependent fields are completed does not depend on the order of the skips.
-                    if (WasSkippedWithoutRunning(dependentNode.Id)
-                        && RecordSkip(dependentNode.Id, kind, isOrigin: false))
+                    if (WasSkippedWithoutRunning(dependentNode.Id))
                     {
-                        _stack.Push(dependentNode);
+                        // The definitions of a skipped batch read their own dependencies again, one of them may
+                        // have been skipped since.
+                        RecordBatchDefinitions(dependentNode, kind, isOrigin: false);
+
+                        if (RecordSkip(dependentNode.Id, kind, isOrigin: false))
+                        {
+                            _stack.Push(dependentNode);
+                        }
                     }
 
                     continue;
@@ -630,6 +620,37 @@ internal sealed class ExecutionState
     {
         var index = nodeId >> 6;
         return index < bitset.Length && (bitset[index] & (1UL << (nodeId & 63))) != 0;
+    }
+
+    // Marks the definitions of a skipped batch as skipped and records the reason of each from its own dependencies.
+    private void RecordBatchDefinitions(ExecutionNode node, SkipKind kind, bool isOrigin)
+    {
+        if (node is OperationBatchExecutionNode batch)
+        {
+            RecordDefinitions(batch.Operations, kind, isOrigin);
+        }
+        else if (node is ApolloOperationBatchExecutionNode apolloBatch)
+        {
+            RecordDefinitions(apolloBatch.Operations, kind, isOrigin);
+        }
+    }
+
+    private void RecordDefinitions(ReadOnlySpan<OperationDefinition> operations, SkipKind kind, bool isOrigin)
+    {
+        foreach (var op in operations)
+        {
+            MarkNodeAsSkipped(op.Id);
+
+            if (isOrigin)
+            {
+                RecordSkip(op.Id, kind, isOrigin);
+            }
+            else if (kind is not SkipKind.Cancelled)
+            {
+                RecordSkippedDependencies(op, op.Dependencies);
+                RecordSkippedDependencies(op, op.OptionalDependencies);
+            }
+        }
     }
 
     // Records why a node was skipped. A node that ran and then failed or skipped itself is the origin of a
