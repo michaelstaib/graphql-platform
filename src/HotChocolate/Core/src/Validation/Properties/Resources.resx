@@ -242,6 +242,9 @@
   <data name="ErrorHelper_DeferAndStreamLabelIsVariable" xml:space="preserve">
     <value>If a label for @defer or @stream is passed, it must not be a variable.</value>
   </data>
+  <data name="ErrorHelper_DeferAndStreamNotDisableableInSubscription" xml:space="preserve">
+    <value>The @{0} directive in a subscription operation must have an `if` argument that can disable it, either a variable or the value false.</value>
+  </data>
   <data name="ErrorHelper_OperationNotSupported" xml:space="preserve">
     <value>This GraphQL schema does not support `{0}` operations.</value>
   </data>

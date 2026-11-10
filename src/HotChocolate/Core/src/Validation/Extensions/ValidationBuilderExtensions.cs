@@ -293,11 +293,25 @@ public static class HotChocolateValidationBuilderExtensions
     /// Subscription operations must have exactly one root field.
     ///
     /// https://spec.graphql.org/September2025/#sec-Single-Root-Field
+    ///
+    /// AND
+    ///
+    /// Defer and Stream Directives Are Used On Valid Root Field
+    ///
+    /// https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-On-Valid-Root-Field
+    ///
+    /// AND
+    ///
+    /// Defer and Stream Directives Are Used In Valid Operations
+    ///
+    /// https://spec.graphql.org/draft/#sec-Defer-And-Stream-Directives-Are-Used-In-Valid-Operations
     /// </summary>
     public static DocumentValidatorBuilder AddOperationRules(
         this DocumentValidatorBuilder builder)
     {
-        return builder.AddVisitor<OperationVisitor>();
+        return builder
+            .AddVisitor<OperationVisitor>()
+            .AddVisitor<SubscriptionDeferStreamVisitor>();
     }
 
     /// <summary>

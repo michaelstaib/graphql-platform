@@ -241,7 +241,6 @@ internal sealed partial class SubscriptionExecutor
                     .ExecuteAsync(operationContext, scopedContextData)
                     .ConfigureAwait(false);
 
-                // todo : we still need to think about defer in subscriptions
                 var operationResult = result.ExpectOperationResult();
                 operationResult.RegisterForCleanup(arena);
                 arena = null; // ownership handed to the result; the executor already sealed it
