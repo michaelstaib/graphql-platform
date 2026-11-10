@@ -176,8 +176,8 @@ operationPlan:
     - document: |
         query testQuery($skip: Boolean!) {
           abstractType {
-            __typename @fusion__requirement
             id
+            __typename @fusion__requirement
             ... on Discussion {
               commentCount
               id @fusion__requirement

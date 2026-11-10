@@ -156,13 +156,13 @@ operationPlan:
     - document: |
         query testQuery($skip: Boolean!) {
           abstractType {
-            __typename @fusion__requirement
             id
+            __typename @fusion__requirement
             __typename @skip(if: $skip)
           }
           abstractTypes {
-            __typename @fusion__requirement
             id
+            __typename @fusion__requirement
             __typename @skip(if: $skip)
           }
         }

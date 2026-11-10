@@ -2250,7 +2250,7 @@ public sealed partial class OperationPlanner
             descendantPolicy);
 
         var resolvableSelections = resolvable.Selections;
-        if (!resolvableSelections.Any(IsUnconditionalTypeNameSelection))
+        if (!resolvableSelections.Any(IsTypeNameSelection))
         {
             resolvableSelections = [new FieldNode(IntrospectionFieldNames.TypeName), .. resolvableSelections];
         }
@@ -2441,7 +2441,8 @@ public sealed partial class OperationPlanner
         }
         else
         {
-            if (sharedSelections.Count < 1 || !sharedSelections.Any(IsUnconditionalTypeNameSelection))
+            if (sharedSelections.Count < 1 || !sharedSelections.Any(
+                    s => s is FieldNode field && IsTypeNameSelection(field) && IsUnconditionallySelected(field)))
             {
                 sharedSelections = [new FieldNode(IntrospectionFieldNames.TypeName), .. sharedSelections];
             }
@@ -3998,7 +3999,8 @@ public sealed partial class OperationPlanner
 
                 var type = path.Peek();
 
-                if (type.IsAbstractType() && !selectionSet.Selections.Any(IsUnconditionalTypeNameSelection))
+                if (type.IsAbstractType() && !selectionSet.Selections.Any(
+                        s => s is FieldNode field && IsTypeNameSelection(field) && IsUnconditionallySelected(field)))
                 {
                     // we add the __typename field to all selection sets that have
                     // an abstract type context as we need the type context for
@@ -4009,9 +4011,13 @@ public sealed partial class OperationPlanner
                     var typenameNode = new FieldNode(IntrospectionFieldNames.TypeName)
                         .WithDirectives([new DirectiveNode("fusion__requirement")]);
 
-                    return fieldNode.WithSelectionSet(new SelectionSetNode([
-                        typenameNode, .. selectionSet.Selections
-                    ]));
+                    // A conditional __typename of the user keeps its position in the result,
+                    // so the requirement goes right behind it.
+                    var selections = selectionSet.Selections.ToList();
+                    var conditionalIndex = selections.FindIndex(IsTypeNameSelection);
+                    selections.Insert(conditionalIndex + 1, typenameNode);
+
+                    return fieldNode.WithSelectionSet(new SelectionSetNode(selections));
                 }
 
                 return node;
@@ -4045,9 +4051,6 @@ public sealed partial class OperationPlanner
 
         return (OperationDefinitionNode)rewriter.Rewrite(operation, context)!;
     }
-
-    private static bool IsUnconditionalTypeNameSelection(ISelectionNode selection)
-        => selection is FieldNode { Directives.Count: 0 } && IsTypeNameSelection(selection);
 
     private static bool IsTypeNameSelection(ISelectionNode selection)
     {

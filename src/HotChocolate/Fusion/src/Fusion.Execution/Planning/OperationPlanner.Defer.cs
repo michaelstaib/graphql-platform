@@ -1103,14 +1103,23 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Determines whether <paramref name="field"/> carries no directives, or only the
-    /// internal <c>fusion__requirement</c> marker, meaning it is fetched unconditionally
-    /// rather than guarded by <c>@skip</c>/<c>@include</c>.
+    /// Determines whether <paramref name="field"/> carries no directives, or only the internal
+    /// <c>fusion__requirement</c> and <c>fusion__empty</c> markers, meaning it is fetched
+    /// unconditionally rather than guarded by <c>@skip</c>/<c>@include</c>.
     /// </summary>
     private static bool IsUnconditionallySelected(FieldNode field)
-        => field.Directives.Count == 0
-            || (field.Directives.Count == 1
-                && field.Directives[0].Name.Value.Equals("fusion__requirement", StringComparison.Ordinal));
+    {
+        foreach (var directive in field.Directives)
+        {
+            if (!directive.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)
+                && !directive.Name.Value.Equals("fusion__empty", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Collects the field names every possible lookup for <paramref name="anchorType"/>
