@@ -98,6 +98,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
     private Dictionary<(Path, string), IError>? _keyFetchErrors;
+    private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
     private Dictionary<Path, List<IError>>? _errorsByPath;
     private bool _disposed;
@@ -680,8 +681,15 @@ AddErrors_Next:
     /// Records the error of a failed fetch of the fields of <paramref name="resultSelectionSet"/>
     /// of the entity at <paramref name="entityPath"/>.
     /// </summary>
-    internal void RecordKeyFetchErrors(Path entityPath, ResultSelectionSet resultSelectionSet, IError error)
+    internal void RecordKeyFetchErrors(
+        Path entityPath,
+        CompactPath entityCompactPath,
+        ResultSelectionSet resultSelectionSet,
+        IError error)
     {
+        _keyFetchPaths ??= [];
+        _keyFetchPaths[entityPath] = entityCompactPath;
+
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             RecordKeyFetchError(entityPath, responseName, error);
@@ -721,15 +729,41 @@ AddErrors_Next:
 
         foreach (var (entityPath, originName, error) in candidates)
         {
-            if (TryGetResult(entityPath, out var element)
-                && element.IsNullOrInvalidated
-                && !ReportKeyFetchErrorUnsafe(element, resultSelectionSet, originName, error))
+            if (TryGetResult(entityPath, out var element))
             {
-                return false;
+                if (element.IsNullOrInvalidated
+                    && !ReportKeyFetchErrorUnsafe(element, resultSelectionSet, originName, error))
+                {
+                    return false;
+                }
+            }
+            else if (_keyFetchPaths is not null && _keyFetchPaths.TryGetValue(entityPath, out var compactPath))
+            {
+                // The entity is below a null value.
+                ReportKeyFetchErrorBelowNullUnsafe(compactPath, resultSelectionSet, originName, error);
             }
         }
 
         return true;
+    }
+
+    private void ReportKeyFetchErrorBelowNullUnsafe(
+        CompactPath entityPath,
+        ResultSelectionSet resultSelectionSet,
+        string originName,
+        IError error)
+    {
+        _reportedKeyFetches ??= [];
+
+        if (_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
+        {
+            _valueCompletion.ReportDependentErrorOnNulledTarget(
+                _result.Data,
+                entityPath,
+                resultSelectionSet,
+                originName,
+                error);
+        }
     }
 
     private static bool IsEntityOfTargets(Path entityPath, ReadOnlySpan<SelectionPath> targets)
@@ -788,7 +822,12 @@ AddErrors_Next:
 
         if (element.IsNullOrInvalidated)
         {
-            _valueCompletion.ReportDependentErrorOnNulledTarget(element, resultSelectionSet, originName, error);
+            _valueCompletion.ReportDependentErrorOnNulledTarget(
+                element,
+                element.CompactPath,
+                resultSelectionSet,
+                originName,
+                error);
             return true;
         }
 

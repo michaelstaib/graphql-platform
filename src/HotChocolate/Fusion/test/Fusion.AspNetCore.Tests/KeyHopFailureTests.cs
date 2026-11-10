@@ -620,6 +620,26 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Execute_Should_ReportTheErrorOfEveryItem_When_LastHopFailsForNullableListOfNonNullItems()
+    {
+        // arrange
+        using var gateway = await CreateGatewayAsync(NestedKeyType, mockLastHop: ServerError);
+
+        // act
+        var result = await ExecuteAsync(gateway, "{ userList(ids: [$ids]) { totalNN } }", [2, 3, 4, 5]);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            ## ids [2, 3, 4, 5]
+            data: {"userList":null}
+            errors: [{"message":"Unexpected Execution Error","path":["userList",0,"totalNN"]},{"message":"Unexpected Execution Error","path":["userList",1,"totalNN"]},{"message":"Unexpected Execution Error","path":["userList",2,"totalNN"]},{"message":"Unexpected Execution Error","path":["userList",3,"totalNN"]}]
+            lookups: B:2 B:3 B:4 B:5
+
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_NotReportErrorsUnderAnotherField_When_ViolationNullsTheRoot()
     {
         // arrange
@@ -1595,6 +1615,188 @@ public class KeyHopFailureTests : FusionTestBase
         }
     }
 
+    [Fact]
+    public async Task Execute_Should_NotReportAnErrorOnAFieldExcludedAtRuntime_When_ASiblingErrorNulledTheItem()
+    {
+        // arrange
+        string[] nulling =
+        [
+            """{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]}""",
+            """{"message":"DB hop failed for 94","path":["nullablePetList",0,"woof"]}"""
+        ];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreateDogSequencedGatewayAsync,
+            "query($s: Boolean!) { nullablePetList(ids: [94, 600]) "
+            + "{ ... on Dog { bark @include(if: $s) woof barkNN } ... on Cat { bark } } }",
+            include: false,
+            ["DN", "DB"],
+            [],
+            nulling,
+            []);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"nullablePetList":[null,{"bark":600}]}
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheKeyFetchErrorOnTheDependentField_When_TheListIsNullBeforeTheFailedHopAnswers()
+    {
+        // arrange
+        const string iError = """{"message":"I hop failed for 93","path":["userList",1,"badNN"]}""";
+        string[] orders = ["B", "I"];
+
+        // act
+        var total = await ExecuteInEveryHopOrderAsync(
+            CreateRaisedErrorSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { total badNN } }",
+            orders,
+            [],
+            [iError, """{"message":"B hop failed for 98","path":["userList",0,"total"]}"""],
+            []);
+        var totalNN = await ExecuteInEveryHopOrderAsync(
+            CreateRaisedErrorSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { totalNN badNN } }",
+            orders,
+            [],
+            [iError, """{"message":"B hop failed for 98","path":["userList",0,"totalNN"]}"""],
+            []);
+        var middle = await ExecuteInEveryHopOrderAsync(
+            CreateRaisedErrorSequencedGatewayAsync,
+            "{ userList(ids: [98, 2, 93]) { total badNN } }",
+            orders,
+            [],
+            [
+                """{"message":"I hop failed for 93","path":["userList",2,"badNN"]}""",
+                """{"message":"B hop failed for 98","path":["userList",0,"total"]}"""
+            ],
+            []);
+
+        // assert
+        new[] { total, totalNN, middle }.MatchInlineSnapshots(
+        [
+            """
+            data: {"userList":null}
+
+            """,
+            """
+            data: {"userList":null}
+
+            """,
+            """
+            data: {"userList":null}
+
+            """
+        ]);
+    }
+
+    private async Task<Gateway> CreateDogSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+    {
+        var hopDn = new SequencedHop(sequence, "DN");
+        var hopDb = new SequencedHop(sequence, "DB");
+        var p = CreateSourceSchema("p", b => b.AddQueryType<DogP.Query>().AddType<DogP.Dog>().AddType<DogP.Cat>());
+        var dn = CreateSourceSchema("dn", b => b.AddQueryType<DogDn.Query>(), mockHttpResponse: hopDn.SendAsync);
+        var db = CreateSourceSchema("db", b => b.AddQueryType<DogDb.Query>(), mockHttpResponse: hopDb.SendAsync);
+        var cb = CreateSourceSchema("cb", b => b.AddQueryType<DogCb.Query>());
+        hopDn.Connect(dn);
+        hopDb.Connect(db);
+
+        return await CreateCompositeSchemaAsync(
+            [("p", p), ("dn", dn), ("db", db), ("cb", cb)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    public static class DogP
+    {
+        [InterfaceType("Pet")]
+        public interface IPet
+        {
+            int Id { get; }
+        }
+
+        [EntityKey("id")]
+        public record Dog(int Id) : IPet;
+
+        [EntityKey("id")]
+        public record Cat(int Id) : IPet;
+
+        public class Query
+        {
+            [GraphQLType<ListType<InterfaceType<IPet>>>]
+            public IEnumerable<IPet> GetNullablePetList(int[] ids)
+                => ids.Select(i => i > 500 ? (IPet)new Cat(i) : new Dog(i));
+
+            [Lookup, Internal]
+            public Dog? GetDogById(int id) => new(id);
+
+            [Lookup, Internal]
+            public Cat? GetCatById(int id) => new(id);
+        }
+    }
+
+    public static class DogDn
+    {
+        public record Dog(int Id, int BarkNN);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public Dog? GetDogById(int id)
+                => id is 93 or 94 ? throw new GraphQLException("DN hop failed for " + id) : new Dog(id, id);
+        }
+    }
+
+    public static class DogDb
+    {
+        public record Dog(int Id, int? Bark, int? Woof);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public Dog? GetDogById(int id)
+                => id is 94 or 96 ? throw new GraphQLException("DB hop failed for " + id) : new Dog(id, id, id);
+        }
+    }
+
+    public static class DogCb
+    {
+        public record Cat(int Id, int? Bark);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public Cat? GetCatById(int id) => new(id, id);
+        }
+    }
+
     private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
     {
         var hopB = new SequencedHop(sequence, "B");
@@ -1797,9 +1999,26 @@ public class KeyHopFailureTests : FusionTestBase
             () => AssertNulledResults([$"data: null\nerrors: [{root},{wrong}]\n"], [root], [extra]));
     }
 
+    private Task<string> ExecuteInEveryHopOrderAsync(
+        Func<HopSequence, bool, Task<Gateway>> createGateway,
+        string query,
+        string[] hops,
+        (string First, string Second)[] precedences,
+        string[] nullingErrors,
+        string[] allowedErrors)
+        => ExecuteInEveryHopOrderAsync(
+            createGateway,
+            query,
+            include: null,
+            hops,
+            precedences,
+            nullingErrors,
+            allowedErrors);
+
     private async Task<string> ExecuteInEveryHopOrderAsync(
         Func<HopSequence, bool, Task<Gateway>> createGateway,
         string query,
+        bool? include,
         string[] hops,
         (string First, string Second)[] precedences,
         string[] nullingErrors,
@@ -1815,7 +2034,7 @@ public class KeyHopFailureTests : FusionTestBase
             foreach (var order in GetHopOrders(hops, precedences))
             {
                 sequence.Start(order);
-                results.Add(await ExecuteWithSortedErrorsAsync(gateway, query));
+                results.Add(await ExecuteWithSortedErrorsAsync(gateway, query, include));
             }
         }
 
@@ -1861,12 +2080,18 @@ public class KeyHopFailureTests : FusionTestBase
         return orders;
     }
 
-    private static async Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query)
+    private static Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query)
+        => ExecuteWithSortedErrorsAsync(gateway, query, include: null);
+
+    private static async Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query, bool? include)
     {
         var text = new StringBuilder();
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = include is null
+            ? new OperationRequest(query)
+            : new OperationRequest(query, variables: new Dictionary<string, object?> { ["s"] = include.Value });
         using var response = await client.PostAsync(
-            new OperationRequest(query),
+            request,
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
 

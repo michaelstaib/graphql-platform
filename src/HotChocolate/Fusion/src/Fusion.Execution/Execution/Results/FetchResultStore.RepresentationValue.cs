@@ -1713,7 +1713,7 @@ internal sealed partial class FetchResultStore
             var nullEntities = CountNullEntities(dataElement);
             listError = nullEntities == 1;
 
-            // The error cannot be tied to one entity, so it is reported once without a path.
+            // An error without an index that several null entities share is reported once without a path.
             if (nullEntities > 1)
             {
                 AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(entitiesError)));

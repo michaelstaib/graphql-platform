@@ -323,9 +323,9 @@ internal sealed class ValueCompletion
     {
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
-        _store.RecordKeyFetchErrors(errorPath, resultSelectionSet, error);
+        _store.RecordKeyFetchErrors(errorPath, path, resultSelectionSet, error);
 
-        // Below a null value the error is reported, the null propagation already happened above the target.
+        // Below a null value the error is added without null propagation.
         var propagate = _store.HasReachableAncestorsUnsafe(target);
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
@@ -428,9 +428,9 @@ internal sealed class ValueCompletion
     {
         var operation = element.Operation;
         var errorPath = targetPath.ToPath(operation);
-        _store.RecordKeyFetchErrors(errorPath, resultSelectionSet, error);
+        _store.RecordKeyFetchErrors(errorPath, targetPath, resultSelectionSet, error);
 
-        var selectionSets = GetTargetSelectionSets(element, targetPath);
+        var selectionSets = GetTargetSelectionSets(element, targetPath, resultSelectionSet);
 
         if (selectionSets.Count > 0)
         {
@@ -439,22 +439,24 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Adds the <paramref name="error"/> of the field <paramref name="originName"/> to the client-visible
-    /// fields of <paramref name="resultSelectionSet"/> of a target that is already <c>null</c>, unless an
-    /// ancestor of the target is null as well or the failure of a non-null origin field is what nulled the target.
+    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/> of
+    /// the target at <paramref name="targetPath"/>, when its field <paramref name="originName"/> is internal or
+    /// nullable. A public non-null origin field is not repeated, its failure is what nulled the target. The
+    /// <paramref name="element"/> is the target or a null value above it.
     /// </summary>
     public void ReportDependentErrorOnNulledTarget(
-        CompositeResultElement target,
+        CompositeResultElement element,
+        CompactPath targetPath,
         ResultSelectionSet resultSelectionSet,
         string originName,
         IError error)
     {
-        foreach (var selectionSet in GetTargetSelectionSets(target, target.CompactPath))
+        foreach (var selectionSet in GetTargetSelectionSets(element, targetPath, resultSelectionSet))
         {
             if (selectionSet.TryGetSelection(originName, out var originSelection)
                 && (originSelection.IsInternal || !originSelection.IsNonNull))
             {
-                ReportErrorOnNulledTarget(target, resultSelectionSet, error);
+                ReportErrorOnNulledTarget(element, targetPath, resultSelectionSet, error);
                 return;
             }
         }
@@ -462,7 +464,10 @@ internal sealed class ValueCompletion
 
     // The target may be null, so its concrete type is unknown. The selection sets of all possible types of its
     // field are returned.
-    private static List<SelectionSet> GetTargetSelectionSets(CompositeResultElement element, CompactPath targetPath)
+    private static List<SelectionSet> GetTargetSelectionSets(
+        CompositeResultElement element,
+        CompactPath targetPath,
+        ResultSelectionSet resultSelectionSet)
     {
         var selectionSets = new List<SelectionSet>();
         var selection = element.CompactPath.Length == targetPath.Length
@@ -475,8 +480,17 @@ internal sealed class ValueCompletion
         }
 
         var operation = selection.DeclaringSelectionSet.DeclaringOperation;
+        var possibleTypes = operation.GetPossibleTypes(selection).ToList();
 
-        foreach (var possibleType in operation.GetPossibleTypes(selection))
+        // The hop selects on the type of its targets, so only that type's selection decides what is included.
+        var hopType = resultSelectionSet.ParentType;
+
+        if (hopType is not null && possibleTypes.Any(t => t.Name == hopType.Name))
+        {
+            possibleTypes = possibleTypes.Where(t => t.Name == hopType.Name).ToList();
+        }
+
+        foreach (var possibleType in possibleTypes)
         {
             selectionSets.Add(operation.GetSelectionSet(selection, possibleType));
         }
