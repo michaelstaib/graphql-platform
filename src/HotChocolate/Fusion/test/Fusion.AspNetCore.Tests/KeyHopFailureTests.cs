@@ -1260,6 +1260,163 @@ public class KeyHopFailureTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportEveryRaisedErrorOnce_When_AccountsKeyHopFailsBeforeUsersKeyHop()
+    {
+        // arrange
+        string[] order = ["accountById", "accountByCode", "userById", "userBySku"];
+
+        // act
+        var result = await ExecuteKeyHopRaceAsync(order);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: null
+            errors: [{"message":"Unexpected Execution Error","path":["nullableAccounts",0,"kayNN"]},{"message":"Unexpected Execution Error","path":["users",0,"kayNN"]}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportOnlyTheUsersErrors_When_UsersKeyHopFailsBeforeAccountsKeyHop()
+    {
+        // arrange
+        string[] order = ["userById", "userBySku", "accountById", "accountByCode"];
+
+        // act
+        var result = await ExecuteKeyHopRaceAsync(order);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: null
+            errors: [{"message":"Unexpected Execution Error","path":["users",0,"kayNN"]}]
+
+            """);
+    }
+
+    private async Task<string> ExecuteKeyHopRaceAsync(string[] order)
+    {
+        var sequence = new HopSequence();
+        var hopQ = new MarkerHop(sequence, ["userById", "accountById"], fail: false);
+        var hopK = new MarkerHop(sequence, ["userBySku", "accountByCode"], fail: true);
+        var p = CreateSourceSchema("p", b => b.AddQueryType<KeyP.Query>());
+        var q = CreateSourceSchema("q", b => b.AddQueryType<KeyQ.Query>(), mockHttpResponse: hopQ.SendAsync);
+        var k = CreateSourceSchema("k", b => b.AddQueryType<KeyK.Query>(), mockHttpResponse: hopK.SendAsync);
+        hopQ.Connect(q);
+        hopK.Connect(k);
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("p", p), ("q", q), ("k", k)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = false),
+            includeOperationPlan: false);
+
+        sequence.Start(order);
+        var result = await ExecuteWithSortedErrorsAsync(
+            gateway,
+            "{ users(ids: [2, 3]) { name kayNN } nullableAccounts(ids: [5]) { kayNN } }");
+        sequence.Start([]);
+
+        return result;
+    }
+
+    private sealed class MarkerHop(HopSequence sequence, string[] markers, bool fail)
+    {
+        private HttpMessageInvoker? _invoker;
+
+        public void Connect(TestServer server)
+            => _invoker = new HttpMessageInvoker(server.CreateHandler());
+
+        public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
+        {
+            var cancellationToken = TestContext.Current.CancellationToken;
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            var hop = markers.First(m => body.Contains(m, StringComparison.Ordinal));
+
+            await sequence.WaitForTurnAsync(hop, cancellationToken);
+
+            var response = fail
+                ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                : await _invoker!.SendAsync(request, cancellationToken);
+
+            sequence.MarkDelivered(hop);
+            return response;
+        }
+    }
+
+    public static class KeyP
+    {
+        [EntityKey("id")]
+        public record User(int Id, string Name);
+
+        [EntityKey("id")]
+        public record Account(int Id);
+
+        public class Query
+        {
+            public IEnumerable<User> GetUsers(int[] ids) => ids.Select(i => new User(i, $"user-{i}"));
+
+            public IEnumerable<Account?> GetNullableAccounts(int[] ids) => ids.Select(i => new Account(i));
+
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, $"user-{id}");
+
+            [Lookup, Internal]
+            public Account? GetAccountById(int id) => new(id);
+        }
+    }
+
+    public static class KeyQ
+    {
+        public record Info([property: Shareable] string Sku);
+
+        public record User(int Id, [property: Shareable] Info Info);
+
+        public record Account(int Id, [property: Shareable] string Code);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, new Info($"sku-{id}"));
+
+            [Lookup, Internal]
+            public Account? GetAccountById(int id) => new(id, $"code-{id}");
+        }
+    }
+
+    public static class KeyK
+    {
+        public record Info([property: Shareable] string Sku);
+
+        public record User([property: Shareable] Info Info, int KayNN);
+
+        public record Account([property: Shareable] string Code, int KayNN);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserBySku([Is("info.sku")] string sku) => new(new Info(sku), 2);
+
+            [Lookup, Internal]
+            public Account? GetAccountByCode(string code) => new(code, 3);
+        }
+    }
+
     private async Task<string> ExecuteInEveryHopOrderAsync(
         string query,
         string[] hops,
@@ -1280,7 +1437,18 @@ public class KeyHopFailureTests : FusionTestBase
         }
 
         sequence.Start([]);
-        return Assert.Single(results.Distinct());
+
+        // Whether a hop that has not started runs after data is null depends on timing. Under data: null only the
+        // data is compared, and every reported error must still be unique.
+        foreach (var result in results.Where(r => r.StartsWith("data: null", StringComparison.Ordinal)))
+        {
+            var errors = result.Split('\n').Where(l => l.StartsWith("errors:", StringComparison.Ordinal)).ToList();
+            Assert.Equal(errors.Count, errors.Distinct().Count());
+        }
+
+        return Assert.Single(results.Select(r => r.StartsWith("data: null", StringComparison.Ordinal)
+            ? "data: null"
+            : r).Distinct());
     }
 
     private static List<string[]> GetHopOrders(string[] hops, (string First, string Second)[] precedences)
