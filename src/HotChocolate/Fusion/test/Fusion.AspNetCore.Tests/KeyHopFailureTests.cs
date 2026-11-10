@@ -13,6 +13,7 @@ namespace HotChocolate.Fusion;
 public class KeyHopFailureTests : FusionTestBase
 {
     private static readonly ConcurrentQueue<string> s_calls = new();
+    private static int s_delayA;
     private static int s_delayB;
     private static int s_delayC;
     private static int s_delayD;
@@ -706,6 +707,42 @@ public class KeyHopFailureTests : FusionTestBase
         Assert.Equal(expected, groupedResult);
     }
 
+    [Theory]
+    [InlineData(true, 400, 0)]
+    [InlineData(true, 0, 400)]
+    [InlineData(false, 400, 0)]
+    [InlineData(false, 0, 400)]
+    public async Task Execute_Should_ReportViolationOfTheFailedDefinition_When_SkipsOfTheBatchArriveInAnyOrder(
+        bool enableRequestGrouping,
+        int delayAccounts,
+        int delayB)
+    {
+        // arrange
+        using var gateway = await CreateSplitBatchedGatewayAsync(enableRequestGrouping);
+        (s_delayA, s_delayB) = (delayAccounts, delayB);
+
+        // act
+        string result;
+
+        try
+        {
+            result = await ExecuteQueryAsync(
+                gateway,
+                "query($s: Boolean!) { nullableUsers(ids: [2, 3]) { name kayNN } "
+                + "accounts(ids: [5]) { id code @include(if: $s) kayNN @include(if: $s) } }",
+                false);
+        }
+        finally
+        {
+            (s_delayA, s_delayB) = (0, 0);
+        }
+
+        // assert
+        Assert.Equal(
+            "data: {\"nullableUsers\":[null,null],\"accounts\":[{\"id\":5}]}\nerrors: [{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",0,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}},{\"message\":\"Cannot return null for non-nullable field.\",\"path\":[\"nullableUsers\",1,\"kayNN\"],\"extensions\":{\"code\":\"HC0018\"}}]\n",
+            result);
+    }
+
     [Fact]
     public async Task Execute_Should_NotReportViolation_When_BatchedDefinitionIsExcludedByAVariable()
     {
@@ -975,6 +1012,21 @@ public class KeyHopFailureTests : FusionTestBase
 
         return await CreateCompositeSchemaAsync(
             [("a", a), ("b", b), ("e", e), ("k", k)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    private async Task<Gateway> CreateSplitBatchedGatewayAsync(bool enableRequestGrouping)
+    {
+        var a = CreateSourceSchema("a", b => b.AddQueryType<SplitUsers.Query>());
+        var accounts = CreateSourceSchema("accounts", b => b.AddQueryType<SplitAccounts.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: ServerErrorAfterDelayB);
+        var e = CreateSourceSchema("e", b => b.AddQueryType<BatchE.Query>());
+        var k = CreateSourceSchema("k", b => b.AddQueryType<BatchK.Query>());
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("accounts", accounts), ("b", b), ("e", e), ("k", k)],
             configureGatewayBuilder: builder =>
                 builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
             includeOperationPlan: false);
@@ -1587,6 +1639,38 @@ public class KeyHopFailureTests : FusionTestBase
 
             [Lookup, Internal]
             public Account? GetAccountByCode(string code) => new(code, 3);
+        }
+    }
+
+    public static class SplitUsers
+    {
+        [EntityKey("id")]
+        public record User(int Id, string Name);
+
+        public class Query
+        {
+            public IEnumerable<User?> GetNullableUsers(int[] ids) => ids.Select(i => new User(i, $"user-{i}"));
+
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, $"user-{id}");
+        }
+    }
+
+    public static class SplitAccounts
+    {
+        [EntityKey("id")]
+        public record Account(int Id);
+
+        public class Query
+        {
+            public async Task<IEnumerable<Account?>> GetAccounts(int[] ids)
+            {
+                await Task.Delay(s_delayA);
+                return ids.Select(i => new Account(i));
+            }
+
+            [Lookup, Internal]
+            public Account? GetAccountById(int id) => new(id);
         }
     }
 }
