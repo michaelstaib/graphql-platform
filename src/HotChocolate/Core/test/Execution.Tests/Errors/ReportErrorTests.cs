@@ -147,16 +147,58 @@ public class ReportErrorTests
             """);
     }
 
+    [Fact]
+    public async Task ReportError_Should_ApplyEveryChangeOfConfigure_When_ErrorIsACustomError()
+    {
+        // arrange
+        var reported = new List<IError>();
+        var exception = new InvalidOperationException("cause");
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddErrorFilter(error =>
+            {
+                reported.Add(error);
+                return error;
+            })
+            .AddQueryType(d => d
+                .Field("items")
+                .Type<ListType<StringType>>()
+                .Resolve(context =>
+                {
+                    context.ReportError(
+                        new GraphQLException(
+                            new CustomError("item failed", context.Path) { Locations = [new Location(1, 1)] }),
+                        error => error
+                            .SetCode("CUSTOM")
+                            .SetException(exception)
+                            .SetPath(null)
+                            .ClearLocations());
+                    return new string?[] { "a" };
+                }))
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        await executor.ExecuteAsync("{ items }", TestContext.Current.CancellationToken);
+
+        // assert
+        var error = Assert.Single(reported);
+        Assert.IsType<CustomError>(error);
+        Assert.Equal("CUSTOM", error.Code);
+        Assert.Same(exception, error.Exception);
+        Assert.Null(error.Path);
+        Assert.Empty(error.Locations ?? []);
+    }
+
     private sealed record CustomError(
         string Message,
         Path? Path,
         IReadOnlyDictionary<string, object?>? Extensions = null) : IError
     {
-        public string? Code => null;
+        public string? Code => Extensions?.TryGetValue("code", out var code) == true ? code as string : null;
 
-        public IReadOnlyList<Location>? Locations => null;
+        public IReadOnlyList<Location>? Locations { get; init; }
 
-        public Exception? Exception => null;
+        public Exception? Exception { get; init; }
 
         public IError WithMessage(string message) => this with { Message = message };
 
@@ -164,12 +206,12 @@ public class ReportErrorTests
 
         public IError WithPath(Path path) => this with { Path = path };
 
-        public IError WithLocations(IReadOnlyList<Location> locations) => this;
+        public IError WithLocations(IReadOnlyList<Location> locations) => this with { Locations = locations };
 
         public IError WithExtensions(IReadOnlyDictionary<string, object?>? extensions)
             => this with { Extensions = extensions };
 
-        public IError WithException(Exception? exception) => this;
+        public IError WithException(Exception? exception) => this with { Exception = exception };
 
         public IError RemoveExtension(string key) => this;
 

@@ -106,19 +106,13 @@ internal partial class MiddlewareContext : IMiddlewareContext
             return configured;
         }
 
-        var result = error.WithMessage(configured.Message).WithExtensions(configured.Extensions);
-
-        if (configured.Path is { } path)
-        {
-            result = result.WithPath(path);
-        }
-
-        if (configured.Locations is { } locations)
-        {
-            result = result.WithLocations(locations);
-        }
-
-        return result;
+        // The interface has no way to remove a path or locations, so null is passed to the type to clear them.
+        return error
+            .WithMessage(configured.Message)
+            .WithExtensions(configured.Extensions)
+            .WithException(configured.Exception)
+            .WithPath(configured.Path!)
+            .WithLocations(configured.Locations!);
     }
 
     public void ReportError(IError error)
