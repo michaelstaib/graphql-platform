@@ -1414,7 +1414,7 @@ public class KeyHopFailureTests : FusionTestBase
 
             await sequence.WaitForTurnAsync(hop, cancellationToken);
             var response = await _invoker!.SendAsync(request, cancellationToken);
-            await response.Content.LoadIntoBufferAsync(cancellationToken);
+            await response.Content.LoadIntoBufferAsync();
             sequence.MarkDelivered(hop);
 
             return response;
