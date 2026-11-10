@@ -66,14 +66,22 @@ internal partial class MiddlewareContext : IMiddlewareContext
         {
             foreach (var error in ex.Errors)
             {
-                ReportError(error);
+                if (configure is null)
+                {
+                    ReportError(error);
+                    continue;
+                }
+
+                var errorBuilder = ErrorBuilder.FromError(error);
+                configure(errorBuilder);
+                ReportError(errorBuilder.Build());
             }
         }
         else if (exception is AggregateException aggregateException)
         {
             foreach (var innerException in aggregateException.InnerExceptions)
             {
-                ReportError(innerException);
+                ReportError(innerException, configure);
             }
         }
         else
