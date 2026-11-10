@@ -1,0 +1,115 @@
+{
+  "version": "1.3.0",
+  "id": "3399804ed38d8297c7afdfe5906a3560faf42b69a41cdffb86918ace7bd94be0",
+  "operation": {
+    "kind": "Query",
+    "document": "query($x: Boolean!, $y: Boolean!) { user(id: \"1\") { name id @fusion__requirement ... @include(if: $x) { ... @skip(if: $y) { __typename @fusion__empty } } } }",
+    "id": "123456789101112",
+    "hash": "123456789101112",
+    "shortHash": "123456789101112"
+  },
+  "searchSpace": 1,
+  "expandedNodes": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Operation",
+      "schema": "a",
+      "operation": {
+        "name": "Op_123456789101112_1",
+        "kind": "Query",
+        "document": "query Op_123456789101112_1($x: Boolean!, $y: Boolean!) { user(id: \"1\") { name ... @include(if: $x) { ... @skip(if: $y) { __typename } } id } }",
+        "hash": "08eb19f3e0e2dca988c64aa123dd65de24ecebb55dfe783f5a6c86b422a6b4c9",
+        "shortHash": "08eb19f3",
+        "xxHash": 16874566298654174584
+      },
+      "resultSelectionSet": "{ user }",
+      "forwardedVariables": [
+        "x",
+        "y"
+      ]
+    }
+  ],
+  "deliveryGroups": [
+    {
+      "id": 0,
+      "path": "$.user",
+      "label": "contact",
+      "conditions": [
+        {
+          "variable": "$x",
+          "passingValue": true
+        },
+        {
+          "variable": "$y",
+          "passingValue": false
+        }
+      ]
+    }
+  ],
+  "incrementalPlans": [
+    {
+      "deliveryGroupIds": [
+        0
+      ],
+      "parentNodeId": 1,
+      "requirements": [
+        {
+          "name": "__fusion_1_id",
+          "type": "ID!",
+          "path": "$.user",
+          "selectionMap": "id"
+        }
+      ],
+      "operation": {
+        "kind": "Query",
+        "document": "query($x: Boolean!, $y: Boolean!) { user(id: \"1\") { id @fusion__requirement ... @include(if: $x) { email @skip(if: $y) } } }",
+        "id": "123456789101112#defer_0",
+        "hash": "123456789101112#defer_0",
+        "shortHash": "123456789101112"
+      },
+      "nodes": [
+        {
+          "id": 1,
+          "type": "Operation",
+          "schema": "b",
+          "operation": {
+            "name": "Op_defer_1",
+            "kind": "Query",
+            "document": "query Op_defer_1($__fusion_1_id: ID!) { userById(id: $__fusion_1_id) { email } }",
+            "hash": "2aab5972b753c9acb689478907ffd733cc3ea02794566e0aea0dd8c4c269412f",
+            "shortHash": "2aab5972",
+            "xxHash": 17733049673571298455
+          },
+          "lookupTypeName": "User",
+          "resultSelectionSet": "{ email }",
+          "source": "$.userById",
+          "target": "$.user",
+          "requirements": [
+            {
+              "name": "__fusion_1_id",
+              "type": "ID!",
+              "path": "$.user",
+              "selectionMap": "id"
+            }
+          ],
+          "conditions": [
+            {
+              "variable": "$x",
+              "passingValue": true
+            },
+            {
+              "variable": "$y",
+              "passingValue": false
+            }
+          ],
+          "dependencies": [
+            {
+              "parentNodeId": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

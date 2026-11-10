@@ -287,7 +287,12 @@ public sealed partial class OperationPlanner
             }
 
             // Use the latest root operation definition after deferred planning.
-            var operation = _operationCompiler.Compile(id, hash, shortHash, internalOperationDefinition);
+            var operation = _operationCompiler.Compile(
+                id,
+                hash,
+                shortHash,
+                internalOperationDefinition,
+                deliveryGroups);
 
             if (deferContextGraph is not null)
             {

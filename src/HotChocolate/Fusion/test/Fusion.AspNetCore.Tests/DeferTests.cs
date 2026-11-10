@@ -1635,7 +1635,7 @@ public class DeferTests : FusionTestBase
         rawBody.MatchSnapshot();
     }
 
-    [Fact(Skip = "Requires validation of @skip/@include interaction with @defer at the planning level")]
+    [Fact]
     public async Task Defer_With_Skip_Directive_Should_Skip_Deferred_Fragment()
     {
         // arrange
@@ -1712,7 +1712,9 @@ public class DeferTests : FusionTestBase
 
         var initial = payloads[0].RootElement;
         Assert.True(initial.TryGetProperty("data", out var data));
-        Assert.Equal("User: VXNlcjox", data.GetProperty("user").GetProperty("name").GetString());
+        Assert.Equal(
+            "User: VXNlcjoyMDkyMTcyNjc2",
+            data.GetProperty("user").GetProperty("name").GetString());
 
         // Reviews should NOT be in the response since the fragment was skipped
         Assert.False(data.GetProperty("user").TryGetProperty("reviews", out _));
@@ -1725,6 +1727,567 @@ public class DeferTests : FusionTestBase
         {
             doc.Dispose();
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_TypeConditionedFragmentHasInclude(bool include)
+    {
+        // arrange
+        using var gateway = await CreateConditionalItemGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                items {
+                    id
+                    ... @defer {
+                        ... on Product @include(if: $x) {
+                            name
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                items {
+                    id
+                    ... on Product @include(if: $x) {
+                        name
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        var items = data["items"]!.AsArray();
+        Assert.Equal(include, items[0]!.AsObject().ContainsKey("name"));
+        Assert.False(items[2]!.AsObject().ContainsKey("name"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferredFragmentWithAliasHasInclude(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("score"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_LeafGroupSelectsFieldInConditionalFragment(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer {
+                        ... @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        rating
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("rating"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_DeferredFragmentSelectingCompositeFieldHasSkip(
+        bool skip)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @skip(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @skip(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            skip);
+
+        // assert
+        Assert.Equal(!skip, data["products"]![0]!.AsObject().ContainsKey("reviews"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_OuterGroupEnclosesConditionalDefer(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    reviews {
+                        id
+                    }
+                    ... @include(if: $x) {
+                        rating
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        var product = data["products"]![0]!.AsObject();
+        Assert.True(product.ContainsKey("reviews"));
+        Assert.Equal(include, product.ContainsKey("rating"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_MatchNonDeferredResult_When_ConditionalFragmentEnclosesDefer(bool include)
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var data = await ExecuteAndCompareWithNonDeferredAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        ... @defer {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        reviews {
+                            id
+                        }
+                    }
+                }
+            }
+            """,
+            include);
+
+        // assert
+        Assert.Equal(include, data["products"]![0]!.AsObject().ContainsKey("reviews"));
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSinglePayload_When_DeferredFragmentIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitIncrementalPayloads_When_DeferredFragmentIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer @include(if: $x) {
+                        score: rating
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"score":123}},{"id":"0","subPath":[1],"data":{"score":123}},{"id":"0","subPath":[2],"data":{"score":123}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSinglePayload_When_FragmentEnclosingDeferIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        ... @defer {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitIncrementalPayloads_When_FragmentEnclosingDeferIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @include(if: $x) {
+                        ... @defer {
+                            reviews {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitSingleOuterGroup_When_InnerGroupIncludeIsFalse()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            x: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_EmitBothGroups_When_InnerGroupIncludeIsTrue()
+    {
+        // arrange
+        using var gateway = await CreateProductDetailsGatewayAsync();
+
+        // act
+        var payloads = await ExecuteProductsDeferAsync(
+            gateway,
+            """
+            query ($x: Boolean!) {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews {
+                            id
+                        }
+                        ... @defer(label: "inner") @include(if: $x) {
+                            rating
+                        }
+                    }
+                }
+            }
+            """,
+            x: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"products":[{"id":"UHJvZHVjdDoxOTc0MTQ1MDk="},{"id":"UHJvZHVjdDozOTM1NzEyMDU5"},{"id":"UHJvZHVjdDoyMjE1MjQ2OTE2"}]},"pending":[{"id":"0","path":["products"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"1","path":["products"],"label":"inner"}],"incremental":[{"id":"0","subPath":[0],"data":{"reviews":[{"id":"UmV2aWV3OjMwMDAwNTM1MTA="},{"id":"UmV2aWV3OjIzNjI5NTY5NjQ="},{"id":"UmV2aWV3OjM5MzkxOTk2NzQ="}]}},{"id":"0","subPath":[1],"data":{"reviews":[{"id":"UmV2aWV3OjEzMzg2NjMwNDA="},{"id":"UmV2aWV3OjMzODU5NDM3MzA="},{"id":"UmV2aWV3OjMyNzg4MDUxMDk="}]}},{"id":"0","subPath":[2],"data":{"reviews":[{"id":"UmV2aWV3OjEzOTQwMTI3MjY="},{"id":"UmV2aWV3OjM3NDIyOTczMjQ="},{"id":"UmV2aWV3OjE4MTc3OTE5ODE="}]}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","subPath":[0],"data":{"rating":123}},{"id":"1","subPath":[1],"data":{"rating":123}},{"id":"1","subPath":[2],"data":{"rating":123}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    private static async Task<List<string>> ExecuteProductsDeferAsync(
+        Gateway gateway,
+        string query,
+        bool x)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            new OperationRequest(query, variables: new Dictionary<string, object?> { ["x"] = x }),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        return await ReadPayloadsAsync(result);
+    }
+
+    private async Task<Gateway> CreateConditionalItemGatewayAsync()
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                items: [Item!]! @returns(types: ["Product", "Product", "Other"])
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+                id: ID!
+            }
+
+            type Other implements Item @key(fields: "id") {
+                id: ID!
+            }
+            """);
+
+        var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                itemById(id: ID!): Item @lookup
+            }
+
+            interface Item {
+                id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+
+            type Other implements Item @key(fields: "id") {
+                id: ID!
+                title: String!
+            }
+            """);
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private static async Task<JsonNode> ExecuteAndCompareWithNonDeferredAsync(
+        Gateway gateway,
+        string deferredQuery,
+        string nonDeferredQuery,
+        bool x)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var variables = new Dictionary<string, object?> { ["x"] = x };
+
+        using var deferredResult = await client.PostAsync(
+            new OperationRequest(deferredQuery, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        using var nonDeferredResult = await client.PostAsync(
+            new OperationRequest(nonDeferredQuery, variables: variables),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var deferredPayloads = await ReadPayloadsAsync(deferredResult);
+        var nonDeferredPayloads = await ReadPayloadsAsync(nonDeferredResult);
+        var deferredData = MergeIncrementalPayloads(deferredPayloads);
+        var nonDeferredData = MergeIncrementalPayloads(nonDeferredPayloads);
+
+        Assert.True(
+            JsonNode.DeepEquals(nonDeferredData, deferredData),
+            $"Deferred: {deferredData.ToJsonString()}, non-deferred: {nonDeferredData.ToJsonString()}");
+
+        return deferredData;
     }
 
     [Fact]
