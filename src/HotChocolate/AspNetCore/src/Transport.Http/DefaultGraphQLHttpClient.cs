@@ -7,6 +7,7 @@ using HotChocolate.Language;
 using static System.Net.Http.HttpCompletionOption;
 
 #if FUSION
+using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Transport.Serialization;
 using HotChocolate.Text.Json;
 using HotChocolate.Transport.Http;
@@ -34,6 +35,7 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
     private readonly bool _disposeInnerClient;
 #if FUSION
     private readonly HttpMessageInvoker? _invoker;
+    private readonly ISourceSchemaHeaderForwarder? _headerForwarder;
 #endif
 
     /// <summary>
@@ -82,15 +84,22 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
     /// <param name="handler">
     /// The message handler of <paramref name="httpClient"/>. It is not disposed with this instance.
     /// </param>
+    /// <param name="headerForwarder">
+    /// Adds gateway request headers to every request, or <c>null</c> to add none.
+    /// </param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="httpClient"/> or <paramref name="handler"/> is <see langword="null"/>.
     /// </exception>
-    internal DefaultGraphQLHttpClient(HttpClient httpClient, HttpMessageHandler handler)
+    internal DefaultGraphQLHttpClient(
+        HttpClient httpClient,
+        HttpMessageHandler handler,
+        ISourceSchemaHeaderForwarder? headerForwarder)
         : this(httpClient, disposeInnerClient: true)
     {
         ArgumentNullException.ThrowIfNull(handler);
 
         _invoker = new HttpMessageInvoker(handler, disposeHandler: false);
+        _headerForwarder = headerForwarder;
     }
 #endif
 
@@ -144,6 +153,7 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         if (request.State is { } state)
         {
             request.OnMessageCreated?.Invoke(request, requestMessage, state);
+            _headerForwarder?.AddHeaders(state.Context.Features, requestMessage);
         }
 #else
         request.OnMessageCreated?.Invoke(request, requestMessage, request.State);

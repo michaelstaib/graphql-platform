@@ -14,20 +14,32 @@ if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FUSION_ARENA_
     builder.Services.AddHostedService<MemoryArenaEventListener>();
 }
 
-builder.Services
-    .AddHeaderPropagation(options => options.Headers.Add("Authorization"));
+// BENCH_FUSION_SOCKETS_TRANSPORT=1 sends subgraph requests through the experimental transport, which owns
+// its handlers and forwards Authorization itself, instead of through the "fusion" IHttpClientFactory client.
+var useHttpClientFactory = Environment.GetEnvironmentVariable("BENCH_FUSION_SOCKETS_TRANSPORT") != "1";
 
-builder.Services
-    .AddHttpClient("fusion")
-    // Drop the default LoggingHttpMessageHandler and LoggingScopeHttpMessageHandler. Even with
-    // logging disabled they add two async state machines and a scope per subgraph call.
-    .RemoveAllLoggers()
-    .ConfigurePrimaryHttpMessageHandler(
-        () => new SocketsHttpHandler
-        {
-            MaxConnectionsPerServer = 256
-        })
-    .AddHeaderPropagation();
+if (useHttpClientFactory)
+{
+    builder.Services
+        .AddHeaderPropagation(options => options.Headers.Add("Authorization"));
+
+    builder.Services
+        .AddHttpClient("fusion")
+        // Drop the default LoggingHttpMessageHandler and LoggingScopeHttpMessageHandler. Even with
+        // logging disabled they add two async state machines and a scope per subgraph call.
+        .RemoveAllLoggers()
+        .ConfigurePrimaryHttpMessageHandler(
+            () => new SocketsHttpHandler
+            {
+                MaxConnectionsPerServer = 256
+            })
+        .AddHeaderPropagation();
+}
+else
+{
+    AppContext.SetSwitch("HotChocolate.Fusion.Experimental.SocketsHttpTransport", true);
+    AppContext.SetData("HotChocolate.Fusion.Experimental.SocketsHttpTransport.ForwardedHeaders", "Authorization");
+}
 
 builder
     .AddGraphQLGateway(disableDefaultSecurity: true)
@@ -35,7 +47,11 @@ builder
 
 var app = builder.Build();
 
-app.UseHeaderPropagation();
+if (useHttpClientFactory)
+{
+    app.UseHeaderPropagation();
+}
+
 app.MapGraphQLHttp();
 
 app.Run();

@@ -77,9 +77,13 @@ public static class HotChocolateFusionServiceCollectionExtensions
         IServiceCollection services)
     {
         services.AddSingleton<ISourceSchemaClientFactory>(
-            static sp => new HttpSourceSchemaClientFactory(
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetService<IOptionsMonitor<HttpClientFactoryOptions>>()));
+            static sp => ExperimentalSocketsHttpTransport.IsEnabled()
+                ? new SocketsHttpSourceSchemaClientFactory(
+                    static _ => SocketsHttpTransportSettings.Default,
+                    sp.GetService<ISourceSchemaHeaderForwarder>())
+                : new HttpSourceSchemaClientFactory(
+                    sp.GetRequiredService<IHttpClientFactory>(),
+                    sp.GetService<IOptionsMonitor<HttpClientFactoryOptions>>()));
 
         services.TryAddSingleton<ISourceSchemaClientScopeFactory>(
             static sp => new DefaultSourceSchemaClientScopeFactory(

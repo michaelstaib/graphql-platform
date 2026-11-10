@@ -16,7 +16,8 @@ public sealed class DefaultGraphQLHttpClientDeadlineTests
         var handler = new RecordingHandler();
         using var clientWithHandler = new DefaultGraphQLHttpClient(
             new HttpClient(handler, disposeHandler: false),
-            handler);
+            handler,
+            headerForwarder: null);
         using var clientWithoutHandler = new DefaultGraphQLHttpClient(
             new HttpClient(handler, disposeHandler: false));
         using var cts = new CancellationTokenSource();
@@ -55,7 +56,7 @@ public sealed class DefaultGraphQLHttpClientDeadlineTests
         // the handler answers after the HTTP client timeout has elapsed
         var handler = new RecordingHandler(TimeSpan.FromMilliseconds(300));
         var httpClient = new HttpClient(handler, disposeHandler: false) { Timeout = TimeSpan.FromMilliseconds(50) };
-        using var client = new DefaultGraphQLHttpClient(httpClient, handler);
+        using var client = new DefaultGraphQLHttpClient(httpClient, handler, headerForwarder: null);
         var results = new List<string>();
 
         // act
@@ -92,7 +93,10 @@ public sealed class DefaultGraphQLHttpClientDeadlineTests
         foreach (var hasDeadline in new[] { true, false })
         {
             var handler = new RecordingHandler(Timeout.InfiniteTimeSpan);
-            using var client = new DefaultGraphQLHttpClient(new HttpClient(handler, disposeHandler: false), handler);
+            using var client = new DefaultGraphQLHttpClient(
+                new HttpClient(handler, disposeHandler: false),
+                handler,
+                headerForwarder: null);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
             var sendTask = client.SendAsync(CreateRequest(hasDeadline), cts.Token);
             await handler.WaitForRequestAsync();
@@ -122,7 +126,10 @@ public sealed class DefaultGraphQLHttpClientDeadlineTests
     {
         // arrange
         var handler = new RecordingHandler();
-        using var client = new DefaultGraphQLHttpClient(new HttpClient(handler, disposeHandler: false), handler);
+        using var client = new DefaultGraphQLHttpClient(
+            new HttpClient(handler, disposeHandler: false),
+            handler,
+            headerForwarder: null);
         HttpStatusCode? receivedStatusCode = null;
         var request = CreateRequest(hasDeadline: true);
         request.State = new RequestCallbackState();
