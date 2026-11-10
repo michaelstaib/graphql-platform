@@ -1,0 +1,153 @@
+title: Defer_Should_DeliverTypenameAndInnerGroup_When_OuterGroupOnlySelectsTypename
+request:
+  document: |
+    {
+      products {
+        ... @defer(label: "outer") {
+          __typename
+          ... @defer(label: "inner") {
+            id
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "data": {
+      "products": [
+        {
+          "__typename": "Product",
+          "id": "1"
+        },
+        {
+          "__typename": "Product",
+          "id": "2"
+        },
+        {
+          "__typename": "Product",
+          "id": "3"
+        }
+      ]
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        products: [Product!]!
+      }
+
+      type Product {
+        id: ID! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_d7a49575_1 {
+              products {
+                __typename
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "products": [
+                    {
+                      "__typename": "Product",
+                      "id": "1"
+                    },
+                    {
+                      "__typename": "Product",
+                      "id": "2"
+                    },
+                    {
+                      "__typename": "Product",
+                      "id": "3"
+                    }
+                  ]
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+        reviewDetailsById(id: ID!): Review @lookup @internal
+      }
+
+      type Author {
+        id: ID! @shareable
+      }
+
+      type Product @key(fields: "id") {
+        reviews: [Review!]!
+        id: ID!
+      }
+
+      type Review @key(fields: "id") {
+        text: String!
+        author: Author!
+        id: ID!
+      }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        reviewById(id: ID!): Review @lookup @internal
+      }
+
+      type Review @key(fields: "id") {
+        rating: Int!
+        id: ID!
+      }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        authorById(id: ID!): Author @lookup @internal
+      }
+
+      type Author @key(fields: "id") {
+        rating: Int!
+        id: ID!
+      }
+operationPlan:
+  operation:
+    - document: |
+        {
+          products {
+            __typename
+            id
+          }
+        }
+      hash: 4644ab1144ca64d6d6bf72992e4817a1
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_d7a49575_1 {
+          products {
+            __typename
+            id
+          }
+        }
