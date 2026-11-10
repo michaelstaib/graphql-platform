@@ -327,6 +327,12 @@ namespace HotChocolate.Validation.Properties {
             }
         }
         
+        internal static string ErrorHelper_FieldsOverlapWithStream {
+            get {
+                return ResourceManager.GetString("ErrorHelper_FieldsOverlapWithStream", resourceCulture);
+            }
+        }
+        
         internal static string ErrorHelper_DeferAndStreamLabelIsVariable {
             get {
                 return ResourceManager.GetString("ErrorHelper_DeferAndStreamLabelIsVariable", resourceCulture);

@@ -283,9 +283,9 @@ public class FieldSelectionMergingRuleTests
     }
 
     [Fact]
-    public void Stream_Mergeable()
+    public void Validate_Should_Report_When_IdenticalStreamFieldsOverlap()
     {
-        ExpectValid(
+        ExpectErrors(
             """
             {
                 __type (type: "Foo") {
@@ -295,6 +295,89 @@ public class FieldSelectionMergingRuleTests
                             name
                         }
                     }
+                    fields @stream(initialCount: 1) {
+                        name
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_StreamFieldOverlapsAcrossFragments()
+    {
+        ExpectErrors(
+            """
+            {
+                __type (type: "Foo") {
+                    ... A
+                    ... B
+                }
+            }
+
+            fragment A on __Type {
+                fields @stream {
+                    name
+                }
+            }
+
+            fragment B on __Type {
+                fields @stream {
+                    description
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_NestedStreamFieldsOverlapUnderMergedParent()
+    {
+        ExpectErrors(
+            """
+            {
+                __type (type: "Foo") {
+                    fields {
+                        args @stream {
+                            name
+                        }
+                    }
+                    fields {
+                        args @stream {
+                            description
+                        }
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_When_StreamFieldsUseDifferentResponseNames()
+    {
+        ExpectValid(
+            """
+            {
+                __type (type: "Foo") {
+                    a: fields @stream {
+                        name
+                    }
+                    b: fields @stream {
+                        name
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_When_SingleStreamFieldIsSelected()
+    {
+        ExpectValid(
+            """
+            {
+                __type (type: "Foo") {
+                    name
+                    name
                     fields @stream(initialCount: 1) {
                         name
                     }
