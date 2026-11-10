@@ -57,7 +57,7 @@ public class KeyHopFailureTests : FusionTestBase
         using var gateway = await CreateGatewayAsync(CompositeKeyType);
 
         // act
-        var result = await ExecuteAsync(gateway, false, true, [2, 98, 3], [98, 2, 3]);
+        var result = await ExecuteAsync(gateway, false, true, [2, 98, 3], [2, 3, 98], [98, 2, 3]);
 
         // assert
         result.MatchInlineSnapshot(
@@ -68,6 +68,13 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 98, 3] defer
             data: {"users":[{"name":"user-2"},{"name":"user-98"},{"name":"user-3"}]}
             incremental: [0]{"total":2} [1]{"total":null} [2]{"total":3}
+            lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
+            ## ids [2, 3, 98] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-3","total":3},{"name":"user-98","total":null}]}
+            lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
+            ## ids [2, 3, 98] defer
+            data: {"users":[{"name":"user-2"},{"name":"user-3"},{"name":"user-98"}]}
+            incremental: [0]{"total":2} [1]{"total":3} [2]{"total":null}
             lookups: B:2 B:3 B:98 C:sku-2/eu C:sku-3/eu
             ## ids [98, 2, 3] plain
             data: {"users":[{"name":"user-98","total":null},{"name":"user-2","total":2},{"name":"user-3","total":3}]}
@@ -87,7 +94,7 @@ public class KeyHopFailureTests : FusionTestBase
         using var gateway = await CreateGatewayAsync(NestedKeyType);
 
         // act
-        var result = await ExecuteAsync(gateway, true, true, [2, 97, 3], [97, 2, 3]);
+        var result = await ExecuteAsync(gateway, false, true, [2, 97, 3], [2, 3, 97], [97, 2, 3]);
 
         // assert
         result.MatchInlineSnapshot(
@@ -98,6 +105,13 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 97, 3] defer
             data: {"users":[{"name":"user-2"},{"name":"user-97"},{"name":"user-3"}]}
             incremental: [0]{"total":2} [1]{"total":null} [2]{"total":3}
+            lookups: B:2 B:3 B:97 C:sku-2 C:sku-3
+            ## ids [2, 3, 97] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-3","total":3},{"name":"user-97","total":null}]}
+            lookups: B:2 B:3 B:97 C:sku-2 C:sku-3
+            ## ids [2, 3, 97] defer
+            data: {"users":[{"name":"user-2"},{"name":"user-3"},{"name":"user-97"}]}
+            incremental: [0]{"total":2} [1]{"total":3} [2]{"total":null}
             lookups: B:2 B:3 B:97 C:sku-2 C:sku-3
             ## ids [97, 2, 3] plain
             data: {"users":[{"name":"user-97","total":null},{"name":"user-2","total":2},{"name":"user-3","total":3}]}
@@ -117,7 +131,7 @@ public class KeyHopFailureTests : FusionTestBase
         using var gateway = await CreateGatewayAsync(CompositeKeyType);
 
         // act
-        var result = await ExecuteAsync(gateway, true, true, [2, 97, 3]);
+        var result = await ExecuteAsync(gateway, false, true, [2, 97, 3], [2, 3, 97], [97, 2, 3]);
 
         // assert
         result.MatchInlineSnapshot(
@@ -128,6 +142,20 @@ public class KeyHopFailureTests : FusionTestBase
             ## ids [2, 97, 3] defer
             data: {"users":[{"name":"user-2"},{"name":"user-97"},{"name":"user-3"}]}
             incremental: [0]{"total":2} [1]{"total":null} [2]{"total":3}
+            lookups: B:2 B:3 B:97 C:sku-2/eu C:sku-3/eu
+            ## ids [2, 3, 97] plain
+            data: {"users":[{"name":"user-2","total":2},{"name":"user-3","total":3},{"name":"user-97","total":null}]}
+            lookups: B:2 B:3 B:97 C:sku-2/eu C:sku-3/eu
+            ## ids [2, 3, 97] defer
+            data: {"users":[{"name":"user-2"},{"name":"user-3"},{"name":"user-97"}]}
+            incremental: [0]{"total":2} [1]{"total":3} [2]{"total":null}
+            lookups: B:2 B:3 B:97 C:sku-2/eu C:sku-3/eu
+            ## ids [97, 2, 3] plain
+            data: {"users":[{"name":"user-97","total":null},{"name":"user-2","total":2},{"name":"user-3","total":3}]}
+            lookups: B:2 B:3 B:97 C:sku-2/eu C:sku-3/eu
+            ## ids [97, 2, 3] defer
+            data: {"users":[{"name":"user-97"},{"name":"user-2"},{"name":"user-3"}]}
+            incremental: [0]{"total":null} [1]{"total":2} [2]{"total":3}
             lookups: B:2 B:3 B:97 C:sku-2/eu C:sku-3/eu
 
             """);
