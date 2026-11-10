@@ -33,13 +33,14 @@ public sealed partial class HttpSourceSchemaClient
     {
         var node = request.Node;
         var variables = request.Variables;
-        var (httpRequest, buffer) = CreateBufferedHttpRequest(context, request);
+        ChunkedArrayWriter? buffer = null;
         GraphQLHttpResponse? httpResponse = null;
 
         try
         {
-            httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-            context.TrackTransport(node, httpRequest.Uri, httpResponse.RawContentType);
+            var response = SendRequestAsync(context, in request, ref buffer, cancellationToken);
+            httpResponse = await response.ConfigureAwait(false);
+            context.TrackTransport(node, _configuration.BaseAddress, httpResponse.RawContentType);
 
             if (variables.Length <= 1)
             {
@@ -105,13 +106,22 @@ public sealed partial class HttpSourceSchemaClient
         ISourceSchemaResultSink sink,
         CancellationToken cancellationToken)
     {
-        var (httpRequest, buffer) = CreateBufferedHttpBatchRequest(context, requests);
+        GraphQLHttpRequest? httpRequest = null;
+        ChunkedArrayWriter? buffer = null;
+
+        // The batch body is written straight from the requests when the batch is sent.
+        if (!CanSendBatchDirectly(requests))
+        {
+            (httpRequest, buffer) = CreateBufferedHttpBatchRequest(context, requests);
+        }
+
         GraphQLHttpResponse? httpResponse = null;
 
         try
         {
-            httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-            context.TrackTransport(requests.ItemRef(0).Node, httpRequest.Uri, httpResponse.RawContentType);
+            httpResponse = await SendBatchRequestAsync(context, requests, httpRequest, cancellationToken)
+                .ConfigureAwait(false);
+            context.TrackTransport(requests.ItemRef(0).Node, _configuration.BaseAddress, httpResponse.RawContentType);
 
             var mapper = new BatchResultMapper(requests, _supportsVariableBatching);
 
@@ -135,25 +145,6 @@ public sealed partial class HttpSourceSchemaClient
         {
             httpResponse?.Dispose();
             buffer?.Dispose();
-        }
-    }
-
-    private (GraphQLHttpRequest HttpRequest, ChunkedArrayWriter? Buffer) CreateBufferedHttpRequest(
-        OperationPlanContext context,
-        SourceSchemaClientRequest request)
-    {
-        ChunkedArrayWriter? buffer = null;
-
-        try
-        {
-            var httpRequest = CreateHttpRequest(context, in request, ref buffer);
-            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration);
-            return (httpRequest, buffer);
-        }
-        catch
-        {
-            buffer?.Dispose();
-            throw;
         }
     }
 

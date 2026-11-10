@@ -7,6 +7,8 @@ using HotChocolate.Language;
 using static System.Net.Http.HttpCompletionOption;
 
 #if FUSION
+using System.Buffers;
+using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Transport.Serialization;
 using HotChocolate.Text.Json;
 using HotChocolate.Transport.Http;
@@ -28,6 +30,13 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
 {
 #if FUSION
     private const string JsonUtf8ContentType = $"{ContentType.Json}; charset=utf-8";
+    private const int MaxRetainedArrayWriterCapacity = 64 * 1024;
+
+    [ThreadStatic]
+    private static JsonWriter? s_jsonWriter;
+
+    [ThreadStatic]
+    private static PooledArrayWriter? s_arrayWriter;
 #endif
 
     private readonly HttpClient _http;
@@ -182,6 +191,168 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         return new GraphQLHttpResponse(responseMessage);
     }
 
+#if FUSION
+    /// <summary>
+    /// Sends a GraphQL request with the POST method whose JSON body is written by <paramref name="body"/>.
+    /// </summary>
+    /// <param name="body">The request body.</param>
+    /// <param name="requestUri">The GraphQL request URI.</param>
+    /// <param name="acceptHeaderValue">The value of the Accept header.</param>
+    /// <param name="operationKind">
+    /// The operation type hint added to <see cref="HttpRequestMessage.Options"/>, or <see langword="null"/> to add none.
+    /// </param>
+    /// <param name="state">
+    /// The state passed to the configured request hooks, or <see langword="null"/> when no hooks are configured.
+    /// </param>
+    /// <param name="hasDeadline">
+    /// Whether <paramref name="cancellationToken"/> is canceled within the default <see cref="HttpClient.Timeout"/>
+    /// of the start of the request.
+    /// </param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the HTTP request.</param>
+    /// <returns>The GraphQL HTTP response.</returns>
+    internal Task<GraphQLHttpResponse> SendJsonAsync<TBody>(
+        TBody body,
+        Uri requestUri,
+        string acceptHeaderValue,
+        OperationType? operationKind,
+        RequestCallbackState? state,
+        bool hasDeadline,
+        CancellationToken cancellationToken)
+        where TBody : struct, IRequestBody
+    {
+        var arrayWriter = RentArrayWriter();
+        var requestMessage = new HttpRequestMessage(HttpMethod.Post, requestUri);
+
+        try
+        {
+            requestMessage.Headers.TryAddWithoutValidation("Accept", acceptHeaderValue);
+            requestMessage.Content = CreateJsonContent(arrayWriter, body);
+
+            if (operationKind.HasValue)
+            {
+                requestMessage.Options.Set(GraphQLHttpRequest.OperationKindOptionsKey, operationKind.Value);
+            }
+
+            if (state is { } callbackState)
+            {
+                callbackState.Configuration.OnBeforeSend?.Invoke(
+                    callbackState.Context,
+                    callbackState.Node,
+                    requestMessage);
+            }
+
+            requestMessage.Version = _http.DefaultRequestVersion;
+            requestMessage.VersionPolicy = _http.DefaultVersionPolicy;
+        }
+        catch
+        {
+            requestMessage.Dispose();
+            arrayWriter.Dispose();
+            throw;
+        }
+
+        return SendJsonMessageAsync(requestMessage, arrayWriter, state, hasDeadline, cancellationToken);
+    }
+
+    private async Task<GraphQLHttpResponse> SendJsonMessageAsync(
+        HttpRequestMessage requestMessage,
+        PooledArrayWriter arrayWriter,
+        RequestCallbackState? state,
+        bool hasDeadline,
+        CancellationToken ct)
+    {
+        // The array writer holds the request body, so it is only reused after the response was received.
+        var received = false;
+
+        try
+        {
+            HttpResponseMessage responseMessage;
+
+            // A request with a deadline skips the timeout and cancellation setup of the HTTP client.
+            if (_invoker is not null && hasDeadline && requestMessage.RequestUri is { IsAbsoluteUri: true })
+            {
+                responseMessage = await _invoker.SendAsync(requestMessage, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                responseMessage = await _http.SendAsync(requestMessage, ResponseHeadersRead, ct).ConfigureAwait(false);
+            }
+
+            if (state is { } callbackState)
+            {
+                callbackState.Configuration.OnAfterReceive?.Invoke(
+                    callbackState.Context,
+                    callbackState.Node,
+                    responseMessage);
+            }
+
+            var response = new GraphQLHttpResponse(responseMessage);
+            received = true;
+            return response;
+        }
+        finally
+        {
+            requestMessage.Dispose();
+
+            if (received)
+            {
+                ReturnArrayWriter(arrayWriter);
+            }
+            else
+            {
+                arrayWriter.Dispose();
+            }
+        }
+    }
+
+    private static PooledArrayWriter RentArrayWriter()
+    {
+        var arrayWriter = s_arrayWriter;
+
+        if (arrayWriter is null)
+        {
+            return new PooledArrayWriter();
+        }
+
+        s_arrayWriter = null;
+        return arrayWriter;
+    }
+
+    private static void ReturnArrayWriter(PooledArrayWriter arrayWriter)
+    {
+        if (s_arrayWriter is not null || arrayWriter.Capacity > MaxRetainedArrayWriterCapacity)
+        {
+            arrayWriter.Dispose();
+            return;
+        }
+
+        arrayWriter.Reset();
+        s_arrayWriter = arrayWriter;
+    }
+
+    private static JsonWriter RentJsonWriter(IBufferWriter<byte> bufferWriter)
+    {
+        var jsonWriter = s_jsonWriter;
+
+        if (jsonWriter is null)
+        {
+            return new JsonWriter(bufferWriter, JsonOptionDefaults.WriterOptions);
+        }
+
+        s_jsonWriter = null;
+        jsonWriter.Reset(bufferWriter);
+        jsonWriter.NullIgnoreCondition = JsonNullIgnoreCondition.None;
+        return jsonWriter;
+    }
+
+    private static void ReturnJsonWriter(JsonWriter jsonWriter)
+    {
+        // The retained writer must not keep the request buffer alive.
+        jsonWriter.Reset(EmptyBufferWriter.Instance);
+        s_jsonWriter = jsonWriter;
+    }
+#endif
+
     private static HttpRequestMessage CreateRequestMessage(
         PooledArrayWriter arrayWriter,
         GraphQLHttpRequest request,
@@ -284,31 +455,47 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
         return message;
     }
 
+#if FUSION
     private static ByteArrayContent CreateJsonContent(
         PooledArrayWriter arrayWriter,
         GraphQLHttpRequest request)
+        => CreateJsonContent(arrayWriter, request.Body);
+
+    private static ByteArrayContent CreateJsonContent<TBody>(
+        PooledArrayWriter arrayWriter,
+        TBody body)
+        where TBody : IRequestBody
     {
-#if FUSION
-        var jsonWriter = new JsonWriter(arrayWriter, JsonOptionDefaults.WriterOptions);
-        request.Body.WriteTo(jsonWriter);
-#else
-        using var jsonWriter = new Utf8JsonWriter(arrayWriter, JsonOptionDefaults.WriterOptions);
-        request.Body.WriteTo(jsonWriter);
-        jsonWriter.Flush();
-#endif
+        // An exception while writing drops the rented JSON writer.
+        var jsonWriter = RentJsonWriter(arrayWriter);
+        body.WriteTo(jsonWriter);
+        ReturnJsonWriter(jsonWriter);
 
         Debug.WriteLine(Encoding.UTF8.GetString(arrayWriter.WrittenSpan));
 
         var internalBuffer = PooledArrayWriterMarshal.GetUnderlyingBuffer(arrayWriter);
         var content = new ByteArrayContent(internalBuffer, 0, arrayWriter.Length);
-#if FUSION
         content.Headers.ContentType = null;
         content.Headers.TryAddWithoutValidation("Content-Type", JsonUtf8ContentType);
-#else
-        content.Headers.ContentType = new MediaTypeHeaderValue(ContentType.Json, "utf-8");
-#endif
         return content;
     }
+#else
+    private static ByteArrayContent CreateJsonContent(
+        PooledArrayWriter arrayWriter,
+        GraphQLHttpRequest request)
+    {
+        using var jsonWriter = new Utf8JsonWriter(arrayWriter, JsonOptionDefaults.WriterOptions);
+        request.Body.WriteTo(jsonWriter);
+        jsonWriter.Flush();
+
+        Debug.WriteLine(Encoding.UTF8.GetString(arrayWriter.WrittenSpan));
+
+        var internalBuffer = PooledArrayWriterMarshal.GetUnderlyingBuffer(arrayWriter);
+        var content = new ByteArrayContent(internalBuffer, 0, arrayWriter.Length);
+        content.Headers.ContentType = new MediaTypeHeaderValue(ContentType.Json, "utf-8");
+        return content;
+    }
+#endif
 
 #if FUSION
     private static HttpContent CreateMultipartContent(
@@ -678,4 +865,22 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
 #endif
         }
     }
+
+#if FUSION
+    /// <summary>
+    /// A buffer writer without capacity that a retained <see cref="JsonWriter"/> points at between uses.
+    /// </summary>
+    private sealed class EmptyBufferWriter : IBufferWriter<byte>
+    {
+        public static EmptyBufferWriter Instance { get; } = new();
+
+        public void Advance(int count)
+        {
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0) => Memory<byte>.Empty;
+
+        public Span<byte> GetSpan(int sizeHint = 0) => [];
+    }
+#endif
 }

@@ -34,6 +34,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private string?[] _transportContentTypes = [];
     private List<IOperationPlanNode>?[] _skippedDefinitions = [];
     private Dictionary<int, Exception>?[] _batchRequestErrors = [];
+    private SourceSchemaClientRequest[]?[] _batchRequestBuffers = [];
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
     private readonly FetchResultStore _resultStore;
     private ImmutableArray<VariableValues> _requirementValues;
@@ -289,6 +290,29 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
         error = null;
         return false;
+    }
+
+    /// <summary>
+    /// Gets the request buffer of a batch node. The buffer has exactly <paramref name="length"/>
+    /// elements, is retained across requests that use this context, and must be cleared by the
+    /// node once its batch completed.
+    /// </summary>
+    /// <param name="node">The batch node that owns the buffer.</param>
+    /// <param name="length">The number of operations of the batch node.</param>
+    /// <returns>The request buffer of the batch node.</returns>
+    internal SourceSchemaClientRequest[] GetBatchRequestBuffer(ExecutionNode node, int length)
+    {
+        var nodeId = node.Id;
+        var buffer = _batchRequestBuffers[nodeId];
+
+        // A plan that reuses the node id for a batch of another size gets a new buffer.
+        if (buffer is null || buffer.Length != length)
+        {
+            buffer = new SourceSchemaClientRequest[length];
+            _batchRequestBuffers[nodeId] = buffer;
+        }
+
+        return buffer;
     }
 
     internal void SetDynamicSchemaName(ExecutionNode node, string schemaName)

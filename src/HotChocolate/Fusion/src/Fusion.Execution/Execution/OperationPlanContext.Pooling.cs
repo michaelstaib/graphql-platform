@@ -243,6 +243,7 @@ public sealed partial class OperationPlanContext
             _schemaNames = new string?[nodeSlotCount];
             _skippedDefinitions = new List<IOperationPlanNode>?[nodeSlotCount];
             _batchRequestErrors = new Dictionary<int, Exception>?[nodeSlotCount];
+            _batchRequestBuffers = new SourceSchemaClientRequest[]?[nodeSlotCount];
             _variableValueSets = new ImmutableArray<VariableValues>[nodeSlotCount];
             _transportUris = new Uri?[nodeSlotCount];
             _transportContentTypes = new string?[nodeSlotCount];
