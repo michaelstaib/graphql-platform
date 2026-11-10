@@ -1130,7 +1130,7 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")]);
+        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")], [], []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1149,7 +1149,7 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")]);
+        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D")], [], []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1168,7 +1168,7 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E", "F"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D"), ("D", "F")]);
+        var result = await ExecuteInEveryHopOrderAsync(query, hops, [("B", "C"), ("E", "D"), ("D", "F")], [], []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1417,10 +1417,50 @@ public class KeyHopFailureTests : FusionTestBase
         }
     }
 
+    // Whether a hop that has not started runs after data is null depends on timing. Under data: null every error
+    // appears at most once, the errors of the root chain appear in every order, and every other error is one of the
+    // allowed errors with exactly its message and path.
+    private static void AssertNullDataResults(
+        IEnumerable<string> results,
+        string[] rootChainErrors,
+        string[] allowedErrors)
+    {
+        foreach (var result in results.Where(r => r.StartsWith("data: null", StringComparison.Ordinal)))
+        {
+            var line = result.Split('\n').First(l => l.StartsWith("errors:", StringComparison.Ordinal));
+            using var document = JsonDocument.Parse(line["errors:".Length..]);
+            var errors = document.RootElement.EnumerateArray().Select(e => e.GetRawText()).ToList();
+
+            Assert.Equal(errors.Count, errors.Distinct().Count());
+            Assert.All(rootChainErrors, e => Assert.Contains(e, errors));
+            Assert.All(errors, e => Assert.True(
+                rootChainErrors.Contains(e) || allowedErrors.Contains(e),
+                $"Unexpected error under data: null: {e}"));
+        }
+    }
+
+    [Fact]
+    public void AssertNullDataResults_Should_Throw_When_AnExtraErrorHasAWrongPath()
+    {
+        // arrange
+        const string root = """{"message":"m","path":["users",0,"kayNN"]}""";
+        const string extra = """{"message":"m","path":["nullableAccounts",0,"kayNN"]}""";
+        const string wrong = """{"message":"m","path":["nullableAccounts",1,"kayNN"]}""";
+
+        // act
+        AssertNullDataResults([$"data: null\nerrors: [{root},{extra}]\n"], [root], [extra]);
+
+        // assert
+        Assert.ThrowsAny<Exception>(
+            () => AssertNullDataResults([$"data: null\nerrors: [{root},{wrong}]\n"], [root], [extra]));
+    }
+
     private async Task<string> ExecuteInEveryHopOrderAsync(
         string query,
         string[] hops,
-        (string First, string Second)[] precedences)
+        (string First, string Second)[] precedences,
+        string[] rootChainErrors,
+        string[] allowedErrors)
     {
         var sequence = new HopSequence();
         var results = new List<string>();
@@ -1438,13 +1478,7 @@ public class KeyHopFailureTests : FusionTestBase
 
         sequence.Start([]);
 
-        // Whether a hop that has not started runs after data is null depends on timing. Under data: null only the
-        // data is compared, and every reported error must still be unique.
-        foreach (var result in results.Where(r => r.StartsWith("data: null", StringComparison.Ordinal)))
-        {
-            var errors = result.Split('\n').Where(l => l.StartsWith("errors:", StringComparison.Ordinal)).ToList();
-            Assert.Equal(errors.Count, errors.Distinct().Count());
-        }
+        AssertNullDataResults(results, rootChainErrors, allowedErrors);
 
         return Assert.Single(results.Select(r => r.StartsWith("data: null", StringComparison.Ordinal)
             ? "data: null"
