@@ -2818,6 +2818,537 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Defer_Should_SelectClientKey_When_GroupNeedsTwoLookupsOnDirectKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("DirectKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_ListGroupNeedsThreeLookupsOnDirectKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("DirectKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                users {
+                    ... @defer {
+                        id
+                        name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_GroupNeedsThreeLookupsOnOneHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("OneHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id
+                        name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_ListGroupNeedsThreeLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                users {
+                    ... @defer {
+                        id
+                        name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_GroupNeedsTwoLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_ListGroupNeedsTwoLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                users {
+                    ... @defer {
+                        id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_SelectAliasedClientKey_When_GroupNeedsTwoLookupsOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        uid: id
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("uid: id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_NotAddKeyField_When_ClientAliasesAnotherFieldToTheKeyName()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("DirectKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query {
+                user {
+                    ... @defer {
+                        id: name
+                        total
+                        rank
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["id: name", "rank", "total"], GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_SelectClientKey_When_KeyIsConditionedBesideAConditionedGroup()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                user {
+                    ... @defer @include(if: $a) {
+                        id @include(if: $b)
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["code", "id", "id", "name", "sku", "total"], GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_KeepKeyHopInGroup_When_HopSelectsClientField()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+                user {
+                    ... @defer @include(if: $a) {
+                        id
+                        code
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_PlanMutationGroup_When_HopSelectsClientField()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        code
+                        name
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Defer_Should_KeepSeedKeyHopInGroup_When_MutationGroupSelectsOnlyKeyAndTotalOnOneHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("OneHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_KeepSeedKeyHopInGroup_When_MutationGroupSelectsOnlyKeyAndTotalOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Contains("id", GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_KeepSeedKeyHopInGroup_When_MutationGroupSelectsKeyAndSkuAndTotalOnTwoHopKey()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation {
+                touch {
+                    ... @defer {
+                        id
+                        sku
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["code", "id", "sku", "sku", "total"], GetIncrementalEntityFields(plan));
+    }
+
+    [Fact]
+    public void Defer_Should_HostClientKeyOnKeyHop_When_MutationGroupIsConditioned()
+    {
+        // arrange
+        var schema = ComposeClientKeySchema("TwoHopKey", "type Mutation { touch: User! }");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            mutation($a: Boolean!) {
+                touch {
+                    ... @defer @include(if: $a) {
+                        id
+                        code
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+        Assert.Equal(["code", "id", "sku", "total"], GetIncrementalEntityFields(plan));
+    }
+
+    private static string[] GetIncrementalEntityFields(OperationPlan plan)
+    {
+        var fields = new List<string>();
+
+        foreach (var incrementalPlan in plan.IncrementalPlans)
+        {
+            foreach (var node in incrementalPlan.AllNodes.OfType<OperationExecutionNode>())
+            {
+                var document = Utf8GraphQLParser.Parse(node.Operation.Value.Span);
+                var operation = document.Definitions.OfType<OperationDefinitionNode>().Single();
+                var lookup = (FieldNode)operation.SelectionSet.Selections[0];
+
+                foreach (var field in lookup.SelectionSet!.Selections.OfType<FieldNode>())
+                {
+                    fields.Add(
+                        field.Alias is { } alias
+                            ? $"{alias.Value}: {field.Name.Value}"
+                            : field.Name.Value);
+                }
+            }
+        }
+
+        fields.Sort(StringComparer.Ordinal);
+        return fields.ToArray();
+    }
+
+    private static FusionSchemaDefinition ComposeClientKeySchema(string topology)
+        => ComposeClientKeySchema(topology, string.Empty);
+
+    private static FusionSchemaDefinition ComposeClientKeySchema(string topology, string rootExtension)
+    {
+        var root =
+            """
+            # name: a
+            type Query {
+                user: User!
+                users: [User!]!
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+            }
+            """ + "\n" + rootExtension;
+
+        const string name =
+            """
+            # name: e
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """;
+
+        const string rank =
+            """
+            # name: f
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                rank: Int!
+            }
+            """;
+
+        const string totalById =
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                total: Int!
+            }
+            """;
+
+        const string totalBySku =
+            """
+            # name: b
+            type Query {
+                userBySku(sku: String!): User @lookup @internal
+            }
+
+            type User @key(fields: "sku") {
+                sku: String! @shareable
+                total: Int!
+            }
+            """;
+
+        const string skuById =
+            """
+            # name: c
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                sku: String! @shareable
+            }
+            """;
+
+        const string codeById =
+            """
+            # name: c
+            type Query {
+                userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                code: String! @shareable
+            }
+            """;
+
+        const string skuByCode =
+            """
+            # name: d
+            type Query {
+                userByCode(code: String!): User @lookup @internal
+            }
+
+            type User @key(fields: "code") {
+                code: String! @shareable
+                sku: String! @shareable
+            }
+            """;
+
+        return topology switch
+        {
+            "DirectKey" => ComposeSchema(root, totalById, name, rank),
+            "OneHopKey" => ComposeSchema(root, totalBySku, skuById, name, rank),
+            _ => ComposeSchema(root, totalBySku, codeById, skuByCode, name, rank)
+        };
+    }
+
+    [Fact]
     public void Defer_Should_FetchAllPrerequisites_When_RequirementMixesNativeAndComputedFields()
     {
         // arrange

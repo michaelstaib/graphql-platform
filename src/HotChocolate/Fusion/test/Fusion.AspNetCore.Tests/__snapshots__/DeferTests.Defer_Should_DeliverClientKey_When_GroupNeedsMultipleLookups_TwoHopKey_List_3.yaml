@@ -1,0 +1,616 @@
+title: Defer_Should_DeliverClientKey_When_GroupNeedsMultipleLookups
+request:
+  document: |
+    {
+      current {
+        users {
+          ... @defer {
+            id
+            name
+            total
+            rank
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 2,
+    "initial": {
+      "data": {
+        "current": {
+          "users": [
+            {},
+            {},
+            {}
+          ]
+        }
+      }
+    },
+    "pending": [
+      {
+        "id": "0",
+        "path": [
+          "current",
+          "users"
+        ]
+      }
+    ],
+    "incremental": [
+      {
+        "id": "0",
+        "path": [
+          "current",
+          "users"
+        ],
+        "subPath": [
+          0
+        ],
+        "data": {
+          "id": "1",
+          "name": "user-1",
+          "rank": 7,
+          "total": 42
+        }
+      },
+      {
+        "id": "0",
+        "path": [
+          "current",
+          "users"
+        ],
+        "subPath": [
+          1
+        ],
+        "data": {
+          "id": "2",
+          "name": "user-2",
+          "rank": 14,
+          "total": 43
+        }
+      },
+      {
+        "id": "0",
+        "path": [
+          "current",
+          "users"
+        ],
+        "subPath": [
+          2
+        ],
+        "data": {
+          "id": "3",
+          "name": "user-3",
+          "rank": 21,
+          "total": 44
+        }
+      }
+    ],
+    "completed": [
+      {
+        "id": "0"
+      }
+    ],
+    "final": {
+      "data": {
+        "current": {
+          "users": [
+            {
+              "id": "1",
+              "name": "user-1",
+              "rank": 7,
+              "total": 42
+            },
+            {
+              "id": "2",
+              "name": "user-2",
+              "rank": 14,
+              "total": 43
+            },
+            {
+              "id": "3",
+              "name": "user-3",
+              "rank": 21,
+              "total": 44
+            }
+          ]
+        }
+      }
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        current: Current!
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type Current {
+        users: [User!]!
+        user: User!
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_f703c67e_1 {
+              current {
+                users {
+                  id
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "current": {
+                    "users": [
+                      {
+                        "id": "1"
+                      },
+                      {
+                        "id": "2"
+                      },
+                      {
+                        "id": "3"
+                      }
+                    ]
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userBySku(sku: String!): User @lookup @internal
+      }
+
+      type User @key(fields: "sku") {
+        sku: String! @shareable
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_defer_2($__fusion_2_sku: String!) {
+              userBySku(sku: $__fusion_2_sku) {
+                total
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_2_sku": "sku-code-1"
+              },
+              {
+                "__fusion_2_sku": "sku-code-2"
+              },
+              {
+                "__fusion_2_sku": "sku-code-3"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "userBySku": {
+                    "total": 42
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userBySku": {
+                    "total": 43
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userBySku": {
+                    "total": 44
+                  }
+                }
+              }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        code: String! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_defer_5($__fusion_5_id: ID!) {
+              userById(id: $__fusion_5_id) {
+                code
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_5_id": "1"
+              },
+              {
+                "__fusion_5_id": "2"
+              },
+              {
+                "__fusion_5_id": "3"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "code": "code-1"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "code": "code-2"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "code": "code-3"
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userByCode(code: String!): User @lookup @internal
+      }
+
+      type User @key(fields: "code") {
+        code: String! @shareable
+        sku: String! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_defer_4($__fusion_4_code: String!) {
+              userByCode(code: $__fusion_4_code) {
+                sku
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_4_code": "code-1"
+              },
+              {
+                "__fusion_4_code": "code-2"
+              },
+              {
+                "__fusion_4_code": "code-3"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "userByCode": {
+                    "sku": "sku-code-1"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userByCode": {
+                    "sku": "sku-code-2"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userByCode": {
+                    "sku": "sku-code-3"
+                  }
+                }
+              }
+  - name: E
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_defer_3($__fusion_3_id: ID!) {
+              userById(id: $__fusion_3_id) {
+                name
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_3_id": "1"
+              },
+              {
+                "__fusion_3_id": "2"
+              },
+              {
+                "__fusion_3_id": "3"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "name": "user-1"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "name": "user-2"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "name": "user-3"
+                  }
+                }
+              }
+  - name: F
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        rank: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                id
+                rank
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_1_id": "1"
+              },
+              {
+                "__fusion_1_id": "2"
+              },
+              {
+                "__fusion_1_id": "3"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "id": "1",
+                    "rank": 7
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "id": "2",
+                    "rank": 14
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "id": "3",
+                    "rank": 21
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        {
+          current {
+            users {
+              __typename @fusion__empty
+              id @fusion__requirement
+            }
+          }
+        }
+      hash: f703c67eef31e5cb15bf3986519c040d
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_f703c67e_1 {
+          current {
+            users {
+              id
+            }
+          }
+        }
+  deliveryGroups:
+    - id: 0
+      path: $.current.users
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+        - name: __fusion_5_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: F
+          operation: |
+            query Op_defer_1($__fusion_1_id: ID!) {
+              userById(id: $__fusion_1_id) {
+                id
+                rank
+              }
+            }
+          source: $.userById
+          target: $.current.users
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1
+        - id: 2
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_2($__fusion_2_sku: String!) {
+              userBySku(sku: $__fusion_2_sku) {
+                total
+              }
+            }
+          source: $.userBySku
+          target: $.current.users
+          requirements:
+            - name: __fusion_2_sku
+              selectionMap: >-
+                sku
+          dependencies:
+            - id: 4
+        - id: 3
+          type: Operation
+          schema: E
+          operation: |
+            query Op_defer_3($__fusion_3_id: ID!) {
+              userById(id: $__fusion_3_id) {
+                name
+              }
+            }
+          source: $.userById
+          target: $.current.users
+          requirements:
+            - name: __fusion_3_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1
+        - id: 4
+          type: Operation
+          schema: D
+          operation: |
+            query Op_defer_4($__fusion_4_code: String!) {
+              userByCode(code: $__fusion_4_code) {
+                sku
+              }
+            }
+          source: $.userByCode
+          target: $.current.users
+          requirements:
+            - name: __fusion_4_code
+              selectionMap: >-
+                code
+          dependencies:
+            - id: 5
+        - id: 5
+          type: Operation
+          schema: C
+          operation: |
+            query Op_defer_5($__fusion_5_id: ID!) {
+              userById(id: $__fusion_5_id) {
+                code
+              }
+            }
+          source: $.userById
+          target: $.current.users
+          requirements:
+            - name: __fusion_5_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1
