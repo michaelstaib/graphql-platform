@@ -387,6 +387,59 @@ public class FieldSelectionMergingRuleTests
     }
 
     [Fact]
+    public void Validate_Should_Report_When_StreamFieldsOverlapAcrossConcreteParentTypes()
+    {
+        ExpectErrors(
+            s_streamSchema,
+            """
+            {
+                ab {
+                    ... on A {
+                        list @stream
+                    }
+                    ... on B {
+                        list @stream
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_DisabledStreamFieldOverlapsPlainField()
+    {
+        ExpectErrors(
+            s_streamSchema,
+            """
+            {
+                a {
+                    list @stream(if: false)
+                    list
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_When_FragmentWithStreamFieldIsSpreadTwice()
+    {
+        ExpectValid(
+            s_streamSchema,
+            """
+            {
+                a {
+                    ... F
+                    ... F
+                }
+            }
+
+            fragment F on A {
+                list @stream
+            }
+            """);
+    }
+
+    [Fact]
     public void Stream_Argument_Mismatch()
     {
         ExpectErrors(
@@ -1807,6 +1860,29 @@ public class FieldSelectionMergingRuleTests
                     item: Item
                     requiredItem: RequiredItem
                     resource: Resource
+                }
+                """)
+            .Use(_ => _ => default)
+            .Create();
+
+    private static readonly ISchemaDefinition s_streamSchema =
+        SchemaBuilder.New()
+            .ModifyOptions(o => o.EnableStream = true)
+            .AddDocumentFromString(
+                """
+                type A {
+                    list: [String]
+                }
+
+                type B {
+                    list: [String]
+                }
+
+                union AOrB = A | B
+
+                type Query {
+                    a: A
+                    ab: AOrB
                 }
                 """)
             .Use(_ => _ => default)
