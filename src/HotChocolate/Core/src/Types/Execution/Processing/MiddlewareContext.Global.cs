@@ -96,7 +96,7 @@ internal partial class MiddlewareContext : IMiddlewareContext
 
     // Returns the configured error. An error that is not a plain error keeps its type and gets the changed message,
     // code, extensions, exception, path and locations through its With methods. A removed path or removed locations
-    // are not applied to such an error because the interface cannot express them.
+    // are not applied to such an error.
     private static IError Configure(IError error, Action<ErrorBuilder> configure)
     {
         var errorBuilder = ErrorBuilder.FromError(error);
