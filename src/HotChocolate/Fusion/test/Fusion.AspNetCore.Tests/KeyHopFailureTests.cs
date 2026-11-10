@@ -940,7 +940,7 @@ public class KeyHopFailureTests : FusionTestBase
         groupedResult.MatchInlineSnapshot(
             """
             data: {"nullableUsers":[null,null],"accounts":[{"kayNN":3}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"kayNN"],"extensions":{"code":"HC0018"}},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"kayNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"Unexpected Execution Error","path":["nullableUsers",0,"kayNN"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"kayNN"]}]
 
             """);
     }
@@ -962,7 +962,7 @@ public class KeyHopFailureTests : FusionTestBase
         groupedResult.MatchInlineSnapshot(
             """
             data: null
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["users",0,"kayNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"Unexpected Execution Error","path":["users",0,"kayNN"]}]
 
             """);
     }
@@ -1000,7 +1000,7 @@ public class KeyHopFailureTests : FusionTestBase
         result.MatchInlineSnapshot(
             """
             data: {"nullableUsers":[null,null],"accounts":[{"id":5}]}
-            errors: [{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",0,"kayNN"],"extensions":{"code":"HC0018"}},{"message":"Cannot return null for non-nullable field.","path":["nullableUsers",1,"kayNN"],"extensions":{"code":"HC0018"}}]
+            errors: [{"message":"Unexpected Execution Error","path":["nullableUsers",0,"kayNN"]},{"message":"Unexpected Execution Error","path":["nullableUsers",1,"kayNN"]}]
 
             """);
     }

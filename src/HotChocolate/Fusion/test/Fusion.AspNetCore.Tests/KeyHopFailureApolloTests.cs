@@ -154,26 +154,20 @@ public sealed class KeyHopFailureApolloTests : FusionTestBase
                   },
                   "errors": [
                     {
-                      "message": "Cannot return null for non-nullable field.",
+                      "message": "Unexpected Execution Error",
                       "path": [
                         "nullableUsers",
                         0,
                         "kayNN"
-                      ],
-                      "extensions": {
-                        "code": "HC0018"
-                      }
+                      ]
                     },
                     {
-                      "message": "Cannot return null for non-nullable field.",
+                      "message": "Unexpected Execution Error",
                       "path": [
                         "nullableUsers",
                         1,
                         "kayNN"
-                      ],
-                      "extensions": {
-                        "code": "HC0018"
-                      }
+                      ]
                     }
                   ]
                 }
@@ -235,26 +229,20 @@ public sealed class KeyHopFailureApolloTests : FusionTestBase
               },
               "errors": [
                 {
-                  "message": "Cannot return null for non-nullable field.",
+                  "message": "Unexpected Execution Error",
                   "path": [
                     "nullableUsers",
                     0,
                     "kayNN"
-                  ],
-                  "extensions": {
-                    "code": "HC0018"
-                  }
+                  ]
                 },
                 {
-                  "message": "Cannot return null for non-nullable field.",
+                  "message": "Unexpected Execution Error",
                   "path": [
                     "nullableUsers",
                     1,
                     "kayNN"
-                  ],
-                  "extensions": {
-                    "code": "HC0018"
-                  }
+                  ]
                 }
               ]
             }
