@@ -51,6 +51,40 @@ public sealed class RequestContextOperationIdExtensionsTests
         Assert.Same(documentId.Value, operationId);
     }
 
+    [Theory]
+    [InlineData("query Foo { foo }", "Bar")]
+    [InlineData("{ foo }", "Bar")]
+    public void GetOperationId_Should_Throw_When_SingleOperation_And_NameIsNotDefined(
+        string document,
+        string operationName)
+    {
+        // arrange
+        var context = CreateContext(document, new OperationDocumentId("abc123"), operationName);
+
+        // act
+        void Act() => context.GetOperationId();
+
+        // assert
+        var exception = Assert.Throws<GraphQLException>(Act);
+        Assert.Equal(
+            "The specified operation `Bar` cannot be found.",
+            Assert.Single(exception.Errors).Message);
+    }
+
+    [Fact]
+    public void GetOperationId_Should_ReturnDocumentId_When_SingleOperation_And_NameIsDefined()
+    {
+        // arrange
+        var documentId = new OperationDocumentId("abc123");
+        var context = CreateContext("query Foo { foo }", documentId, operationName: "Foo");
+
+        // act
+        var operationId = context.GetOperationId();
+
+        // assert
+        Assert.Same(documentId.Value, operationId);
+    }
+
     [Fact]
     public void GetOperationId_Should_BuildIdDotOperationName_When_MultipleOperations()
     {

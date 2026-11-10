@@ -16,4 +16,13 @@ internal static class ThrowHelper
 
     public static InvalidOperationException OperationId_DocumentIdEmpty()
         => new("The operation document must have a document ID before an operation id can be computed.");
+
+    public static GraphQLException OperationId_OperationNotFound(
+        Language.DocumentNode document,
+        string operationName)
+        => new(ErrorBuilder.New()
+            .SetMessage("The specified operation `{0}` cannot be found.", operationName)
+            .AddLocation(document)
+            .SetExtension("operationName", operationName)
+            .Build());
 }

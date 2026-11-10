@@ -68,6 +68,16 @@ public static class RequestContextOperationIdExtensions
 
         if (documentInfo.OperationCount == 1)
         {
+            // The id of a single operation document does not contain the operation name,
+            // so a requested name must be checked against the document on every request.
+            var requestedName = context.Request.OperationName;
+
+            if (!string.IsNullOrEmpty(requestedName)
+                && !DefinesOperation(documentInfo.Document, requestedName))
+            {
+                throw ThrowHelper.OperationId_OperationNotFound(documentInfo.Document, requestedName);
+            }
+
             operationId = documentInfo.Id.Value;
         }
         else
@@ -103,5 +113,21 @@ public static class RequestContextOperationIdExtensions
 
         documentInfo.OperationId = operationId;
         return operationId;
+    }
+
+    private static bool DefinesOperation(Language.DocumentNode document, string operationName)
+    {
+        var definitions = document.Definitions;
+
+        for (var i = 0; i < definitions.Count; i++)
+        {
+            if (definitions[i] is Language.OperationDefinitionNode { Name: { } name }
+                && name.Value.Equals(operationName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
