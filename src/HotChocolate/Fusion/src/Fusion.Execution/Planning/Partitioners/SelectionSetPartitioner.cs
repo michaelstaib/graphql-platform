@@ -371,7 +371,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             if (selection is FieldNode field)
             {
                 return field.Name.Value.Equals(IntrospectionFieldNames.TypeName)
-                    && field.Alias is null;
+                    && field.Alias is null
+                    && field.Directives.Count == 0;
             }
 
             return false;

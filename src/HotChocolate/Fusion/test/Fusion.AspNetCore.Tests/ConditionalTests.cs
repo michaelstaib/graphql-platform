@@ -1,5 +1,6 @@
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
@@ -2784,6 +2785,145 @@ public class ConditionalTests : FusionTestBase
             }
             """,
             variables: new Dictionary<string, object?> { ["skip1"] = false, ["skip2"] = true });
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result);
+    }
+
+    [Fact]
+    public async Task Typename_Skip_On_Abstract_Field_Without_Defer()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<AbstractTypeTests.SourceSchema1.Query>()
+                .AddType<AbstractTypeTests.SourceSchema1.Discussion>()
+                .AddType<AbstractTypeTests.SourceSchema1.Author>()
+                .AddType<AbstractTypeTests.SourceSchema1.Product>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query testQuery($skip: Boolean!) {
+              abstractType {
+                id
+                __typename @skip(if: $skip)
+              }
+              abstractTypes {
+                id
+                __typename @skip(if: $skip)
+              }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skip"] = true });
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result);
+    }
+
+    [Fact]
+    public async Task Typename_Skip_On_Abstract_Field_In_Defer()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<AbstractTypeTests.SourceSchema1.Query>()
+                .AddType<AbstractTypeTests.SourceSchema1.Discussion>()
+                .AddType<AbstractTypeTests.SourceSchema1.Author>()
+                .AddType<AbstractTypeTests.SourceSchema1.Product>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query testQuery($skip: Boolean!) {
+              abstractType {
+                id
+                ... @defer {
+                  __typename @skip(if: $skip)
+                  ... on Discussion {
+                    title
+                  }
+                }
+              }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skip"] = true });
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
+    }
+
+    [Fact]
+    public async Task Typename_Skip_On_Abstract_Field_With_Lookup()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<AbstractTypeTests.SourceSchema1.Query>()
+                .AddType<AbstractTypeTests.SourceSchema1.Discussion>()
+                .AddType<AbstractTypeTests.SourceSchema1.Author>()
+                .AddType<AbstractTypeTests.SourceSchema1.Product>());
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            b => b
+                .AddQueryType<AbstractTypeTests.SourceSchema2.Query>()
+                .AddType<AbstractTypeTests.SourceSchema2.Author>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query testQuery($skip: Boolean!) {
+              abstractType {
+                id
+                __typename @skip(if: $skip)
+                ... on Discussion {
+                  commentCount
+                }
+              }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skip"] = true });
 
         using var result = await client.PostAsync(
             request,
