@@ -1,0 +1,94 @@
+operation:
+  - document: |
+      {
+        containers {
+          id
+          id @fusion__requirement
+          result {
+            __typename @fusion__empty
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        containers {
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        containerById(id: $__fusion_1_id) {
+          result {
+            __typename
+          }
+        }
+      }
+    source: $.containerById
+    target: $.containers
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.containers.result
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 2
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_1($__fusion_1_id: ID!) {
+            productById(id: $__fusion_1_id) {
+              far
+            }
+          }
+        source: $.productById
+        target: $.containers.result<Product>
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - id: 2
+      - id: 2
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_2($__fusion_2_id: ID!) {
+            containerById(id: $__fusion_2_id) {
+              result {
+                __typename
+                ... on Product {
+                  id
+                }
+              }
+            }
+          }
+        source: $.containerById
+        target: $.containers
+        requirements:
+          - name: __fusion_2_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
