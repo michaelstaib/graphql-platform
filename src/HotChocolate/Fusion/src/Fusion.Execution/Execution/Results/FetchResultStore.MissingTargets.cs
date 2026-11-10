@@ -108,7 +108,7 @@ internal sealed partial class FetchResultStore
     /// targets the hops could not fetch and for the targets of the hops that <paramref name="state"/> skipped
     /// because a dependency failed. A target whose requirement field failed reports that error on its dependent
     /// fields, any other target completes its undefined non-null fields with a non-null violation. The hops are
-    /// completed in the order of their ids.
+    /// completed by the depth of their dependencies, then by their ids.
     /// </summary>
     /// <param name="plan">The plan whose hops are completed.</param>
     /// <param name="state">The execution state of the plan.</param>
@@ -151,14 +151,10 @@ internal sealed partial class FetchResultStore
 
                 if (hasKeyFetchErrors)
                 {
-                    // A failed key fetch is also reported on the targets that were already null before a hop ran.
                     hopCount = AppendHopIds(plan, ref hops, hopCount);
-                    SortByDependencyDepth(plan, hops.AsSpan(0, hopCount));
                 }
-                else
-                {
-                    Array.Sort(hops, 0, hopCount);
-                }
+
+                SortByDependencyDepth(plan, hops.AsSpan(0, hopCount));
 
                 for (var i = 0; i < hopCount; i++)
                 {
@@ -193,8 +189,6 @@ internal sealed partial class FetchResultStore
         }
     }
 
-    // The error of a failed key fetch reaches the hops behind the hop that reports it, so a hop is completed after
-    // the hops it depends on. The ids of a plan do not follow its dependencies.
     private static void SortByDependencyDepth(IOperationPlan plan, Span<int> hopIds)
     {
         var depths = new Dictionary<int, int>();
@@ -403,7 +397,6 @@ internal sealed partial class FetchResultStore
         ReadOnlySpan<OperationRequirement> requirements,
         ResultSelectionSet resultSelectionSet)
     {
-        // The requirement field names are only needed when a fetch failed, so the healthy path allocates nothing.
         var requirementFieldNames = HasKeyFetchErrors ? GetRequirementFieldNames(targets, requirements) : null;
 
         for (var i = 0; i < _missingTargetCount; i++)
