@@ -1754,48 +1754,43 @@ public class KeyHopFailureTests : FusionTestBase
             []);
 
         // assert
-        new[] { excluded, included }.MatchInlineSnapshots(
-        [
-            """
-            data: {"nullablePetList":[null,{"name":600}]}
-            errors: [{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]}]
-
-            """,
-            """
-            data: {"nullablePetList":[null,{"name":600}]}
-            errors: [{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]},{"message":"PN hop failed for 94","path":["nullablePetList",0,"name"]}]
-
-            """
-        ]);
+        Snapshot.Create()
+            .Add(excluded, "s: false", "text")
+            .Add(included, "s: true", "text")
+            .MatchMarkdownSnapshot();
     }
 
     [Fact]
     public async Task Execute_Should_ReportTheErrorOfANullKeyObjectOnTheDependentField_When_ItsResolverThrows()
     {
         // arrange
-        string[] hops = ["B"];
+        const string list = "{ userList(ids: [98, 2]) { total } }";
+        const string nullableItems = "{ nullableUsers(ids: [98, 2]) { total } }";
+        var results = new List<string>();
 
         // act
-        var list = await ExecuteInEveryHopOrderAsync(
-            CreateNullKeyObjectSequencedGatewayAsync,
-            "{ userList(ids: [98, 2]) { total } }",
-            include: null,
-            hops,
-            [],
-            [],
-            []);
-        var nullableItems = await ExecuteInEveryHopOrderAsync(
-            CreateNullKeyObjectSequencedGatewayAsync,
-            "{ nullableUsers(ids: [98, 2]) { total } }",
-            include: null,
-            hops,
-            [],
-            [],
-            []);
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateNullKeyObjectSequencedGatewayAsync(
+                new HopSequence(),
+                enableRequestGrouping);
+            results.Add(await ExecuteWithSortedErrorsAsync(gateway, list, include: null));
+            results.Add(await ExecuteWithSortedErrorsAsync(gateway, nullableItems, include: null));
+        }
 
         // assert
-        new[] { list, nullableItems }.MatchInlineSnapshots(
+        results.MatchInlineSnapshots(
         [
+            """
+            data: {"userList":[{"total":null},{"total":2}]}
+            errors: [{"message":"info failed for 98","path":["userList",0,"total"]}]
+
+            """,
+            """
+            data: {"nullableUsers":[{"total":null},{"total":2}]}
+            errors: [{"message":"info failed for 98","path":["nullableUsers",0,"total"]}]
+
+            """,
             """
             data: {"userList":[{"total":null},{"total":2}]}
             errors: [{"message":"info failed for 98","path":["userList",0,"total"]}]
@@ -1834,19 +1829,10 @@ public class KeyHopFailureTests : FusionTestBase
             []);
 
         // assert
-        new[] { list, nullableItems }.MatchInlineSnapshots(
-        [
-            """
-            data: {"userList":null}
-            errors: [{"message":"I hop failed for 93","path":["userList",1,"badNN"]},{"message":"info failed for 98","path":["userList",0,"total"]}]
-
-            """,
-            """
-            data: {"nullableUsers":[{"total":null,"badNN":98},null]}
-            errors: [{"message":"I hop failed for 93","path":["nullableUsers",1,"badNN"]},{"message":"info failed for 98","path":["nullableUsers",0,"total"]}]
-
-            """
-        ]);
+        Snapshot.Create()
+            .Add(list, "userList", "text")
+            .Add(nullableItems, "nullableUsers", "text")
+            .MatchMarkdownSnapshot();
     }
 
     private async Task<Gateway> CreatePetInterfaceSequencedGatewayAsync(
