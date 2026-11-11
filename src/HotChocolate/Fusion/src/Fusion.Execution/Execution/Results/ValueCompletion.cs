@@ -52,7 +52,6 @@ internal sealed class ValueCompletion
         _propagateNullValues = errorHandlingMode is not ErrorHandlingMode.Null;
         _typeMemoA = null;
         _typeMemoB = null;
-        _errorPlacements?.Clear();
     }
 
     /// <summary>

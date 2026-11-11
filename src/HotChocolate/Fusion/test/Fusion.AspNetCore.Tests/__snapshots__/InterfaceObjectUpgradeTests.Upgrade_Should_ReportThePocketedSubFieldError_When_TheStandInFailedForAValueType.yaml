@@ -17,15 +17,24 @@ response:
         "trendingMedia": [
           {
             "__typename": "Book",
-            "info": null
+            "info": {
+              "a": null,
+              "b": "Info: SW5mbzoxMTc3NDY1NTIw"
+            }
           },
           {
             "__typename": "Book",
-            "info": null
+            "info": {
+              "a": null,
+              "b": "Info: SW5mbzoxNzA0NTUwNjU3"
+            }
           },
           {
             "__typename": "Book",
-            "info": null
+            "info": {
+              "a": null,
+              "b": "Info: SW5mbzozNzY4NTEzOTI5"
+            }
           }
         ]
       },
@@ -76,7 +85,7 @@ sourceSchemas:
       }
 
       type Info {
-        a: String! @shareable
+        a: String @shareable
         b: String
       }
 
@@ -200,7 +209,7 @@ sourceSchemas:
       }
 
       type Info {
-        a: String! @shareable
+        a: String @shareable
       }
 
       type Media @interfaceObject @key(fields: "id") {

@@ -1357,9 +1357,9 @@ AddErrors_Next:
     /// <summary>
     /// Pockets the <paramref name="error"/> of the sub-field at <paramref name="path"/>, which lies
     /// <paramref name="depth"/> path segments below the value-type field <paramref name="field"/>, so that it is
-    /// reported at <paramref name="path"/> whether or not the value-type field is <c>null</c> when the error is applied.
-    /// An error that is the same as an error already pocketed at <paramref name="path"/> is ignored, and the pocket of
-    /// that error is returned.
+    /// reported at <paramref name="path"/> whether or not the value-type field is <c>null</c> when the error is
+    /// applied. An error that is the same as an error already pocketed at <paramref name="path"/> is ignored, and the
+    /// pocket of that error is returned.
     /// </summary>
     internal SubFieldPocket PocketSubFieldError(Path path, IError error, CompositeResultElement field, int depth)
     {
@@ -1491,7 +1491,8 @@ AddErrors_Next:
     /// </summary>
     internal void CompactSubFieldPocketsAt(CompositeResultElement element)
     {
-        if (_subFieldPocketsByElement is null || !_subFieldPocketsByElement.TryGetValue(element.Cursor, out var pockets))
+        if (_subFieldPocketsByElement is null
+            || !_subFieldPocketsByElement.TryGetValue(element.Cursor, out var pockets))
         {
             return;
         }

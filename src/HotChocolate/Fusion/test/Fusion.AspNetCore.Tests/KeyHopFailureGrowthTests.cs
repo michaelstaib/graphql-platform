@@ -25,16 +25,16 @@ public class KeyHopFailureGrowthTests : FusionTestBase
             includeOperationPlan: false);
 
         // act
-        var (growth, result) = await MeasureGrowthAsync(gateway, "info { code label }", 2000);
+        var (growth, result) = await MeasureGrowthAsync(gateway, "info { code label }", 4000);
 
         // assert
         Assert.InRange(growth, 0, MaxLinearGrowth);
         SummarizeErrors(result).MatchInlineSnapshot(
             """
             first item: {"info":{"code":null,"label":null}}
-            4000 x The batch size exceeds the maximum allowed batch size of 1024. at no path
-            2000 x Unexpected Execution Error at userList/i/info/code
-            2000 x Unexpected Execution Error at userList/i/info/label
+            8000 x The batch size exceeds the maximum allowed batch size of 1024. at no path
+            4000 x Unexpected Execution Error at userList/i/info/code
+            4000 x Unexpected Execution Error at userList/i/info/label
 
             """);
     }
@@ -64,7 +64,7 @@ public class KeyHopFailureGrowthTests : FusionTestBase
             """);
     }
 
-    // Gets the ratio of the fastest of five runs of userList with 4n items to the fastest of five runs with n items,
+    // Gets the ratio of the fastest of seven runs of userList with 4n items to the fastest of seven runs with n items,
     // and the response of the warm-up run with n items.
     private static async Task<(double Growth, string Result)> MeasureGrowthAsync(
         Gateway gateway,
@@ -77,7 +77,7 @@ public class KeyHopFailureGrowthTests : FusionTestBase
         var timeOfN = double.MaxValue;
         var timeOf4N = double.MaxValue;
 
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 7; i++)
         {
             timeOfN = Math.Min(timeOfN, await MeasureAsync(queryOfN));
             timeOf4N = Math.Min(timeOf4N, await MeasureAsync(queryOf4N));
@@ -87,6 +87,9 @@ public class KeyHopFailureGrowthTests : FusionTestBase
 
         async Task<double> MeasureAsync(string query)
         {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
             var stopwatch = Stopwatch.StartNew();
             await ExecuteAsync(gateway, query);
             return stopwatch.Elapsed.TotalMilliseconds;

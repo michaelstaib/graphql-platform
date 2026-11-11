@@ -138,7 +138,7 @@ public class InterfaceObjectUpgradeTests : FusionTestBase
             }
 
             type Info {
-              a: String! @shareable
+              a: String @shareable
               b: String
             }
 
@@ -163,7 +163,7 @@ public class InterfaceObjectUpgradeTests : FusionTestBase
             }
 
             type Info {
-              a: String! @shareable
+              a: String @shareable
             }
             """);
 
