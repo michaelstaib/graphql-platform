@@ -2909,11 +2909,12 @@ public sealed partial class OperationPlanner
                     {
                         var fieldNamedType = fieldDef.Type.NamedType();
 
-                        if (fieldNamedType is FusionComplexTypeDefinition { IsValueType: true } valueType)
+                        if (fieldNamedType is FusionComplexTypeDefinition { IsValueType: true }
+                            or FusionUnionTypeDefinition { IsValueType: true })
                         {
                             var pruned = PruneNonValueTypeChildren(
                                 field.SelectionSet,
-                                valueType,
+                                fieldNamedType,
                                 schema,
                                 sourceSchemaName,
                                 sourceAliases,

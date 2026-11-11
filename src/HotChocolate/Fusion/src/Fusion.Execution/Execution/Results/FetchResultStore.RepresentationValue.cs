@@ -2063,6 +2063,8 @@ internal sealed partial class FetchResultStore
                 return true;
             }
 
+            _keyFetchSource = resultSelectionSet;
+
             if (_valueCompletion.BuildErrorResult(
                     target,
                     resultSelectionSet,

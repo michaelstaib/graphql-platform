@@ -137,6 +137,7 @@ internal sealed partial class FetchResultStore
             }
 
             var hops = ArrayPool<int>.Shared.Rent(Math.Max(_missingTargetCount, 8));
+            _completingPlan = plan;
 
             try
             {
@@ -181,6 +182,7 @@ internal sealed partial class FetchResultStore
             finally
             {
                 ArrayPool<int>.Shared.Return(hops);
+                _completingPlan = null;
 
                 // The next pass of a mutation only looks at what its root field adds.
                 _missingTargetCount = 0;
@@ -450,8 +452,8 @@ internal sealed partial class FetchResultStore
         ResultSelectionSet resultSelectionSet)
     {
         return requirementFieldNames is not null
-            && TryGetKeyFetchErrorUnsafe(target.Path, requirementFieldNames, out var originName, out var error)
-                ? ReportKeyFetchErrorUnsafe(target, resultSelectionSet, originName, error)
+            && TryGetKeyFetchErrorsUnsafe(target.Path, requirementFieldNames, out var errors)
+                ? ReportKeyFetchErrorsUnsafe(target, resultSelectionSet, errors)
                 : _valueCompletion.CompleteUndefinedFields(target, resultSelectionSet);
     }
 }

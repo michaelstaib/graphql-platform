@@ -97,8 +97,10 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
-    private HashSet<Path>? _subFieldPockets;
-    private Dictionary<(Path, string), IError>? _keyFetchErrors;
+    private List<KeyValuePair<Path, IError>>? _subFieldPockets;
+    private Dictionary<(Path, string), List<KeyFetchError>>? _keyFetchErrors;
+    private ResultSelectionSet? _keyFetchSource;
+    private IOperationPlan? _completingPlan;
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
     private Dictionary<Path, List<IError>>? _errorsByPath;
@@ -223,25 +225,24 @@ internal sealed partial class FetchResultStore : IDisposable
                     }
 
                     var resultData = _result.Data;
+                    var canExecutionContinue = true;
+
+                    // Once the null reached the root, the remaining results only report their errors.
                     for (i = 0; i < results.Length; i++)
                     {
                         var result = results[i];
                         _memory.Add(result);
 
-                        if (!SaveSafeResult(
-                                resultData,
-                                result.Path,
-                                result.AdditionalPaths,
-                                dataElementsSpan[i],
-                                errorTriesSpan[i],
-                                resultSelectionSet))
-                        {
-                            RegisterRemainingResults(_memory, results, i);
-                            return false;
-                        }
+                        canExecutionContinue &= SaveSafeResult(
+                            resultData,
+                            result.Path,
+                            result.AdditionalPaths,
+                            dataElementsSpan[i],
+                            errorTriesSpan[i],
+                            resultSelectionSet);
                     }
 
-                    return true;
+                    return canExecutionContinue;
                 }
                 catch
                 {
@@ -596,6 +597,7 @@ internal sealed partial class FetchResultStore : IDisposable
             ref var path = ref MemoryMarshal.GetReference(paths);
             ref var end = ref Unsafe.Add(ref path, paths.Length);
             var resultData = _result.Data;
+            _keyFetchSource = resultSelectionSet;
 
             while (Unsafe.IsAddressLessThan(ref path, ref end))
             {
@@ -646,6 +648,7 @@ AddErrors_Next:
             ref var path = ref MemoryMarshal.GetReference(paths);
             ref var end = ref Unsafe.Add(ref path, paths.Length);
             var resultData = _result.Data;
+            _keyFetchSource = resultSelectionSet;
 
             while (Unsafe.IsAddressLessThan(ref path, ref end))
             {
@@ -693,24 +696,61 @@ AddErrors_Next:
     {
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            RecordKeyFetchError(entityPath, entityCompactPath, responseName, error);
+            RecordKeyFetchError(
+                entityPath,
+                entityCompactPath,
+                responseName,
+                resultSelectionSet.TryGetChild(responseName),
+                error);
         }
     }
 
     /// <summary>
-    /// Records the error of a failed fetch of the field <paramref name="responseName"/>
-    /// of the entity at <paramref name="entityPath"/>.
+    /// Records the error of a failed fetch of the field <paramref name="name"/> of the entity at
+    /// <paramref name="entityPath"/>, or of each sub-field in <paramref name="fetched"/> when the fetch
+    /// selected sub-fields of the field. The name of a sub-field is its dot separated path from the entity.
     /// </summary>
     internal void RecordKeyFetchError(
         Path entityPath,
         CompactPath entityCompactPath,
-        string responseName,
+        string name,
+        ResultSelectionSet? fetched,
         IError error)
     {
+        if (fetched is { ResponseNames.Length: > 0 })
+        {
+            foreach (var responseName in fetched.ResponseNames)
+            {
+                RecordKeyFetchError(
+                    entityPath,
+                    entityCompactPath,
+                    name + "." + responseName,
+                    fetched.TryGetChild(responseName),
+                    error);
+            }
+
+            return;
+        }
+
         _keyFetchPaths ??= [];
         _keyFetchPaths[entityPath] = entityCompactPath;
         _keyFetchErrors ??= [];
-        _keyFetchErrors.TryAdd((entityPath, responseName), error);
+
+        if (!_keyFetchErrors.TryGetValue((entityPath, name), out var errors))
+        {
+            errors = [];
+            _keyFetchErrors.Add((entityPath, name), errors);
+        }
+
+        foreach (var recorded in errors)
+        {
+            if (IsSameError(recorded.Error, error))
+            {
+                return;
+            }
+        }
+
+        errors.Add(new KeyFetchError(error, _keyFetchSource));
     }
 
     private bool ReportKeyFetchErrorsOfNulledEntitiesUnsafe(
@@ -718,28 +758,35 @@ AddErrors_Next:
         List<string> requirementFieldNames,
         ResultSelectionSet resultSelectionSet)
     {
-        List<(Path, string, IError)>? candidates = null;
+        List<Path>? entityPaths = null;
 
-        foreach (var ((entityPath, name), error) in _keyFetchErrors!)
+        foreach (var (entityPath, name) in _keyFetchErrors!.Keys)
         {
-            if (requirementFieldNames.Contains(name) && IsEntityOfTargets(entityPath, targets))
+            if (IsRequirementFieldName(name, requirementFieldNames)
+                && IsEntityOfTargets(entityPath, targets)
+                && entityPaths?.Contains(entityPath) != true)
             {
-                candidates ??= [];
-                candidates.Add((entityPath, name, error));
+                entityPaths ??= [];
+                entityPaths.Add(entityPath);
             }
         }
 
-        if (candidates is null)
+        if (entityPaths is null)
         {
             return true;
         }
 
-        foreach (var (entityPath, originName, error) in candidates)
+        foreach (var entityPath in entityPaths)
         {
+            if (!TryGetKeyFetchErrorsUnsafe(entityPath, requirementFieldNames, out var errors))
+            {
+                continue;
+            }
+
             if (TryGetResult(entityPath, out var element))
             {
                 if (element.IsNullOrInvalidated
-                    && !ReportKeyFetchErrorUnsafe(element, resultSelectionSet, originName, error))
+                    && !ReportKeyFetchErrorsUnsafe(element, resultSelectionSet, errors))
                 {
                     return false;
                 }
@@ -747,24 +794,48 @@ AddErrors_Next:
             else if (_keyFetchPaths is not null && _keyFetchPaths.TryGetValue(entityPath, out var compactPath))
             {
                 // The entity is below a null value.
-                ReportKeyFetchErrorBelowNullUnsafe(compactPath, resultSelectionSet, originName, error);
+                ReportKeyFetchErrorsBelowNullUnsafe(compactPath, resultSelectionSet, errors);
             }
         }
 
         return true;
     }
 
-    private void ReportKeyFetchErrorBelowNullUnsafe(
+    // A recorded name belongs to a requirement when it is the requirement field or one of its parent fields.
+    private static bool IsRequirementFieldName(string name, List<string> requirementFieldNames)
+    {
+        foreach (var requirementFieldName in requirementFieldNames)
+        {
+            if (requirementFieldName.Length == name.Length
+                ? requirementFieldName.Equals(name, StringComparison.Ordinal)
+                : requirementFieldName.Length > name.Length
+                    && requirementFieldName[name.Length] == '.'
+                    && requirementFieldName.StartsWith(name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ReportKeyFetchErrorsBelowNullUnsafe(
         CompactPath entityPath,
         ResultSelectionSet resultSelectionSet,
-        string originName,
-        IError error)
+        List<(string OriginName, KeyFetchError Fetch)> errors)
     {
         _reportedKeyFetches ??= [];
 
         if (_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
         {
-            _valueCompletion.ReportDependentErrorOnNulledTarget(entityPath, resultSelectionSet, originName, error);
+            foreach (var (originName, fetch) in errors)
+            {
+                _valueCompletion.ReportDependentErrorOnNulledTarget(
+                    entityPath,
+                    resultSelectionSet,
+                    originName,
+                    fetch.Error);
+            }
         }
     }
 
@@ -809,11 +880,10 @@ AddErrors_Next:
         return false;
     }
 
-    private bool ReportKeyFetchErrorUnsafe(
+    private bool ReportKeyFetchErrorsUnsafe(
         CompositeResultElement element,
         ResultSelectionSet resultSelectionSet,
-        string originName,
-        IError error)
+        List<(string OriginName, KeyFetchError Fetch)> errors)
     {
         _reportedKeyFetches ??= [];
 
@@ -822,41 +892,192 @@ AddErrors_Next:
             return true;
         }
 
-        if (element.IsNullOrInvalidated)
+        var source = _keyFetchSource;
+        _keyFetchSource = resultSelectionSet;
+
+        try
         {
-            _valueCompletion.ReportDependentErrorOnNulledTarget(
-                element.CompactPath,
-                resultSelectionSet,
-                originName,
-                error);
+            foreach (var (originName, fetch) in errors)
+            {
+                if (element.IsNullOrInvalidated)
+                {
+                    _valueCompletion.ReportDependentErrorOnNulledTarget(
+                        element.CompactPath,
+                        resultSelectionSet,
+                        originName,
+                        fetch.Error);
+                    continue;
+                }
+
+                if (!_valueCompletion.BuildErrorResult(element, resultSelectionSet, fetch.Error, element.CompactPath))
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
-
-        return _valueCompletion.BuildErrorResult(element, resultSelectionSet, error, element.CompactPath);
+        finally
+        {
+            _keyFetchSource = source;
+        }
     }
 
-    private bool TryGetKeyFetchErrorUnsafe(
+    // Gets the distinct errors recorded for the requirement fields of the entity and for their parent fields,
+    // ordered by the dependency depth and then the id of the hop that recorded them.
+    private bool TryGetKeyFetchErrorsUnsafe(
         Path entityPath,
         List<string>? requirementFieldNames,
-        [NotNullWhen(true)] out string? originName,
-        [NotNullWhen(true)] out IError? error)
+        [NotNullWhen(true)] out List<(string OriginName, KeyFetchError Fetch)>? errors)
     {
-        if (requirementFieldNames is not null)
+        errors = null;
+
+        if (requirementFieldNames is null)
         {
-            foreach (var name in requirementFieldNames)
+            return false;
+        }
+
+        foreach (var requirementFieldName in requirementFieldNames)
+        {
+            var name = requirementFieldName;
+
+            while (true)
             {
-                if (_keyFetchErrors!.TryGetValue((entityPath, name), out error))
+                if (_keyFetchErrors!.TryGetValue((entityPath, name), out var recorded))
                 {
-                    originName = name;
-                    return true;
+                    foreach (var fetch in recorded)
+                    {
+                        AddKeyFetchError(ref errors, name, fetch);
+                    }
                 }
+
+                var index = name.LastIndexOf('.');
+
+                if (index < 0)
+                {
+                    break;
+                }
+
+                name = name[..index];
             }
         }
 
-        originName = null;
-        error = null;
-        return false;
+        if (errors is null)
+        {
+            return false;
+        }
+
+        SortBySourceUnsafe(errors);
+        return true;
+
+        static void AddKeyFetchError(
+            ref List<(string OriginName, KeyFetchError Fetch)>? errors,
+            string name,
+            KeyFetchError fetch)
+        {
+            errors ??= [];
+
+            foreach (var (_, added) in errors)
+            {
+                if (IsSameError(added.Error, fetch.Error))
+                {
+                    return;
+                }
+            }
+
+            errors.Add((name, fetch));
+        }
     }
+
+    private void SortBySourceUnsafe(List<(string OriginName, KeyFetchError Fetch)> errors)
+    {
+        if (errors.Count < 2 || _completingPlan is not { } plan)
+        {
+            return;
+        }
+
+        var depths = ArrayPool<int>.Shared.Rent(plan.MaxNodeId + 1);
+
+        try
+        {
+            depths.AsSpan(0, plan.MaxNodeId + 1).Fill(-1);
+            var keys = new long[errors.Count];
+
+            for (var i = 0; i < errors.Count; i++)
+            {
+                keys[i] = GetSourceOrder(plan, errors[i].Fetch.Source, depths);
+            }
+
+            // Insertion sort keeps the recording order of errors of the same hop.
+            for (var i = 1; i < errors.Count; i++)
+            {
+                var key = keys[i];
+                var error = errors[i];
+                var j = i - 1;
+
+                while (j >= 0 && keys[j] > key)
+                {
+                    keys[j + 1] = keys[j];
+                    errors[j + 1] = errors[j];
+                    j--;
+                }
+
+                keys[j + 1] = key;
+                errors[j + 1] = error;
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(depths);
+        }
+    }
+
+    private static long GetSourceOrder(IOperationPlan plan, ResultSelectionSet? source, int[] depths)
+    {
+        if (source is null)
+        {
+            return long.MaxValue;
+        }
+
+        foreach (var node in plan.AllNodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode operation when ReferenceEquals(operation.ResultSelectionSet, source):
+                case ApolloOperationExecutionNode apollo when ReferenceEquals(apollo.ResultSelectionSet, source):
+                    return GetHopOrder(plan, node.Id, depths);
+
+                case OperationBatchExecutionNode batch:
+                    foreach (var operation in batch.Operations)
+                    {
+                        if (ReferenceEquals(operation.ResultSelectionSet, source))
+                        {
+                            return GetHopOrder(plan, operation.Id, depths);
+                        }
+                    }
+
+                    break;
+
+                case ApolloOperationBatchExecutionNode batch:
+                    foreach (var operation in batch.Operations)
+                    {
+                        if (ReferenceEquals(operation.ResultSelectionSet, source))
+                        {
+                            return GetHopOrder(plan, operation.Id, depths);
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        return long.MaxValue;
+
+        static long GetHopOrder(IOperationPlan plan, int hopId, int[] depths)
+            => ((long)GetDependencyDepth(plan, hopId, depths) << 32) | (uint)hopId;
+    }
+
+    private readonly record struct KeyFetchError(IError Error, ResultSelectionSet? Source);
 
     private static List<string> GetRequirementFieldNames(
         ReadOnlySpan<SelectionPath> targets,
@@ -896,15 +1117,15 @@ AddErrors_Next:
         switch (map)
         {
             case PathNode path:
-                names.Add(internalAlias ?? path.PathSegment.FieldName.Value);
+                names.Add(GetRequirementFieldName(path.PathSegment, internalAlias));
                 break;
 
             case PathObjectValueSelectionNode pathObject:
-                names.Add(internalAlias ?? pathObject.Path.PathSegment.FieldName.Value);
+                names.Add(GetRequirementFieldName(pathObject.Path.PathSegment, internalAlias));
                 break;
 
             case PathListValueSelectionNode pathList:
-                names.Add(internalAlias ?? pathList.Path.PathSegment.FieldName.Value);
+                names.Add(GetRequirementFieldName(pathList.Path.PathSegment, internalAlias));
                 break;
 
             case ObjectValueSelectionNode objectValue:
@@ -934,6 +1155,19 @@ AddErrors_Next:
         }
     }
 
+    // Gets the dot separated path of the fields of the segment, where the alias replaces the first field.
+    private static string GetRequirementFieldName(PathSegmentNode segment, string? internalAlias)
+    {
+        var name = internalAlias ?? segment.FieldName.Value;
+
+        for (var current = segment.PathSegment; current is not null; current = current.PathSegment)
+        {
+            name = name + "." + current.FieldName.Value;
+        }
+
+        return name;
+    }
+
     internal void PocketError(Path path, IError error)
     {
         _pocketedErrors ??= [];
@@ -943,37 +1177,41 @@ AddErrors_Next:
     /// <summary>
     /// Pockets the <paramref name="error"/> of the value-type sub-field at <paramref name="path"/>, which is reported
     /// at <paramref name="path"/> whether or not the value-type field is <c>null</c> when the error is applied.
+    /// An error that is the same as an error already pocketed at <paramref name="path"/> is ignored.
     /// </summary>
     internal void PocketSubFieldError(Path path, IError error)
     {
-        _pocketedErrors ??= [];
+        _subFieldPockets ??= [];
 
-        if (_pocketedErrors.TryAdd(path, error))
+        foreach (var (pocketedPath, pocketedError) in _subFieldPockets)
         {
-            _subFieldPockets ??= [];
-            _subFieldPockets.Add(path);
+            if (pocketedPath.Equals(path) && IsSameError(pocketedError, error))
+            {
+                return;
+            }
         }
+
+        _subFieldPockets.Add(new KeyValuePair<Path, IError>(path, error));
     }
 
-    /// <summary>
-    /// Gets whether the error pocketed at <paramref name="path"/> was pocketed by <see cref="PocketSubFieldError"/>.
-    /// </summary>
-    internal bool IsSubFieldPocket(Path path)
-        => _subFieldPockets?.Contains(path) ?? false;
-
     internal bool HasPocketedErrors
-        => _pocketedErrors?.Count > 0;
+        => _pocketedErrors?.Count > 0 || _subFieldPockets?.Count > 0;
 
     internal List<KeyValuePair<Path, IError>> GetPocketedErrorsSnapshot()
         => _pocketedErrors is { Count: > 0 } errors
             ? [.. errors]
             : [];
 
+    internal List<KeyValuePair<Path, IError>> GetSubFieldPocketsSnapshot()
+        => _subFieldPockets is { Count: > 0 } pockets
+            ? [.. pockets]
+            : [];
+
     internal bool RemovePocketedError(Path path)
-    {
-        _subFieldPockets?.Remove(path);
-        return _pocketedErrors?.Remove(path) ?? false;
-    }
+        => _pocketedErrors?.Remove(path) ?? false;
+
+    internal bool RemoveSubFieldPocket(Path path, IError error)
+        => _subFieldPockets?.Remove(new KeyValuePair<Path, IError>(path, error)) ?? false;
 
     /// <summary>
     /// Removes the errors pocketed at or below <paramref name="path"/>, except the errors pocketed by
@@ -990,7 +1228,7 @@ AddErrors_Next:
 
         foreach (var errorPath in _pocketedErrors.Keys)
         {
-            if (PathUtilities.IsPathInSubtree(errorPath, path, includeSelf: true) && !IsSubFieldPocket(errorPath))
+            if (PathUtilities.IsPathInSubtree(errorPath, path, includeSelf: true))
             {
                 pathsToRemove ??= [];
                 pathsToRemove.Add(errorPath);
@@ -1106,20 +1344,21 @@ AddErrors_Next:
                 resultSelectionSet);
         }
 
-        if (!SaveSafeResult(resultData, path, dataElement, errorTrie, resultSelectionSet))
-        {
-            return false;
-        }
+        var canExecutionContinue = SaveSafeResult(resultData, path, dataElement, errorTrie, resultSelectionSet);
 
+        // Once the null reached the root, the remaining targets only report the errors of the source.
         for (var i = 0; i < additionalTargets.Length; i++)
         {
-            if (!SaveSafeResult(resultData, additionalTargets, i, dataElement, errorTrie, resultSelectionSet))
+            if (!canExecutionContinue && errorTrie is null)
             {
                 return false;
             }
+
+            canExecutionContinue &=
+                SaveSafeResult(resultData, additionalTargets, i, dataElement, errorTrie, resultSelectionSet);
         }
 
-        return true;
+        return canExecutionContinue;
     }
 
     /// <summary>
@@ -1392,6 +1631,7 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
+            ReportSourceErrorsBelowNullRoot(path, errorTrie, resultSelectionSet);
             return false;
         }
 
@@ -1410,10 +1650,12 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
+            ReportSourceErrorsBelowNullRoot(path, errorTrie, resultSelectionSet);
             return false;
         }
 
         Debug.Assert(element.ValueKind is JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined);
+        _keyFetchSource = resultSelectionSet;
 
         if (element.IsNullOrInvalidated)
         {
@@ -1454,6 +1696,7 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
+            ReportSourceErrorsBelowNullRoot(additionalTargets.GetPath(index), errorTrie, resultSelectionSet);
             return false;
         }
 
@@ -1464,6 +1707,18 @@ AddErrors_Next:
             dataElement,
             errorTrie,
             resultSelectionSet);
+    }
+
+    private void ReportSourceErrorsBelowNullRoot(
+        CompactPath path,
+        ErrorTrie? errorTrie,
+        ResultSelectionSet resultSelectionSet)
+    {
+        if (errorTrie is not null)
+        {
+            _keyFetchSource = resultSelectionSet;
+            _valueCompletion.ReportSourceErrorsOnNulledTarget(path, resultSelectionSet, errorTrie);
+        }
     }
 
     public ImmutableArray<VariableValues> CreateVariableValueSets(

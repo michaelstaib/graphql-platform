@@ -348,6 +348,12 @@ internal sealed class ValueCompletion
 
             var selection = fieldResult.AssertSelection();
 
+            if (selection.IsValueTypeNamedType
+                && !FetchesVisibleSubField(selection, resultSelectionSet.TryGetChild(responseName)))
+            {
+                continue;
+            }
+
             if (!propagate)
             {
                 _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, errorPath.Append(responseName))));
@@ -357,6 +363,11 @@ internal sealed class ValueCompletion
             if (!ApplyFieldError(fieldResult, selection, error, errorPath.Append(responseName)))
             {
                 return false;
+            }
+
+            if (selection.IsValueTypeNamedType && !fieldResult.IsNullOrInvalidated)
+            {
+                fieldResult.SetNullValue();
             }
         }
 
@@ -413,7 +424,31 @@ internal sealed class ValueCompletion
         CompactPath targetPath,
         ResultSelectionSet resultSelectionSet,
         IError error)
-        => AddErrorOnNulledTarget(targetPath, resultSelectionSet, error, isRaisedBySource: false);
+    {
+        var errorPath = targetPath.ToPath(_store.Operation);
+        _store.RecordKeyFetchErrors(errorPath, targetPath, resultSelectionSet, error);
+
+        if (_store.GetRuntimeSelectionSetUnsafe(targetPath) is not { } selectionSet)
+        {
+            return;
+        }
+
+        var includeFlags = _store.IncludeFlags;
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (!selectionSet.TryGetSelection(responseName, out var selection)
+                || selection.IsInternal
+                || !selection.IsIncluded(includeFlags)
+                || (selection.IsValueTypeNamedType
+                    && !FetchesVisibleSubField(selection, resultSelectionSet.TryGetChild(responseName))))
+            {
+                continue;
+            }
+
+            _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, errorPath.Append(responseName))));
+        }
+    }
 
     /// <summary>
     /// Adds the errors of <paramref name="errorTrie"/>, which the source of <paramref name="resultSelectionSet"/>
@@ -432,7 +467,7 @@ internal sealed class ValueCompletion
 
         if (errorTrie.FindFirstError() is { } error)
         {
-            AddErrorOnNulledTarget(targetPath, resultSelectionSet, error, isRaisedBySource: true);
+            ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
         }
     }
 
@@ -459,17 +494,33 @@ internal sealed class ValueCompletion
             }
 
             hasFieldErrors = true;
-            _store.RecordKeyFetchError(errorPath, targetPath, responseName, error);
+            var fetched = resultSelectionSet.TryGetChild(responseName);
+            Selection? selection = null;
 
-            if (selectionSet is null
-                || !selectionSet.TryGetSelection(responseName, out var selection)
-                || selection.IsInternal
-                || !selection.IsIncluded(includeFlags))
+            var isVisible = selectionSet is not null
+                && selectionSet.TryGetSelection(responseName, out selection)
+                && !selection.IsInternal
+                && selection.IsIncluded(includeFlags);
+
+            if (fetched is not null && fieldErrorTrie.Error is null)
+            {
+                AddSubFieldErrorsOnNulledTarget(
+                    errorPath,
+                    targetPath,
+                    responseName,
+                    isVisible ? selection : null,
+                    fieldErrorTrie);
+                continue;
+            }
+
+            _store.RecordKeyFetchError(errorPath, targetPath, responseName, fetched, error);
+
+            if (!isVisible)
             {
                 continue;
             }
 
-            if (selection.IsValueTypeNamedType && resultSelectionSet.TryGetChild(responseName) is { } fetched)
+            if (selection!.IsValueTypeNamedType)
             {
                 AddValueTypeFieldError(target: null, errorPath.Append(responseName), selection, fetched, error);
                 continue;
@@ -481,93 +532,84 @@ internal sealed class ValueCompletion
         return hasFieldErrors;
     }
 
-    private void AddErrorOnNulledTarget(
-        CompactPath targetPath,
-        ResultSelectionSet resultSelectionSet,
-        IError error,
-        bool isRaisedBySource)
+    // Adds the errors that the source raised for the sub-fields of a value-type field it returned to the paths of
+    // those sub-fields.
+    private void AddSubFieldErrorsOnNulledTarget(
+        Path entityPath,
+        CompactPath entityCompactPath,
+        string responseName,
+        Selection? visibleSelection,
+        ErrorTrie fieldErrorTrie)
     {
-        var errorPath = targetPath.ToPath(_store.Operation);
-        _store.RecordKeyFetchErrors(errorPath, targetPath, resultSelectionSet, error);
-
-        if (_store.GetRuntimeSelectionSetUnsafe(targetPath) is not { } selectionSet)
-        {
-            return;
-        }
-
+        var fieldPath = entityPath.Append(responseName);
+        var selectionSet = visibleSelection is null ? null : GetSubFieldSelectionSet(visibleSelection);
         var includeFlags = _store.IncludeFlags;
 
-        foreach (var responseName in resultSelectionSet.ResponseNames)
+        foreach (var (key, subFieldErrorTrie) in fieldErrorTrie)
         {
-            if (!selectionSet.TryGetSelection(responseName, out var selection)
-                || selection.IsInternal
-                || !selection.IsIncluded(includeFlags))
+            if (key is not string subFieldName || subFieldErrorTrie?.FindFirstError() is not { } error)
             {
                 continue;
             }
 
-            if (isRaisedBySource
-                && selection.IsValueTypeNamedType
-                && resultSelectionSet.TryGetChild(responseName) is { } fetched)
-            {
-                AddValueTypeFieldError(target: null, errorPath.Append(responseName), selection, fetched, error);
-                continue;
-            }
+            _store.RecordKeyFetchError(
+                entityPath,
+                entityCompactPath,
+                responseName + "." + subFieldName,
+                fetched: null,
+                error);
 
-            _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, errorPath.Append(responseName))));
+            if (selectionSet is not null
+                && selectionSet.TryGetSelection(subFieldName, out var subField)
+                && !subField.IsInternal
+                && subField.IsIncluded(includeFlags)
+                && !IsTypeNameField(subField))
+            {
+                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, fieldPath.Append(subFieldName))));
+            }
         }
     }
 
     /// <summary>
-    /// Adds the <paramref name="error"/> of a source that fetched the sub-fields <paramref name="fetched"/> of the
-    /// value-type field at <paramref name="fieldPath"/> to the field when the source fetched every sub-field of the
-    /// field, or else to the client-visible sub-fields the source fetched. The error is pocketed when
-    /// <paramref name="target"/>, the unfilled value of the field, is given.
+    /// Adds the <paramref name="error"/> of a source that fetched <paramref name="fetched"/> of the value-type field at
+    /// <paramref name="fieldPath"/> to the client-visible sub-fields it fetched when the field has a single possible
+    /// type and other sources fetch the rest, otherwise to the field, whose value <paramref name="target"/> becomes
+    /// <c>null</c>. Nothing is added when the source fetched no client-visible sub-field other than <c>__typename</c>.
     /// </summary>
     private void AddValueTypeFieldError(
         CompositeResultElement? target,
         Path fieldPath,
         Selection selection,
-        ResultSelectionSet fetched,
+        ResultSelectionSet? fetched,
         IError error)
     {
         var includeFlags = _store.IncludeFlags;
 
-        if (GetSubFieldSelectionSet(selection) is not { } selectionSet
+        if (!FetchesVisibleSubField(selection, fetched))
+        {
+            return;
+        }
+
+        if (fetched is null
+            || GetSubFieldSelectionSet(selection) is not { } selectionSet
             || FetchesEverySubField(selectionSet, fetched, includeFlags))
         {
-            if (target is null)
+            _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, fieldPath)));
+
+            if (target is { IsNullOrInvalidated: false } value)
             {
-                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, fieldPath)));
-            }
-            else
-            {
-                PocketErrors(fieldPath, fetched, error);
+                value.SetNullValue();
             }
 
             return;
         }
 
-        var isFieldNulled = false;
-
         foreach (var responseName in fetched.ResponseNames)
         {
-            if (!selectionSet.TryGetSelection(responseName, out var subField) || !subField.IsIncluded(includeFlags))
-            {
-                continue;
-            }
-
-            if (subField.IsInternal)
-            {
-                if (target is { } value)
-                {
-                    _store.RecordKeyFetchError(fieldPath, value.CompactPath, responseName, error);
-                }
-
-                continue;
-            }
-
-            if (isFieldNulled)
+            if (!selectionSet.TryGetSelection(responseName, out var subField)
+                || !subField.IsIncluded(includeFlags)
+                || subField.IsInternal
+                || IsTypeNameField(subField))
             {
                 continue;
             }
@@ -581,10 +623,14 @@ internal sealed class ValueCompletion
                 _store.PocketSubFieldError(fieldPath.Append(responseName), error);
             }
 
-            isFieldNulled = subField.IsNonNull && _errorHandlingMode is ErrorHandlingMode.Propagate;
+            if (subField.IsNonNull && _errorHandlingMode is ErrorHandlingMode.Propagate)
+            {
+                return;
+            }
         }
     }
 
+    // Gets the selection set of the sub-fields of a value-type field that has a single possible type.
     private SelectionSet? GetSubFieldSelectionSet(Selection selection)
     {
         if (selection.NamedType is IObjectTypeDefinition objectType)
@@ -610,7 +656,10 @@ internal sealed class ValueCompletion
 
         foreach (var subField in selectionSet.Selections)
         {
-            if (subField.IsIncluded(includeFlags) && !fetchedNames.Contains(subField.ResponseName))
+            if (subField.IsIncluded(includeFlags)
+                && !subField.IsInternal
+                && !IsTypeNameField(subField)
+                && !fetchedNames.Contains(subField.ResponseName))
             {
                 return false;
             }
@@ -619,9 +668,90 @@ internal sealed class ValueCompletion
         return true;
     }
 
+    // Gets whether the source fetched a client-visible sub-field of the value-type field other than __typename.
+    private bool FetchesVisibleSubField(Selection selection, ResultSelectionSet? fetched)
+    {
+        if (fetched is null)
+        {
+            return true;
+        }
+
+        var includeFlags = _store.IncludeFlags;
+
+        if (selection.NamedType is IObjectTypeDefinition objectType)
+        {
+            return FetchesVisibleSubField(selection.GetSelectionSet(objectType), fetched, includeFlags);
+        }
+
+        foreach (var possibleType in _schema.GetPossibleTypes(selection.NamedType))
+        {
+            if (FetchesVisibleSubField(selection.GetSelectionSet(possibleType), fetched, includeFlags))
+            {
+                return true;
+            }
+        }
+
+        return false;
+
+        static bool FetchesVisibleSubField(
+            SelectionSet? selectionSet,
+            ResultSelectionSet fetched,
+            ConditionFlags includeFlags)
+        {
+            if (selectionSet is null)
+            {
+                return false;
+            }
+
+            foreach (var responseName in fetched.ResponseNames)
+            {
+                if (selectionSet.TryGetSelection(responseName, out var subField)
+                    && subField.IsIncluded(includeFlags)
+                    && !subField.IsInternal
+                    && !IsTypeNameField(subField))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool IsTypeNameField(Selection selection)
+        => selection.Field.Name.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal);
+
+    // Records the error of the field of the target for the dependents of the entity that holds the field, with
+    // the dot separated path of the field from that entity.
+    private void RecordKeyFetchError(
+        CompositeResultElement target,
+        Selection selection,
+        ResultSelectionSet? fetched,
+        IError error)
+    {
+        var entity = target.Parent;
+        var name = selection.ResponseName;
+
+        while (!entity.IsRoot
+            && entity.Parent.ValueKind is JsonValueKind.Object
+            && entity.Selection is { IsValueTypeNamedType: true } valueTypeSelection)
+        {
+            name = valueTypeSelection.ResponseName + "." + name;
+            entity = entity.Parent;
+        }
+
+        _store.RecordKeyFetchError(
+            entity.Path,
+            entity.CompactPath,
+            name,
+            selection.IsValueTypeNamedType ? fetched : null,
+            error);
+    }
+
     /// <summary>
     /// Reports the <paramref name="error"/> of the failed field <paramref name="originName"/> like
     /// <see cref="ReportErrorOnNulledTarget"/>, unless the origin field is a client-visible non-null field.
+    /// <paramref name="originName"/> is the dot separated path of the failed field from the target.
     /// </summary>
     public void ReportDependentErrorOnNulledTarget(
         CompactPath targetPath,
@@ -629,8 +759,11 @@ internal sealed class ValueCompletion
         string originName,
         IError error)
     {
+        var separator = originName.IndexOf('.');
+        var originFieldName = separator < 0 ? originName : originName[..separator];
+
         if (_store.GetRuntimeSelectionSetUnsafe(targetPath) is { } selectionSet
-            && selectionSet.TryGetSelection(originName, out var originSelection)
+            && selectionSet.TryGetSelection(originFieldName, out var originSelection)
             && (originSelection.IsInternal || !originSelection.IsNonNull))
         {
             ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
@@ -704,10 +837,21 @@ internal sealed class ValueCompletion
             return;
         }
 
+        foreach (var (path, error) in _store.GetSubFieldPocketsSnapshot())
+        {
+            _store.RemoveSubFieldPocket(path, error);
+            _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, path)));
+
+            if (_store.TryGetResult(path.Parent, out var valueResult, out var isValueBelowNullValue)
+                && !isValueBelowNullValue
+                && valueResult.ValueKind is JsonValueKind.Undefined)
+            {
+                valueResult.SetNullValue();
+            }
+        }
+
         foreach (var (path, error) in _store.GetPocketedErrorsSnapshot())
         {
-            var isSubFieldPocket = _store.IsSubFieldPocket(path);
-
             if (!_store.RemovePocketedError(path))
             {
                 continue;
@@ -715,18 +859,6 @@ internal sealed class ValueCompletion
 
             var parentPath = path.Parent;
             var hasParent = _store.TryGetResult(parentPath, out var parentResult, out var isBelowNullValue);
-
-            if (isSubFieldPocket)
-            {
-                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, path)));
-
-                if (hasParent && !isBelowNullValue && parentResult.ValueKind is JsonValueKind.Undefined)
-                {
-                    parentResult.SetNullValue();
-                }
-
-                continue;
-            }
 
             if (isBelowNullValue)
             {
@@ -1036,6 +1168,15 @@ internal sealed class ValueCompletion
 
         var targetPath = target.Path;
 
+        foreach (var (path, error) in _store.GetSubFieldPocketsSnapshot())
+        {
+            if (PathUtilities.IsPathInSubtree(path, targetPath, includeSelf: true)
+                && !TryApplySubFieldPocket(path, error))
+            {
+                return false;
+            }
+        }
+
         foreach (var (path, error) in _store.GetPocketedErrorsSnapshot())
         {
             if (!PathUtilities.IsPathInSubtree(path, targetPath, includeSelf: true))
@@ -1052,6 +1193,29 @@ internal sealed class ValueCompletion
         return true;
     }
 
+    private bool TryApplySubFieldPocket(Path path, IError error)
+    {
+        if (!_store.TryGetResult(path, out var fieldResult))
+        {
+            return true;
+        }
+
+        _store.RemoveSubFieldPocket(path, error);
+
+        if (fieldResult.IsNullOrInvalidated || fieldResult.Selection is not { } selection)
+        {
+            _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, path)));
+            return true;
+        }
+
+        if (fieldResult.IsInternal || fieldResult.IsExcluded)
+        {
+            return true;
+        }
+
+        return ApplyFieldError(fieldResult, selection, error, path);
+    }
+
     private bool TryApplyPocketedError(Path path, IError error)
     {
         if (!_store.TryGetResult(path, out var fieldResult))
@@ -1061,11 +1225,6 @@ internal sealed class ValueCompletion
 
         if (fieldResult.IsNullOrInvalidated)
         {
-            if (_store.IsSubFieldPocket(path))
-            {
-                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, path)));
-            }
-
             _store.RemovePocketedError(path);
             return true;
         }
@@ -1082,7 +1241,12 @@ internal sealed class ValueCompletion
         {
             if (fieldResult.IsInternal)
             {
-                _store.RecordKeyFetchError(path.Parent, parent.CompactPath, selection.ResponseName, error);
+                _store.RecordKeyFetchError(
+                    path.Parent,
+                    parent.CompactPath,
+                    selection.ResponseName,
+                    fetched: null,
+                    error);
             }
 
             _store.RemovePocketedError(path);
@@ -1133,7 +1297,12 @@ internal sealed class ValueCompletion
             {
                 if (field.IsInternal)
                 {
-                    _store.RecordKeyFetchError(path, entity.CompactPath, responseName, error);
+                    _store.RecordKeyFetchError(
+                        path,
+                        entity.CompactPath,
+                        responseName,
+                        resultSelectionSet.TryGetChild(responseName),
+                        error);
                     continue;
                 }
 
@@ -1287,10 +1456,9 @@ internal sealed class ValueCompletion
         {
             if (errorTrie?.FindFirstError() is { } error)
             {
-                var entity = target.Parent;
-                _store.RecordKeyFetchError(entity.Path, entity.CompactPath, selection.ResponseName, error);
+                RecordKeyFetchError(target, selection, resultSelectionSet, error);
 
-                if (!selection.IsInternal && !target.IsExcluded && resultSelectionSet is not null)
+                if (!selection.IsInternal && !target.IsExcluded)
                 {
                     AddValueTypeFieldError(target, target.Path, selection, resultSelectionSet, error);
                 }
@@ -1307,8 +1475,7 @@ internal sealed class ValueCompletion
         // or with a path below it.
         if (errorTrie?.FindFirstError() is { } nullErrorFromPath)
         {
-            var entity = target.Parent;
-            _store.RecordKeyFetchError(entity.Path, entity.CompactPath, selection.ResponseName, nullErrorFromPath);
+            RecordKeyFetchError(target, selection, resultSelectionSet, nullErrorFromPath);
 
             if (selection.IsInternal)
             {
