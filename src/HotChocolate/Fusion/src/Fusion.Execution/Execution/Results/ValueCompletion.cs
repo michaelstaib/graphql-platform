@@ -66,6 +66,7 @@ internal sealed class ValueCompletion
         _propagateNullValues = false;
         _typeMemoA = null;
         _typeMemoB = null;
+        _errorPlacements?.Clear();
     }
 
     /// <summary>

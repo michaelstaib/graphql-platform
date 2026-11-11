@@ -1130,8 +1130,15 @@ AddErrors_Next:
             if (errors is null)
             {
                 errors = [];
-                _dependentErrors ??= new HashSet<ErrorIdentity>(ErrorIdentityComparer.Instance);
-                _dependentErrors.Clear();
+
+                if (_dependentErrors is null)
+                {
+                    _dependentErrors = new HashSet<ErrorIdentity>(ErrorIdentityComparer.Instance);
+                }
+                else if (_dependentErrors.Count > 0)
+                {
+                    _dependentErrors.Clear();
+                }
             }
 
             if (_dependentErrors!.Add(new ErrorIdentity(entityPath, null, fetch.Error)))
@@ -1348,10 +1355,11 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Pockets the <paramref name="error"/> of the sub-field at <paramref name="path"/> below the value-type field
-    /// <paramref name="field"/>, which is reported at <paramref name="path"/> whether or not the value-type field is
-    /// <c>null</c> when the error is applied. An error that is the same as an error already pocketed at
-    /// <paramref name="path"/> is ignored, and the pocket of that error is returned.
+    /// Pockets the <paramref name="error"/> of the sub-field at <paramref name="path"/>, which lies
+    /// <paramref name="depth"/> path segments below the value-type field <paramref name="field"/>, so that it is
+    /// reported at <paramref name="path"/> whether or not the value-type field is <c>null</c> when the error is applied.
+    /// An error that is the same as an error already pocketed at <paramref name="path"/> is ignored, and the pocket of
+    /// that error is returned.
     /// </summary>
     internal SubFieldPocket PocketSubFieldError(Path path, IError error, CompositeResultElement field, int depth)
     {
@@ -1578,7 +1586,8 @@ AddErrors_Next:
         // The number of path segments between the value-type field and the sub-field.
         public int Depth { get; } = depth;
 
-        // The layout version of the result when the pocket was created, while which Field keeps its path.
+        // The layout version of the result when the pocket was created. Field is at its path only while the result
+        // still has this layout version.
         public int LayoutVersion { get; } = layoutVersion;
 
         public bool IsRemoved { get; set; }
