@@ -7,6 +7,7 @@ using HotChocolate.Execution.Configuration;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Resolvers;
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
@@ -2130,7 +2131,8 @@ public class KeyHopFailureTests : FusionTestBase
             foreach (var order in GetHopOrders(["B", "X", "I"], []))
             {
                 sequence.Start(order);
-                results.Add(await ExecuteDeferredWithSortedErrorsAsync(gateway, query));
+                results.Add(
+                    GetErrorPaths(await ExecuteDeferredPayloadsAsync(gateway, query), "info failed for 98"));
             }
         }
 
@@ -2138,8 +2140,43 @@ public class KeyHopFailureTests : FusionTestBase
 
         // assert
         Snapshot.Create()
-            .Add(Assert.Single(results.Distinct()), "every order", "text")
+            .Add(Assert.Single(results.Distinct()), "paths of the errors of B in every order", "text")
             .MatchMarkdownSnapshot();
+    }
+
+    // Gets the sorted paths of the errors with the message in the payloads.
+    private static string GetErrorPaths(string payloads, string message)
+    {
+        var paths = new List<string>();
+
+        foreach (var payload in payloads.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var node = JsonNode.Parse(payload)!;
+            AddPaths(node["errors"]);
+
+            foreach (var entry in node["incremental"] as JsonArray ?? [])
+            {
+                AddPaths(entry?["errors"]);
+            }
+
+            foreach (var entry in node["completed"] as JsonArray ?? [])
+            {
+                AddPaths(entry?["errors"]);
+            }
+        }
+
+        return string.Join("\n", paths.Order(StringComparer.Ordinal)) + "\n";
+
+        void AddPaths(JsonNode? errors)
+        {
+            foreach (var error in errors as JsonArray ?? [])
+            {
+                if (error?["message"]?.GetValue<string>() == message)
+                {
+                    paths.Add(error["path"]!.ToJsonString());
+                }
+            }
+        }
     }
 
     [Fact]
@@ -2590,6 +2627,260 @@ public class KeyHopFailureTests : FusionTestBase
         snapshot.MatchMarkdownSnapshot();
     }
 
+    [Fact]
+    public async Task Execute_Should_PreferANonNullSubFieldInEveryOrder_When_TheSourceRaisesAtTheField()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateOptCodeSequencedGatewayAsync,
+            "info { opt code label } total",
+            ["B", "X"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateOptCodeSequencedGatewayAsync,
+            "info { code opt label } total",
+            ["B", "X"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateOptCodeSequencedGatewayAsync,
+            "info { opt label } total",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnlyOnTheDependentFieldInEveryOrder_When_ARequirementRaises()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(snapshot, CreateSkuErrorSequencedGatewayAsync, "info { code } total", ["B"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateSkuErrorSequencedGatewayAsync,
+            "info { code label } total",
+            ["B", "X"]);
+        await AddKeyObjectResultsAsync(snapshot, CreateSkuErrorSequencedGatewayAsync, "info { code sku } total", ["B"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheNearestFetchedFieldInEveryOrder_When_ItsPathIsNotSelected()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateHiddenErrorSequencedGatewayAsync,
+            "info { code meta { a b } detail { d } }",
+            ["B", "X"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateHiddenErrorSequencedGatewayAsync,
+            "info { meta { b a } code }",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnceOnTheListInEveryOrder_When_TheSourceRaisesAtTheList()
+    {
+        // arrange
+        const string selection = "infos { code label }";
+
+        // act
+        var intact = await ExecuteInEveryHopOrderAsync(
+            CreateInfoListSequencedGatewayAsync,
+            $"{{ userList(ids: [98, 97, 96, 2]) {{ {selection} }} }}",
+            include: null,
+            ["B", "X"],
+            [],
+            [],
+            []);
+        var nulled = await ExecuteInEveryHopOrderAsync(
+            CreateInfoListSequencedGatewayAsync,
+            $"{{ userList(ids: [98, 97, 96, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+        var nullableItems = await ExecuteInEveryHopOrderAsync(
+            CreateInfoListSequencedGatewayAsync,
+            $"{{ nullableUsers(ids: [98, 97, 96, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(intact, "intact list", "text")
+            .Add(nulled, "nulled list", "text")
+            .Add(nullableItems, "nullable items", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOfEachSourceOnItsSubFieldInEveryOrder_When_ARootValueTypeFails()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddRootValueTypeResultsAsync(snapshot, "viewer: Viewer! @shareable @error", "a: String", false, false);
+        await AddRootValueTypeResultsAsync(snapshot, "viewer: Viewer! @shareable @error", "a: String!", false, false);
+        await AddRootValueTypeResultsAsync(snapshot, "viewer: Viewer! @shareable", "a: String", true, true);
+        await AddRootValueTypeResultsAsync(snapshot, "viewer: Viewer @shareable", "a: String", true, true);
+        await AddRootValueTypeResultsAsync(snapshot, "viewer: Viewer! @shareable", "a: String!", true, true);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOfANullDependentFieldInEveryOrder_When_TheFieldsAreDeferred()
+    {
+        // arrange
+        const string query = "{ userList(ids: [98, 2]) { ... @defer { info { code label } total } } }";
+        var sequence = new HopSequence();
+        var errorsOfNullTotals = new List<string>();
+
+        // act
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateKeyObjectSiblingSequencedGatewayAsync(sequence, enableRequestGrouping);
+
+            foreach (var order in GetHopOrders(["B", "X"], []))
+            {
+                sequence.Start(order);
+                var (total, errors) = GetFirstTotal(await ExecuteDeferredPayloadsAsync(gateway, query));
+
+                if (total is "null")
+                {
+                    errorsOfNullTotals.Add(errors);
+                }
+            }
+        }
+
+        sequence.Start([]);
+
+        // assert
+        Assert.NotEmpty(errorsOfNullTotals);
+        Assert.All(errorsOfNullTotals, errors => Assert.Equal("info failed for 98", errors));
+    }
+
+    // Gets the deferred value of total of the first item and the distinct messages of the errors at its path.
+    private static (string Total, string Errors) GetFirstTotal(string payloads)
+    {
+        var total = "missing";
+        var messages = new List<string>();
+
+        foreach (var payload in payloads.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var node = JsonNode.Parse(payload)!;
+            AddMessages(node["errors"]);
+
+            foreach (var entry in node["incremental"] as JsonArray ?? [])
+            {
+                if (entry?["subPath"]?.ToJsonString() == "[0]"
+                    && entry["data"] is JsonObject data
+                    && data.TryGetPropertyValue("total", out var value))
+                {
+                    total = value?.ToJsonString() ?? "null";
+                }
+
+                AddMessages(entry?["errors"]);
+            }
+
+            foreach (var entry in node["completed"] as JsonArray ?? [])
+            {
+                AddMessages(entry?["errors"]);
+            }
+        }
+
+        return (total, string.Join(",", messages.Distinct()));
+
+        void AddMessages(JsonNode? errors)
+        {
+            foreach (var error in errors as JsonArray ?? [])
+            {
+                if (error?["path"]?.ToJsonString() == """["userList",0,"total"]""")
+                {
+                    messages.Add(error["message"]!.GetValue<string>());
+                }
+            }
+        }
+    }
+
+    private async Task AddRootValueTypeResultsAsync(
+        Snapshot snapshot,
+        string viewerOfA,
+        string fieldOfA,
+        bool aFails,
+        bool bFails)
+    {
+        var viewerOfB = viewerOfA.Replace(" @error", "", StringComparison.Ordinal);
+        var schemaA = $"type Query {{ {viewerOfA} }} type Viewer @shareable {{ {fieldOfA} }}";
+        var schemaB = $"type Query {{ {viewerOfB} }} type Viewer @shareable {{ b: String }}";
+        var sequence = new HopSequence();
+        var results = new List<string>();
+
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateCompositeSchemaAsync(
+                [
+                    ("A", CreateSequencedSourceSchema(sequence, "A", schemaA, aFails)),
+                    ("B", CreateSequencedSourceSchema(sequence, "B", schemaB, bFails))
+                ],
+                configureGatewayBuilder: builder =>
+                    builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+                includeOperationPlan: false);
+
+            foreach (var order in GetHopOrders(["A", "B"], []))
+            {
+                sequence.Start(order);
+                results.Add(await ExecuteWithSortedErrorsAsync(gateway, "{ viewer { a b } }", include: null));
+            }
+        }
+
+        sequence.Start([]);
+        snapshot.Add(
+            Assert.Single(results.Distinct()),
+            $"A {viewerOfA} {{ {fieldOfA} }}{(aFails ? " fails" : "")}, B {viewerOfB} {{ b: String }}"
+                + (bFails ? " fails" : ""),
+            "text");
+    }
+
+    // Creates a source schema whose hop is answered in the order of the current run, with a server error when it fails.
+    private TestServer CreateSequencedSourceSchema(HopSequence sequence, string hop, string schemaText, bool fails)
+    {
+        if (fails)
+        {
+            var failingHop = new FailingSequencedHop(sequence, hop);
+            return CreateSourceSchema(hop, schemaText, mockHttpResponse: failingHop.SendAsync);
+        }
+
+        var sequencedHop = new SequencedHop(sequence, hop);
+        var server = CreateSourceSchema(hop, schemaText, mockHttpResponse: sequencedHop.SendAsync);
+        sequencedHop.Connect(server);
+        return server;
+    }
+
     private async Task AddKeyObjectResultsAsync(
         Snapshot snapshot,
         Func<HopSequence, bool, Task<Gateway>> createGateway,
@@ -2680,6 +2971,52 @@ public class KeyHopFailureTests : FusionTestBase
                 ("x", x => x.AddQueryType<XInfoMeta.Query>(), "X", false)
             ]);
 
+    private Task<Gateway> CreateOptCodeSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoOptCode.Query>(), "B", false),
+                ("x", x => x.AddQueryType<XInfoLabel.Query>(), "X", false),
+                ("c", c => c.AddQueryType<CNested.Query>(), null, false)
+            ]);
+
+    private Task<Gateway> CreateSkuErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoSkuError.Query>(), "B", false),
+                ("x", x => x.AddQueryType<XInfoLabel.Query>(), "X", false),
+                ("c", c => c.AddQueryType<CNested.Query>(), null, false)
+            ]);
+
+    private Task<Gateway> CreateHiddenErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoHiddenError.Query>(), "B", false),
+                ("x", x => x.AddQueryType<XInfoMeta.Query>(), "X", false)
+            ]);
+
+    private Task<Gateway> CreateInfoListSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoListError.Query>(), "B", false),
+                ("x", x => x.AddQueryType<XInfoListLabel.Query>(), "X", false)
+            ]);
+
     // Composes source schema a, the given sources and source schema i, whose hop is I. A source with a hop is
     // answered in the order of the current run, with a server error when it fails.
     private async Task<Gateway> CreateHopSourcesSequencedGatewayAsync(
@@ -2723,6 +3060,198 @@ public class KeyHopFailureTests : FusionTestBase
             configureGatewayBuilder: builder =>
                 builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
             includeOperationPlan: false);
+    }
+
+    public static class BInfoOptCode
+    {
+        public record Info([property: Shareable] string Sku, string Code, string? Opt);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo()
+                => id == 98
+                    ? throw new GraphQLException("info failed for 98")
+                    : new Info("sku-" + id, "code-" + id, "opt-" + id);
+        }
+    }
+
+    public static class BInfoSkuError
+    {
+        [GraphQLName("Info")]
+        public class InfoObj(int id)
+        {
+            [Shareable]
+            public string GetSku() => id == 98 ? throw new GraphQLException("sku failed for 98") : "sku-" + id;
+
+            public string? Code => "code-" + id;
+        }
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public InfoObj? GetInfo() => new(id);
+        }
+    }
+
+    public static class BInfoHiddenError
+    {
+        [GraphQLName("Meta")]
+        public class MetaObj(int id)
+        {
+            public string? GetA(IResolverContext context) => Report(context, id, "meta", "a-" + id);
+        }
+
+        [GraphQLName("Detail")]
+        public class DetailObj(int id)
+        {
+            public string? GetD(IResolverContext context) => Report(context, id, "detail", "d-" + id);
+        }
+
+        [GraphQLName("Info")]
+        public class InfoObj(int id)
+        {
+            public string? GetCode(IResolverContext context) => Report(context, id, "info", "code-" + id);
+
+            [Shareable]
+            public MetaObj GetMeta() => new(id);
+
+            public DetailObj? GetDetail() => new(id);
+        }
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public InfoObj? GetInfo() => new(id);
+        }
+
+        // Reports an error at the unselected sibling hidden for the item 98 and returns the value.
+        private static string Report(IResolverContext context, int id, string parent, string value)
+        {
+            if (id == 98)
+            {
+                context.ReportError(
+                    ErrorBuilder.New()
+                        .SetMessage($"{parent} hidden failed for 98")
+                        .SetPath(context.Path.Parent.Append("hidden"))
+                        .Build());
+            }
+
+            return value;
+        }
+    }
+
+    public static class BInfoListError
+    {
+        [GraphQLName("Info")]
+        public class InfoObj(int id, int index)
+        {
+            public string? GetCode()
+                => id == 97 && index == 1 ? throw new GraphQLException("code failed for 97") : $"code-{id}-{index}";
+        }
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id)
+                => id == 96 ? throw new GraphQLException("B lookup failed for 96") : new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public InfoObj?[]? GetInfos()
+                => id == 98 ? throw new GraphQLException("infos failed for 98") : [new(id, 0), new(id, 1)];
+        }
+    }
+
+    public static class XInfoListLabel
+    {
+        [GraphQLName("Info")]
+        public class InfoObj(int id, int index)
+        {
+            public string? Label => $"label-{id}-{index}";
+        }
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public InfoObj?[]? GetInfos() => [new(id, 0), new(id, 1)];
+        }
     }
 
     public static class BInfoNonNullCodeError
@@ -3332,46 +3861,6 @@ public class KeyHopFailureTests : FusionTestBase
                 => id == 98
                     ? throw new GraphQLException("B lookup failed for 98")
                     : new User(id, new Info("sku-" + id, "code-" + id));
-        }
-    }
-
-    private static async Task<string> ExecuteDeferredWithSortedErrorsAsync(Gateway gateway, string query)
-    {
-        var text = new StringBuilder();
-        var payloads = await ExecuteDeferredPayloadsAsync(gateway, query);
-
-        foreach (var payload in payloads.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var node = JsonNode.Parse(payload)!;
-            SortErrors(node["errors"]);
-
-            if (node["completed"] is JsonArray completed)
-            {
-                foreach (var entry in completed)
-                {
-                    SortErrors(entry?["errors"]);
-                }
-            }
-
-            text.AppendLine(node.ToJsonString());
-        }
-
-        return text.ToString();
-
-        static void SortErrors(JsonNode? errors)
-        {
-            if (errors is not JsonArray array)
-            {
-                return;
-            }
-
-            var sorted = array.Select(e => e!.ToJsonString()).Order(StringComparer.Ordinal).ToList();
-            array.Clear();
-
-            foreach (var error in sorted)
-            {
-                array.Add(JsonNode.Parse(error));
-            }
         }
     }
 

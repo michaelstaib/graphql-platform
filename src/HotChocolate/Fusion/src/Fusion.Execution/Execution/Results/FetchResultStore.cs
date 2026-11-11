@@ -97,7 +97,9 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
+    private Dictionary<Path, ResultSelectionSet>? _pocketedErrorSources;
     private List<KeyValuePair<Path, IError>>? _subFieldPockets;
+    private List<CompositeResultDocument.Cursor>? _nullValueTypeFields;
     private Dictionary<(Path, string), List<KeyFetchError>>? _keyFetchErrors;
     private List<KeyFetchError>? _unstampedKeyFetchErrors;
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
@@ -858,7 +860,12 @@ AddErrors_Next:
     {
         _reportedKeyFetches ??= [];
 
-        if (_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
+        if (!_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
+        {
+            return;
+        }
+
+        try
         {
             foreach (var (originName, fetch) in errors)
             {
@@ -868,6 +875,10 @@ AddErrors_Next:
                     originName,
                     fetch.Error);
             }
+        }
+        finally
+        {
+            StampKeyFetchErrors(resultSelectionSet);
         }
     }
 
@@ -952,8 +963,31 @@ AddErrors_Next:
         }
     }
 
-    // Gets the distinct errors recorded for the requirement fields of the entity and for their parent fields,
-    // ordered by the dependency depth and then the id of the hop that recorded them.
+    // Gets whether the field with the dot separated path name of the entity at entityPath is null.
+    private bool IsNullValue(Path entityPath, string name)
+    {
+        var path = entityPath;
+        var start = 0;
+
+        while (start < name.Length)
+        {
+            var end = name.IndexOf('.', start);
+
+            if (end < 0)
+            {
+                end = name.Length;
+            }
+
+            path = path.Append(name[start..end]);
+            start = end + 1;
+        }
+
+        return TryGetResult(path, out var value) && value.IsNullOrInvalidated;
+    }
+
+    // Gets the distinct errors recorded for the requirement fields of the entity, for their parent fields and, when a
+    // parent field is null, for the fields below it, ordered by the dependency depth and then the id of the hop that
+    // recorded them.
     private bool TryGetKeyFetchErrorsUnsafe(
         Path entityPath,
         List<string>? requirementFieldNames,
@@ -981,6 +1015,11 @@ AddErrors_Next:
                     }
                 }
 
+                if (!ReferenceEquals(name, requirementFieldName) && IsNullValue(entityPath, name))
+                {
+                    AddKeyFetchErrorsBelow(ref errors, entityPath, name);
+                }
+
                 var index = name.LastIndexOf('.');
 
                 if (index < 0)
@@ -999,6 +1038,28 @@ AddErrors_Next:
 
         SortBySource(errors, hopOrder);
         return true;
+
+        // Adds the errors recorded for the fields below the field name of the entity, whose null value removed the
+        // requirement field.
+        void AddKeyFetchErrorsBelow(
+            ref List<(string OriginName, KeyFetchError Fetch)>? errors,
+            Path entityPath,
+            string name)
+        {
+            foreach (var ((path, recordedName), recorded) in _keyFetchErrors!)
+            {
+                if (recordedName.Length > name.Length
+                    && recordedName[name.Length] == '.'
+                    && recordedName.StartsWith(name, StringComparison.Ordinal)
+                    && path.Equals(entityPath))
+                {
+                    foreach (var fetch in recorded)
+                    {
+                        AddKeyFetchError(ref errors, recordedName, fetch);
+                    }
+                }
+            }
+        }
 
         static void AddKeyFetchError(
             ref List<(string OriginName, KeyFetchError Fetch)>? errors,
@@ -1135,11 +1196,67 @@ AddErrors_Next:
         return name;
     }
 
-    internal void PocketError(Path path, IError error)
+    internal void PocketError(Path path, IError error, ResultSelectionSet source)
     {
         _pocketedErrors ??= [];
-        _pocketedErrors.TryAdd(path, error);
+
+        if (_pocketedErrors.TryAdd(path, error))
+        {
+            _pocketedErrorSources ??= [];
+            _pocketedErrorSources[path] = source;
+        }
     }
+
+    /// <summary>
+    /// Records the <paramref name="error"/> pocketed at <paramref name="path"/> for the internal field
+    /// <paramref name="name"/> of the entity at the parent of <paramref name="path"/>, with the source that pocketed
+    /// it.
+    /// </summary>
+    internal void RecordPocketedKeyFetchError(
+        Path path,
+        CompactPath entityCompactPath,
+        string name,
+        IError error)
+    {
+        var start = _unstampedKeyFetchErrors?.Count ?? 0;
+
+        RecordKeyFetchError(path.Parent, entityCompactPath, name, fetched: null, error);
+
+        if (_unstampedKeyFetchErrors is not { } errors
+            || errors.Count == start
+            || _pocketedErrorSources is null
+            || !_pocketedErrorSources.TryGetValue(path, out var source))
+        {
+            return;
+        }
+
+        for (var i = start; i < errors.Count; i++)
+        {
+            errors[i].Source = source;
+        }
+
+        errors.RemoveRange(start, errors.Count - start);
+    }
+
+    /// <summary>
+    /// Records that a source returned <c>null</c> without an error for the value-type field
+    /// <paramref name="field"/>.
+    /// </summary>
+    internal void RecordNullValueTypeField(CompositeResultElement field)
+    {
+        _nullValueTypeFields ??= [];
+
+        if (!_nullValueTypeFields.Contains(field.Cursor))
+        {
+            _nullValueTypeFields.Add(field.Cursor);
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a source returned <c>null</c> without an error for the value-type field <paramref name="field"/>.
+    /// </summary>
+    internal bool IsNullValueTypeField(CompositeResultElement field)
+        => _nullValueTypeFields?.Contains(field.Cursor) ?? false;
 
     /// <summary>
     /// Pockets the <paramref name="error"/> of the value-type sub-field at <paramref name="path"/>, which is reported
@@ -1175,7 +1292,10 @@ AddErrors_Next:
             : [];
 
     internal bool RemovePocketedError(Path path)
-        => _pocketedErrors?.Remove(path) ?? false;
+    {
+        _pocketedErrorSources?.Remove(path);
+        return _pocketedErrors?.Remove(path) ?? false;
+    }
 
     internal bool RemoveSubFieldPocket(Path path, IError error)
         => _subFieldPockets?.Remove(new KeyValuePair<Path, IError>(path, error)) ?? false;
@@ -1210,6 +1330,7 @@ AddErrors_Next:
         foreach (var pathToRemove in pathsToRemove)
         {
             _pocketedErrors.Remove(pathToRemove);
+            _pocketedErrorSources?.Remove(pathToRemove);
         }
     }
 
