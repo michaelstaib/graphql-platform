@@ -1809,6 +1809,46 @@ public class KeyHopFailureTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOfANullKeyObjectOnTheDependentField_When_ASiblingNullsTheList()
+    {
+        // arrange
+        string[] hops = ["B", "I"];
+
+        // act
+        var list = await ExecuteInEveryHopOrderAsync(
+            CreateNullKeyObjectSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { total badNN } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+        var nullableItems = await ExecuteInEveryHopOrderAsync(
+            CreateNullKeyObjectSequencedGatewayAsync,
+            "{ nullableUsers(ids: [98, 93]) { total badNN } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+
+        // assert
+        new[] { list, nullableItems }.MatchInlineSnapshots(
+        [
+            """
+            data: {"userList":null}
+            errors: [{"message":"I hop failed for 93","path":["userList",1,"badNN"]},{"message":"info failed for 98","path":["userList",0,"total"]}]
+
+            """,
+            """
+            data: {"nullableUsers":[{"total":null,"badNN":98},null]}
+            errors: [{"message":"I hop failed for 93","path":["nullableUsers",1,"badNN"]},{"message":"info failed for 98","path":["nullableUsers",0,"total"]}]
+
+            """
+        ]);
+    }
+
     private async Task<Gateway> CreatePetInterfaceSequencedGatewayAsync(
         HopSequence sequence,
         bool enableRequestGrouping)
