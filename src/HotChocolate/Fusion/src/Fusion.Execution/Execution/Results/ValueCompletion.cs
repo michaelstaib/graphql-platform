@@ -510,7 +510,7 @@ internal sealed class ValueCompletion
             return;
         }
 
-        if (!ApplyPocketedErrors(resultData))
+        if (!resultData.IsNullOrInvalidated && !ApplyPocketedErrors(resultData))
         {
             return;
         }
@@ -522,11 +522,22 @@ internal sealed class ValueCompletion
 
         foreach (var (path, error) in _store.GetPocketedErrorsSnapshot())
         {
+            if (!_store.RemovePocketedError(path))
+            {
+                continue;
+            }
+
             var parentPath = path.Parent;
+
+            if (_store.IsBelowNullValue(parentPath))
+            {
+                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, parentPath)));
+                _store.RemovePocketedErrorsInSubtree(parentPath);
+                continue;
+            }
 
             if (!_store.TryGetResult(parentPath, out var parentResult))
             {
-                _store.RemovePocketedError(path);
                 continue;
             }
 
@@ -538,16 +549,10 @@ internal sealed class ValueCompletion
 
             if (parentResult.ValueKind is JsonValueKind.Undefined)
             {
-                var promotedError = ErrorBuilder.FromError(error)
-                    .SetPath(parentPath);
-
-                _store.AddError(_errorHandler.Handle(promotedError.Build()));
+                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, parentPath)));
                 parentResult.SetNullValue();
                 _store.RemovePocketedErrorsInSubtree(parentPath);
-                continue;
             }
-
-            _store.RemovePocketedError(path);
         }
     }
 
@@ -867,8 +872,27 @@ internal sealed class ValueCompletion
             return true;
         }
 
+        var parent = fieldResult.Parent;
+
+        if (fieldResult.IsInternal || fieldResult.IsExcluded)
+        {
+            if (fieldResult.IsInternal)
+            {
+                _store.RecordKeyFetchError(path.Parent, parent.CompactPath, selection.ResponseName, error);
+            }
+
+            _store.RemovePocketedError(path);
+            return true;
+        }
+
         var canExecutionContinue = ApplyFieldError(fieldResult, selection, error, path);
         _store.RemovePocketedError(path);
+
+        if (parent.IsNullOrInvalidated)
+        {
+            _store.RemovePocketedErrorsInSubtree(path.Parent);
+        }
+
         return canExecutionContinue;
     }
 
@@ -901,11 +925,18 @@ internal sealed class ValueCompletion
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            if (hasEntity
-                && entity.TryGetProperty(responseName, out var field)
-                && field.IsInternal)
+            if (hasEntity && entity.TryGetProperty(responseName, out var field))
             {
-                _store.RecordKeyFetchError(path, entity.CompactPath, responseName, error);
+                if (field.IsInternal)
+                {
+                    _store.RecordKeyFetchError(path, entity.CompactPath, responseName, error);
+                    continue;
+                }
+
+                if (field.IsExcluded)
+                {
+                    continue;
+                }
             }
 
             _store.PocketError(path.Append(responseName), error);
@@ -1055,7 +1086,7 @@ internal sealed class ValueCompletion
                 var entity = target.Parent;
                 _store.RecordKeyFetchError(entity.Path, entity.CompactPath, selection.ResponseName, error);
 
-                if (!selection.IsInternal && resultSelectionSet is not null)
+                if (!selection.IsInternal && !target.IsExcluded && resultSelectionSet is not null)
                 {
                     PocketErrors(target.Path, resultSelectionSet, error);
                 }

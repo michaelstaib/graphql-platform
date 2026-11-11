@@ -1835,6 +1835,161 @@ public class KeyHopFailureTests : FusionTestBase
             .MatchMarkdownSnapshot();
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnlyOnTheDependentField_When_TheNullKeyObjectIsExcluded()
+    {
+        // arrange
+        const string field =
+            "query($s: Boolean!) { userList(ids: [98, 2]) { total info @include(if: $s) { sku } } }";
+        const string fragment =
+            "query($s: Boolean!) { userList(ids: [98, 2]) "
+            + "{ total ... on User @include(if: $s) { info { sku } } } }";
+        var snapshot = Snapshot.Create();
+
+        // act
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateNullKeyObjectSequencedGatewayAsync(
+                new HopSequence(),
+                enableRequestGrouping);
+            var name = enableRequestGrouping ? "grouping" : "no grouping";
+            var excludedField = await ExecuteWithSortedErrorsAsync(gateway, field, include: false);
+            var includedField = await ExecuteWithSortedErrorsAsync(gateway, field, include: true);
+            var excludedFragment = await ExecuteWithSortedErrorsAsync(gateway, fragment, include: false);
+            snapshot
+                .Add(excludedField, $"{name}, field, s: false", "text")
+                .Add(includedField, $"{name}, field, s: true", "text")
+                .Add(excludedFragment, $"{name}, fragment, s: false", "text");
+        }
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOfANullKeyObjectAtItsPathInEveryOrder_When_ASiblingNullsTheList()
+    {
+        // arrange
+        string[] hops = ["B", "I"];
+
+        // act
+        var field = await ExecuteInEveryHopOrderAsync(
+            CreateNullKeyObjectSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { badNN info { sku } } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+        var alias = await ExecuteInEveryHopOrderAsync(
+            CreateNullKeyObjectSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { badNN i: info { sku } } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(field, "info", "text")
+            .Add(alias, "alias", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnlyOnTheDependentField_When_ASiblingFillsTheKeyObject()
+    {
+        // arrange
+        string[] hops = ["B", "X"];
+
+        // act
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreateKeyObjectSiblingSequencedGatewayAsync,
+            "{ userList(ids: [98, 2]) { info { label } total } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(result, "userList", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    private async Task<Gateway> CreateKeyObjectSiblingSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopX = new SequencedHop(sequence, "X");
+        var hopI = new SequencedHop(sequence, "I");
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<BInfoCode.Query>(), mockHttpResponse: hopB.SendAsync);
+        var x = CreateSourceSchema("x", b => b.AddQueryType<XInfoLabel.Query>(), mockHttpResponse: hopX.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>());
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopX.Connect(x);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("x", x), ("c", c), ("i", i)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    public static class BInfoCode
+    {
+        public record Info([property: Shareable] string Sku, string Code);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo()
+                => id == 98 ? throw new GraphQLException("info failed for 98") : new Info("sku-" + id, "code-" + id);
+        }
+    }
+
+    public static class XInfoLabel
+    {
+        public record Info([property: Shareable] string Sku, string Label);
+
+        public record User(int Id, [property: Shareable] Info? Info);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, new Info("sku-" + id, "label-" + id));
+        }
+    }
+
     private async Task<Gateway> CreatePetInterfaceSequencedGatewayAsync(
         HopSequence sequence,
         bool enableRequestGrouping)

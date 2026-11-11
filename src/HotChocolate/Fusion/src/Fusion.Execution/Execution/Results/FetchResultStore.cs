@@ -979,6 +979,69 @@ AddErrors_Next:
         }
     }
 
+    /// <summary>
+    /// Gets whether the root or a value between the root and the value at <paramref name="path"/> is <c>null</c>
+    /// or invalidated.
+    /// </summary>
+    internal bool IsBelowNullValue(Path path)
+    {
+        var element = _result.Data;
+
+        if (path.IsRoot)
+        {
+            return false;
+        }
+
+        var buffer = s_objectPool.Rent(path.Length);
+        var segments = buffer.AsSpan(0, path.Length);
+
+        try
+        {
+            path.CopyTo(segments);
+
+            for (var i = 0; i < segments.Length; i++)
+            {
+                if (element.IsNullOrInvalidated)
+                {
+                    return true;
+                }
+
+                switch (segments[i])
+                {
+                    case string fieldName:
+                        if (element.ValueKind is not JsonValueKind.Object
+                            || !element.TryGetProperty(fieldName, out element))
+                        {
+                            return false;
+                        }
+
+                        break;
+
+                    case int index:
+                        if (element.ValueKind is not JsonValueKind.Array
+                            || index < 0
+                            || element.GetArrayLength() <= index)
+                        {
+                            return false;
+                        }
+
+                        element = element[index];
+                        break;
+
+                    default:
+                        return false;
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            segments.Clear();
+            s_objectPool.Return(buffer);
+        }
+    }
+
     internal bool TryGetResult(Path path, out CompositeResultElement element)
     {
         element = _result.Data;
