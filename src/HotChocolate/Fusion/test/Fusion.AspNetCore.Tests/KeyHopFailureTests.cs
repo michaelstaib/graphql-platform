@@ -1727,6 +1727,193 @@ public class KeyHopFailureTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnlyOnFieldsOfTheRuntimeType_When_AnInterfaceHopFails()
+    {
+        // arrange
+        const string query =
+            "query($s: Boolean!) { nullablePetList(ids: [94, 600]) "
+            + "{ name @include(if: $s) ... on Dog { barkNN } ... on Cat { name } } }";
+
+        // act
+        var excluded = await ExecuteInEveryHopOrderAsync(
+            CreatePetInterfaceSequencedGatewayAsync,
+            query,
+            include: false,
+            ["DN", "PN"],
+            [],
+            [],
+            []);
+        var included = await ExecuteInEveryHopOrderAsync(
+            CreatePetInterfaceSequencedGatewayAsync,
+            query,
+            include: true,
+            ["DN", "PN"],
+            [],
+            [],
+            []);
+
+        // assert
+        new[] { excluded, included }.MatchInlineSnapshots(
+        [
+            """
+            data: {"nullablePetList":[null,{"name":600}]}
+            errors: [{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]}]
+
+            """,
+            """
+            data: {"nullablePetList":[null,{"name":600}]}
+            errors: [{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]},{"message":"PN hop failed for 94","path":["nullablePetList",0,"name"]}]
+
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOfANullKeyObjectOnTheDependentField_When_ItsResolverThrows()
+    {
+        // arrange
+        string[] hops = ["B"];
+
+        // act
+        var list = await ExecuteInEveryHopOrderAsync(
+            CreateNullKeyObjectSequencedGatewayAsync,
+            "{ userList(ids: [98, 2]) { total } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+        var nullableItems = await ExecuteInEveryHopOrderAsync(
+            CreateNullKeyObjectSequencedGatewayAsync,
+            "{ nullableUsers(ids: [98, 2]) { total } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+
+        // assert
+        new[] { list, nullableItems }.MatchInlineSnapshots(
+        [
+            """
+            data: {"userList":[{"total":null},{"total":2}]}
+            errors: [{"message":"info failed for 98","path":["userList",0,"total"]}]
+
+            """,
+            """
+            data: {"nullableUsers":[{"total":null},{"total":2}]}
+            errors: [{"message":"info failed for 98","path":["nullableUsers",0,"total"]}]
+
+            """
+        ]);
+    }
+
+    private async Task<Gateway> CreatePetInterfaceSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+    {
+        var hopDn = new SequencedHop(sequence, "DN");
+        var hopPn = new SequencedHop(sequence, "PN");
+        var p = CreateSourceSchema("p", b => b.AddQueryType<DogP.Query>().AddType<DogP.Dog>().AddType<DogP.Cat>());
+        var dn = CreateSourceSchema("dn", b => b.AddQueryType<DogDn.Query>(), mockHttpResponse: hopDn.SendAsync);
+        var pn = CreateSourceSchema(
+            "pn",
+            b => b.AddQueryType<PetPn.Query>().AddType<PetPn.Dog>().AddType<PetPn.Cat>(),
+            mockHttpResponse: hopPn.SendAsync);
+        hopDn.Connect(dn);
+        hopPn.Connect(pn);
+
+        return await CreateCompositeSchemaAsync(
+            [("p", p), ("dn", dn), ("pn", pn)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    private async Task<Gateway> CreateNullKeyObjectSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopI = new SequencedHop(sequence, "I");
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema(
+            "b",
+            b => b.AddQueryType<BNullableInfo.Query>(),
+            mockHttpResponse: hopB.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>());
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c), ("i", i)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    public static class PetPn
+    {
+        [InterfaceType("Pet")]
+        public interface IPet
+        {
+            int Id { get; }
+
+            int? Name { get; }
+        }
+
+        public record Dog(int Id, int? Name) : IPet;
+
+        public record Cat(int Id, int? Name) : IPet;
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            [GraphQLType<InterfaceType<IPet>>]
+            public IPet? GetPetById(int id)
+                => id == 94
+                    ? throw new GraphQLException("PN hop failed for " + id)
+                    : id > 500 ? new Cat(id, id) : new Dog(id, id);
+        }
+    }
+
+    public static class BNullableInfo
+    {
+        public record Info([property: Shareable] string Sku);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo()
+                => id == 98 ? throw new GraphQLException("info failed for 98") : new Info("sku-" + id);
+        }
+    }
+
     private async Task<Gateway> CreateDogSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
     {
         var hopDn = new SequencedHop(sequence, "DN");

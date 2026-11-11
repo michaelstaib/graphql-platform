@@ -70,12 +70,6 @@ internal sealed class ResultSelectionSet
     public bool HasSourceResponseNameMappings { get; }
 
     /// <summary>
-    /// Gets the object type the selections are made on, or <c>null</c> when the selection set was created
-    /// without an object type.
-    /// </summary>
-    internal IObjectTypeDefinition? ParentType { get; private init; }
-
-    /// <summary>
     /// Gets a value indicating whether the objects described by this selection set are opaque
     /// interface values produced by an <c>@interfaceObject</c> stand-in. Such values initialize
     /// interface-typed and only recover their concrete identity through a covering lookup.
@@ -467,10 +461,7 @@ internal sealed class ResultSelectionSet
             selectionsArray,
             fragmentsArray,
             responseNamesArray,
-            sourceResponseNameMappings?.ToArray())
-        {
-            ParentType = parentType as IObjectTypeDefinition
-        };
+            sourceResponseNameMappings?.ToArray());
     }
 
     public static ResultSelectionSet CreateFromPlan(

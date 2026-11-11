@@ -542,9 +542,12 @@ internal sealed partial class FetchResultStore : IDisposable
                 _errorsByPath.Add(path, errorsAtPath);
             }
 
-            if (errorsAtPath.Any(existing => IsSameError(existing, error)))
+            foreach (var existing in errorsAtPath)
             {
-                return;
+                if (IsSameError(existing, error))
+                {
+                    return;
+                }
             }
 
             errorsAtPath.Add(error);
@@ -606,7 +609,7 @@ internal sealed partial class FetchResultStore : IDisposable
                     // The start element is an ancestor when the target is below a null value.
                     if (element.CompactPath.Length == path.Length)
                     {
-                        _valueCompletion.ReportErrorOnNulledTarget(element, resultSelectionSet, error);
+                        _valueCompletion.ReportErrorOnNulledTarget(element.CompactPath, resultSelectionSet, error);
                     }
 
                     goto AddErrors_Next;
@@ -653,7 +656,7 @@ AddErrors_Next:
                 var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
                 if (element.IsNullOrInvalidated)
                 {
-                    _valueCompletion.ReportErrorOnNulledTarget(element, path, resultSelectionSet, error);
+                    _valueCompletion.ReportErrorOnNulledTarget(path, resultSelectionSet, error);
                     goto AddErrors_Next;
                 }
 
@@ -687,12 +690,9 @@ AddErrors_Next:
         ResultSelectionSet resultSelectionSet,
         IError error)
     {
-        _keyFetchPaths ??= [];
-        _keyFetchPaths[entityPath] = entityCompactPath;
-
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            RecordKeyFetchError(entityPath, responseName, error);
+            RecordKeyFetchError(entityPath, entityCompactPath, responseName, error);
         }
     }
 
@@ -700,8 +700,14 @@ AddErrors_Next:
     /// Records the error of a failed fetch of the field <paramref name="responseName"/>
     /// of the entity at <paramref name="entityPath"/>.
     /// </summary>
-    internal void RecordKeyFetchError(Path entityPath, string responseName, IError error)
+    internal void RecordKeyFetchError(
+        Path entityPath,
+        CompactPath entityCompactPath,
+        string responseName,
+        IError error)
     {
+        _keyFetchPaths ??= [];
+        _keyFetchPaths[entityPath] = entityCompactPath;
         _keyFetchErrors ??= [];
         _keyFetchErrors.TryAdd((entityPath, responseName), error);
     }
@@ -757,12 +763,7 @@ AddErrors_Next:
 
         if (_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
         {
-            _valueCompletion.ReportDependentErrorOnNulledTarget(
-                _result.Data,
-                entityPath,
-                resultSelectionSet,
-                originName,
-                error);
+            _valueCompletion.ReportDependentErrorOnNulledTarget(entityPath, resultSelectionSet, originName, error);
         }
     }
 
@@ -823,7 +824,6 @@ AddErrors_Next:
         if (element.IsNullOrInvalidated)
         {
             _valueCompletion.ReportDependentErrorOnNulledTarget(
-                element,
                 element.CompactPath,
                 resultSelectionSet,
                 originName,
@@ -1378,7 +1378,6 @@ AddErrors_Next:
             if (errorTrie?.FindFirstError() is { } nulledError)
             {
                 _valueCompletion.ReportErrorOnNulledTarget(
-                    element,
                     path.IsRoot ? element.CompactPath : path,
                     resultSelectionSet,
                     nulledError);
@@ -4138,6 +4137,53 @@ AddErrors_Next:
 
         return element;
     }
+
+    /// <summary>
+    /// Gets the selection set of the runtime type of the object at <paramref name="path"/>, also when the object
+    /// or a value above it was set to <c>null</c>, or <c>null</c> when no object was ever at the path.
+    /// </summary>
+    internal SelectionSet? GetRuntimeSelectionSetUnsafe(CompactPath path)
+    {
+        var element = _result.Data;
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            if (!TryGetValueUnsafe(ref element))
+            {
+                return null;
+            }
+
+            var segment = path[i];
+
+            if (segment >= 0)
+            {
+                if (element.ValueKind is not JsonValueKind.Object)
+                {
+                    return null;
+                }
+
+                element = element.GetPropertyBySelectionId(segment);
+            }
+            else
+            {
+                var index = ~segment;
+
+                if (element.ValueKind is not JsonValueKind.Array || index >= element.GetArrayLength())
+                {
+                    return null;
+                }
+
+                element = element[index];
+            }
+        }
+
+        return TryGetValueUnsafe(ref element) && element.ValueKind is JsonValueKind.Object
+            ? element.SelectionSet
+            : null;
+    }
+
+    private bool TryGetValueUnsafe(ref CompositeResultElement element)
+        => element.ValueKind is not JsonValueKind.Null || _result.TryGetReplacedValue(element, out element);
 
     private void InitializeTargetPaths(ImmutableArray<VariableValues> importedValues)
     {

@@ -22,6 +22,11 @@ internal static class ErrorHelper
             .SetPath(path)
             .Build();
 
+    public static IError WithPath(IError error, Path path)
+        => ErrorBuilder.FromError(error)
+            .SetPath(path)
+            .Build();
+
     public static IError WithoutPath(IError error)
         => ErrorBuilder.FromError(error)
             .SetPath(null)

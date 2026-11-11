@@ -25,6 +25,7 @@ public sealed partial class CompositeResultDocument : IDisposable
     private NullMarkerState _nullMarkerState;
     private int _layoutVersion;
     private int _shapeVersion;
+    private Dictionary<int, int>? _replacedValues;
     private int _disposed;
 
     internal CompositeResultDocument(
@@ -710,10 +711,44 @@ public sealed partial class CompositeResultDocument : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void AssignNullValue(CompositeResultElement target)
     {
-        TrackValueReplacement(target.Cursor);
+        var tokenType = _metaDb.GetElementTokenType(target.Cursor, resolveReferences: false);
+
+        if (tokenType is ElementTokenType.Reference or ElementTokenType.StartObject or ElementTokenType.StartArray)
+        {
+            _layoutVersion++;
+            _shapeVersion++;
+
+            if (tokenType is ElementTokenType.Reference)
+            {
+                RecordReplacedValue(target.Cursor);
+            }
+        }
+
         _metaDb.ReplacePreserveParent(
             cursor: target.Cursor,
             tokenType: ElementTokenType.Null);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RecordReplacedValue(Cursor target)
+    {
+        _replacedValues ??= [];
+        _replacedValues[target.Value] = _metaDb.GetLocation(target);
+    }
+
+    /// <summary>
+    /// Tries to get the object or list that <paramref name="nullValue"/> held before it was set to <c>null</c>.
+    /// </summary>
+    internal bool TryGetReplacedValue(CompositeResultElement nullValue, out CompositeResultElement value)
+    {
+        if (_replacedValues is not null && _replacedValues.TryGetValue(nullValue.Cursor.Value, out var location))
+        {
+            value = new CompositeResultElement(this, new Cursor(location));
+            return true;
+        }
+
+        value = default;
+        return false;
     }
 
     /// <summary>

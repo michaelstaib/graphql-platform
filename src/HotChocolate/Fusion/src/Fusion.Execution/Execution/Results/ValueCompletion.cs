@@ -350,8 +350,7 @@ internal sealed class ValueCompletion
 
             if (!propagate)
             {
-                _store.AddError(
-                    _errorHandler.Handle(ErrorBuilder.FromError(error).SetPath(errorPath.Append(responseName)).Build()));
+                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, errorPath.Append(responseName))));
                 continue;
             }
 
@@ -406,149 +405,51 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/>
-    /// of a target that is already <c>null</c>.
+    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/> that
+    /// the runtime type of the target at <paramref name="targetPath"/> includes, when the target is <c>null</c> or
+    /// below a <c>null</c> value.
     /// </summary>
     public void ReportErrorOnNulledTarget(
-        CompositeResultElement target,
-        ResultSelectionSet resultSelectionSet,
-        IError error)
-        => ReportErrorOnNulledTarget(target, target.CompactPath, resultSelectionSet, error);
-
-    /// <summary>
-    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/>
-    /// of the target at <paramref name="targetPath"/>. The <paramref name="element"/> is the target or the
-    /// null value above it.
-    /// </summary>
-    public void ReportErrorOnNulledTarget(
-        CompositeResultElement element,
         CompactPath targetPath,
         ResultSelectionSet resultSelectionSet,
         IError error)
     {
-        var operation = element.Operation;
-        var errorPath = targetPath.ToPath(operation);
+        var errorPath = targetPath.ToPath(_store.Operation);
         _store.RecordKeyFetchErrors(errorPath, targetPath, resultSelectionSet, error);
 
-        var selectionSets = GetTargetSelectionSets(element, targetPath, resultSelectionSet);
-
-        if (selectionSets.Count > 0)
+        if (_store.GetRuntimeSelectionSetUnsafe(targetPath) is not { } selectionSet)
         {
-            AddNulledTargetErrors(errorPath, resultSelectionSet, selectionSets, error);
+            return;
+        }
+
+        var includeFlags = _store.IncludeFlags;
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (selectionSet.TryGetSelection(responseName, out var selection)
+                && !selection.IsInternal
+                && selection.IsIncluded(includeFlags))
+            {
+                _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, errorPath.Append(responseName))));
+            }
         }
     }
 
     /// <summary>
-    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/> of
-    /// the target at <paramref name="targetPath"/>, when its field <paramref name="originName"/> is internal or
-    /// nullable. A public non-null origin field is not repeated, its failure is what nulled the target. The
-    /// <paramref name="element"/> is the target or a null value above it.
+    /// Reports the <paramref name="error"/> of the failed field <paramref name="originName"/> like
+    /// <see cref="ReportErrorOnNulledTarget"/>, unless the origin field is a client-visible non-null field.
     /// </summary>
     public void ReportDependentErrorOnNulledTarget(
-        CompositeResultElement element,
         CompactPath targetPath,
         ResultSelectionSet resultSelectionSet,
         string originName,
         IError error)
     {
-        foreach (var selectionSet in GetTargetSelectionSets(element, targetPath, resultSelectionSet))
+        if (_store.GetRuntimeSelectionSetUnsafe(targetPath) is { } selectionSet
+            && selectionSet.TryGetSelection(originName, out var originSelection)
+            && (originSelection.IsInternal || !originSelection.IsNonNull))
         {
-            if (selectionSet.TryGetSelection(originName, out var originSelection)
-                && (originSelection.IsInternal || !originSelection.IsNonNull))
-            {
-                ReportErrorOnNulledTarget(element, targetPath, resultSelectionSet, error);
-                return;
-            }
-        }
-    }
-
-    // The target may be null, so its concrete type is unknown. The selection sets of all possible types of its
-    // field are returned.
-    private static List<SelectionSet> GetTargetSelectionSets(
-        CompositeResultElement element,
-        CompactPath targetPath,
-        ResultSelectionSet resultSelectionSet)
-    {
-        var selectionSets = new List<SelectionSet>();
-        var selection = element.CompactPath.Length == targetPath.Length
-            ? GetFieldSelection(element)
-            : GetFieldSelection(element.Operation, targetPath);
-
-        if (selection is null)
-        {
-            return selectionSets;
-        }
-
-        var operation = selection.DeclaringSelectionSet.DeclaringOperation;
-        var possibleTypes = operation.GetPossibleTypes(selection).ToList();
-
-        // The hop selects on the type of its targets, so only that type's selection decides what is included.
-        var hopType = resultSelectionSet.ParentType;
-
-        if (hopType is not null && possibleTypes.Any(t => t.Name == hopType.Name))
-        {
-            possibleTypes = possibleTypes.Where(t => t.Name == hopType.Name).ToList();
-        }
-
-        foreach (var possibleType in possibleTypes)
-        {
-            selectionSets.Add(operation.GetSelectionSet(selection, possibleType));
-        }
-
-        return selectionSets;
-    }
-
-    private static Selection? GetFieldSelection(Operation operation, CompactPath targetPath)
-    {
-        for (var i = targetPath.Length - 1; i >= 0; i--)
-        {
-            if (targetPath[i] >= 0)
-            {
-                return operation.GetSelectionById(targetPath[i]);
-            }
-        }
-
-        return null;
-    }
-
-    private static Selection? GetFieldSelection(CompositeResultElement target)
-    {
-        var current = target;
-
-        while (current.Selection is null)
-        {
-            current = current.Parent;
-
-            if (current.IsRoot)
-            {
-                return null;
-            }
-        }
-
-        return current.Selection;
-    }
-
-    private void AddNulledTargetErrors(
-        Path errorPath,
-        ResultSelectionSet resultSelectionSet,
-        List<SelectionSet> selectionSets,
-        IError error)
-    {
-        var includeFlags = _store.IncludeFlags;
-
-        foreach (var responseName in resultSelectionSet.ResponseNames)
-        {
-            foreach (var selectionSet in selectionSets)
-            {
-                if (selectionSet.TryGetSelection(responseName, out var selection)
-                    && !selection.IsInternal
-                    && selection.IsIncluded(includeFlags))
-                {
-                    var fieldPath = errorPath.Append(responseName);
-                    _store.AddError(_errorHandler.Handle(ErrorBuilder.FromError(error).SetPath(fieldPath).Build()));
-                    break;
-                }
-            }
+            ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
         }
     }
 
@@ -1004,7 +905,7 @@ internal sealed class ValueCompletion
                 && entity.TryGetProperty(responseName, out var field)
                 && field.IsInternal)
             {
-                _store.RecordKeyFetchError(path, responseName, error);
+                _store.RecordKeyFetchError(path, entity.CompactPath, responseName, error);
             }
 
             _store.PocketError(path.Append(responseName), error);
@@ -1149,10 +1050,15 @@ internal sealed class ValueCompletion
 
         if (sourceValueKind is JsonValueKind.Null && selection.IsValueTypeNamedType)
         {
-            if (errorTrie?.FindFirstError() is { } error
-                && resultSelectionSet is not null)
+            if (errorTrie?.FindFirstError() is { } error)
             {
-                PocketErrors(target.Path, resultSelectionSet, error);
+                var entity = target.Parent;
+                _store.RecordKeyFetchError(entity.Path, entity.CompactPath, selection.ResponseName, error);
+
+                if (!selection.IsInternal && resultSelectionSet is not null)
+                {
+                    PocketErrors(target.Path, resultSelectionSet, error);
+                }
             }
 
             // For shared parent types we keep the target untouched so that
@@ -1166,7 +1072,8 @@ internal sealed class ValueCompletion
         // or with a path below it.
         if (errorTrie?.FindFirstError() is { } nullErrorFromPath)
         {
-            _store.RecordKeyFetchError(target.Path.Parent, selection.ResponseName, nullErrorFromPath);
+            var entity = target.Parent;
+            _store.RecordKeyFetchError(entity.Path, entity.CompactPath, selection.ResponseName, nullErrorFromPath);
 
             if (selection.IsInternal)
             {
