@@ -97,6 +97,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
+    private Dictionary<Path, (Selection Selection, ResultSelectionSet Fetched)>? _pocketedFields;
     private Dictionary<(Path, string), IError>? _keyFetchErrors;
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
@@ -939,6 +940,36 @@ AddErrors_Next:
         _pocketedErrors.TryAdd(path, error);
     }
 
+    /// <summary>
+    /// Records the <paramref name="selection"/> of the value-type field at <paramref name="path"/> and the sub-fields
+    /// <paramref name="fetched"/> by the source whose error was pocketed for it.
+    /// </summary>
+    internal void RecordPocketedField(Path path, Selection selection, ResultSelectionSet fetched)
+    {
+        _pocketedFields ??= [];
+        _pocketedFields.TryAdd(path, (selection, fetched));
+    }
+
+    /// <summary>
+    /// Gets the selection and the fetched sub-fields recorded for the value-type field at <paramref name="path"/>.
+    /// </summary>
+    internal bool TryGetPocketedField(
+        Path path,
+        [NotNullWhen(true)] out Selection? selection,
+        [NotNullWhen(true)] out ResultSelectionSet? fetched)
+    {
+        if (_pocketedFields is not null && _pocketedFields.TryGetValue(path, out var field))
+        {
+            selection = field.Selection;
+            fetched = field.Fetched;
+            return true;
+        }
+
+        selection = null;
+        fetched = null;
+        return false;
+    }
+
     internal bool HasPocketedErrors
         => _pocketedErrors?.Count > 0;
 
@@ -1440,7 +1471,7 @@ AddErrors_Next:
         {
             if (errorTrie?.FindFirstError() is { } nulledError)
             {
-                _valueCompletion.ReportErrorOnNulledTarget(
+                _valueCompletion.ReportRaisedErrorOnNulledTarget(
                     path.IsRoot ? element.CompactPath : path,
                     resultSelectionSet,
                     nulledError);

@@ -1919,6 +1919,37 @@ public class KeyHopFailureTests : FusionTestBase
             .MatchMarkdownSnapshot();
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFetchedSubFieldsInEveryOrder_When_ASiblingNullsTheList()
+    {
+        // arrange
+        string[] hops = ["B", "X", "I"];
+
+        // act
+        var code = await ExecuteInEveryHopOrderAsync(
+            CreateKeyObjectSiblingSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { info { code label } total badNN } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+        var internalKey = await ExecuteInEveryHopOrderAsync(
+            CreateKeyObjectSiblingSequencedGatewayAsync,
+            "{ userList(ids: [98, 93]) { info { label } total badNN } }",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(code, "code and label", "text")
+            .Add(internalKey, "label", "text")
+            .MatchMarkdownSnapshot();
+    }
+
     private async Task<Gateway> CreateKeyObjectSiblingSequencedGatewayAsync(
         HopSequence sequence,
         bool enableRequestGrouping)
