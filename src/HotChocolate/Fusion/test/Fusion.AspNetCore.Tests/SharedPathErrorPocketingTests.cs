@@ -297,7 +297,7 @@ public class SharedPathErrorPocketingTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Viewer_Remains_Uninitialized_Promotes_One_Pocketed_Error_To_Parent()
+    public async Task Viewer_Remains_Uninitialized_Reports_Pocketed_Error_On_Fetched_Field()
     {
         using var serverA = CreateSourceSchema(
             "A",

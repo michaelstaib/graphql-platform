@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -1862,6 +1863,19 @@ public class KeyHopFailureTests : FusionTestBase
                 .Add(excludedFragment, $"{name}, fragment, s: false", "text");
         }
 
+        foreach (var include in new[] { false, true })
+        {
+            var nulledList = await ExecuteInEveryHopOrderAsync(
+                CreateNullKeyObjectSequencedGatewayAsync,
+                "query($s: Boolean!) { userList(ids: [98, 93]) { total badNN info @include(if: $s) { sku } } }",
+                include,
+                ["B", "I"],
+                [],
+                [],
+                []);
+            snapshot.Add(nulledList, $"every order, nulled list, s: {include.ToString().ToLowerInvariant()}", "text");
+        }
+
         // assert
         snapshot.MatchMarkdownSnapshot();
     }
@@ -1948,6 +1962,447 @@ public class KeyHopFailureTests : FusionTestBase
             .Add(code, "code and label", "text")
             .Add(internalKey, "label", "text")
             .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFetchedSubFieldsInEveryOrder_When_TheKeyObjectIsAnInterface()
+    {
+        // arrange
+        const string selection = "info { ... on InfoA { code label } }";
+
+        // act
+        var intact = await ExecuteInEveryHopOrderAsync(
+            CreateInterfaceKeyObjectSequencedGatewayAsync,
+            $"{{ userList(ids: [98, 2]) {{ {selection} }} }}",
+            include: null,
+            ["B", "X"],
+            [],
+            [],
+            []);
+        var nulled = await ExecuteInEveryHopOrderAsync(
+            CreateInterfaceKeyObjectSequencedGatewayAsync,
+            $"{{ userList(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(intact, "intact list", "text")
+            .Add(nulled, "nulled list", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportEachErrorOnlyOnItsOwnFieldInEveryOrder_When_TheHopRaisesForSeveralFields()
+    {
+        // arrange
+        const string selection = "info { code label } region";
+        var snapshot = Snapshot.Create();
+
+        // act
+        foreach (var id in new[] { 98, 97 })
+        {
+            var intact = await ExecuteInEveryHopOrderAsync(
+                CreateRegionKeyObjectSequencedGatewayAsync,
+                $"{{ userList(ids: [{id}, 2]) {{ {selection} }} }}",
+                include: null,
+                ["B", "X"],
+                [],
+                [],
+                []);
+            var nulled = await ExecuteInEveryHopOrderAsync(
+                CreateRegionKeyObjectSequencedGatewayAsync,
+                $"{{ userList(ids: [{id}, 93]) {{ {selection} badNN }} }}",
+                include: null,
+                ["B", "X", "I"],
+                [],
+                [],
+                []);
+            snapshot
+                .Add(intact, $"{id}, intact list", "text")
+                .Add(nulled, $"{id}, nulled list", "text");
+        }
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFetchedSubFieldsInEveryOrder_When_TheOtherSourceReturnsNull()
+    {
+        // arrange
+        const string selection = "info { code label }";
+
+        // act
+        var intact = await ExecuteInEveryHopOrderAsync(
+            CreateInfoSourcesSequencedGatewayAsync<XInfoNull.Query>,
+            $"{{ userList(ids: [98, 2]) {{ {selection} }} }}",
+            include: null,
+            ["B", "X"],
+            [],
+            [],
+            []);
+        var nulled = await ExecuteInEveryHopOrderAsync(
+            CreateInfoSourcesSequencedGatewayAsync<XInfoNull.Query>,
+            $"{{ userList(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+        var nullableItems = await ExecuteInEveryHopOrderAsync(
+            CreateInfoSourcesSequencedGatewayAsync<XInfoNull.Query>,
+            $"{{ nullableUsers(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(intact, "intact list", "text")
+            .Add(nulled, "nulled list", "text")
+            .Add(nullableItems, "nullable items", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOfEachSourceOnItsSubFieldsInEveryOrder_When_BothSourcesRaise()
+    {
+        // arrange
+        const string selection = "info { code label }";
+
+        // act
+        var intact = await ExecuteInEveryHopOrderAsync(
+            CreateInfoSourcesSequencedGatewayAsync<XInfoRaise.Query>,
+            $"{{ userList(ids: [98, 2]) {{ {selection} }} }}",
+            include: null,
+            ["B", "X"],
+            [],
+            [],
+            []);
+        var nulled = await ExecuteInEveryHopOrderAsync(
+            CreateInfoSourcesSequencedGatewayAsync<XInfoRaise.Query>,
+            $"{{ userList(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+        var nullableItems = await ExecuteInEveryHopOrderAsync(
+            CreateInfoSourcesSequencedGatewayAsync<XInfoRaise.Query>,
+            $"{{ nullableUsers(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            ["B", "X", "I"],
+            [],
+            [],
+            []);
+
+        // assert
+        Snapshot.Create()
+            .Add(intact, "intact list", "text")
+            .Add(nulled, "nulled list", "text")
+            .Add(nullableItems, "nullable items", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFetchedSubFieldsInEveryOrder_When_TheFieldsAreDeferred()
+    {
+        // arrange
+        const string query = "{ userList(ids: [98, 93]) { ... @defer { info { code label } total badNN } } }";
+        var sequence = new HopSequence();
+        var results = new List<string>();
+
+        // act
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateKeyObjectSiblingSequencedGatewayAsync(sequence, enableRequestGrouping);
+
+            foreach (var order in GetHopOrders(["B", "X", "I"], []))
+            {
+                sequence.Start(order);
+                results.Add(await ExecuteDeferredWithSortedErrorsAsync(gateway, query));
+            }
+        }
+
+        sequence.Start([]);
+
+        // assert
+        Snapshot.Create()
+            .Add(Assert.Single(results.Distinct()), "every order", "text")
+            .MatchMarkdownSnapshot();
+    }
+
+    private async Task<Gateway> CreateInfoSourcesSequencedGatewayAsync<TXQuery>(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        where TXQuery : class
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopX = new SequencedHop(sequence, "X");
+        var hopI = new SequencedHop(sequence, "I");
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<BInfoCode.Query>(), mockHttpResponse: hopB.SendAsync);
+        var x = CreateSourceSchema("x", b => b.AddQueryType<TXQuery>(), mockHttpResponse: hopX.SendAsync);
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopX.Connect(x);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("x", x), ("i", i)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    private static async Task<string> ExecuteDeferredWithSortedErrorsAsync(Gateway gateway, string query)
+    {
+        var text = new StringBuilder();
+        var payloads = await ExecuteDeferredPayloadsAsync(gateway, query);
+
+        foreach (var payload in payloads.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var node = JsonNode.Parse(payload)!;
+            SortErrors(node["errors"]);
+
+            if (node["completed"] is JsonArray completed)
+            {
+                foreach (var entry in completed)
+                {
+                    SortErrors(entry?["errors"]);
+                }
+            }
+
+            text.AppendLine(node.ToJsonString());
+        }
+
+        return text.ToString();
+
+        static void SortErrors(JsonNode? errors)
+        {
+            if (errors is not JsonArray array)
+            {
+                return;
+            }
+
+            var sorted = array.Select(e => e!.ToJsonString()).Order(StringComparer.Ordinal).ToList();
+            array.Clear();
+
+            foreach (var error in sorted)
+            {
+                array.Add(JsonNode.Parse(error));
+            }
+        }
+    }
+
+    public static class XInfoNull
+    {
+        public record Info([property: Shareable] string Sku, string Label);
+
+        public record User(int Id, [property: Shareable] Info? Info);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, id == 98 ? null : new Info("sku-" + id, "label-" + id));
+        }
+    }
+
+    public static class XInfoRaise
+    {
+        public record Info([property: Shareable] string Sku, string Label);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo()
+                => id == 98
+                    ? throw new GraphQLException("x info failed for 98")
+                    : new Info("sku-" + id, "label-" + id);
+        }
+    }
+
+    private async Task<Gateway> CreateInterfaceKeyObjectSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopX = new SequencedHop(sequence, "X");
+        var hopI = new SequencedHop(sequence, "I");
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema(
+            "b",
+            b => b.AddQueryType<BInfoInterface.Query>().AddType<BInfoInterface.InfoA>(),
+            mockHttpResponse: hopB.SendAsync);
+        var x = CreateSourceSchema(
+            "x",
+            b => b.AddQueryType<XInfoInterface.Query>().AddType<XInfoInterface.InfoA>(),
+            mockHttpResponse: hopX.SendAsync);
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopX.Connect(x);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("x", x), ("i", i)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    private async Task<Gateway> CreateRegionKeyObjectSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+    {
+        var hopB = new SequencedHop(sequence, "B");
+        var hopX = new SequencedHop(sequence, "X");
+        var hopI = new SequencedHop(sequence, "I");
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<BInfoRegion.Query>(), mockHttpResponse: hopB.SendAsync);
+        var x = CreateSourceSchema("x", b => b.AddQueryType<XInfoLabel.Query>(), mockHttpResponse: hopX.SendAsync);
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopX.Connect(x);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("x", x), ("i", i)],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    public static class BInfoInterface
+    {
+        [InterfaceType("Info")]
+        public interface IInfo
+        {
+            [Shareable]
+            string Sku { get; }
+        }
+
+        [Shareable]
+        public record InfoA(string Sku, [property: Shareable] string Code) : IInfo;
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            [GraphQLType<InterfaceType<IInfo>>]
+            public IInfo? GetInfo()
+                => id == 98 ? throw new GraphQLException("info failed for 98") : new InfoA("sku-" + id, "code-" + id);
+        }
+    }
+
+    public static class XInfoInterface
+    {
+        [InterfaceType("Info")]
+        public interface IInfo
+        {
+            [Shareable]
+            string Sku { get; }
+        }
+
+        [Shareable]
+        public record InfoA(string Sku, [property: Shareable] string Label) : IInfo;
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            [GraphQLType<InterfaceType<IInfo>>]
+            public IInfo? GetInfo() => new InfoA("sku-" + id, "label-" + id);
+        }
+    }
+
+    public static class BInfoRegion
+    {
+        public record Info([property: Shareable] string Sku, string Code);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo()
+                => id == 97 ? throw new GraphQLException("info failed for 97") : new Info("sku-" + id, "code-" + id);
+
+            public string? GetRegion()
+                => id is 98 or 97 ? throw new GraphQLException("region failed for " + id) : "eu";
+        }
     }
 
     private async Task<Gateway> CreateKeyObjectSiblingSequencedGatewayAsync(

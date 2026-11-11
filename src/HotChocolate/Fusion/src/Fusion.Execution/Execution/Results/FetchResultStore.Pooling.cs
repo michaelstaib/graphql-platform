@@ -95,7 +95,7 @@ internal sealed partial class FetchResultStore
 
         _errors?.Clear();
         _pocketedErrors?.Clear();
-        _pocketedFields?.Clear();
+        _subFieldPockets?.Clear();
         ClearMissingTargets();
         _keyFetchErrors?.Clear();
         _keyFetchPaths?.Clear();
@@ -151,7 +151,7 @@ internal sealed partial class FetchResultStore
         // clear errors
         _errors?.Clear();
         _pocketedErrors?.Clear();
-        _pocketedFields?.Clear();
+        _subFieldPockets?.Clear();
         ClearMissingTargets();
         _keyFetchErrors?.Clear();
         _keyFetchPaths?.Clear();

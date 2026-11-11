@@ -97,7 +97,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
-    private Dictionary<Path, (Selection Selection, ResultSelectionSet Fetched)>? _pocketedFields;
+    private HashSet<Path>? _subFieldPockets;
     private Dictionary<(Path, string), IError>? _keyFetchErrors;
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
@@ -941,34 +941,25 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Records the <paramref name="selection"/> of the value-type field at <paramref name="path"/> and the sub-fields
-    /// <paramref name="fetched"/> by the source whose error was pocketed for it.
+    /// Pockets the <paramref name="error"/> of the value-type sub-field at <paramref name="path"/>, which is reported
+    /// at <paramref name="path"/> whether or not the value-type field is <c>null</c> when the error is applied.
     /// </summary>
-    internal void RecordPocketedField(Path path, Selection selection, ResultSelectionSet fetched)
+    internal void PocketSubFieldError(Path path, IError error)
     {
-        _pocketedFields ??= [];
-        _pocketedFields.TryAdd(path, (selection, fetched));
+        _pocketedErrors ??= [];
+
+        if (_pocketedErrors.TryAdd(path, error))
+        {
+            _subFieldPockets ??= [];
+            _subFieldPockets.Add(path);
+        }
     }
 
     /// <summary>
-    /// Gets the selection and the fetched sub-fields recorded for the value-type field at <paramref name="path"/>.
+    /// Gets whether the error pocketed at <paramref name="path"/> was pocketed by <see cref="PocketSubFieldError"/>.
     /// </summary>
-    internal bool TryGetPocketedField(
-        Path path,
-        [NotNullWhen(true)] out Selection? selection,
-        [NotNullWhen(true)] out ResultSelectionSet? fetched)
-    {
-        if (_pocketedFields is not null && _pocketedFields.TryGetValue(path, out var field))
-        {
-            selection = field.Selection;
-            fetched = field.Fetched;
-            return true;
-        }
-
-        selection = null;
-        fetched = null;
-        return false;
-    }
+    internal bool IsSubFieldPocket(Path path)
+        => _subFieldPockets?.Contains(path) ?? false;
 
     internal bool HasPocketedErrors
         => _pocketedErrors?.Count > 0;
@@ -979,8 +970,15 @@ AddErrors_Next:
             : [];
 
     internal bool RemovePocketedError(Path path)
-        => _pocketedErrors?.Remove(path) ?? false;
+    {
+        _subFieldPockets?.Remove(path);
+        return _pocketedErrors?.Remove(path) ?? false;
+    }
 
+    /// <summary>
+    /// Removes the errors pocketed at or below <paramref name="path"/>, except the errors pocketed by
+    /// <see cref="PocketSubFieldError"/>.
+    /// </summary>
     internal void RemovePocketedErrorsInSubtree(Path path)
     {
         if (_pocketedErrors is not { Count: > 0 })
@@ -992,7 +990,7 @@ AddErrors_Next:
 
         foreach (var errorPath in _pocketedErrors.Keys)
         {
-            if (PathUtilities.IsPathInSubtree(errorPath, path, includeSelf: true))
+            if (PathUtilities.IsPathInSubtree(errorPath, path, includeSelf: true) && !IsSubFieldPocket(errorPath))
             {
                 pathsToRemove ??= [];
                 pathsToRemove.Add(errorPath);
@@ -1010,72 +1008,20 @@ AddErrors_Next:
         }
     }
 
-    /// <summary>
-    /// Gets whether the root or a value between the root and the value at <paramref name="path"/> is <c>null</c>
-    /// or invalidated.
-    /// </summary>
-    internal bool IsBelowNullValue(Path path)
-    {
-        var element = _result.Data;
-
-        if (path.IsRoot)
-        {
-            return false;
-        }
-
-        var buffer = s_objectPool.Rent(path.Length);
-        var segments = buffer.AsSpan(0, path.Length);
-
-        try
-        {
-            path.CopyTo(segments);
-
-            for (var i = 0; i < segments.Length; i++)
-            {
-                if (element.IsNullOrInvalidated)
-                {
-                    return true;
-                }
-
-                switch (segments[i])
-                {
-                    case string fieldName:
-                        if (element.ValueKind is not JsonValueKind.Object
-                            || !element.TryGetProperty(fieldName, out element))
-                        {
-                            return false;
-                        }
-
-                        break;
-
-                    case int index:
-                        if (element.ValueKind is not JsonValueKind.Array
-                            || index < 0
-                            || element.GetArrayLength() <= index)
-                        {
-                            return false;
-                        }
-
-                        element = element[index];
-                        break;
-
-                    default:
-                        return false;
-                }
-            }
-
-            return false;
-        }
-        finally
-        {
-            segments.Clear();
-            s_objectPool.Return(buffer);
-        }
-    }
-
     internal bool TryGetResult(Path path, out CompositeResultElement element)
+        => TryGetResult(path, out element, out _);
+
+    /// <summary>
+    /// Gets the value at <paramref name="path"/> and whether the root or a value between the root and that value is
+    /// <c>null</c> or invalidated.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the value at <paramref name="path"/> exists.
+    /// </returns>
+    internal bool TryGetResult(Path path, out CompositeResultElement element, out bool isBelowNullValue)
     {
         element = _result.Data;
+        isBelowNullValue = false;
 
         if (path.IsRoot)
         {
@@ -1091,6 +1037,8 @@ AddErrors_Next:
 
             for (var i = 0; i < segments.Length; i++)
             {
+                isBelowNullValue |= element.IsNullOrInvalidated;
+
                 switch (segments[i])
                 {
                     case string fieldName:
@@ -1469,12 +1417,12 @@ AddErrors_Next:
 
         if (element.IsNullOrInvalidated)
         {
-            if (errorTrie?.FindFirstError() is { } nulledError)
+            if (errorTrie is not null)
             {
-                _valueCompletion.ReportRaisedErrorOnNulledTarget(
+                _valueCompletion.ReportSourceErrorsOnNulledTarget(
                     path.IsRoot ? element.CompactPath : path,
                     resultSelectionSet,
-                    nulledError);
+                    errorTrie);
             }
 
             return true;

@@ -1,4 +1,4 @@
-title: Viewer_Remains_Uninitialized_Promotes_One_Pocketed_Error_To_Parent
+title: Viewer_Remains_Uninitialized_Reports_Pocketed_Error_On_Fetched_Field
 request:
   document: |
     {
@@ -17,7 +17,8 @@ response:
         {
           "message": "Unexpected Execution Error",
           "path": [
-            "viewer"
+            "viewer",
+            "a"
           ]
         }
       ]
