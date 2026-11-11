@@ -99,9 +99,14 @@ internal sealed partial class FetchResultStore : IDisposable
     private Dictionary<Path, IError>? _pocketedErrors;
     private Dictionary<Path, ResultSelectionSet>? _pocketedErrorSources;
     private Dictionary<Path, List<Path>>? _pocketedErrorPaths;
+    private const int MaxRetainedSetSize = 1024;
     private List<SubFieldPocket>? _subFieldPockets;
     private Dictionary<CompositeResultDocument.Cursor, List<SubFieldPocket>>? _subFieldPocketsByElement;
+    private Dictionary<ErrorIdentity, SubFieldPocket>? _subFieldPocketsByError;
+    private Stack<List<SubFieldPocket>>? _subFieldPocketListPool;
     private int _subFieldPocketCount;
+    private HashSet<ErrorIdentity>? _recordedKeyFetchErrors;
+    private HashSet<ErrorIdentity>? _dependentErrors;
     private Dictionary<CompositeResultDocument.Cursor, List<ResultSelectionSet?>>? _failedValueTypeFetches;
     private Dictionary<(Path, string), List<KeyFetchError>>? _keyFetchErrors;
     private Dictionary<Path, List<string>>? _keyFetchNames;
@@ -770,12 +775,11 @@ AddErrors_Next:
             names.Add(name);
         }
 
-        foreach (var recorded in errors)
+        _recordedKeyFetchErrors ??= new HashSet<ErrorIdentity>(ErrorIdentityComparer.Instance);
+
+        if (!_recordedKeyFetchErrors.Add(new ErrorIdentity(entityPath, name, error)))
         {
-            if (IsSameError(recorded.Error, error))
-            {
-                return;
-            }
+            return;
         }
 
         var keyFetchError = new KeyFetchError(error);
@@ -807,11 +811,9 @@ AddErrors_Next:
     {
         List<Path>? entityPaths = null;
 
-        foreach (var (entityPath, name) in _keyFetchErrors!.Keys)
+        foreach (var (entityPath, names) in _keyFetchNames!)
         {
-            if (IsRequirementFieldName(name, requirementFieldNames)
-                && IsEntityOfTargets(entityPath, targets)
-                && entityPaths?.Contains(entityPath) != true)
+            if (HasRequirementFieldName(names, requirementFieldNames) && IsEntityOfTargets(entityPath, targets))
             {
                 entityPaths ??= [];
                 entityPaths.Add(entityPath);
@@ -846,6 +848,19 @@ AddErrors_Next:
         }
 
         return true;
+    }
+
+    private static bool HasRequirementFieldName(List<string> names, List<string> requirementFieldNames)
+    {
+        foreach (var name in names)
+        {
+            if (IsRequirementFieldName(name, requirementFieldNames))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // A recorded name belongs to a requirement when it is the requirement field or one of its parent fields.
@@ -1107,22 +1122,22 @@ AddErrors_Next:
             }
         }
 
-        static void AddKeyFetchError(
+        void AddKeyFetchError(
             ref List<(string OriginName, KeyFetchError Fetch)>? errors,
             string name,
             KeyFetchError fetch)
         {
-            errors ??= [];
-
-            foreach (var (_, added) in errors)
+            if (errors is null)
             {
-                if (IsSameError(added.Error, fetch.Error))
-                {
-                    return;
-                }
+                errors = [];
+                _dependentErrors ??= new HashSet<ErrorIdentity>(ErrorIdentityComparer.Instance);
+                _dependentErrors.Clear();
             }
 
-            errors.Add((name, fetch));
+            if (_dependentErrors!.Add(new ErrorIdentity(entityPath, null, fetch.Error)))
+            {
+                errors.Add((name, fetch));
+            }
         }
     }
 
@@ -1338,30 +1353,27 @@ AddErrors_Next:
     /// <c>null</c> when the error is applied. An error that is the same as an error already pocketed at
     /// <paramref name="path"/> is ignored, and the pocket of that error is returned.
     /// </summary>
-    internal SubFieldPocket PocketSubFieldError(Path path, IError error, CompositeResultElement field)
+    internal SubFieldPocket PocketSubFieldError(Path path, IError error, CompositeResultElement field, int depth)
     {
-        _subFieldPocketsByElement ??= [];
+        var identity = new ErrorIdentity(path, null, error);
+        _subFieldPocketsByError ??= new Dictionary<ErrorIdentity, SubFieldPocket>(ErrorIdentityComparer.Instance);
 
-        if (_subFieldPocketsByElement.TryGetValue(field.Cursor, out var pocketsOfField))
+        if (_subFieldPocketsByError.TryGetValue(identity, out var pocketed))
         {
-            foreach (var pocketed in pocketsOfField)
-            {
-                if (!pocketed.IsRemoved && pocketed.Path.Equals(path) && IsSameError(pocketed.Error, error))
-                {
-                    return pocketed;
-                }
-            }
+            return pocketed;
         }
 
-        var pocket = new SubFieldPocket(path, error, field);
+        var pocket = new SubFieldPocket(path, error, field, depth, _result.LayoutVersion);
+        _subFieldPocketsByError.Add(identity, pocket);
         (_subFieldPockets ??= []).Add(pocket);
         _subFieldPocketCount++;
+        _subFieldPocketsByElement ??= [];
 
         for (var current = field; ; current = current.Parent)
         {
             if (!_subFieldPocketsByElement.TryGetValue(current.Cursor, out var pockets))
             {
-                pockets = [];
+                pockets = _subFieldPocketListPool?.Count > 0 ? _subFieldPocketListPool.Pop() : [];
                 _subFieldPocketsByElement.Add(current.Cursor, pockets);
             }
 
@@ -1374,6 +1386,52 @@ AddErrors_Next:
         }
 
         return pocket;
+    }
+
+    private void ClearSubFieldPockets()
+    {
+        if (_subFieldPocketsByElement is { Count: > 0 })
+        {
+            _subFieldPocketListPool ??= [];
+
+            foreach (var pockets in _subFieldPocketsByElement.Values)
+            {
+                if (_subFieldPocketListPool.Count < MaxRetainedSetSize && pockets.Capacity <= 64)
+                {
+                    pockets.Clear();
+                    _subFieldPocketListPool.Push(pockets);
+                }
+            }
+
+            if (_subFieldPocketsByElement.Count > MaxRetainedSetSize)
+            {
+                _subFieldPocketsByElement = null;
+            }
+            else
+            {
+                _subFieldPocketsByElement.Clear();
+            }
+        }
+
+        if (_subFieldPocketsByError is { Count: > MaxRetainedSetSize })
+        {
+            _subFieldPocketsByError = null;
+        }
+        else
+        {
+            _subFieldPocketsByError?.Clear();
+        }
+
+        if (_subFieldPockets is { Count: > MaxRetainedSetSize })
+        {
+            _subFieldPockets = null;
+        }
+        else
+        {
+            _subFieldPockets?.Clear();
+        }
+
+        _subFieldPocketCount = 0;
     }
 
     internal bool HasPocketedErrors
@@ -1479,6 +1537,7 @@ AddErrors_Next:
         {
             pocket.IsRemoved = true;
             _subFieldPocketCount--;
+            _subFieldPocketsByError!.Remove(new ErrorIdentity(pocket.Path, null, pocket.Error));
         }
     }
 
@@ -1503,7 +1562,12 @@ AddErrors_Next:
     }
 
     // The error of a sub-field below a value-type field that is applied to its path once the result is known.
-    internal sealed class SubFieldPocket(Path path, IError error, CompositeResultElement field)
+    internal sealed class SubFieldPocket(
+        Path path,
+        IError error,
+        CompositeResultElement field,
+        int depth,
+        int layoutVersion)
     {
         public Path Path { get; } = path;
 
@@ -1511,7 +1575,35 @@ AddErrors_Next:
 
         public CompositeResultElement Field { get; } = field;
 
+        // The number of path segments between the value-type field and the sub-field.
+        public int Depth { get; } = depth;
+
+        // The layout version of the result when the pocket was created, while which Field keeps its path.
+        public int LayoutVersion { get; } = layoutVersion;
+
         public bool IsRemoved { get; set; }
+    }
+
+    // An error and the path, and the dot separated field name below the path, where it was recorded.
+    private readonly record struct ErrorIdentity(Path Path, string? Name, IError Error);
+
+    // Compares recorded errors by their path, field name, message, code and extensions.
+    private sealed class ErrorIdentityComparer : IEqualityComparer<ErrorIdentity>
+    {
+        public static ErrorIdentityComparer Instance { get; } = new();
+
+        public bool Equals(ErrorIdentity x, ErrorIdentity y)
+            => x.Path.Equals(y.Path)
+                && string.Equals(x.Name, y.Name, StringComparison.Ordinal)
+                && IsSameError(x.Error, y.Error);
+
+        public int GetHashCode(ErrorIdentity obj)
+            => HashCode.Combine(
+                obj.Path,
+                obj.Name,
+                obj.Error.Message,
+                obj.Error.Code,
+                obj.Error.Extensions?.Count ?? -1);
     }
 
     internal bool TryGetResult(Path path, out CompositeResultElement element)

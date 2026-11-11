@@ -1290,34 +1290,47 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Execute_Should_ReportTheSameErrorsInEveryOrder_When_DependentsTwoLevelsDeepAreBelowANulledItem()
+    public async Task Execute_Should_ReportTheErrorsByHopDepthInEveryOrder_When_RequirementsOfTwoDepthsAreMissing()
     {
         // arrange
-        const string query = "{ nullableUsers(ids: [2, 93]) { rank score code totalNN } }";
         var sequence = new HopSequence();
         var errors = new List<string>();
 
         // act
         foreach (var enableRequestGrouping in new[] { true, false })
         {
-            using var gateway = await CreateSequencedGatewayAsync(sequence, enableRequestGrouping);
+            using var gateway = await CreateHopSourcesSequencedGatewayAsync(
+                sequence,
+                enableRequestGrouping,
+                [
+                    ("b", b => b.AddQueryType<B.Query>(), "B", false),
+                    ("q", q => q.AddQueryType<QCode.Query>(), "Q", false),
+                    ("r", r => r.AddQueryType<RScore.Query>(), "R", false),
+                    ("z", z => z.AddQueryType<ZTotal.Query>(), null, false)
+                ]);
 
-            foreach (var order in GetHopOrders(["B", "C", "D", "E", "F"], [("B", "C"), ("E", "D"), ("D", "F")]))
+            foreach (var list in new[] { "userList", "nullableUsers" })
             {
-                sequence.Start(order);
-                errors.Add(await ExecuteForErrorsInResponseOrderAsync(gateway, query));
+                foreach (var order in GetHopOrders(["B", "Q", "R"], [("Q", "R")]))
+                {
+                    sequence.Start(order);
+                    errors.Add(
+                        await ExecuteForErrorMessagesAtPathAsync(
+                            gateway,
+                            $"{{ {list}(ids: [98, 2]) {{ total }} }}",
+                            $$"""["{{list}}",0,"total"]"""));
+                }
             }
         }
 
         sequence.Start([]);
 
         // assert
+        Assert.Equal(12, errors.Count);
         Assert.Single(errors.Distinct()).MatchInlineSnapshot(
             """
-            E hop failed for 93 at ["nullableUsers",1,"code"]
-            E hop failed for 93 at ["nullableUsers",1,"rank"]
-            E hop failed for 93 at ["nullableUsers",1,"score"]
-            Cannot return null for non-nullable field. at ["nullableUsers",1,"totalNN"]
+            B hop failed for 98
+            Q failed for 98
 
             """);
     }
@@ -2828,7 +2841,7 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Execute_Should_CompleteWithinTheTimeLimit_When_EverySourceFailsForTheValueTypeOfManyItems()
+    public async Task Execute_Should_GrowLinearly_When_EverySourceFailsForTheValueTypeOfManyItems()
     {
         // arrange
         var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
@@ -2837,22 +2850,43 @@ public class KeyHopFailureTests : FusionTestBase
         using var gateway = await CreateCompositeSchemaAsync(
             [("a", a), ("code", code), ("label", label)],
             includeOperationPlan: false);
-        var query = $"{{ userList(ids: [{string.Join(",", Enumerable.Range(1, 4000))}]) {{ info {{ code label }} }} }}";
-        await ExecuteWithSortedErrorsAsync(gateway, "{ userList(ids: [1]) { info { code label } } }", include: null);
 
         // act
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var result = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
-        stopwatch.Stop();
+        var (growth, result) = await MeasureGrowthAsync(gateway, "info { code label }", 4000);
 
         // assert
-        Assert.InRange(stopwatch.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(4));
+        Assert.InRange(growth, 0, MaxLinearGrowth);
         SummarizeErrors(result).MatchInlineSnapshot(
             """
             first item: {"info":{"code":null,"label":null}}
             8000 x The batch size exceeds the maximum allowed batch size of 1024. at no path
             4000 x Unexpected Execution Error at userList/i/info/code
             4000 x Unexpected Execution Error at userList/i/info/label
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_GrowLinearly_When_TheRequirementSourceFailsForManyDependents()
+    {
+        // arrange
+        var a = CreateSourceSchema("a", builder => builder.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", builder => builder.AddQueryType<B.Query>());
+        var c = CreateSourceSchema("c", builder => builder.AddQueryType<CNested.Query>());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c)],
+            includeOperationPlan: false);
+
+        // act
+        var (growth, result) = await MeasureGrowthAsync(gateway, "total", 8000);
+
+        // assert
+        Assert.InRange(growth, 0, MaxLinearGrowth);
+        SummarizeErrors(result).MatchInlineSnapshot(
+            """
+            first item: {"total":null}
+            8000 x The batch size exceeds the maximum allowed batch size of 1024. at no path
+            8000 x Unexpected Execution Error at userList/i/total
 
             """);
     }
@@ -3214,12 +3248,62 @@ public class KeyHopFailureTests : FusionTestBase
                 ("x", x => x.AddQueryType<XInfoTwoObjects.Query>(), "X", false)
             ]);
 
+    // The largest ratio of the time for 2n items to the time for n items that counts as linear growth.
+    private const double MaxLinearGrowth = 3.0;
+
+    // Gets the ratio of the fastest of three runs of userList with 2n items to the fastest of three runs with n items,
+    // and the response for n items.
+    private static async Task<(double Growth, string Result)> MeasureGrowthAsync(
+        Gateway gateway,
+        string selection,
+        int n)
+    {
+        var result = await ExecuteRawAsync(gateway, CreateUserListQuery(selection, n));
+        var timeOfN = await MeasureFastestAsync(n);
+        var timeOf2N = await MeasureFastestAsync(n * 2);
+        return (timeOf2N / timeOfN, result);
+
+        async Task<double> MeasureFastestAsync(int count)
+        {
+            var query = CreateUserListQuery(selection, count);
+            var fastest = double.MaxValue;
+
+            for (var i = 0; i < 3; i++)
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                await ExecuteRawAsync(gateway, query);
+                fastest = Math.Min(fastest, stopwatch.Elapsed.TotalMilliseconds);
+            }
+
+            return fastest;
+        }
+
+        static string CreateUserListQuery(string selection, int count)
+            => $"{{ userList(ids: [{string.Join(",", Enumerable.Range(1, count))}]) {{ {selection} }} }}";
+    }
+
+    private static async Task<string> ExecuteRawAsync(Gateway gateway, string query)
+    {
+        using var client = gateway.CreateClient();
+        using var content = new StringContent(
+            JsonSerializer.Serialize(new { query }),
+            Encoding.UTF8,
+            "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:5000/graphql")
+        {
+            Content = content
+        };
+        request.Headers.Add("Accept", "application/json");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        return await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+    }
+
     // Gets the first item and the number of errors per message and path, with list indexes replaced by i.
     private static string SummarizeErrors(string result)
     {
-        var lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        var data = JsonNode.Parse(lines[0]["data: ".Length..])!;
-        var errors = lines.Length > 1 ? JsonNode.Parse(lines[1]["errors: ".Length..])!.AsArray() : [];
+        var response = JsonNode.Parse(result)!;
+        var data = response["data"]!;
+        var errors = response["errors"] as JsonArray ?? [];
         var text = new StringBuilder();
         text.AppendLine($"first item: {data["userList"]?[0]?.ToJsonString()}");
 
@@ -3670,6 +3754,66 @@ public class KeyHopFailureTests : FusionTestBase
 
             [Shareable]
             public Info? GetInfo() => new(new Meta("b-" + id));
+        }
+    }
+
+    public static class QCode
+    {
+        public record User(int Id, [property: Shareable] string? Code);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id)
+                => id == 98 ? throw new GraphQLException("Q failed for 98") : new User(id, "code-" + id);
+        }
+    }
+
+    public static class RScore
+    {
+        public record User([property: Shareable] string Code, [property: Shareable] int? Score);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserByCode(string code) => new(code, code.Length);
+        }
+    }
+
+    public static class ZTotal
+    {
+        public record Info([property: Shareable] string Sku);
+
+        public record User([property: Shareable] Info Info, [property: Shareable] int? Score, int? Total);
+
+        public record KeyInput(string Sku, int Score);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserByKey([Is("{ sku: info.sku, score }")] KeyInput key)
+                => new(new Info(key.Sku), key.Score, int.Parse(key.Sku[4..]));
         }
     }
 
@@ -5086,26 +5230,6 @@ public class KeyHopFailureTests : FusionTestBase
             {
                 text.AppendLine(error.GetProperty("message").GetString());
             }
-        }
-
-        return text.ToString();
-    }
-
-    // Returns the message and path of every error, in the order of the response.
-    private static async Task<string> ExecuteForErrorsInResponseOrderAsync(Gateway gateway, string query)
-    {
-        var text = new StringBuilder();
-        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
-        using var response = await client.PostAsync(
-            new OperationRequest(query),
-            new Uri("http://localhost:5000/graphql"),
-            TestContext.Current.CancellationToken);
-        using var result = await response.ReadAsResultAsync(TestContext.Current.CancellationToken);
-
-        foreach (var error in result.Errors.EnumerateArray())
-        {
-            var path = error.TryGetProperty("path", out var errorPath) ? errorPath.GetRawText() : "no path";
-            text.AppendLine($"{error.GetProperty("message").GetString()} at {path}");
         }
 
         return text.ToString();

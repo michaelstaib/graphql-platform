@@ -25,6 +25,7 @@ internal sealed class ValueCompletion
     private bool _propagateNullValues;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
+    private Dictionary<(Selection, ResultSelectionSet), (ValueTypeErrorPlacement, string[][]?)>? _errorPlacements;
 
     public ValueCompletion(FetchResultStore store, int maxDepth)
     {
@@ -51,6 +52,7 @@ internal sealed class ValueCompletion
         _propagateNullValues = errorHandlingMode is not ErrorHandlingMode.Null;
         _typeMemoA = null;
         _typeMemoB = null;
+        _errorPlacements?.Clear();
     }
 
     /// <summary>
@@ -379,7 +381,11 @@ internal sealed class ValueCompletion
 
                     foreach (var subFieldPath in subFieldPaths!)
                     {
-                        var pocket = _store.PocketSubFieldError(subFieldPath, error, fieldResult);
+                        var pocket = _store.PocketSubFieldError(
+                            subFieldPath,
+                            error,
+                            fieldResult,
+                            subFieldPath.Length - fieldPath.Length);
 
                         if (fieldResult.ValueKind is not JsonValueKind.Undefined && !TryApplySubFieldPocket(pocket))
                         {
@@ -486,7 +492,7 @@ internal sealed class ValueCompletion
             if (selection.IsValueTypeNamedType)
             {
                 AddValueTypeFieldError(
-                    target: null,
+                    anchor: null,
                     fieldPath,
                     selection,
                     resultSelectionSet.TryGetChild(responseName),
@@ -634,13 +640,13 @@ internal sealed class ValueCompletion
     /// <summary>
     /// Adds the <paramref name="error"/> of a source that failed for the value-type field at
     /// <paramref name="fieldPath"/>, or for the entity that holds it, after fetching <paramref name="fetched"/>.
-    /// The error is added to the field, whose value <paramref name="target"/> becomes <c>null</c>, when the field has
-    /// several possible types or the source fetched all of its client-visible sub-fields, otherwise to the
-    /// client-visible sub-fields the source fetched that <see cref="GetErrorSubFieldPaths"/> selects, and nowhere when
-    /// the source fetched none.
+    /// The error is added to the field, whose value held by <paramref name="anchor"/> becomes <c>null</c>, when the
+    /// field has several possible types or the source fetched all of its client-visible sub-fields, otherwise to the
+    /// client-visible sub-fields the source fetched that <see cref="GetErrorSubFieldPaths"/> selects, pocketed at
+    /// <paramref name="anchor"/> when it is given, and nowhere when the source fetched none.
     /// </summary>
     private void AddValueTypeFieldError(
-        CompositeResultElement? target,
+        PocketAnchor? anchor,
         Path fieldPath,
         Selection selection,
         ResultSelectionSet? fetched,
@@ -651,7 +657,7 @@ internal sealed class ValueCompletion
             case ValueTypeErrorPlacement.Field:
                 _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, fieldPath)));
 
-                if (target is { IsNullOrInvalidated: false } value)
+                if (anchor?.Field is { IsNullOrInvalidated: false } value)
                 {
                     value.SetNullValue();
                 }
@@ -661,7 +667,7 @@ internal sealed class ValueCompletion
             case ValueTypeErrorPlacement.SubField:
                 foreach (var subFieldPath in subFieldPaths!)
                 {
-                    AddErrorAt(target, subFieldPath, error);
+                    AddErrorAt(anchor, subFieldPath, error);
                 }
 
                 break;
@@ -672,7 +678,7 @@ internal sealed class ValueCompletion
     // below it, each at its own path when that path is client-visible, nowhere when it is an internal field, and
     // otherwise on the nearest client-visible field above it.
     private void AddErrorsBelowField(
-        CompositeResultElement? anchor,
+        PocketAnchor? anchor,
         Path path,
         Selection selection,
         ResultSelectionSet? fetched,
@@ -699,7 +705,7 @@ internal sealed class ValueCompletion
     // Adds the errors the source raised below the client-visible field at path like AddErrorsBelowField, and adds the
     // errors that belong on the field itself to fieldErrors.
     private void AddSubFieldErrors(
-        CompositeResultElement? anchor,
+        PocketAnchor? anchor,
         Path path,
         Selection selection,
         ResultSelectionSet? fetched,
@@ -746,7 +752,7 @@ internal sealed class ValueCompletion
     // Adds the error of the field at path on the sub-fields the value-type rule selects for a value-type field, or
     // nowhere when the source fetched no client-visible sub-field of it.
     private void AddErrorAtField(
-        CompositeResultElement? anchor,
+        PocketAnchor? anchor,
         Path path,
         Selection selection,
         ResultSelectionSet? fetched,
@@ -773,16 +779,19 @@ internal sealed class ValueCompletion
     }
 
     // Adds the error at path, or pockets it when anchor, the value-type field above path, is given.
-    private void AddErrorAt(CompositeResultElement? anchor, Path path, IError error)
+    private void AddErrorAt(PocketAnchor? anchor, Path path, IError error)
     {
-        if (anchor is { } field)
+        if (anchor is { } pocketAnchor)
         {
-            _store.PocketSubFieldError(path, error, field);
+            _store.PocketSubFieldError(path, error, pocketAnchor.Field, path.Length - pocketAnchor.PathLength);
             return;
         }
 
         _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, path)));
     }
+
+    // The value-type field whose sub-field errors are pocketed, and the length of its path.
+    private readonly record struct PocketAnchor(CompositeResultElement Field, int PathLength);
 
     // Adds each error of errorTrie once without a path.
     private void AddErrorsWithoutPath(ErrorTrie errorTrie)
@@ -805,27 +814,84 @@ internal sealed class ValueCompletion
     {
         subFieldPaths = null;
 
-        if (fetched is null || GetSubFieldSelectionSet(selection) is not { } selectionSet)
+        if (fetched is null)
         {
             return ValueTypeErrorPlacement.Field;
+        }
+
+        _errorPlacements ??= [];
+
+        if (!_errorPlacements.TryGetValue((selection, fetched), out var cached))
+        {
+            cached = GetValueTypeErrorPlacement(selection, fetched);
+            _errorPlacements.Add((selection, fetched), cached);
+        }
+
+        var (placement, subFieldNames) = cached;
+
+        if (placement is ValueTypeErrorPlacement.SubField)
+        {
+            subFieldPaths = new List<Path>(subFieldNames!.Length);
+
+            foreach (var names in subFieldNames)
+            {
+                var path = fieldPath;
+
+                foreach (var name in names)
+                {
+                    path = path.Append(name);
+                }
+
+                subFieldPaths.Add(path);
+            }
+        }
+
+        return placement;
+    }
+
+    // Gets the placement of the error of a source that fetched the sub-fields in fetched of a value-type field, and
+    // the response names from the field to each sub-field that holds the error.
+    private (ValueTypeErrorPlacement, string[][]?) GetValueTypeErrorPlacement(
+        Selection selection,
+        ResultSelectionSet fetched)
+    {
+        if (GetSubFieldSelectionSet(selection) is not { } selectionSet)
+        {
+            return (ValueTypeErrorPlacement.Field, null);
         }
 
         var includeFlags = _store.IncludeFlags;
         List<ErrorSubField>? subFields = null;
-        CollectErrorSubFields(selectionSet, fetched, fieldPath, coverPath: null, includeFlags, ref subFields);
+        CollectErrorSubFields(selectionSet, fetched, Path.Root, coverPath: null, includeFlags, ref subFields);
 
         if (subFields is null)
         {
-            return ValueTypeErrorPlacement.None;
+            return (ValueTypeErrorPlacement.None, null);
         }
 
         if (selection.UnwrappedKind is TypeKind.List || FetchesEverySubField(selectionSet, fetched, includeFlags))
         {
-            return ValueTypeErrorPlacement.Field;
+            return (ValueTypeErrorPlacement.Field, null);
         }
 
-        subFieldPaths = GetErrorSubFieldPaths(subFields);
-        return ValueTypeErrorPlacement.SubField;
+        var paths = GetErrorSubFieldPaths(subFields);
+        var subFieldNames = new string[paths.Count][];
+
+        for (var i = 0; i < paths.Count; i++)
+        {
+            var names = new string[paths[i].Length];
+            var current = paths[i];
+
+            for (var j = names.Length - 1; j >= 0; j--)
+            {
+                names[j] = ((NamePathSegment)current).Name;
+                current = current.Parent;
+            }
+
+            subFieldNames[i] = names;
+        }
+
+        return (ValueTypeErrorPlacement.SubField, subFieldNames);
     }
 
     // Gets the paths of the sub-fields that hold the error: the first sub-field that is non-null together with every
@@ -1232,10 +1298,19 @@ internal sealed class ValueCompletion
             var path = pocket.Path;
             var error = pocket.Error;
             _store.RemoveSubFieldPocket(pocket);
-            InitializeUndefinedValueTypeParent(path);
 
-            if (_store.TryGetResult(path, out var fieldResult, out var isBelowNullValue)
-                && !isBelowNullValue
+            if (!TryGetPocketedSubField(pocket, out var fieldResult, out var isBelowNullValue))
+            {
+                InitializeUndefinedValueTypeParent(path);
+
+                if (!_store.TryGetResult(path, out fieldResult, out isBelowNullValue))
+                {
+                    _store.AddError(_errorHandler.Handle(ErrorHelper.WithPath(error, path)));
+                    continue;
+                }
+            }
+
+            if (!isBelowNullValue
                 && !fieldResult.IsNullOrInvalidated
                 && !fieldResult.IsInternal
                 && !fieldResult.IsExcluded
@@ -1285,6 +1360,60 @@ internal sealed class ValueCompletion
         }
     }
 
+    // Gets the sub-field of a pocket directly below its value-type field from the field the pocket holds, after
+    // initializing that field like InitializeUndefinedValueTypeParent, while no value holding an object or a list was
+    // replaced since the pocket was created.
+    private bool TryGetPocketedSubField(
+        FetchResultStore.SubFieldPocket pocket,
+        out CompositeResultElement fieldResult,
+        out bool isBelowNullValue)
+    {
+        fieldResult = default;
+        isBelowNullValue = false;
+
+        var result = _store.Result;
+
+        if (pocket.Depth != 1
+            || pocket.LayoutVersion != result.LayoutVersion
+            || pocket.Path is not NamePathSegment { Name: var name })
+        {
+            return false;
+        }
+
+        var field = pocket.Field;
+        isBelowNullValue = IsBelowNullValue(field);
+        InitializeUndefinedValueTypeField(field, isBelowNullValue);
+
+        if (pocket.LayoutVersion != result.LayoutVersion)
+        {
+            return false;
+        }
+
+        isBelowNullValue |= field.IsNullOrInvalidated;
+        return field.ValueKind is JsonValueKind.Object && field.TryGetProperty(name, out fieldResult);
+
+        static bool IsBelowNullValue(CompositeResultElement element)
+        {
+            if (element.IsRoot)
+            {
+                return false;
+            }
+
+            for (var current = element.Parent; ; current = current.Parent)
+            {
+                if (current.IsNullOrInvalidated)
+                {
+                    return true;
+                }
+
+                if (current.IsRoot)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
     // Initializes the undefined value-type objects above the sub-field at path with their selection sets when the
     // sources that failed for them fetched every client-visible sub-field, and otherwise sets them to null.
     private void InitializeUndefinedValueTypeParent(Path path)
@@ -1306,6 +1435,13 @@ internal sealed class ValueCompletion
             }
         }
 
+        InitializeUndefinedValueTypeField(parent, isBelowNullValue);
+    }
+
+    // Initializes the undefined value-type field with its selection set when the sources that failed for it fetched
+    // every client-visible sub-field, and otherwise sets it to null.
+    private void InitializeUndefinedValueTypeField(CompositeResultElement parent, bool isBelowNullValue)
+    {
         if (isBelowNullValue
             || parent.ValueKind is not JsonValueKind.Undefined
             || parent.Selection is not { IsValueTypeNamedType: true } selection)
@@ -1979,21 +2115,22 @@ internal sealed class ValueCompletion
                 if (!selection.IsInternal && !target.IsExcluded)
                 {
                     var path = target.Path;
+                    var anchor = new PocketAnchor(target, path.Length);
                     List<IError>? fieldErrors = null;
                     _store.RecordFailedValueTypeFetch(target, resultSelectionSet);
 
                     if (errorTrie.Error is not null)
                     {
-                        AddValueTypeFieldError(target, path, selection, resultSelectionSet, error);
+                        AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, error);
                     }
 
-                    AddSubFieldErrors(target, path, selection, resultSelectionSet, errorTrie, ref fieldErrors);
+                    AddSubFieldErrors(anchor, path, selection, resultSelectionSet, errorTrie, ref fieldErrors);
 
                     if (fieldErrors is not null)
                     {
                         foreach (var fieldError in fieldErrors)
                         {
-                            AddValueTypeFieldError(target, path, selection, resultSelectionSet, fieldError);
+                            AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, fieldError);
                         }
                     }
                 }
