@@ -10,7 +10,8 @@ namespace HotChocolate.Fusion;
 [Collection(KeyHopFailureGrowthCollection.Name)]
 public class KeyHopFailureGrowthTests : FusionTestBase
 {
-    // The largest ratio of the time for 4n items to the time for n items that counts as linear growth.
+    // The largest ratio of the processor time for 4n items to the processor time for n items that counts as linear
+    // growth.
     private const double MaxLinearGrowth = 8.0;
 
     [Fact]
@@ -64,8 +65,8 @@ public class KeyHopFailureGrowthTests : FusionTestBase
             """);
     }
 
-    // Gets the ratio of the fastest of seven runs of userList with 4n items to the fastest of seven runs with n items,
-    // and the response of the warm-up run with n items.
+    // Gets the ratio of the least processor time of seven runs of userList with 4n items to the least processor time
+    // of seven runs with n items, and the response of the warm-up run with n items.
     private static async Task<(double Growth, string Result)> MeasureGrowthAsync(
         Gateway gateway,
         string selection,
@@ -90,9 +91,15 @@ public class KeyHopFailureGrowthTests : FusionTestBase
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
-            var stopwatch = Stopwatch.StartNew();
+            var start = GetProcessorTime();
             await ExecuteAsync(gateway, query);
-            return stopwatch.Elapsed.TotalMilliseconds;
+            return (GetProcessorTime() - start).TotalMilliseconds;
+        }
+
+        static TimeSpan GetProcessorTime()
+        {
+            using var process = Process.GetCurrentProcess();
+            return process.TotalProcessorTime;
         }
 
         static string CreateUserListQuery(string selection, int count)
