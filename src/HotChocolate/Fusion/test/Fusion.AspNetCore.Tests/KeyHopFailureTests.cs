@@ -1216,7 +1216,14 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(CreateSequencedGatewayAsync, query, hops, [("B", "C"), ("E", "D")], [], []);
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreateSequencedGatewayAsync,
+            query,
+            include: null,
+            hops,
+            [("B", "C"), ("E", "D")],
+            [],
+            []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1235,7 +1242,14 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(CreateSequencedGatewayAsync, query, hops, [("B", "C"), ("E", "D")], [], []);
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreateSequencedGatewayAsync,
+            query,
+            include: null,
+            hops,
+            [("B", "C"), ("E", "D")],
+            [],
+            []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1254,7 +1268,14 @@ public class KeyHopFailureTests : FusionTestBase
         string[] hops = ["B", "C", "D", "E", "F"];
 
         // act
-        var result = await ExecuteInEveryHopOrderAsync(CreateSequencedGatewayAsync, query, hops, [("B", "C"), ("E", "D"), ("D", "F")], [], []);
+        var result = await ExecuteInEveryHopOrderAsync(
+            CreateSequencedGatewayAsync,
+            query,
+            include: null,
+            hops,
+            [("B", "C"), ("E", "D"), ("D", "F")],
+            [],
+            []);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1397,7 +1418,8 @@ public class KeyHopFailureTests : FusionTestBase
             sequence.Start(order);
             var result = await ExecuteWithSortedErrorsAsync(
                 gateway,
-                "{ userList(ids: [96, 93]) { total badNN } }");
+                "{ userList(ids: [96, 93]) { total badNN } }",
+                include: null);
             results.Add($"## {string.Join(" ", order)}\n{result}");
         }
 
@@ -1428,7 +1450,10 @@ public class KeyHopFailureTests : FusionTestBase
         sequence.Start(["I", "B", "C"]);
 
         // act
-        var result = await ExecuteWithSortedErrorsAsync(gateway, "{ userList(ids: [96, 93]) { total badNN } }");
+        var result = await ExecuteWithSortedErrorsAsync(
+            gateway,
+            "{ userList(ids: [96, 93]) { total badNN } }",
+            include: null);
 
         // assert
         result.MatchInlineSnapshot(
@@ -1453,6 +1478,7 @@ public class KeyHopFailureTests : FusionTestBase
         var result = await ExecuteInEveryHopOrderAsync(
             CreatePetSequencedGatewayAsync,
             "{ petList(ids: [96, 93]) { ... on Dog { bark barkNN } } }",
+            include: null,
             ["Z2", "Z3"],
             [],
             nulling,
@@ -1467,7 +1493,7 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Execute_Should_ReportTheRaisedErrorOfASharedEntity_When_ASiblingErrorNulledTheListOfItsPrimaryPath()
+    public async Task Execute_Should_ReportTheRaisedErrorOfASharedEntity_When_ASiblingErrorNulledItsPrimaryList()
     {
         // arrange
         const string query = "{ a: userList(ids: [96, 93]) { total badNN } b: userList(ids: [96]) { total } }";
@@ -1479,6 +1505,7 @@ public class KeyHopFailureTests : FusionTestBase
         var requestInFlight = await ExecuteInEveryHopOrderAsync(
             CreateRaisedErrorSequencedGatewayAsync,
             query,
+            include: null,
             ["B", "C", "I"],
             [("B", "C"), ("B", "I")],
             [iError, aError, bError],
@@ -1488,6 +1515,7 @@ public class KeyHopFailureTests : FusionTestBase
         var listNullFirst = await ExecuteInEveryHopOrderAsync(
             CreateRaisedErrorSequencedGatewayAsync,
             query,
+            include: null,
             ["B", "C", "I"],
             [("I", "B"), ("B", "C")],
             [iError, bError],
@@ -1496,9 +1524,9 @@ public class KeyHopFailureTests : FusionTestBase
         var sequence = new HopSequence();
         using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
         sequence.Start(["B", "I", "C"]);
-        var inFlightOrder = await ExecuteWithSortedErrorsAsync(gateway, query);
+        var inFlightOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
         sequence.Start(["I", "B", "C"]);
-        var nulledFirstOrder = await ExecuteWithSortedErrorsAsync(gateway, query);
+        var nulledFirstOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
         sequence.Start([]);
 
         // assert
@@ -1539,6 +1567,7 @@ public class KeyHopFailureTests : FusionTestBase
         var result = await ExecuteInEveryHopOrderAsync(
             CreateSequencedGatewayAsync,
             "{ userList(ids: [98, 93]) { totalNN scoreNN } }",
+            include: null,
             ["B", "E"],
             [],
             nulling,
@@ -1645,7 +1674,7 @@ public class KeyHopFailureTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Execute_Should_ReportTheKeyFetchErrorOnTheDependentField_When_TheListIsNullBeforeTheFailedHopAnswers()
+    public async Task Execute_Should_ReportTheKeyFetchErrorOnTheDependentField_When_TheListIsNullBeforeTheHopAnswers()
     {
         // arrange
         const string iError = """{"message":"I hop failed for 93","path":["userList",1,"badNN"]}""";
@@ -1655,6 +1684,7 @@ public class KeyHopFailureTests : FusionTestBase
         var total = await ExecuteInEveryHopOrderAsync(
             CreateRaisedErrorSequencedGatewayAsync,
             "{ userList(ids: [98, 93]) { total badNN } }",
+            include: null,
             orders,
             [],
             [iError, """{"message":"B hop failed for 98","path":["userList",0,"total"]}"""],
@@ -1662,6 +1692,7 @@ public class KeyHopFailureTests : FusionTestBase
         var totalNN = await ExecuteInEveryHopOrderAsync(
             CreateRaisedErrorSequencedGatewayAsync,
             "{ userList(ids: [98, 93]) { totalNN badNN } }",
+            include: null,
             orders,
             [],
             [iError, """{"message":"B hop failed for 98","path":["userList",0,"totalNN"]}"""],
@@ -1669,6 +1700,7 @@ public class KeyHopFailureTests : FusionTestBase
         var middle = await ExecuteInEveryHopOrderAsync(
             CreateRaisedErrorSequencedGatewayAsync,
             "{ userList(ids: [98, 2, 93]) { total badNN } }",
+            include: null,
             orders,
             [],
             [
@@ -1855,7 +1887,8 @@ public class KeyHopFailureTests : FusionTestBase
         sequence.Start(order);
         var result = await ExecuteWithSortedErrorsAsync(
             gateway,
-            "{ users(ids: [2, 3]) { name kayNN } nullableAccounts(ids: [5]) { kayNN } }");
+            "{ users(ids: [2, 3]) { name kayNN } nullableAccounts(ids: [5]) { kayNN } }",
+            include: null);
         sequence.Start([]);
 
         return result;
@@ -1999,22 +2032,6 @@ public class KeyHopFailureTests : FusionTestBase
             () => AssertNulledResults([$"data: null\nerrors: [{root},{wrong}]\n"], [root], [extra]));
     }
 
-    private Task<string> ExecuteInEveryHopOrderAsync(
-        Func<HopSequence, bool, Task<Gateway>> createGateway,
-        string query,
-        string[] hops,
-        (string First, string Second)[] precedences,
-        string[] nullingErrors,
-        string[] allowedErrors)
-        => ExecuteInEveryHopOrderAsync(
-            createGateway,
-            query,
-            include: null,
-            hops,
-            precedences,
-            nullingErrors,
-            allowedErrors);
-
     private async Task<string> ExecuteInEveryHopOrderAsync(
         Func<HopSequence, bool, Task<Gateway>> createGateway,
         string query,
@@ -2079,9 +2096,6 @@ public class KeyHopFailureTests : FusionTestBase
         Extend();
         return orders;
     }
-
-    private static Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query)
-        => ExecuteWithSortedErrorsAsync(gateway, query, include: null);
 
     private static async Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query, bool? include)
     {
