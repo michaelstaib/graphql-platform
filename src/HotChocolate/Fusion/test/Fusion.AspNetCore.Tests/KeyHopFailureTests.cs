@@ -1505,7 +1505,7 @@ public class KeyHopFailureTests : FusionTestBase
 
         // act
         var requestInFlight = await ExecuteInEveryHopOrderAsync(
-            CreateRaisedErrorSequencedGatewayAsync,
+            CreateInFlightRaisedErrorSequencedGatewayAsync,
             query,
             include: null,
             ["B", "C", "I"],
@@ -1524,9 +1524,12 @@ public class KeyHopFailureTests : FusionTestBase
             [aError]);
 
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        using var inFlightGateway = await CreateInFlightRaisedErrorSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping: true);
         sequence.Start(["B", "I", "C"]);
-        var inFlightOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
+        var inFlightOrder = await ExecuteWithSortedErrorsAsync(inFlightGateway, query, include: null);
+        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
         sequence.Start(["I", "B", "C"]);
         var nulledFirstOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
         sequence.Start([]);
@@ -2202,11 +2205,31 @@ public class KeyHopFailureTests : FusionTestBase
             [],
             [],
             []);
+        var sequence = new HopSequence();
+        var dependentErrors = new List<string>();
+
+        foreach (var enableRequestGrouping in new[] { true, false })
+        {
+            using var gateway = await CreateCompositeRequirementSequencedGatewayAsync(sequence, enableRequestGrouping);
+
+            foreach (var order in GetHopOrders(["B", "R"], []))
+            {
+                sequence.Start(order);
+                dependentErrors.Add(
+                    await ExecuteForErrorMessagesAtPathAsync(
+                        gateway,
+                        $"{{ userList(ids: [98, 2]) {{ {selection} }} }}",
+                        """["userList",0,"total"]"""));
+            }
+        }
+
+        sequence.Start([]);
 
         // assert
         Snapshot.Create()
             .Add(intact, "intact list", "text")
             .Add(nullableItems, "nullable items", "text")
+            .Add(Assert.Single(dependentErrors.Distinct()), "errors of the dependent field in response order", "text")
             .MatchMarkdownSnapshot();
     }
 
@@ -2331,9 +2354,13 @@ public class KeyHopFailureTests : FusionTestBase
     public async Task Execute_Should_ReportTheErrorOfADeliveredHopInEveryOrder_When_TheNullReachesTheRoot()
     {
         // arrange
+        const string subFieldsQuery = "{ users(ids: [98, 93]) { info { code label } total badNN } }";
+        const string fieldQuery = "{ users(ids: [98, 93]) { info { code } badNN } }";
         var sequence = new HopSequence();
         var subFields = new List<string>();
         var field = new List<string>();
+        var heldSubFields = new List<string>();
+        var heldField = new List<string>();
 
         // act
         foreach (var enableRequestGrouping in new[] { true, false })
@@ -2343,21 +2370,27 @@ public class KeyHopFailureTests : FusionTestBase
             foreach (var order in GetHopOrders(["B", "X", "I"], [("B", "I")]))
             {
                 sequence.Start(order);
-                subFields.Add(
-                    await ExecuteWithSortedErrorsAsync(
-                        gateway,
-                        "{ users(ids: [98, 93]) { info { code label } total badNN } }",
-                        include: null));
+                subFields.Add(await ExecuteWithSortedErrorsAsync(gateway, subFieldsQuery, include: null));
             }
 
             foreach (var order in GetHopOrders(["B", "I"], [("B", "I")]))
             {
                 sequence.Start(order);
-                field.Add(
-                    await ExecuteWithSortedErrorsAsync(
-                        gateway,
-                        "{ users(ids: [98, 93]) { info { code } badNN } }",
-                        include: null));
+                field.Add(await ExecuteWithSortedErrorsAsync(gateway, fieldQuery, include: null));
+            }
+
+            foreach (var order in GetHopOrders(["B", "X", "I"], [("I", "B")]))
+            {
+                sequence.Start(order, heldHop: "B");
+                heldSubFields.Add(await ExecuteWithSortedErrorsAsync(gateway, subFieldsQuery, include: null));
+                sequence.Release();
+            }
+
+            foreach (var order in GetHopOrders(["B", "I"], [("I", "B")]))
+            {
+                sequence.Start(order, heldHop: "B");
+                heldField.Add(await ExecuteWithSortedErrorsAsync(gateway, fieldQuery, include: null));
+                sequence.Release();
             }
         }
 
@@ -2367,6 +2400,8 @@ public class KeyHopFailureTests : FusionTestBase
         Snapshot.Create()
             .Add(Assert.Single(subFields.Distinct()), "sub-fields of two sources", "text")
             .Add(Assert.Single(field.Distinct()), "every sub-field from one source", "text")
+            .Add(Assert.Single(heldSubFields.Distinct()), "sub-fields of two sources, B answers after I", "text")
+            .Add(Assert.Single(heldField.Distinct()), "every sub-field from one source, B answers after I", "text")
             .MatchMarkdownSnapshot();
     }
 
@@ -2406,18 +2441,472 @@ public class KeyHopFailureTests : FusionTestBase
                 .Add(nulled, $"{selection}, nulled list", "text");
         }
 
-        var onlyTypename = await ExecuteInEveryHopOrderAsync(
+        await AddKeyObjectResultsAsync(
+            snapshot,
             CreateKeyObjectSiblingSequencedGatewayAsync,
-            "{ userList(ids: [98, 2]) { info { __typename label } total } }",
-            include: null,
-            ["B", "X"],
-            [],
-            [],
-            []);
-        snapshot.Add(onlyTypename, "info { __typename label } total, intact list", "text");
+            "info { __typename label } total",
+            ["B", "X"]);
 
         // assert
         snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheSubFieldErrorAtItsPathInEveryOrder_When_TheSourceNullsTheKeyObject()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateNonNullCodeErrorSequencedGatewayAsync,
+            "info { code } total",
+            ["B"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateNonNullCodeErrorSequencedGatewayAsync,
+            "info { code label } total",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheSubFieldErrorAtItsPathInEveryOrder_When_TheSourceNullsANestedKeyObject()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateDetailErrorSequencedGatewayAsync,
+            "info { code detail { sku } } total",
+            ["B"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateDetailErrorSequencedGatewayAsync,
+            "info { code } total",
+            ["B"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnlyOnTheSubFieldThatRaisedItInEveryOrder_When_SiblingsAreFetched()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateNonNullCodeErrorSequencedGatewayAsync,
+            "info { code2 code label } total",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_KeepTheSubFieldsOfTheOtherSourceInEveryOrder_When_TheLookupRaises()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateNullableCodeLookupErrorSequencedGatewayAsync,
+            "info { code label } total",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFirstFetchedSubFieldInEveryOrder_When_TheSourceFails()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateNullableCodeServerErrorSequencedGatewayAsync,
+            "info { code label } total",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFirstFetchedSubFieldInEveryOrder_When_ANestedSubFieldIsShared()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+
+        // act
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateMetaSequencedGatewayAsync,
+            "info { code meta { a b } }",
+            ["B", "X"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            CreateMetaSequencedGatewayAsync,
+            "info { meta { a b } code }",
+            ["B", "X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheFieldInEveryOrder_When_TheKeyObjectSelectsOnlyTheTypename()
+    {
+        // arrange
+        var snapshot = Snapshot.Create();
+        Func<HopSequence, bool, Task<Gateway>> createGateway =
+            CreateInfoSourcesSequencedGatewayAsync<XInfoInterfaceTwo.Query, XInfoInterfaceTwo.InfoA,
+                XInfoInterfaceTwo.InfoB>;
+
+        // act
+        await AddKeyObjectResultsAsync(snapshot, createGateway, "info { __typename }", ["B"]);
+        await AddKeyObjectResultsAsync(
+            snapshot,
+            createGateway,
+            "info { __typename ... on InfoA { label } ... on InfoB { code2 } }",
+            ["B", "X"]);
+        await AddKeyObjectResultsAsync(snapshot, createGateway, "info { __typename ... on InfoA { label } }", ["X"]);
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    private async Task AddKeyObjectResultsAsync(
+        Snapshot snapshot,
+        Func<HopSequence, bool, Task<Gateway>> createGateway,
+        string selection,
+        string[] hops)
+    {
+        var intact = await ExecuteInEveryHopOrderAsync(
+            createGateway,
+            $"{{ userList(ids: [98, 2]) {{ {selection} }} }}",
+            include: null,
+            hops,
+            [],
+            [],
+            []);
+        var nulled = await ExecuteInEveryHopOrderAsync(
+            createGateway,
+            $"{{ userList(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            [.. hops, "I"],
+            [],
+            [],
+            []);
+        var nullableItems = await ExecuteInEveryHopOrderAsync(
+            createGateway,
+            $"{{ nullableUsers(ids: [98, 93]) {{ {selection} badNN }} }}",
+            include: null,
+            [.. hops, "I"],
+            [],
+            [],
+            []);
+        snapshot
+            .Add(intact, $"{selection}, intact list", "text")
+            .Add(nulled, $"{selection}, nulled list", "text")
+            .Add(nullableItems, $"{selection}, nullable items", "text");
+    }
+
+    private Task<Gateway> CreateNonNullCodeErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateInfoSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            b => b.AddQueryType<BInfoNonNullCodeError.Query>(),
+            x => x.AddQueryType<XInfoLabel.Query>(),
+            includeDependentSource: true);
+
+    private Task<Gateway> CreateNullableCodeLookupErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateInfoSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            b => b.AddQueryType<BInfoNullableCodeLookupError.Query>(),
+            x => x.AddQueryType<XInfoLabel.Query>(),
+            includeDependentSource: true);
+
+    private Task<Gateway> CreateNullableCodeServerErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoNullableCodeLookupError.Query>(), "B", true),
+                ("x", x => x.AddQueryType<XInfoLabel.Query>(), "X", false),
+                ("c", c => c.AddQueryType<CNested.Query>(), null, false)
+            ]);
+
+    private Task<Gateway> CreateDetailErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoDetailError.Query>(), "B", false),
+                ("c", c => c.AddQueryType<CInfoDetailSku.Query>(), null, false)
+            ]);
+
+    private Task<Gateway> CreateMetaSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateHopSourcesSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping,
+            [
+                ("b", b => b.AddQueryType<BInfoMeta.Query>(), "B", false),
+                ("x", x => x.AddQueryType<XInfoMeta.Query>(), "X", false)
+            ]);
+
+    // Composes source schema a, the given sources and source schema i, whose hop is I. A source with a hop is
+    // answered in the order of the current run, with a server error when it fails.
+    private async Task<Gateway> CreateHopSourcesSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping,
+        (string Name, Action<IRequestExecutorBuilder> Configure, string? Hop, bool Fails)[] sources)
+    {
+        var sourceSchemas = new List<(string, TestServer)>
+        {
+            ("a", CreateSourceSchema("a", b => b.AddQueryType<A.Query>()))
+        };
+
+        foreach (var (name, configure, hop, fails) in sources)
+        {
+            if (hop is null)
+            {
+                sourceSchemas.Add((name, CreateSourceSchema(name, configure)));
+                continue;
+            }
+
+            if (fails)
+            {
+                var failingHop = new FailingSequencedHop(sequence, hop);
+                sourceSchemas.Add((name, CreateSourceSchema(name, configure, mockHttpResponse: failingHop.SendAsync)));
+                continue;
+            }
+
+            var sequencedHop = new SequencedHop(sequence, hop);
+            var server = CreateSourceSchema(name, configure, mockHttpResponse: sequencedHop.SendAsync);
+            sequencedHop.Connect(server);
+            sourceSchemas.Add((name, server));
+        }
+
+        var hopI = new SequencedHop(sequence, "I");
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopI.Connect(i);
+        sourceSchemas.Add(("i", i));
+
+        return await CreateCompositeSchemaAsync(
+            [.. sourceSchemas],
+            configureGatewayBuilder: builder =>
+                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = enableRequestGrouping),
+            includeOperationPlan: false);
+    }
+
+    public static class BInfoNonNullCodeError
+    {
+        [GraphQLName("Info")]
+        public class InfoObj(int id)
+        {
+            [Shareable]
+            public string Sku => "sku-" + id;
+
+            public string Code2 => "code2-" + id;
+
+            public string GetCode() => id == 98 ? throw new GraphQLException("code failed for 98") : "code-" + id;
+        }
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public InfoObj? GetInfo() => new(id);
+        }
+    }
+
+    public static class BInfoNullableCodeLookupError
+    {
+        public record Info([property: Shareable] string Sku, string? Code);
+
+        public record User(int Id, [property: Shareable] Info? Info);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id)
+                => id == 98
+                    ? throw new GraphQLException("B lookup failed for 98")
+                    : new User(id, new Info("sku-" + id, "code-" + id));
+        }
+    }
+
+    public static class BInfoDetailError
+    {
+        [GraphQLName("Detail")]
+        public class DetailObj(int id)
+        {
+            [Shareable]
+            public string GetSku() => id == 98 ? throw new GraphQLException("sku failed for 98") : "sku-" + id;
+        }
+
+        [GraphQLName("Info")]
+        public class InfoObj(int id)
+        {
+            public string? Code => "code-" + id;
+
+            [Shareable]
+            public DetailObj? GetDetail() => new(id);
+        }
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public InfoObj? GetInfo() => new(id);
+        }
+    }
+
+    public static class CInfoDetailSku
+    {
+        public record Detail([property: Shareable] string Sku);
+
+        public record Info([property: Shareable] Detail Detail);
+
+        public record User([property: Shareable] Info Info, int? Total);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public User? GetUserBySku([Is("info.detail.sku")] string sku)
+                => new(new Info(new Detail(sku)), int.Parse(sku[4..]));
+        }
+    }
+
+    public static class BInfoMeta
+    {
+        public record Meta(string? A);
+
+        public record Info(string? Code, [property: Shareable] Meta Meta);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo()
+                => id == 98
+                    ? throw new GraphQLException("info failed for 98")
+                    : new Info("code-" + id, new Meta("a-" + id));
+        }
+    }
+
+    public static class XInfoMeta
+    {
+        public record Meta(string? B);
+
+        public record Info([property: Shareable] Meta Meta);
+
+        public class Query
+        {
+            [Internal]
+            public Lookups Lookups { get; } = new();
+        }
+
+        [Internal]
+        public class Lookups
+        {
+            [Lookup, Internal]
+            public UserObj? GetUserById(int id) => new(id);
+        }
+
+        [GraphQLName("User")]
+        public class UserObj(int id)
+        {
+            public int Id => id;
+
+            [Shareable]
+            public Info? GetInfo() => new(new Meta("b-" + id));
+        }
     }
 
     private async Task AddAbstractKeyObjectResultsAsync(
@@ -3368,11 +3857,23 @@ public class KeyHopFailureTests : FusionTestBase
         }
     }
 
-    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+    private Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+        => CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping, hopIWaitsForRequestOfC: false);
+
+    // Answers hop I only after the request of hop C was sent, so the target of hop C is in flight when I nulls it.
+    private Task<Gateway> CreateInFlightRaisedErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping, hopIWaitsForRequestOfC: true);
+
+    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping,
+        bool hopIWaitsForRequestOfC)
     {
         var hopB = new SequencedHop(sequence, "B");
         var hopC = new SequencedHop(sequence, "C");
-        var hopI = new SequencedHop(sequence, "I");
+        var hopI = new SequencedHop(sequence, "I", hopIWaitsForRequestOfC ? "C" : null);
         var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
         var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: hopB.SendAsync);
         var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>(), mockHttpResponse: hopC.SendAsync);
@@ -3636,6 +4137,28 @@ public class KeyHopFailureTests : FusionTestBase
         return orders;
     }
 
+    // Returns the messages of the errors at the path, in the order of the response.
+    private static async Task<string> ExecuteForErrorMessagesAtPathAsync(Gateway gateway, string query, string path)
+    {
+        var text = new StringBuilder();
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        using var response = await client.PostAsync(
+            new OperationRequest(query),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        using var result = await response.ReadAsResultAsync(TestContext.Current.CancellationToken);
+
+        foreach (var error in result.Errors.EnumerateArray())
+        {
+            if (error.GetProperty("path").GetRawText() == path)
+            {
+                text.AppendLine(error.GetProperty("message").GetString());
+            }
+        }
+
+        return text.ToString();
+    }
+
     private static async Task<string> ExecuteWithSortedErrorsAsync(Gateway gateway, string query, bool? include)
     {
         var text = new StringBuilder();
@@ -3692,22 +4215,44 @@ public class KeyHopFailureTests : FusionTestBase
 
     private sealed class HopSequence
     {
+        private HopRun _run = new([], heldHop: null);
+
+        // Starts a run that delivers the hops in the given order and holds the held hop until Release is called.
+        public void Start(string[] order, string? heldHop = null) => _run = new HopRun(order, heldHop);
+
+        public HopRun Current => _run;
+
+        public void Release() => _run.Release();
+
+        public Task WaitForTurnAsync(string hop, CancellationToken cancellationToken)
+            => _run.WaitForTurnAsync(hop, cancellationToken);
+
+        public void MarkDelivered(string hop) => _run.MarkDelivered(hop);
+    }
+
+    private sealed class HopRun(string[] order, string? heldHop)
+    {
         private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(30);
 
-        private string[] _order = [];
-        private TaskCompletionSource[] _delivered = [];
+        private readonly TaskCompletionSource[] _delivered = order
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToArray();
+        private readonly ConcurrentDictionary<string, TaskCompletionSource> _requested = new();
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public void Start(string[] order)
-        {
-            _order = order;
-            _delivered = order
-                .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
-                .ToArray();
-        }
+        public void MarkRequested(string hop) => GetRequested(hop).TrySetResult();
+
+        public Task WaitForRequestAsync(string hop, CancellationToken cancellationToken)
+            => GetRequested(hop).Task.WaitAsync(s_timeout, cancellationToken);
 
         public async Task WaitForTurnAsync(string hop, CancellationToken cancellationToken)
         {
-            var index = Array.IndexOf(_order, hop);
+            if (hop == heldHop)
+            {
+                await _released.Task.WaitAsync(s_timeout, cancellationToken);
+            }
+
+            var index = Array.IndexOf(order, hop);
 
             if (index > 0)
             {
@@ -3717,16 +4262,24 @@ public class KeyHopFailureTests : FusionTestBase
 
         public void MarkDelivered(string hop)
         {
-            var index = Array.IndexOf(_order, hop);
+            var index = Array.IndexOf(order, hop);
 
             if (index >= 0)
             {
                 _delivered[index].TrySetResult();
             }
         }
+
+        public void Release() => _released.TrySetResult();
+
+        private TaskCompletionSource GetRequested(string hop)
+            => _requested.GetOrAdd(
+                hop,
+                _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
     }
 
-    private sealed class SequencedHop(HopSequence sequence, string hop)
+    // A hop that is answered in the order of the current run, after the request of waitForRequestOf was sent.
+    private sealed class SequencedHop(HopSequence sequence, string hop, string? waitForRequestOf = null)
     {
         private HttpMessageInvoker? _invoker;
 
@@ -3736,13 +4289,34 @@ public class KeyHopFailureTests : FusionTestBase
         public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
         {
             var cancellationToken = TestContext.Current.CancellationToken;
+            var run = sequence.Current;
+            run.MarkRequested(hop);
 
-            await sequence.WaitForTurnAsync(hop, cancellationToken);
+            if (waitForRequestOf is not null)
+            {
+                await run.WaitForRequestAsync(waitForRequestOf, cancellationToken);
+            }
+
+            await run.WaitForTurnAsync(hop, cancellationToken);
             var response = await _invoker!.SendAsync(request, cancellationToken);
             await response.Content.LoadIntoBufferAsync();
-            sequence.MarkDelivered(hop);
+            run.MarkDelivered(hop);
 
             return response;
+        }
+    }
+
+    // A hop that is answered with a server error in the order of the current run.
+    private sealed class FailingSequencedHop(HopSequence sequence, string hop)
+    {
+        public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
+        {
+            var run = sequence.Current;
+            run.MarkRequested(hop);
+            await run.WaitForTurnAsync(hop, TestContext.Current.CancellationToken);
+            run.MarkDelivered(hop);
+
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError);
         }
     }
 

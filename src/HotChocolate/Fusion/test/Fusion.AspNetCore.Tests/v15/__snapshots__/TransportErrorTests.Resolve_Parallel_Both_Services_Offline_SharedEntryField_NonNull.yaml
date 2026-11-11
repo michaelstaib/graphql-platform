@@ -14,7 +14,15 @@ response:
         {
           "message": "Unexpected Execution Error",
           "path": [
-            "viewer"
+            "viewer",
+            "name"
+          ]
+        },
+        {
+          "message": "Unexpected Execution Error",
+          "path": [
+            "viewer",
+            "userId"
           ]
         }
       ]

@@ -2878,6 +2878,25 @@ public sealed partial class OperationPlanner
         return current;
     }
 
+    // Gets whether the union is a value type whose member types are value types as well.
+    private static bool IsValueTypeUnion(FusionUnionTypeDefinition unionType)
+    {
+        if (!unionType.IsValueType)
+        {
+            return false;
+        }
+
+        foreach (var memberType in unionType.Types)
+        {
+            if (!memberType.IsValueType)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Strips child selection sets from fields whose return type is not a
     /// value type. Only value-type subtrees are relevant for the result
@@ -2910,7 +2929,7 @@ public sealed partial class OperationPlanner
                         var fieldNamedType = fieldDef.Type.NamedType();
 
                         if (fieldNamedType is FusionComplexTypeDefinition { IsValueType: true }
-                            or FusionUnionTypeDefinition { IsValueType: true })
+                            || (fieldNamedType is FusionUnionTypeDefinition unionType && IsValueTypeUnion(unionType)))
                         {
                             var pruned = PruneNonValueTypeChildren(
                                 field.SelectionSet,

@@ -1,0 +1,85 @@
+{
+  "version": "1.2.0",
+  "id": "b8ea4369c1fecefa2cc77fcc78cbe305239895b9e1318cdd568252ce193e1f20",
+  "operation": {
+    "kind": "Query",
+    "document": "{ users { info { __typename @fusion__requirement ... on InfoA { code label } } id @fusion__requirement } }",
+    "id": "123456789101112",
+    "hash": "123456789101112",
+    "shortHash": "123456789101112"
+  },
+  "searchSpace": 2,
+  "expandedNodes": 5,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Operation",
+      "schema": "a",
+      "operation": {
+        "name": "Op_123456789101112_1",
+        "kind": "Query",
+        "document": "query Op_123456789101112_1 { users { id } }",
+        "hash": "1b7d515f6cca5a626a1f7be8ab2cd6a6fbfe735a58dc77ea7c548195c2933039",
+        "shortHash": "1b7d515f",
+        "xxHash": 12073123458780405880
+      },
+      "resultSelectionSet": "{ users }"
+    },
+    {
+      "id": 2,
+      "type": "Operation",
+      "schema": "b",
+      "operation": {
+        "name": "Op_123456789101112_2",
+        "kind": "Query",
+        "document": "query Op_123456789101112_2($__fusion_1_id: Int!) { lookups { userById(id: $__fusion_1_id) { info { __typename ... on InfoA { code } } } } }",
+        "hash": "a5fe52806d5c0702fb6187088814beb225f82aa257d6544b0b20416f84379502",
+        "shortHash": "a5fe5280",
+        "xxHash": 15884896899953683249
+      },
+      "lookupTypeName": "User",
+      "resultSelectionSet": "{ info { __typename ... on InfoA { code } } }",
+      "source": "$.lookups.userById",
+      "target": "$.users",
+      "requirements": [
+        {
+          "name": "__fusion_1_id",
+          "type": "Int!",
+          "path": "$.users",
+          "selectionMap": "id"
+        }
+      ],
+      "dependencies": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "type": "Operation",
+      "schema": "x",
+      "operation": {
+        "name": "Op_123456789101112_3",
+        "kind": "Query",
+        "document": "query Op_123456789101112_3($__fusion_2_id: Int!) { lookups { userById(id: $__fusion_2_id) { info { __typename ... on InfoA { label } } } } }",
+        "hash": "0858ae4238fdf5c9aca32456dc93b19cd9a643a9909164e9bce95d2c2d6c4a23",
+        "shortHash": "0858ae42",
+        "xxHash": 9800655847907915090
+      },
+      "lookupTypeName": "User",
+      "resultSelectionSet": "{ info { __typename ... on InfoA { label } } }",
+      "source": "$.lookups.userById",
+      "target": "$.users",
+      "requirements": [
+        {
+          "name": "__fusion_2_id",
+          "type": "Int!",
+          "path": "$.users",
+          "selectionMap": "id"
+        }
+      ],
+      "dependencies": [
+        1
+      ]
+    }
+  ]
+}

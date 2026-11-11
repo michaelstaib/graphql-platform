@@ -1,4 +1,3 @@
-using System.Text.Json;
 using HotChocolate.Transport.Http;
 using OperationRequest = HotChocolate.Transport.OperationRequest;
 
@@ -111,7 +110,7 @@ public class SharedPathErrorPocketingTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Viewer_NonNull_With_Error_Fails_Fast()
+    public async Task Viewer_NonNull_With_Error_And_Nullable_Children_Pockets_Child_Error()
     {
         using var serverA = CreateSourceSchema(
             "A",
@@ -159,13 +158,7 @@ public class SharedPathErrorPocketingTests : FusionTestBase
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
 
-        using var response = await result.ReadAsResultAsync(TestContext.Current.CancellationToken);
-
-        Assert.True(response.Errors.ValueKind is JsonValueKind.Array);
-        Assert.Equal(1, response.Errors.GetArrayLength());
-        Assert.Equal("Unexpected Execution Error", response.Errors[0].GetProperty("message").GetString());
-        Assert.Equal("viewer", response.Errors[0].GetProperty("path")[0].GetString());
-        Assert.True(response.Data.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null);
+        await MatchSnapshotAsync(gateway, request, result);
     }
 
     [Fact]

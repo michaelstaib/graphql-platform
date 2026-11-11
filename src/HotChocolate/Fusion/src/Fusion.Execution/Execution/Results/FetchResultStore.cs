@@ -99,8 +99,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private Dictionary<Path, IError>? _pocketedErrors;
     private List<KeyValuePair<Path, IError>>? _subFieldPockets;
     private Dictionary<(Path, string), List<KeyFetchError>>? _keyFetchErrors;
-    private ResultSelectionSet? _keyFetchSource;
-    private IOperationPlan? _completingPlan;
+    private List<KeyFetchError>? _unstampedKeyFetchErrors;
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
     private Dictionary<Path, List<IError>>? _errorsByPath;
@@ -524,11 +523,13 @@ internal sealed partial class FetchResultStore : IDisposable
             var partial = document.Root;
             var data = _result.Data;
 
-            return _valueCompletion.BuildResult(
+            var canExecutionContinue = _valueCompletion.BuildResult(
                 partial,
                 data,
                 errorTrie: null,
                 resultSelectionSet: resultSelectionSet);
+            StampKeyFetchErrors(resultSelectionSet);
+            return canExecutionContinue;
         }
     }
 
@@ -594,44 +595,50 @@ internal sealed partial class FetchResultStore : IDisposable
     {
         lock (_lock)
         {
-            ref var path = ref MemoryMarshal.GetReference(paths);
-            ref var end = ref Unsafe.Add(ref path, paths.Length);
-            var resultData = _result.Data;
-            _keyFetchSource = resultSelectionSet;
-
-            while (Unsafe.IsAddressLessThan(ref path, ref end))
+            try
             {
-                if (resultData.IsInvalidated)
-                {
-                    return false;
-                }
+                ref var path = ref MemoryMarshal.GetReference(paths);
+                ref var end = ref Unsafe.Add(ref path, paths.Length);
+                var resultData = _result.Data;
 
-                var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
-                if (element.IsNullOrInvalidated)
+                while (Unsafe.IsAddressLessThan(ref path, ref end))
                 {
-                    // The start element is an ancestor when the target is below a null value.
-                    if (element.CompactPath.Length == path.Length)
+                    if (resultData.IsInvalidated)
                     {
-                        _valueCompletion.ReportErrorOnNulledTarget(element.CompactPath, resultSelectionSet, error);
+                        return false;
                     }
 
-                    goto AddErrors_Next;
-                }
+                    var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
+                    if (element.IsNullOrInvalidated)
+                    {
+                        // The start element is an ancestor when the target is below a null value.
+                        if (element.CompactPath.Length == path.Length)
+                        {
+                            _valueCompletion.ReportErrorOnNulledTarget(element.CompactPath, resultSelectionSet, error);
+                        }
 
-                var canExecutionContinue =
-                    _valueCompletion.BuildErrorResult(
-                        element,
-                        resultSelectionSet,
-                        error,
-                        element.CompactPath);
-                if (!canExecutionContinue)
-                {
-                    resultData.Invalidate();
-                    return false;
-                }
+                        goto AddErrors_Next;
+                    }
+
+                    var canExecutionContinue =
+                        _valueCompletion.BuildErrorResult(
+                            element,
+                            resultSelectionSet,
+                            error,
+                            element.CompactPath);
+                    if (!canExecutionContinue)
+                    {
+                        resultData.Invalidate();
+                        return false;
+                    }
 
 AddErrors_Next:
-                path = ref Unsafe.Add(ref path, 1)!;
+                    path = ref Unsafe.Add(ref path, 1)!;
+                }
+            }
+            finally
+            {
+                StampKeyFetchErrors(resultSelectionSet);
             }
         }
 
@@ -645,39 +652,45 @@ AddErrors_Next:
     {
         lock (_lock)
         {
-            ref var path = ref MemoryMarshal.GetReference(paths);
-            ref var end = ref Unsafe.Add(ref path, paths.Length);
-            var resultData = _result.Data;
-            _keyFetchSource = resultSelectionSet;
-
-            while (Unsafe.IsAddressLessThan(ref path, ref end))
+            try
             {
-                if (resultData.IsInvalidated)
-                {
-                    return false;
-                }
+                ref var path = ref MemoryMarshal.GetReference(paths);
+                ref var end = ref Unsafe.Add(ref path, paths.Length);
+                var resultData = _result.Data;
 
-                var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
-                if (element.IsNullOrInvalidated)
+                while (Unsafe.IsAddressLessThan(ref path, ref end))
                 {
-                    _valueCompletion.ReportErrorOnNulledTarget(path, resultSelectionSet, error);
-                    goto AddErrors_Next;
-                }
+                    if (resultData.IsInvalidated)
+                    {
+                        return false;
+                    }
 
-                var canExecutionContinue =
-                    _valueCompletion.BuildErrorResult(
-                        element,
-                        resultSelectionSet,
-                        error,
-                        path);
-                if (!canExecutionContinue)
-                {
-                    resultData.Invalidate();
-                    return false;
-                }
+                    var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
+                    if (element.IsNullOrInvalidated)
+                    {
+                        _valueCompletion.ReportErrorOnNulledTarget(path, resultSelectionSet, error);
+                        goto AddErrors_Next;
+                    }
+
+                    var canExecutionContinue =
+                        _valueCompletion.BuildErrorResult(
+                            element,
+                            resultSelectionSet,
+                            error,
+                            path);
+                    if (!canExecutionContinue)
+                    {
+                        resultData.Invalidate();
+                        return false;
+                    }
 
 AddErrors_Next:
-                path = ref Unsafe.Add(ref path, 1);
+                    path = ref Unsafe.Add(ref path, 1);
+                }
+            }
+            finally
+            {
+                StampKeyFetchErrors(resultSelectionSet);
             }
         }
 
@@ -750,13 +763,32 @@ AddErrors_Next:
             }
         }
 
-        errors.Add(new KeyFetchError(error, _keyFetchSource));
+        var keyFetchError = new KeyFetchError(error);
+        errors.Add(keyFetchError);
+        (_unstampedKeyFetchErrors ??= []).Add(keyFetchError);
+    }
+
+    // Assigns the source, whose result or error is being added, to the errors recorded since the last call.
+    private void StampKeyFetchErrors(ResultSelectionSet source)
+    {
+        if (_unstampedKeyFetchErrors is not { Count: > 0 } errors)
+        {
+            return;
+        }
+
+        foreach (var error in errors)
+        {
+            error.Source = source;
+        }
+
+        errors.Clear();
     }
 
     private bool ReportKeyFetchErrorsOfNulledEntitiesUnsafe(
         ReadOnlySpan<SelectionPath> targets,
         List<string> requirementFieldNames,
-        ResultSelectionSet resultSelectionSet)
+        ResultSelectionSet resultSelectionSet,
+        HopOrder hopOrder)
     {
         List<Path>? entityPaths = null;
 
@@ -778,7 +810,7 @@ AddErrors_Next:
 
         foreach (var entityPath in entityPaths)
         {
-            if (!TryGetKeyFetchErrorsUnsafe(entityPath, requirementFieldNames, out var errors))
+            if (!TryGetKeyFetchErrorsUnsafe(entityPath, requirementFieldNames, hopOrder, out var errors))
             {
                 continue;
             }
@@ -892,9 +924,6 @@ AddErrors_Next:
             return true;
         }
 
-        var source = _keyFetchSource;
-        _keyFetchSource = resultSelectionSet;
-
         try
         {
             foreach (var (originName, fetch) in errors)
@@ -919,7 +948,7 @@ AddErrors_Next:
         }
         finally
         {
-            _keyFetchSource = source;
+            StampKeyFetchErrors(resultSelectionSet);
         }
     }
 
@@ -928,6 +957,7 @@ AddErrors_Next:
     private bool TryGetKeyFetchErrorsUnsafe(
         Path entityPath,
         List<string>? requirementFieldNames,
+        HopOrder hopOrder,
         [NotNullWhen(true)] out List<(string OriginName, KeyFetchError Fetch)>? errors)
     {
         errors = null;
@@ -967,7 +997,7 @@ AddErrors_Next:
             return false;
         }
 
-        SortBySourceUnsafe(errors);
+        SortBySource(errors, hopOrder);
         return true;
 
         static void AddKeyFetchError(
@@ -989,95 +1019,32 @@ AddErrors_Next:
         }
     }
 
-    private void SortBySourceUnsafe(List<(string OriginName, KeyFetchError Fetch)> errors)
+    // Orders the errors by the hop that recorded them and keeps the recording order of errors of the same hop.
+    private static void SortBySource(List<(string OriginName, KeyFetchError Fetch)> errors, HopOrder hopOrder)
     {
-        if (errors.Count < 2 || _completingPlan is not { } plan)
+        for (var i = 1; i < errors.Count; i++)
         {
-            return;
-        }
+            var error = errors[i];
+            var key = hopOrder.GetKey(error.Fetch.Source);
+            var j = i - 1;
 
-        var depths = ArrayPool<int>.Shared.Rent(plan.MaxNodeId + 1);
-
-        try
-        {
-            depths.AsSpan(0, plan.MaxNodeId + 1).Fill(-1);
-            var keys = new long[errors.Count];
-
-            for (var i = 0; i < errors.Count; i++)
+            while (j >= 0 && hopOrder.GetKey(errors[j].Fetch.Source) > key)
             {
-                keys[i] = GetSourceOrder(plan, errors[i].Fetch.Source, depths);
+                errors[j + 1] = errors[j];
+                j--;
             }
 
-            // Insertion sort keeps the recording order of errors of the same hop.
-            for (var i = 1; i < errors.Count; i++)
-            {
-                var key = keys[i];
-                var error = errors[i];
-                var j = i - 1;
-
-                while (j >= 0 && keys[j] > key)
-                {
-                    keys[j + 1] = keys[j];
-                    errors[j + 1] = errors[j];
-                    j--;
-                }
-
-                keys[j + 1] = key;
-                errors[j + 1] = error;
-            }
-        }
-        finally
-        {
-            ArrayPool<int>.Shared.Return(depths);
+            errors[j + 1] = error;
         }
     }
 
-    private static long GetSourceOrder(IOperationPlan plan, ResultSelectionSet? source, int[] depths)
+    // An error recorded for a field of an entity and the result selection set of the source that recorded it.
+    private sealed class KeyFetchError(IError error)
     {
-        if (source is null)
-        {
-            return long.MaxValue;
-        }
+        public IError Error { get; } = error;
 
-        foreach (var node in plan.AllNodes)
-        {
-            switch (node)
-            {
-                case OperationExecutionNode operation when ReferenceEquals(operation.ResultSelectionSet, source):
-                case ApolloOperationExecutionNode apollo when ReferenceEquals(apollo.ResultSelectionSet, source):
-                    return GetHopOrder(plan, node.Id, depths);
-
-                case OperationBatchExecutionNode batch:
-                    foreach (var operation in batch.Operations)
-                    {
-                        if (ReferenceEquals(operation.ResultSelectionSet, source))
-                        {
-                            return GetHopOrder(plan, operation.Id, depths);
-                        }
-                    }
-
-                    break;
-
-                case ApolloOperationBatchExecutionNode batch:
-                    foreach (var operation in batch.Operations)
-                    {
-                        if (ReferenceEquals(operation.ResultSelectionSet, source))
-                        {
-                            return GetHopOrder(plan, operation.Id, depths);
-                        }
-                    }
-
-                    break;
-            }
-        }
-
-        return long.MaxValue;
-
-        static long GetHopOrder(IOperationPlan plan, int hopId, int[] depths)
-            => ((long)GetDependencyDepth(plan, hopId, depths) << 32) | (uint)hopId;
+        public ResultSelectionSet? Source { get; set; }
     }
-
-    private readonly record struct KeyFetchError(IError Error, ResultSelectionSet? Source);
 
     private static List<string> GetRequirementFieldNames(
         ReadOnlySpan<SelectionPath> targets,
@@ -1631,7 +1598,7 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
-            ReportSourceErrorsBelowNullRoot(path, errorTrie, resultSelectionSet);
+            ReportSourceErrorsBelowNullRoot(path, dataElement, errorTrie, resultSelectionSet);
             return false;
         }
 
@@ -1650,12 +1617,11 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
-            ReportSourceErrorsBelowNullRoot(path, errorTrie, resultSelectionSet);
+            ReportSourceErrorsBelowNullRoot(path, dataElement, errorTrie, resultSelectionSet);
             return false;
         }
 
         Debug.Assert(element.ValueKind is JsonValueKind.Object or JsonValueKind.Null or JsonValueKind.Undefined);
-        _keyFetchSource = resultSelectionSet;
 
         if (element.IsNullOrInvalidated)
         {
@@ -1664,7 +1630,9 @@ AddErrors_Next:
                 _valueCompletion.ReportSourceErrorsOnNulledTarget(
                     path.IsRoot ? element.CompactPath : path,
                     resultSelectionSet,
+                    dataElement,
                     errorTrie);
+                StampKeyFetchErrors(resultSelectionSet);
             }
 
             return true;
@@ -1676,6 +1644,7 @@ AddErrors_Next:
                 element,
                 errorTrie,
                 resultSelectionSet);
+        StampKeyFetchErrors(resultSelectionSet);
 
         if (canExecutionContinue)
         {
@@ -1696,7 +1665,11 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
-            ReportSourceErrorsBelowNullRoot(additionalTargets.GetPath(index), errorTrie, resultSelectionSet);
+            ReportSourceErrorsBelowNullRoot(
+                additionalTargets.GetPath(index),
+                dataElement,
+                errorTrie,
+                resultSelectionSet);
             return false;
         }
 
@@ -1711,13 +1684,14 @@ AddErrors_Next:
 
     private void ReportSourceErrorsBelowNullRoot(
         CompactPath path,
+        SourceResultElement dataElement,
         ErrorTrie? errorTrie,
         ResultSelectionSet resultSelectionSet)
     {
         if (errorTrie is not null)
         {
-            _keyFetchSource = resultSelectionSet;
-            _valueCompletion.ReportSourceErrorsOnNulledTarget(path, resultSelectionSet, errorTrie);
+            _valueCompletion.ReportSourceErrorsOnNulledTarget(path, resultSelectionSet, dataElement, errorTrie);
+            StampKeyFetchErrors(resultSelectionSet);
         }
     }
 

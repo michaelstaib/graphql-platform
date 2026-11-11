@@ -457,7 +457,7 @@ public abstract partial class FusionTestBase : IAsyncDisposable
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
-                => handler(request);
+                => handler(request).WaitAsync(cancellationToken);
         }
 
         // The Fusion test harness routes gateway -> subgraph calls through the in-memory

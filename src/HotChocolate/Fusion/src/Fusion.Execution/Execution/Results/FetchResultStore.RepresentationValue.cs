@@ -2063,13 +2063,14 @@ internal sealed partial class FetchResultStore
                 return true;
             }
 
-            _keyFetchSource = resultSelectionSet;
+            var canExecutionContinue = _valueCompletion.BuildErrorResult(
+                target,
+                resultSelectionSet,
+                error,
+                target.CompactPath);
+            StampKeyFetchErrors(resultSelectionSet);
 
-            if (_valueCompletion.BuildErrorResult(
-                    target,
-                    resultSelectionSet,
-                    error,
-                    target.CompactPath))
+            if (canExecutionContinue)
             {
                 return true;
             }
