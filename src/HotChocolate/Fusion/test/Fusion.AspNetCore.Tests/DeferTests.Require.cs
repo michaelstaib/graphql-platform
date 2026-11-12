@@ -1625,6 +1625,196 @@ public partial class DeferTests
     }
 
     [Fact]
+    public async Task Defer_Should_DeliverGroup_When_HeldFieldFailsOnLastListItem()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ users15 { id soft total } }",
+            "{ users15 { id ... @defer { soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "users15": [
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 5
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "users15"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "subPath": [
+                    0
+                  ],
+                  "data": {
+                    "soft": "soft-1",
+                    "total": "total-sku-1"
+                  }
+                },
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "users15",
+                        1,
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "subPath": [
+                    1
+                  ],
+                  "data": {
+                    "soft": null,
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverEachHeldFieldError_When_FirstAndLastListItemFail()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ users55 { id soft total } }",
+            "{ users55 { id ... @defer { soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "users55": [
+                  {
+                    "id": 5
+                  },
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 5
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "users55"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "users55",
+                        0,
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "subPath": [
+                    0
+                  ],
+                  "data": {
+                    "soft": null,
+                    "total": "total-sku-5"
+                  }
+                },
+                {
+                  "id": "0",
+                  "subPath": [
+                    1
+                  ],
+                  "data": {
+                    "soft": "soft-1",
+                    "total": "total-sku-1"
+                  }
+                },
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "users55",
+                        2,
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "subPath": [
+                    2
+                  ],
+                  "data": {
+                    "soft": null,
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
     public async Task Defer_Should_CompleteStream_When_SkuFailsUnderDeferredRequireField()
     {
         // arrange
@@ -1977,6 +2167,10 @@ public partial class DeferTests
             public List<User?> GetUsers() => [new(1), new(2), new(3)];
 
             public List<User?> GetUsers5() => [new(1), new(5), new(6)];
+
+            public List<User?> GetUsers15() => [new(1), new(5)];
+
+            public List<User?> GetUsers55() => [new(5), new(1), new(5)];
 
             [Lookup]
             [Internal]

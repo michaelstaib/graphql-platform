@@ -693,7 +693,7 @@ internal static partial class OperationPlanExecutor
     }
 
     /// <summary>
-    /// Collects requirements satisfied by the enclosing plan scope and
+    /// Collects the requirements and held fields satisfied by the enclosing plan scope and
     /// installs their values on the child context.
     /// </summary>
     private static void CollectIncrementalPlanRequirements(
@@ -701,55 +701,50 @@ internal static partial class OperationPlanExecutor
         IncrementalPlan incrementalPlan,
         OperationPlanContext childContext)
     {
-        CollectHeldFields(parentResultStore, incrementalPlan, childContext);
-
+        var heldFields = incrementalPlan.HeldFields;
         var collected = CollectParentScopeRequirements(incrementalPlan);
-        if (collected.Count == 0)
+
+        if (collected.Count == 0 && heldFields.IsEmpty)
         {
             return;
         }
 
-        var anchor = collected[0].Path;
-        for (var i = 1; i < collected.Count; i++)
-        {
-            if (!collected[i].Path.Equals(anchor))
-            {
-                throw new InvalidOperationException(
-                    "Deferred incremental plan has parent-sourced requirements at different anchor paths; "
-                    + "one-time materialization assumes a single anchor.");
-            }
-        }
-
-        var requirementSpan = new OperationRequirement[collected.Count];
+        ImmutableArray<VariableValues> requirementValues = [];
         var keys = new HashSet<string>(collected.Count, StringComparer.Ordinal);
-        for (var i = 0; i < collected.Count; i++)
+
+        if (collected.Count > 0)
         {
-            requirementSpan[i] = collected[i];
-            keys.Add(collected[i].Key);
+            var anchor = collected[0].Path;
+            for (var i = 1; i < collected.Count; i++)
+            {
+                if (!collected[i].Path.Equals(anchor))
+                {
+                    throw new InvalidOperationException(
+                        "Deferred incremental plan has parent-sourced requirements at different anchor paths; "
+                        + "one-time materialization assumes a single anchor.");
+                }
+            }
+
+            var requirementSpan = new OperationRequirement[collected.Count];
+            for (var i = 0; i < collected.Count; i++)
+            {
+                requirementSpan[i] = collected[i];
+                keys.Add(collected[i].Key);
+            }
+
+            requirementValues = parentResultStore.CreateVariableValueSets(
+                anchor,
+                requestVariables: [],
+                requirementSpan);
         }
 
-        var parentValues = parentResultStore.CreateVariableValueSets(
-            anchor,
-            requestVariables: [],
-            requirementSpan);
-
-        childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
-    }
-
-    private static void CollectHeldFields(
-        FetchResultStore parentResultStore,
-        IncrementalPlan incrementalPlan,
-        OperationPlanContext childContext)
-    {
-        var heldFields = incrementalPlan.HeldFields;
         if (heldFields.IsEmpty)
         {
+            childContext.SetRequirements(requirementValues, keys, parentResultStore.Operation);
             return;
         }
 
-        // Each held field maps on its own, so a field that failed in the enclosing scope
-        // does not drop the values of its siblings.
-        var parentValues = new ImmutableArray<VariableValues>[heldFields.Length];
+        var parentValues = new ImmutableArray<VariableValues>[heldFields.Length + 1];
 
         for (var i = 0; i < heldFields.Length; i++)
         {
@@ -759,7 +754,8 @@ internal static partial class OperationPlanExecutor
                 heldFields.AsSpan().Slice(i, 1));
         }
 
-        childContext.SetHeldFieldValues(parentValues, heldFields, parentResultStore.Operation);
+        parentValues[heldFields.Length] = requirementValues;
+        childContext.SetParentValues(parentValues, heldFields, keys, parentResultStore.Operation);
 
         if (parentResultStore.TakeHeldFieldErrors(incrementalPlan) is { } errors)
         {

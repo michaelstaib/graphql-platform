@@ -734,24 +734,27 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     /// <summary>
-    /// Sets the values of the fields that the enclosing plan scope fetched and this plan delivers, one
-    /// entry of <paramref name="parentValues"/> per held field. The result paths belong to
-    /// <paramref name="parentOperation"/>.
+    /// Sets the values this plan reads from the enclosing plan scope. <paramref name="parentValues"/> holds
+    /// one entry per held field, followed by the entry of the requirements named by <paramref name="keys"/>.
+    /// The result paths belong to <paramref name="parentOperation"/>.
     /// </summary>
-    internal void SetHeldFieldValues(
+    internal void SetParentValues(
         ImmutableArray<VariableValues>[] parentValues,
         ImmutableArray<OperationRequirement> heldFields,
+        HashSet<string> keys,
         Operation parentOperation)
     {
-        var imported = new ImmutableArray<VariableValues>[parentValues.Length];
-
-        for (var i = 0; i < parentValues.Length; i++)
-        {
-            imported[i] = _resultStore.ImportVariableValues(parentValues[i], parentOperation);
-        }
-
-        _heldFieldValues = imported;
+        _resultStore.ImportVariableValues(parentValues, parentOperation);
+        _heldFieldValues = parentValues;
         _heldFields = heldFields;
+
+        var requirementValues = parentValues[heldFields.Length];
+
+        if (!requirementValues.IsEmpty && keys.Count > 0)
+        {
+            _requirementValues = requirementValues;
+            _requirementKeys = keys;
+        }
     }
 
     /// <summary>
@@ -766,7 +769,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     {
         if (_heldFieldValues is { } heldFieldValues)
         {
-            for (var i = 0; i < heldFieldValues.Length; i++)
+            for (var i = 0; i < _heldFields.Length; i++)
             {
                 if (!heldFieldValues[i].IsDefaultOrEmpty)
                 {

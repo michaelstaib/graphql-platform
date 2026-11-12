@@ -3299,32 +3299,47 @@ AddErrors_Next:
         ImmutableArray<VariableValues> source,
         Operation sourceOperation)
     {
+        ImportVariableValues(new Span<ImmutableArray<VariableValues>>(ref source), sourceOperation);
+        return source;
+    }
+
+    /// <summary>
+    /// Imports the variable value sets that one child incremental plan reads from
+    /// <paramref name="sourceOperation"/>, replacing each set with its imported form. A list that the
+    /// sets address is created once and fits every set.
+    /// </summary>
+    internal void ImportVariableValues(
+        Span<ImmutableArray<VariableValues>> sources,
+        Operation sourceOperation)
+    {
         ArgumentNullException.ThrowIfNull(sourceOperation);
 
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (source.IsDefaultOrEmpty)
-        {
-            return [];
-        }
-
-        var builder = ImmutableArray.CreateBuilder<VariableValues>(source.Length);
-
-        ImmutableArray<VariableValues> imported;
-
         lock (_lock)
         {
-            foreach (var entry in source)
+            for (var i = 0; i < sources.Length; i++)
             {
-                builder.Add(ImportVariableValuesEntryUnsafe(entry, sourceOperation));
-            }
+                var source = sources[i];
 
-            imported = builder.MoveToImmutable();
+                if (source.IsDefaultOrEmpty)
+                {
+                    sources[i] = [];
+                    continue;
+                }
+
+                var builder = ImmutableArray.CreateBuilder<VariableValues>(source.Length);
+
+                foreach (var entry in source)
+                {
+                    builder.Add(ImportVariableValuesEntryUnsafe(entry, sourceOperation));
+                }
+
+                sources[i] = builder.MoveToImmutable();
+            }
         }
 
-        InitializeTargetPaths(imported);
-
-        return imported;
+        InitializeTargetPaths(sources);
     }
 
     /// <summary>
@@ -3985,13 +4000,8 @@ AddErrors_Next:
         return element;
     }
 
-    private void InitializeTargetPaths(ImmutableArray<VariableValues> importedValues)
+    private void InitializeTargetPaths(ReadOnlySpan<ImmutableArray<VariableValues>> importedSets)
     {
-        if (importedValues.IsDefaultOrEmpty)
-        {
-            return;
-        }
-
         lock (_lock)
         {
             // Track list containers that need imported elements.
@@ -4003,12 +4013,15 @@ AddErrors_Next:
             {
                 var hasPathBelowMissingList = false;
 
-                foreach (var entry in importedValues)
+                foreach (var importedValues in importedSets)
                 {
-                    TrackListContainerUnsafe(entry.Path, ref containers, ref hasPathBelowMissingList);
-                    foreach (var additional in entry.AdditionalPaths.AsSpan())
+                    foreach (var entry in importedValues)
                     {
-                        TrackListContainerUnsafe(additional, ref containers, ref hasPathBelowMissingList);
+                        TrackListContainerUnsafe(entry.Path, ref containers, ref hasPathBelowMissingList);
+                        foreach (var additional in entry.AdditionalPaths.AsSpan())
+                        {
+                            TrackListContainerUnsafe(additional, ref containers, ref hasPathBelowMissingList);
+                        }
                     }
                 }
 
