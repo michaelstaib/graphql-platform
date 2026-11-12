@@ -49,16 +49,52 @@ public class DeepErrorPathTests
             path);
     }
 
+    [Theory]
+    [InlineData(21)]
+    [InlineData(33)]
+    public async Task ExecuteAsync_Should_ReportFullPath_When_DelegateResolverErrorIsNestedInObjects(int depth)
+    {
+        // arrange
+        var executor = await CreateDelegateExecutorAsync();
+        var query = BuildQuery("child", depth);
+
+        // act
+        var path = await ExecuteAndReadErrorPathAsync(executor, query);
+
+        // assert
+        Assert.Equal(Enumerable.Repeat("child", depth).Append("fail").ToArray(), path);
+    }
+
+    [Theory]
+    [InlineData(13)]
+    [InlineData(33)]
+    public async Task ExecuteAsync_Should_ReportFullPath_When_DelegateResolverErrorIsNestedInLists(int depth)
+    {
+        // arrange
+        var executor = await CreateDelegateExecutorAsync();
+        var query = BuildQuery("children", depth);
+
+        // act
+        var path = await ExecuteAndReadErrorPathAsync(executor, query);
+
+        // assert
+        Assert.Equal(
+            Enumerable.Range(0, depth).SelectMany(_ => new[] { "children", "0" }).Append("fail").ToArray(),
+            path);
+    }
+
     private static void SkipWhenValidationOverflowsTheStack(int depth)
     {
 #if NET8_0
-        Assert.SkipWhen(depth >= 150, "The recursive document validation overflows the stack on net8.0 at this depth.");
+        Assert.SkipWhen(
+            depth >= 150,
+            "On net8.0 this depth overflows the stack, in execution in Release builds and in validation in Debug builds.");
 #endif
     }
 
     private static string BuildQuery(string field, int depth)
     {
-        // The parser limits the nesting of a single document, so long chains are split into fragments.
+        // The parser accepts 199 nested levels in one document, so a depth of 200 needs fragments.
         const int chunk = 20;
         var fragments = (depth - 1) / chunk + 1;
         var query = new StringBuilder("{ ...F0 }");
@@ -85,6 +121,7 @@ public class DeepErrorPathTests
         var result = await executor.ExecuteAsync(query, TestContext.Current.CancellationToken);
         var errors = result.ExpectOperationResult().Errors;
         var error = Assert.Single(errors);
+        Assert.Equal("failed", error.Message);
         return error.Path!.ToList().Select(s => s.ToString()!).ToArray();
     }
 
@@ -92,6 +129,26 @@ public class DeepErrorPathTests
         => new ServiceCollection()
             .AddGraphQL()
             .AddQueryType<Node>()
+            .ConfigureValidation((_, b) => b.ModifyOptions(o => o.MaxAllowedSelectionSetDepth = 1000))
+            .ModifyRequestOptions(o => o.IncludeExceptionDetails = false)
+            .BuildRequestExecutorAsync();
+
+    private static ValueTask<IRequestExecutor> CreateDelegateExecutorAsync()
+        => new ServiceCollection()
+            .AddGraphQL()
+            .AddDocumentFromString(
+                """
+                schema { query: Node }
+
+                type Node {
+                  child: Node
+                  children: [Node]
+                  fail: String
+                }
+                """)
+            .AddResolver("Node", "child", _ => new object())
+            .AddResolver("Node", "children", _ => new object[] { new() })
+            .AddResolver("Node", "fail", string? (_) => throw new GraphQLException("failed"))
             .ConfigureValidation((_, b) => b.ModifyOptions(o => o.MaxAllowedSelectionSetDepth = 1000))
             .ModifyRequestOptions(o => o.IncludeExceptionDetails = false)
             .BuildRequestExecutorAsync();
