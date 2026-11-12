@@ -1211,21 +1211,21 @@ public partial class DeferTests
         "{ user(id: 1) { id sku total } }",
         "{ user(id: 1) { id ... @defer { sku total } } }",
         null,
-        "a: 1, b: 2, c: 1",
+        "a: 1, b: 1, c: 1",
         2)]
     [InlineData(
         "s4",
         "{ user(id: 1) { sku total } }",
         "{ user(id: 1) { ... @defer { sku total } } }",
         null,
-        "a: 1, b: 2, c: 1",
+        "a: 1, b: 1, c: 1",
         2)]
     [InlineData(
         "s4",
         "{ user(id: 1) { id sku total } }",
         "{ user(id: 1) { ... @defer { id sku total } } }",
         null,
-        "a: 1, b: 2, c: 1",
+        "a: 1, b: 1, c: 1",
         2)]
     [InlineData(
         "s4",
@@ -1973,6 +1973,106 @@ public partial class DeferTests
             }
             """
         ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FetchRequiredFieldOnce_When_ParentStepAlreadyFetchesItsSource()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ users5 { id soft sku total } }",
+            "{ users5 { id soft ... @defer { soft sku total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "errors": [
+                {
+                  "message": "The soft failed.",
+                  "path": [
+                    "users5",
+                    1,
+                    "soft"
+                  ]
+                }
+              ],
+              "data": {
+                "users5": [
+                  {
+                    "id": 1,
+                    "soft": "soft-1"
+                  },
+                  {
+                    "id": 5,
+                    "soft": null
+                  },
+                  {
+                    "id": 6,
+                    "soft": "soft-6"
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "users5"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "subPath": [
+                    0
+                  ],
+                  "data": {
+                    "sku": "sku-1",
+                    "total": "total-sku-1"
+                  }
+                },
+                {
+                  "id": "0",
+                  "subPath": [
+                    1
+                  ],
+                  "data": {
+                    "sku": "sku-5",
+                    "total": "total-sku-5"
+                  }
+                },
+                {
+                  "id": "0",
+                  "subPath": [
+                    2
+                  ],
+                  "data": {
+                    "sku": "sku-6",
+                    "total": "total-sku-6"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
     }
 
     [Fact]

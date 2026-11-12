@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Language;
@@ -753,6 +754,7 @@ public sealed partial class OperationPlanner
         // cleaned up below once it succeeds. A step is rerouted only when every requirement it
         // reads from a step that stays in this plan can be rerouted.
         var rerouted = new List<(int ProviderStepId, int DownstreamStepId, string FieldName)>();
+        var reroutedHeldFields = new Dictionary<(int ProviderStepId, string FieldName), OperationRequirement>();
         var liftedRequirementKeys = new HashSet<(int StepId, string Key)>();
         foreach (var entry in lifted)
         {
@@ -773,6 +775,7 @@ public sealed partial class OperationPlanner
             var internalOperationBeforeReroute = scopeState.InternalOperation;
             var stepLifted = new List<LiftedDeferRequirement>();
             var stepRerouted = new List<(int ProviderStepId, int DownstreamStepId, string FieldName)>();
+            var stepHeldFields = new List<(int ProviderStepId, OperationRequirement HeldField)>();
             var readsRemainingStep = false;
 
             foreach (var (_, requirement) in downstreamStep.Requirements)
@@ -844,6 +847,18 @@ public sealed partial class OperationPlanner
                 if (fieldName is not null)
                 {
                     stepRerouted.Add((providerStep.Id, downstreamStep.Id, fieldName));
+
+                    if (TryCreateReroutedHeldField(
+                        descriptor,
+                        anchorFieldNames,
+                        providerStep,
+                        fieldName,
+                        scopeState,
+                        resolvedId,
+                        out var heldField))
+                    {
+                        stepHeldFields.Add((providerStep.Id, heldField));
+                    }
                 }
             }
 
@@ -856,6 +871,11 @@ public sealed partial class OperationPlanner
 
             lifted.AddRange(stepLifted);
             rerouted.AddRange(stepRerouted);
+
+            foreach (var (providerStepId, heldField) in stepHeldFields)
+            {
+                reroutedHeldFields[(providerStepId, heldField.Key)] = heldField;
+            }
         }
 
         if (lifted.Count == 0)
@@ -889,7 +909,8 @@ public sealed partial class OperationPlanner
             incrementalPlanSteps,
             rerouted,
             descriptor.Path,
-            anchorFieldNames);
+            anchorFieldNames,
+            reroutedHeldFields);
 
         // Drop every producer step (its data now comes from the enclosing scope)
         // along with any incremental-plan step that got promoted wholesale into
@@ -899,6 +920,17 @@ public sealed partial class OperationPlanner
         foreach (var producer in producers)
         {
             droppedStepIds.Add(producer.Id);
+        }
+
+        // A step that only fetched fields the enclosing scope now holds has nothing left to deliver.
+        foreach (var (providerStepId, _) in reroutedHeldFields.Keys)
+        {
+            if (incrementalPlanSteps.ById(providerStepId) is OperationPlanStep provider
+                && droppedStepIds.IsSupersetOf(provider.Dependents)
+                && !SelectsAnchorField(provider, anchorFieldNames, reroutedHeldFields))
+            {
+                droppedStepIds.Add(providerStepId);
+            }
         }
 
         var rewrittenIncrementalPlan = RewriteIncrementalPlanAfterDeferRequirementRouting(
@@ -922,6 +954,14 @@ public sealed partial class OperationPlanner
         }
 
         AddHeldClientFields(descriptor, anchorFieldNames, promotedParentSteps, rewrittenIncrementalPlan);
+
+        foreach (var heldField in reroutedHeldFields.Values)
+        {
+            if (descriptor.Requirements.TryAdd(heldField.Key, heldField))
+            {
+                descriptor.HeldFields.Add(heldField);
+            }
+        }
 
         // Publish scope updates before processing additional descriptors.
         if (rootScopeState is not null)
@@ -1009,6 +1049,90 @@ public sealed partial class OperationPlanner
                 descriptor.HeldFields.Add(held);
             }
         }
+    }
+
+    /// <summary>
+    /// Creates the held field for the leaf field <paramref name="fieldName"/> of the deferred group that
+    /// <paramref name="providerStep"/> selects and the step <paramref name="parentStepId"/> of the
+    /// enclosing scope already fetches as a requirement.
+    /// </summary>
+    private bool TryCreateReroutedHeldField(
+        IncrementalPlanDescriptor descriptor,
+        HashSet<string> anchorFieldNames,
+        OperationPlanStep providerStep,
+        string fieldName,
+        ScopeState scope,
+        int parentStepId,
+        [NotNullWhen(true)] out OperationRequirement? heldField)
+    {
+        heldField = null;
+
+        if (!providerStep.Target.Equals(descriptor.Path)
+            || !anchorFieldNames.Contains(fieldName)
+            || descriptor.Requirements.ContainsKey(fieldName)
+            || !IsPlainLeafSelection(GetStepEntitySelectionSet(providerStep), fieldName)
+            || scope.Steps.ById(parentStepId) is not OperationPlanStep parentStep
+            || !TryLocateDeferRequirementTarget(parentStep, descriptor.Path, out _, out var parentType)
+            || parentType is not FusionComplexTypeDefinition complexType
+            || !complexType.Fields.TryGetField(fieldName, allowInaccessibleFields: true, out var definition)
+            || !TryLocateInternalSelectionSetAtPath(
+                scope.InternalOperation.SelectionSet,
+                descriptor.Path,
+                out var internalSelectionSet)
+            || !SelectsResponseName(internalSelectionSet, fieldName))
+        {
+            return false;
+        }
+
+        heldField = new OperationRequirement(
+            fieldName,
+            definition.Type.ToTypeNode(),
+            descriptor.Path,
+            FieldSelectionMapParser.Parse(fieldName));
+        return true;
+    }
+
+    private static bool IsPlainLeafSelection(SelectionSetNode selectionSet, string fieldName)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is FieldNode
+                {
+                    Alias: null,
+                    SelectionSet: null,
+                    Arguments.Count: 0,
+                    Directives.Count: 0
+                } field
+                && field.Name.Value.Equals(fieldName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SelectsAnchorField(
+        OperationPlanStep step,
+        HashSet<string> anchorFieldNames,
+        Dictionary<(int ProviderStepId, string FieldName), OperationRequirement> heldFields)
+    {
+        foreach (var selection in GetStepEntitySelectionSet(step).Selections)
+        {
+            if (selection is not FieldNode field)
+            {
+                return true;
+            }
+
+            var responseName = field.Alias?.Value ?? field.Name.Value;
+
+            if (anchorFieldNames.Contains(responseName) && !heldFields.ContainsKey((step.Id, responseName)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2249,13 +2373,16 @@ public sealed partial class OperationPlanner
     /// Removes each <paramref name="rerouted"/> provider-to-dependent dependency edge, unless
     /// the dependent still has another requirement that resolves back to the same provider,
     /// and drops the provider's rerouted field once no remaining dependent still consumes it.
-    /// A field of <paramref name="anchorFieldNames"/> selected at <paramref name="anchorPath"/> is kept.
+    /// A field of <paramref name="anchorFieldNames"/> selected at <paramref name="anchorPath"/> is kept,
+    /// unless it is one of <paramref name="heldFields"/>. A held field that a remaining dependent still
+    /// consumes is removed from <paramref name="heldFields"/>.
     /// </summary>
     private static ImmutableList<PlanStep> RemoveReroutedInPlanEdges(
         ImmutableList<PlanStep> incrementalPlanSteps,
         List<(int ProviderStepId, int DownstreamStepId, string FieldName)> rerouted,
         SelectionPath anchorPath,
-        HashSet<string> anchorFieldNames)
+        HashSet<string> anchorFieldNames,
+        Dictionary<(int ProviderStepId, string FieldName), OperationRequirement> heldFields)
     {
         if (rerouted.Count == 0)
         {
@@ -2339,7 +2466,11 @@ public sealed partial class OperationPlanner
                 {
                     var isAnchorField = providerStep.Target.Equals(anchorPath) && anchorFieldNames.Contains(fieldName);
 
-                    if (!isAnchorField && !stillConsumedFieldNames.Contains(fieldName))
+                    if (stillConsumedFieldNames.Contains(fieldName))
+                    {
+                        heldFields.Remove((providerStep.Id, fieldName));
+                    }
+                    else if (!isAnchorField || heldFields.ContainsKey((providerStep.Id, fieldName)))
                     {
                         updatedProviderStep = RemoveUnconsumedEntityField(updatedProviderStep, fieldName);
                     }
