@@ -2855,18 +2855,22 @@ public class KeyHopFailureTests : FusionTestBase
             [
                 """
                 data: {"product":{"name":"p","details":{"a":"a"}}}
+                errors: [{"message":"details hidden failed"},{"message":"product hidden failed"}]
 
                 """,
                 """
                 data: {"product":{"details":{"a":"a"}}}
+                errors: [{"message":"details hidden failed"}]
 
                 """,
                 """
                 data: {"product":{"name":"p"}}
+                errors: [{"message":"product hidden failed"}]
 
                 """,
                 """
                 data: {"productNN":{"name":"p"}}
+                errors: [{"message":"product hidden failed"}]
 
                 """
             ]);

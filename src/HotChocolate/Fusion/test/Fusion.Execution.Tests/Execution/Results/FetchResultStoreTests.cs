@@ -1057,6 +1057,32 @@ public sealed class FetchResultStoreTests : FusionTestBase
     public void AddErrors_Should_UseAliasesInErrorPath()
     {
         // arrange
+        const string payload = """{"data":{"aliasedFoo":{"id":"1","aliasedValue":null}}}""";
+
+        // act
+        var errorPaths = AddErrorToAliasedField(payload);
+
+        // assert
+        Assert.Equal("aliasedFoo.aliasedValue", Assert.Single(errorPaths));
+    }
+
+    [Fact]
+    public void AddErrors_Should_ReportTheErrorWithoutPath_When_TheFieldHoldsTheValueOfAnotherSource()
+    {
+        // arrange
+        const string payload = """{"data":{"aliasedFoo":{"id":"1","aliasedValue":"value"}}}""";
+
+        // act
+        var errorPaths = AddErrorToAliasedField(payload);
+
+        // assert
+        Assert.Equal("no path", Assert.Single(errorPaths));
+    }
+
+    // Adds the partial result of the payload for { aliasedFoo: foo { id aliasedValue: value } }, then an error for the
+    // aliasedValue field, and returns the paths of the errors.
+    private static List<string> AddErrorToAliasedField(string payload)
+    {
         var schema = ComposeSchema(
             """
             # name: test
@@ -1094,31 +1120,20 @@ public sealed class FetchResultStoreTests : FusionTestBase
             deferFlags: default,
             pathSegmentLocalPoolCapacity: 16);
 
-        var payload =
-            """{"data":{"aliasedFoo":{"id":"1","aliasedValue":"value"}}}"""u8.ToArray();
-        var document = SourceResultDocument.Parse(sourceArena, payload, payload.Length);
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        var document = SourceResultDocument.Parse(sourceArena, bytes, bytes.Length);
         var added = store.AddPartialResults(
             SelectionPath.Root,
             [new SourceSchemaResult(CompactPath.Root, document)],
             node.ResultSelectionSet,
             containsErrors: false);
-
-        var error = ErrorBuilder.New()
-            .SetMessage("boom")
-            .Build();
-
-        // act
         var completed = store.AddErrors(
-            error,
+            ErrorBuilder.New().SetMessage("boom").Build(),
             fieldSelectionSet,
             HotChocolate.Path.Root.Append("aliasedFoo"));
 
-        // assert
-        Assert.True(added);
-        Assert.True(completed);
-        Assert.Collection(
-            store.Errors!,
-            error => Assert.Equal("aliasedFoo.aliasedValue", error.Path?.Print()));
+        Assert.True(added && completed);
+        return store.Errors!.Select(error => error.Path?.Print() ?? "no path").ToList();
     }
 
     [Fact]

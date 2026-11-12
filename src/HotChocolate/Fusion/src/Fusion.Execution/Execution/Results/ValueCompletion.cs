@@ -86,13 +86,12 @@ internal sealed class ValueCompletion
 
         if (sourceSnapshot.ValueKind is not JsonValueKind.Object)
         {
-            var error = errorTrie?.FindFirstError();
             var canExecutionContinue =
                 BuildResultForInvalidSource(
                     sourceSnapshot,
                     target,
                     resultSelectionSet,
-                    error);
+                    errorTrie);
 
             if (!canExecutionContinue)
             {
@@ -109,6 +108,11 @@ internal sealed class ValueCompletion
         else if (TryUpgradeOpaqueTarget(objectContext.SelectionSet, target, source))
         {
             objectContext = target.GetObjectContext();
+        }
+
+        if (errorTrie is { Count: > 0 })
+        {
+            AddUnmappedSubFieldErrors(objectContext.SelectionSet, resultSelectionSet, errorTrie);
         }
 
         if (resultSelectionSet.HasSourceResponseNameMappings)
@@ -311,8 +315,9 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path of each field selected by
-    /// <paramref name="resultSelectionSet"/>, and to the sub-field that the value-type rule selects for a value-type
-    /// field.
+    /// <paramref name="resultSelectionSet"/> that holds no leaf value of another source, and to the sub-field that the
+    /// value-type rule selects for a value-type field. When every such field holds a leaf value, the error is added
+    /// once without a path.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the execution can continue.
@@ -330,6 +335,8 @@ internal sealed class ValueCompletion
 
         // Below a null value the error is added without null propagation.
         var propagate = _store.HasReachableAncestorsUnsafe(target);
+        var hasErrorField = false;
+        var hasLeafValue = false;
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -343,8 +350,21 @@ internal sealed class ValueCompletion
             }
 
             if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal
                 || fieldResult.IsExcluded)
+            {
+                continue;
+            }
+
+            // A leaf that another source completed keeps its value.
+            if (!fieldResult.IsInternal && HoldsLeafValue(fieldResult))
+            {
+                hasLeafValue = true;
+                continue;
+            }
+
+            hasErrorField = true;
+
+            if (fieldResult.IsInternal)
             {
                 continue;
             }
@@ -414,6 +434,12 @@ internal sealed class ValueCompletion
             }
         }
 
+        // An error whose fields all hold the values of other sources belongs on no field.
+        if (hasLeafValue && !hasErrorField)
+        {
+            _store.AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(error)));
+        }
+
         return true;
     }
 
@@ -459,9 +485,9 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Adds the <paramref name="error"/> to the client-visible fields of <paramref name="resultSelectionSet"/> that
-    /// the runtime type of the target at <paramref name="targetPath"/> includes, when the target is <c>null</c> or
-    /// below a <c>null</c> value.
+    /// Adds the <paramref name="error"/> to the client-visible fields other than <c>__typename</c> of
+    /// <paramref name="resultSelectionSet"/> that the runtime type of the target at <paramref name="targetPath"/>
+    /// includes, when the target is <c>null</c> or below a <c>null</c> value.
     /// </summary>
     public void ReportErrorOnNulledTarget(
         CompactPath targetPath,
@@ -482,7 +508,8 @@ internal sealed class ValueCompletion
         {
             if (!selectionSet.TryGetSelection(responseName, out var selection)
                 || selection.IsInternal
-                || !selection.IsIncluded(includeFlags))
+                || !selection.IsIncluded(includeFlags)
+                || IsTypeNameField(selection))
             {
                 continue;
             }
@@ -507,7 +534,8 @@ internal sealed class ValueCompletion
     /// <summary>
     /// Adds the errors of <paramref name="errorTrie"/>, which the source of <paramref name="resultSelectionSet"/>
     /// raised for the target at <paramref name="targetPath"/> together with the data <paramref name="source"/>, to
-    /// the client-visible fields they belong to, when the target is <c>null</c> or below a <c>null</c> value.
+    /// the client-visible fields they belong to, when the target is <c>null</c> or below a <c>null</c> value. An
+    /// error below a field that the source did not fetch is added once without a path.
     /// </summary>
     public void ReportSourceErrorsOnNulledTarget(
         CompactPath targetPath,
@@ -515,19 +543,17 @@ internal sealed class ValueCompletion
         SourceResultElement source,
         ErrorTrie errorTrie)
     {
-        if (errorTrie.Error is null
-            && TryAddFieldErrorsOnNulledTarget(targetPath, resultSelectionSet, source, errorTrie))
+        if (errorTrie.Error is { } error)
         {
+            ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
             return;
         }
 
-        if (errorTrie.FindFirstError() is { } error)
-        {
-            ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
-        }
+        AddErrorsOfUnfetchedFields(resultSelectionSet, errorTrie);
+        AddFetchedFieldErrorsOnNulledTarget(targetPath, resultSelectionSet, source, errorTrie);
     }
 
-    private bool TryAddFieldErrorsOnNulledTarget(
+    private void AddFetchedFieldErrorsOnNulledTarget(
         CompactPath targetPath,
         ResultSelectionSet resultSelectionSet,
         SourceResultElement source,
@@ -535,7 +561,6 @@ internal sealed class ValueCompletion
     {
         var errorPath = targetPath.ToPath(_store.Operation);
         var selectionSet = _store.GetRuntimeSelectionSetUnsafe(targetPath);
-        var hasFieldErrors = false;
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -547,8 +572,6 @@ internal sealed class ValueCompletion
                 continue;
             }
 
-            hasFieldErrors = true;
-
             AddFieldErrorsOnNulledTarget(
                 new KeyFetchErrorOrigin(errorPath, targetPath, responseName),
                 errorPath.Append(responseName),
@@ -558,8 +581,20 @@ internal sealed class ValueCompletion
                 fieldErrorTrie,
                 error);
         }
+    }
 
-        return hasFieldErrors;
+    // Adds the errors that the source raised below the fields it did not fetch once without a path.
+    private void AddErrorsOfUnfetchedFields(ResultSelectionSet resultSelectionSet, ErrorTrie errorTrie)
+    {
+        foreach (var (key, fieldErrorTrie) in errorTrie)
+        {
+            if (fieldErrorTrie is not null
+                && (key is not string sourceResponseName
+                    || !TryGetResponseName(resultSelectionSet, sourceResponseName, out _)))
+            {
+                AddErrorsWithoutPath(fieldErrorTrie);
+            }
+        }
     }
 
     // Adds the errors that the source raised for the field of a nulled target, whose source value is value, to the
@@ -716,6 +751,8 @@ internal sealed class ValueCompletion
 
         foreach (var (key, childErrorTrie) in errorTrie)
         {
+            string? responseName;
+
             if (childErrorTrie is null)
             {
                 continue;
@@ -727,10 +764,12 @@ internal sealed class ValueCompletion
                 continue;
             }
 
+            // Without fetched sub-fields the source fetched the client selection set, whose names are the source names.
             if (key is string sourceResponseName
-                && fetched is not null
-                && TryGetResponseName(fetched, sourceResponseName, out var responseName)
-                && TryGetSubField(selectionSet, responseName, out var subField))
+                && (fetched is null
+                    ? TryGetSubField(selectionSet, responseName = sourceResponseName, out var subField)
+                    : TryGetResponseName(fetched, sourceResponseName, out responseName)
+                        && TryGetSubField(selectionSet, responseName, out subField)))
             {
                 if (!subField.IsInternal)
                 {
@@ -738,7 +777,7 @@ internal sealed class ValueCompletion
                         anchor,
                         path.Append(responseName),
                         subField,
-                        fetched.TryGetChild(responseName),
+                        fetched?.TryGetChild(responseName),
                         childErrorTrie);
                 }
 
@@ -1616,9 +1655,10 @@ internal sealed class ValueCompletion
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet,
-        IError? error)
+        ErrorTrie? errorTrie)
     {
         var sourceValueKind = source.ValueKind;
+        var error = errorTrie?.FindFirstError();
 
         if (sourceValueKind is JsonValueKind.Null && IsValueType(target.Type))
         {
@@ -1636,7 +1676,16 @@ internal sealed class ValueCompletion
         // instead of surfacing an unexpected execution error.
         if (sourceValueKind is JsonValueKind.Null && error is null)
         {
-            return CompleteNullSource(source, target, resultSelectionSet);
+            return CompleteNullSource(source, target, resultSelectionSet, errorTrie: null);
+        }
+
+        // A null source whose errors were raised below it reports each error at the field that raised it.
+        if (sourceValueKind is JsonValueKind.Null
+            && errorTrie is { Error: null }
+            && (target.ValueKind is JsonValueKind.Object
+                || (target.ValueKind is JsonValueKind.Undefined && TryInitializeTargetObject(target))))
+        {
+            return CompleteNullSourceWithErrors(source, target, resultSelectionSet, errorTrie);
         }
 
         var fallbackError = error ??
@@ -1660,7 +1709,8 @@ internal sealed class ValueCompletion
     /// <summary>
     /// Completes the selection set of <paramref name="target"/> for a <c>null</c>
     /// source, applying per-field nullability so that non-null fields produce a
-    /// non-null violation and nullable fields are set to <c>null</c>.
+    /// non-null violation and nullable fields are set to <c>null</c>. Fields that hold a
+    /// leaf value and fields with errors in <paramref name="errorTrie"/> are skipped.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the execution can continue.
@@ -1669,7 +1719,8 @@ internal sealed class ValueCompletion
     private bool CompleteNullSource(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
-        ResultSelectionSet resultSelectionSet)
+        ResultSelectionSet resultSelectionSet,
+        ErrorTrie? errorTrie)
     {
         if (target.ValueKind is JsonValueKind.Undefined
             && !TryInitializeTargetObject(target))
@@ -1680,7 +1731,9 @@ internal sealed class ValueCompletion
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
             if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+                || fieldResult.IsInternal
+                || HoldsLeafValue(fieldResult)
+                || TryGetFieldErrorTrie(errorTrie, resultSelectionSet, responseName, out _))
             {
                 continue;
             }
@@ -1712,6 +1765,145 @@ internal sealed class ValueCompletion
 
         return ApplyPocketedErrors(target);
     }
+
+    /// <summary>
+    /// Completes the selection set of the object <paramref name="target"/> for a <c>null</c> source like
+    /// <see cref="CompleteNullSource"/>, and adds each error of <paramref name="errorTrie"/> once at the path of the
+    /// field that raised it, with the null propagating from that field.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the execution can continue.
+    /// <c>false</c>, if the execution needs to be halted.
+    /// </returns>
+    private bool CompleteNullSourceWithErrors(
+        SourceResultElementSnapshot source,
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        ErrorTrie errorTrie)
+    {
+        var targetPath = target.CompactPath.ToPath(target.Operation);
+        var isReachable = _store.HasReachableAncestorsUnsafe(target);
+        var canExecutionContinue = true;
+
+        // The null of the source makes every field it fetched missing for the dependents of the entity.
+        foreach (var error in EnumerateErrors(errorTrie))
+        {
+            _store.RecordKeyFetchErrors(targetPath, target.CompactPath, resultSelectionSet, error);
+        }
+
+        AddErrorsOfUnfetchedFields(resultSelectionSet, errorTrie);
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (!TryGetFieldErrorTrie(errorTrie, resultSelectionSet, responseName, out var fieldErrorTrie))
+            {
+                continue;
+            }
+
+            if (!target.TryGetProperty(responseName, out var fieldResult)
+                || fieldResult.IsInternal
+                || fieldResult.IsExcluded)
+            {
+                continue;
+            }
+
+            if (HoldsLeafValue(fieldResult))
+            {
+                AddErrorsWithoutPath(fieldErrorTrie);
+                continue;
+            }
+
+            var selection = fieldResult.AssertSelection();
+            var childSet = resultSelectionSet.TryGetChild(responseName);
+
+            // Once the null propagated past the target, the errors of the other fields are added below that null.
+            if (!canExecutionContinue || !isReachable || target.IsNullOrInvalidated)
+            {
+                if (fieldErrorTrie.FindFirstError() is { } fieldError)
+                {
+                    AddFieldErrorsOnNulledTarget(
+                        new KeyFetchErrorOrigin(targetPath, target.CompactPath, responseName),
+                        targetPath.Append(responseName),
+                        selection,
+                        childSet,
+                        default,
+                        fieldErrorTrie,
+                        fieldError);
+                }
+
+                continue;
+            }
+
+            // A value-type field keeps its value for the other sources that fetch it, unless the value-type rule
+            // puts the error on the field, which makes it null.
+            if (selection.IsValueTypeNamedType)
+            {
+                AddNullValueTypeFieldErrors(fieldResult, fieldErrorTrie, selection, childSet);
+
+                if (selection.IsNonNull
+                    && fieldResult.ValueKind is JsonValueKind.Null
+                    && _errorHandlingMode is ErrorHandlingMode.Propagate
+                    && PropagateNullValues(target))
+                {
+                    canExecutionContinue = false;
+                }
+
+                continue;
+            }
+
+            AddErrorsBelowField(anchor: null, targetPath.Append(responseName), selection, childSet, fieldErrorTrie);
+
+            if (_errorHandlingMode is ErrorHandlingMode.Propagate && selection.IsNonNull)
+            {
+                if (PropagateNullValues(fieldResult))
+                {
+                    canExecutionContinue = false;
+                }
+            }
+            else if (fieldResult.ValueKind is JsonValueKind.Undefined)
+            {
+                fieldResult.SetNullValue();
+            }
+        }
+
+        if (!canExecutionContinue)
+        {
+            return false;
+        }
+
+        if (!isReachable || target.IsNullOrInvalidated)
+        {
+            return true;
+        }
+
+        return CompleteNullSource(source, target, resultSelectionSet, errorTrie);
+    }
+
+    // Gets the errors that the source raised for the field with the response name, or below it.
+    private static bool TryGetFieldErrorTrie(
+        ErrorTrie? errorTrie,
+        ResultSelectionSet resultSelectionSet,
+        string responseName,
+        [NotNullWhen(true)] out ErrorTrie? fieldErrorTrie)
+    {
+        if (errorTrie is not null
+            && errorTrie.TryGetValue(GetSourceResponseName(resultSelectionSet, responseName), out fieldErrorTrie)
+            && fieldErrorTrie is not null)
+        {
+            return true;
+        }
+
+        fieldErrorTrie = null;
+        return false;
+    }
+
+    // Gets whether the field holds a leaf value that another source completed.
+    private static bool HoldsLeafValue(CompositeResultElement fieldResult)
+        => fieldResult.ValueKind
+            is JsonValueKind.String
+            or JsonValueKind.Number
+            or JsonValueKind.True
+            or JsonValueKind.False;
 
     private static bool TryInitializeTargetObject(CompositeResultElement target)
     {
@@ -2105,35 +2297,9 @@ internal sealed class ValueCompletion
 
         if (sourceValueKind is JsonValueKind.Null && selection.IsValueTypeNamedType)
         {
-            if (errorTrie?.FindFirstError() is { } error)
+            if (errorTrie is not null)
             {
-                foreach (var fieldError in EnumerateErrors(errorTrie))
-                {
-                    RecordKeyFetchError(target, selection, resultSelectionSet, fieldError);
-                }
-
-                if (!selection.IsInternal && !target.IsExcluded)
-                {
-                    var path = target.Path;
-                    var anchor = new PocketAnchor(target, path.Length);
-                    List<IError>? fieldErrors = null;
-                    _store.RecordFailedValueTypeFetch(target, resultSelectionSet);
-
-                    if (errorTrie.Error is not null)
-                    {
-                        AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, error);
-                    }
-
-                    AddSubFieldErrors(anchor, path, selection, resultSelectionSet, errorTrie, ref fieldErrors);
-
-                    if (fieldErrors is not null)
-                    {
-                        foreach (var fieldError in fieldErrors)
-                        {
-                            AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, fieldError);
-                        }
-                    }
-                }
+                AddNullValueTypeFieldErrors(target, errorTrie, selection, resultSelectionSet);
             }
 
             // For shared parent types we keep the target untouched so that
@@ -2167,6 +2333,50 @@ internal sealed class ValueCompletion
         }
 
         return true;
+    }
+
+    // Adds the errors of a source that returned null for the value-type field of the target, after fetching the
+    // sub-fields in resultSelectionSet, by the value-type rule, and records them for the dependents of the entity.
+    private void AddNullValueTypeFieldErrors(
+        CompositeResultElement target,
+        ErrorTrie errorTrie,
+        Selection selection,
+        ResultSelectionSet? resultSelectionSet)
+    {
+        if (errorTrie.FindFirstError() is not { } error)
+        {
+            return;
+        }
+
+        foreach (var fieldError in EnumerateErrors(errorTrie))
+        {
+            RecordKeyFetchError(target, selection, resultSelectionSet, fieldError);
+        }
+
+        if (selection.IsInternal || target.IsExcluded)
+        {
+            return;
+        }
+
+        var path = target.Path;
+        var anchor = new PocketAnchor(target, path.Length);
+        List<IError>? fieldErrors = null;
+        _store.RecordFailedValueTypeFetch(target, resultSelectionSet);
+
+        if (errorTrie.Error is not null)
+        {
+            AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, error);
+        }
+
+        AddSubFieldErrors(anchor, path, selection, resultSelectionSet, errorTrie, ref fieldErrors);
+
+        if (fieldErrors is not null)
+        {
+            foreach (var fieldError in fieldErrors)
+            {
+                AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, fieldError);
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -2614,7 +2824,7 @@ TryCompleteList_MoveNext:
             target.InitializeObjectValue(objectSelectionSet, out objectContext);
         }
 
-        if (errorTrie is { Count: > 0 } && IsInValueType(target, parentSelection))
+        if (errorTrie is { Count: > 0 })
         {
             AddUnmappedSubFieldErrors(objectContext.SelectionSet, resultSelectionSet, errorTrie);
         }
@@ -2723,42 +2933,8 @@ TryCompleteList_MoveNext:
         return true;
     }
 
-    // Gets whether the object target of the selection is a value type or below a value-type field of the same entity.
-    private static bool IsInValueType(CompositeResultElement target, Selection selection)
-    {
-        if (selection.IsValueTypeNamedType)
-        {
-            return true;
-        }
-
-        if (selection.NamedType is FusionComplexTypeDefinition { IsEntityType: true })
-        {
-            return false;
-        }
-
-        for (var current = target.Parent; !current.IsRoot; current = current.Parent)
-        {
-            if (current.Selection is not { } currentSelection)
-            {
-                continue;
-            }
-
-            if (currentSelection.IsValueTypeNamedType)
-            {
-                return true;
-            }
-
-            if (currentSelection.NamedType is FusionComplexTypeDefinition { IsEntityType: true })
-            {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
-    // Adds the errors that the source raised below an object it returned in a value type, at paths that are neither
-    // client-visible nor internal, once without a path.
+    // Adds the errors that the source raised below an object it returned, at paths that are neither client-visible,
+    // internal nor excluded at runtime, once without a path.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddUnmappedSubFieldErrors(
         SelectionSet? selectionSet,
@@ -2770,15 +2946,21 @@ TryCompleteList_MoveNext:
             if (childErrorTrie is null
                 || key is not string sourceResponseName
                 || (fetched is null
-                    ? TryGetSubField(selectionSet, sourceResponseName, out _)
+                    ? IsSubFieldOrExcluded(selectionSet, sourceResponseName)
                     : TryGetResponseName(fetched, sourceResponseName, out var responseName)
-                        && TryGetSubField(selectionSet, responseName, out _)))
+                        && IsSubFieldOrExcluded(selectionSet, responseName)))
             {
                 continue;
             }
 
             AddErrorsWithoutPath(childErrorTrie);
         }
+
+        bool IsSubFieldOrExcluded(SelectionSet? set, string name)
+            => TryGetSubField(set, name, out _)
+                || (set is not null
+                    && set.TryGetSelection(name, out var selection)
+                    && !selection.IsIncluded(_store.IncludeFlags));
     }
 
     /// <summary>

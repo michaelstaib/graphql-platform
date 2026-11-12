@@ -52,7 +52,7 @@
             },
             {
               "Key": "graphql.field.path",
-              "Value": "deepB"
+              "Value": "deepB.deeperB.causeFatalError"
             },
             {
               "Key": "graphql.error.code",
