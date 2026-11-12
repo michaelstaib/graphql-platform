@@ -1278,7 +1278,52 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         string heldFields)
     {
         // arrange
-        var schema = ComposeSchema(
+        var schema = ComposeHeldFieldSchema();
+        var originalPlan = PlanOperation(schema, operation);
+
+        using var buffer = new PooledArrayWriter();
+        new JsonOperationPlanFormatter().Format(buffer, originalPlan);
+
+        var compiler = new OperationCompiler(
+            schema,
+            new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
+                new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
+        var parser = new JsonOperationPlanParser(compiler);
+
+        // act
+        var parsedPlan = parser.Parse(buffer.WrittenMemory);
+
+        // assert
+        var originalHeldFields = Assert.Single(originalPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
+        var parsedHeldFields = Assert.Single(parsedPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
+        Assert.Equal(heldFields, string.Join(", ", originalHeldFields));
+        Assert.Equal(heldFields, string.Join(", ", parsedHeldFields));
+    }
+
+    [Fact]
+    public void Constructor_Should_DeriveHeldFields_When_RequirementsNameFieldsOfPlan()
+    {
+        // arrange
+        var schema = ComposeHeldFieldSchema();
+        var plan = Assert.Single(
+            PlanOperation(schema, "{ user(id: 1) { id ... @defer { soft total } } }").IncrementalPlans);
+
+        // act
+        var rebuilt = new IncrementalPlan(
+            plan.Operation,
+            plan.RootNodes,
+            plan.AllNodes,
+            plan.DeliveryGroups,
+            plan.Requirements);
+
+        // assert
+        Assert.Equal(["soft"], rebuilt.HeldFields.Select(t => t.Key));
+        Assert.Equal(plan.HeldFields.Select(t => t.Key), rebuilt.HeldFields.Select(t => t.Key));
+    }
+
+    private static FusionSchemaDefinition ComposeHeldFieldSchema()
+    {
+        return ComposeSchema(
             """
             # name: a
             type Query {
@@ -1314,25 +1359,6 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                 total(sku: String @require(field: "sku")): String
             }
             """);
-        var originalPlan = PlanOperation(schema, operation);
-
-        using var buffer = new PooledArrayWriter();
-        new JsonOperationPlanFormatter().Format(buffer, originalPlan);
-
-        var compiler = new OperationCompiler(
-            schema,
-            new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
-                new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
-        var parser = new JsonOperationPlanParser(compiler);
-
-        // act
-        var parsedPlan = parser.Parse(buffer.WrittenMemory);
-
-        // assert
-        var originalHeldFields = Assert.Single(originalPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
-        var parsedHeldFields = Assert.Single(parsedPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
-        Assert.Equal(heldFields, string.Join(", ", originalHeldFields));
-        Assert.Equal(heldFields, string.Join(", ", parsedHeldFields));
     }
 
     [Fact]

@@ -718,13 +718,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// </summary>
     internal void SetRequirements(
         ImmutableArray<VariableValues> parentValues,
-        HashSet<string> keys,
+        HashSet<string>? keys,
         Operation parentOperation)
     {
-        ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(parentOperation);
 
-        if (parentValues.IsDefaultOrEmpty || keys.Count == 0)
+        if (parentValues.IsDefaultOrEmpty || keys is not { Count: > 0 })
         {
             return;
         }
@@ -741,7 +740,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     internal void SetParentValues(
         ImmutableArray<VariableValues>[] parentValues,
         ImmutableArray<OperationRequirement> heldFields,
-        HashSet<string> keys,
+        HashSet<string>? keys,
         Operation parentOperation)
     {
         _resultStore.ImportVariableValues(parentValues, parentOperation);
@@ -750,7 +749,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
         var requirementValues = parentValues[heldFields.Length];
 
-        if (!requirementValues.IsEmpty && keys.Count > 0)
+        if (!requirementValues.IsEmpty && keys is { Count: > 0 })
         {
             _requirementValues = requirementValues;
             _requirementKeys = keys;

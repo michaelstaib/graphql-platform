@@ -719,10 +719,12 @@ internal static partial class OperationPlanExecutor
         }
 
         ImmutableArray<VariableValues> requirementValues = [];
-        var keys = new HashSet<string>(collected.Count, StringComparer.Ordinal);
+        HashSet<string>? keys = null;
 
         if (collected.Count > 0)
         {
+            keys = new HashSet<string>(collected.Count, StringComparer.Ordinal);
+
             var anchor = collected[0].Path;
             for (var i = 1; i < collected.Count; i++)
             {
