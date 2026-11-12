@@ -1059,7 +1059,8 @@ internal static partial class OperationPlanExecutor
     /// <c>incremental.data</c> to be a map of fields to merge at the pending
     /// path, not the fully rooted result. When the delivery path crosses a list,
     /// the pending path ends at the first list and each concrete descendant is
-    /// emitted with a relative field-and-index <c>subPath</c>.
+    /// emitted with a relative field-and-index <c>subPath</c>. Each error is carried
+    /// by the entry whose response path contains the error path, otherwise by the first entry.
     /// </summary>
     private static bool TryCreateIncrementalResults(
         OperationResultData rootData,
@@ -1076,6 +1077,7 @@ internal static partial class OperationPlanExecutor
 
         var selectionPath = bestDeliveryGroup.Path ?? SelectionPath.Root;
         var builder = ImmutableList.CreateBuilder<IIncrementalResult>();
+        var responsePaths = errors is { Count: > 0 } ? new List<Path>() : null;
 
         CollectIncrementalResults(
             document,
@@ -1085,9 +1087,15 @@ internal static partial class OperationPlanExecutor
             fieldIndex: 0,
             pendingFieldCount,
             Path.Root,
+            Path.Root,
             bestDeliveryGroup.Id,
-            errors,
+            responsePaths,
             builder);
+
+        if (responsePaths is { Count: > 0 })
+        {
+            PlaceErrors(errors!, responsePaths, builder);
+        }
 
         incrementalResults = builder.ToImmutable();
         return incrementalResults.Count > 0;
@@ -1101,8 +1109,9 @@ internal static partial class OperationPlanExecutor
         int fieldIndex,
         int pendingFieldCount,
         Path subPath,
+        Path responsePath,
         int deliveryGroupId,
-        ImmutableList<IError>? errors,
+        List<Path>? responsePaths,
         ImmutableList<IIncrementalResult>.Builder results)
     {
         if (element.IsNullMarker)
@@ -1131,8 +1140,9 @@ internal static partial class OperationPlanExecutor
                     fieldIndex,
                     pendingFieldCount,
                     subPath.Append(i),
+                    responsePaths is null ? responsePath : responsePath.Append(i),
                     deliveryGroupId,
-                    errors,
+                    responsePaths,
                     results);
             }
 
@@ -1144,9 +1154,10 @@ internal static partial class OperationPlanExecutor
             results.Add(
                 new IncrementalObjectResult(
                     deliveryGroupId,
-                    errors,
+                    errors: null,
                     subPath.IsRoot ? null : subPath,
                     CreateIncrementalData(document, element)));
+            responsePaths?.Add(responsePath);
             return;
         }
 
@@ -1162,8 +1173,9 @@ internal static partial class OperationPlanExecutor
                 fieldIndex,
                 pendingFieldCount,
                 subPath,
+                responsePath,
                 deliveryGroupId,
-                errors,
+                responsePaths,
                 results);
             return;
         }
@@ -1182,9 +1194,69 @@ internal static partial class OperationPlanExecutor
             fieldIndex + 1,
             pendingFieldCount,
             fieldIndex < pendingFieldCount ? subPath : subPath.Append(segment.Name),
+            responsePaths is null ? responsePath : responsePath.Append(segment.Name),
             deliveryGroupId,
-            errors,
+            responsePaths,
             results);
+    }
+
+    private static void PlaceErrors(
+        ImmutableList<IError> errors,
+        List<Path> responsePaths,
+        ImmutableList<IIncrementalResult>.Builder results)
+    {
+        var errorsByResult = new ImmutableList<IError>.Builder?[results.Count];
+
+        foreach (var error in errors)
+        {
+            var index = FindResultContaining(responsePaths, error.Path);
+            (errorsByResult[index < 0 ? 0 : index] ??= ImmutableList.CreateBuilder<IError>()).Add(error);
+        }
+
+        for (var i = 0; i < errorsByResult.Length; i++)
+        {
+            if (errorsByResult[i] is { } placed)
+            {
+                var result = (IncrementalObjectResult)results[i];
+                results[i] = new IncrementalObjectResult(result.Id, placed.ToImmutable(), result.SubPath, result.Data);
+            }
+        }
+    }
+
+    private static int FindResultContaining(List<Path> responsePaths, Path? errorPath)
+    {
+        if (errorPath is null)
+        {
+            return -1;
+        }
+
+        var bestIndex = -1;
+        var bestLength = -1;
+
+        for (var i = 0; i < responsePaths.Count; i++)
+        {
+            var responsePath = responsePaths[i];
+
+            if (responsePath.Length <= bestLength || responsePath.Length > errorPath.Length)
+            {
+                continue;
+            }
+
+            var current = errorPath;
+
+            while (current.Length > responsePath.Length)
+            {
+                current = current.Parent;
+            }
+
+            if (current.Equals(responsePath))
+            {
+                bestIndex = i;
+                bestLength = responsePath.Length;
+            }
+        }
+
+        return bestIndex;
     }
 
     private static bool HasRemainingFieldSegments(SelectionPath selectionPath, int segmentIndex)

@@ -5527,4 +5527,261 @@ public class DeferTests : FusionTestBase
 
         public record OwnerInput(int Raw, int Computed);
     }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnFirstListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("1");
+
+        // act
+        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","errors":[{"message":"Nick of user 1 failed.","path":["users",0,"nick"]}],"subPath":[0],"data":{"nick":null}},{"id":"0","subPath":[1],"data":{"nick":"Nick 2"}},{"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnMiddleListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"nick":"Nick 1"}},{"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["users",1,"nick"]}],"subPath":[1],"data":{"nick":null}},{"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnLastListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"nick":"Nick 1"}},{"id":"0","subPath":[1],"data":{"nick":"Nick 2"}},{"id":"0","errors":[{"message":"Nick of user 3 failed.","path":["users",2,"nick"]}],"subPath":[2],"data":{"nick":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachItemErrorOnce_When_DeferredFieldFailsOnTwoListItems()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("1", "3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","errors":[{"message":"Nick of user 1 failed.","path":["users",0,"nick"]}],"subPath":[0],"data":{"nick":null}},{"id":"0","subPath":[1],"data":{"nick":"Nick 2"}},{"id":"0","errors":[{"message":"Nick of user 3 failed.","path":["users",2,"nick"]}],"subPath":[2],"data":{"nick":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnNestedListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2-1");
+
+        // act
+        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id friends { id ... @defer { nick } } } }",
+            "query { users { id friends { id nick } } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1","friends":[{"id":"1-1"},{"id":"1-2"}]},{"id":"2","friends":[{"id":"2-1"},{"id":"2-2"}]},{"id":"3","friends":[{"id":"3-1"},{"id":"3-2"}]}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0,"friends",0],"data":{"nick":"Nick 1-1"}},{"id":"0","subPath":[0,"friends",1],"data":{"nick":"Nick 1-2"}},{"id":"0","errors":[{"message":"Nick of user 2-1 failed.","path":["users",1,"friends",0,"nick"]}],"subPath":[1,"friends",0],"data":{"nick":null}},{"id":"0","subPath":[1,"friends",1],"data":{"nick":"Nick 2-2"}},{"id":"0","subPath":[2,"friends",0],"data":{"nick":"Nick 3-1"}},{"id":"0","subPath":[2,"friends",1],"data":{"nick":"Nick 3-2"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnMutationListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "mutation { createUsers { id ... @defer { nick } } }",
+            "mutation { createUsers { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"createUsers":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["createUsers"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"nick":"Nick 1"}},{"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["createUsers",1,"nick"]}],"subPath":[1],"data":{"nick":null}},{"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    private async Task<Gateway> CreateFailingNickGatewayAsync(params string[] failingIds)
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<FailingNickSourceA.Query>()
+                .AddMutationType<FailingNickSourceA.Mutation>());
+
+        var server2 = CreateSourceSchema(
+            "B",
+            b => b.AddQueryType<FailingNickSourceB.Query>(),
+            configureServices: s => s.AddSingleton(new FailingNickSourceB.FailingIds([.. failingIds])));
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private static async Task<(List<string> Payloads, List<string> DeferredErrors, List<string> PlainErrors)>
+        ExecuteDeferredAndPlainAsync(Gateway gateway, string deferredQuery, string plainQuery)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var uri = new Uri("http://localhost:5000/graphql");
+
+        using var deferredResult = await client.PostAsync(
+            new OperationRequest(deferredQuery),
+            uri,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(deferredResult);
+
+        using var plainResult = await client.PostAsync(
+            new OperationRequest(plainQuery),
+            uri,
+            TestContext.Current.CancellationToken);
+        var plainPayloads = await ReadPayloadsAsync(plainResult);
+
+        var deferredErrors = new List<string>();
+
+        foreach (var payload in payloads)
+        {
+            var response = JsonNode.Parse(payload)!.AsObject();
+            AddErrors(response, deferredErrors);
+
+            foreach (var incremental in response["incremental"]?.AsArray() ?? [])
+            {
+                AddErrors(incremental!.AsObject(), deferredErrors);
+            }
+
+            foreach (var completed in response["completed"]?.AsArray() ?? [])
+            {
+                AddErrors(completed!.AsObject(), deferredErrors);
+            }
+        }
+
+        var plainErrors = new List<string>();
+        AddErrors(JsonNode.Parse(Assert.Single(plainPayloads))!.AsObject(), plainErrors);
+
+        return (payloads, deferredErrors, plainErrors);
+
+        static void AddErrors(JsonObject container, List<string> errors)
+        {
+            foreach (var error in container["errors"]?.AsArray() ?? [])
+            {
+                errors.Add(error!.ToJsonString());
+            }
+        }
+    }
+
+    private static class FailingNickSourceA
+    {
+        public class Query
+        {
+            public IEnumerable<User> GetUsers() => [new("1"), new("2"), new("3")];
+        }
+
+        public class Mutation
+        {
+            public IEnumerable<User> CreateUsers() => [new("1"), new("2"), new("3")];
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>, Shareable] string Id)
+        {
+            public IEnumerable<User> GetFriends() => [new(Id + "-1"), new(Id + "-2")];
+        }
+    }
+
+    private static class FailingNickSourceB
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([GraphQLType<NonNullType<IdType>>] string id) => new(id);
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id)
+        {
+            public string? GetNick([Service] FailingIds failingIds)
+                => failingIds.Ids.Contains(Id)
+                    ? throw new GraphQLException("Nick of user " + Id + " failed.")
+                    : "Nick " + Id;
+        }
+
+        public sealed record FailingIds(ImmutableHashSet<string> Ids);
+    }
 }
