@@ -315,8 +315,8 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Assigns the <paramref name="error"/> of the source of <paramref name="resultSelectionSet"/> like
-    /// <see cref="BuildDependentErrorResult"/>. When it lands on no field, it is added once without a path unless a
-    /// dependent field receives it.
+    /// <see cref="BuildDependentErrorResult"/>. When it lands on no field, it is added once without a path unless it
+    /// is placed elsewhere.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the execution can continue.
@@ -330,12 +330,7 @@ internal sealed class ValueCompletion
     {
         var placedErrorCount = _store.PlacedErrorCount;
         var canExecutionContinue = BuildDependentErrorResult(target, resultSelectionSet, error, path);
-
-        if (_store.PlacedErrorCount == placedErrorCount)
-        {
-            _store.AddErrorWithoutPathUnlessPlaced(error);
-        }
-
+        CompletePlacement(error, placedErrorCount);
         return canExecutionContinue;
     }
 
@@ -492,8 +487,8 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Adds the <paramref name="error"/> of the source of <paramref name="resultSelectionSet"/> like
-    /// <see cref="AddErrorOnNulledTarget"/>. When it lands on no field, it is added once without a path unless a
-    /// dependent field receives it.
+    /// <see cref="AddErrorOnNulledTarget"/>. When it lands on no field, it is added once without a path unless it is
+    /// placed elsewhere.
     /// </summary>
     public void ReportErrorOnNulledTarget(
         CompactPath targetPath,
@@ -502,8 +497,14 @@ internal sealed class ValueCompletion
     {
         var placedErrorCount = _store.PlacedErrorCount;
         AddErrorOnNulledTarget(targetPath, resultSelectionSet, error);
+        CompletePlacement(error, placedErrorCount);
+    }
 
-        if (_store.PlacedErrorCount == placedErrorCount)
+    // Marks the error as placed when an error was placed since placedErrorCount, and otherwise adds it once without a
+    // path unless it is placed elsewhere.
+    private void CompletePlacement(IError error, int placedErrorCount)
+    {
+        if (!_store.MarkPlacedSince(error, placedErrorCount))
         {
             _store.AddErrorWithoutPathUnlessPlaced(error);
         }
@@ -560,7 +561,7 @@ internal sealed class ValueCompletion
     /// Adds the errors of <paramref name="errorTrie"/>, which the source of <paramref name="resultSelectionSet"/>
     /// raised for the target at <paramref name="targetPath"/> together with the data <paramref name="source"/>, to
     /// the client-visible fields they belong to, when the target is <c>null</c> or below a <c>null</c> value. An
-    /// error that belongs on no such field is added once without a path unless a dependent field receives it.
+    /// error that belongs on no such field is added once without a path unless it is placed elsewhere.
     /// </summary>
     public void ReportSourceErrorsOnNulledTarget(
         CompactPath targetPath,
@@ -623,7 +624,7 @@ internal sealed class ValueCompletion
 
     // Adds the errors that the source raised for the field of a nulled target, whose source value is value, to the
     // client-visible fields they belong to and records them for the dependents of the entity. An error that belongs on
-    // no client-visible field is added once without a path, unless a dependent field receives it.
+    // no client-visible field is added once without a path unless it is placed elsewhere.
     private void AddFieldErrorsOnNulledTarget(
         KeyFetchErrorOrigin origin,
         Path fieldPath,
@@ -742,8 +743,8 @@ internal sealed class ValueCompletion
     }
 
     // Adds the error of the client-visible field at path, whose source value is null, and the errors the source raised
-    // below it, each at its own path when that path is client-visible, nowhere when it is an internal field, and
-    // otherwise on the nearest client-visible field above it.
+    // below it, each at its own path when that path is client-visible, once without a path unless it is placed
+    // elsewhere when it is an internal field, and otherwise on the nearest client-visible field above it.
     private void AddErrorsBelowField(
         PocketAnchor? anchor,
         Path path,
@@ -803,16 +804,18 @@ internal sealed class ValueCompletion
                     : TryGetResponseName(fetched, sourceResponseName, out responseName)
                         && TryGetSubField(selectionSet, responseName, out subField)))
             {
-                if (!subField.IsInternal)
+                if (subField.IsInternal)
                 {
-                    AddErrorsBelowField(
-                        anchor,
-                        path.Append(responseName),
-                        subField,
-                        fetched?.TryGetChild(responseName),
-                        childErrorTrie);
+                    AddErrorsWithoutPath(childErrorTrie);
+                    continue;
                 }
 
+                AddErrorsBelowField(
+                    anchor,
+                    path.Append(responseName),
+                    subField,
+                    fetched?.TryGetChild(responseName),
+                    childErrorTrie);
                 continue;
             }
 
@@ -820,8 +823,8 @@ internal sealed class ValueCompletion
         }
     }
 
-    // Adds the error of the field at path on the sub-fields the value-type rule selects for a value-type field, or
-    // nowhere when the source fetched no client-visible sub-field of it.
+    // Adds the error of the field at path on the sub-fields the value-type rule selects for a value-type field, or once
+    // without a path unless it is placed elsewhere when the source fetched no client-visible sub-field of it.
     private void AddErrorAtField(
         PocketAnchor? anchor,
         Path path,
@@ -834,6 +837,7 @@ internal sealed class ValueCompletion
             switch (GetValueTypeErrorPlacement(selection, fetched, path, out var subFieldPaths))
             {
                 case ValueTypeErrorPlacement.None:
+                    _store.AddErrorWithoutPathUnlessPlaced(error);
                     return;
 
                 case ValueTypeErrorPlacement.SubField:
@@ -864,7 +868,7 @@ internal sealed class ValueCompletion
     // The value-type field whose sub-field errors are pocketed, and the length of its path.
     private readonly record struct PocketAnchor(CompositeResultElement Field, int PathLength);
 
-    // Adds each error of errorTrie once without a path, unless a dependent field receives it.
+    // Adds each error of errorTrie once without a path, unless it is placed elsewhere.
     private void AddErrorsWithoutPath(ErrorTrie errorTrie)
     {
         foreach (var error in EnumerateErrors(errorTrie))
@@ -2411,7 +2415,8 @@ internal sealed class ValueCompletion
     }
 
     // Adds the errors of a source that returned null for the value-type field of the target, after fetching the
-    // sub-fields in resultSelectionSet, by the value-type rule, and records them for the dependents of the entity.
+    // sub-fields in resultSelectionSet, by the value-type rule, and records them for the dependents of the entity. An
+    // error that lands on no field is added once without a path unless it is placed elsewhere.
     private void AddNullValueTypeFieldErrors(
         CompositeResultElement target,
         ErrorTrie errorTrie,
@@ -2430,6 +2435,7 @@ internal sealed class ValueCompletion
 
         if (selection.IsInternal || target.IsExcluded)
         {
+            AddErrorsWithoutPath(errorTrie);
             return;
         }
 
@@ -2440,7 +2446,9 @@ internal sealed class ValueCompletion
 
         if (errorTrie.Error is not null)
         {
+            var placedErrorCount = _store.PlacedErrorCount;
             AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, error);
+            CompletePlacement(error, placedErrorCount);
         }
 
         AddSubFieldErrors(anchor, path, selection, resultSelectionSet, errorTrie, ref fieldErrors);
@@ -2449,7 +2457,9 @@ internal sealed class ValueCompletion
         {
             foreach (var fieldError in fieldErrors)
             {
+                var placedErrorCount = _store.PlacedErrorCount;
                 AddValueTypeFieldError(anchor, path, selection, resultSelectionSet, fieldError);
+                CompletePlacement(fieldError, placedErrorCount);
             }
         }
     }

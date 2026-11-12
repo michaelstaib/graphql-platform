@@ -47,6 +47,27 @@ public class LookupErrorPathTests : FusionTestBase
         "nick label"
     ];
 
+    // The selections of an entity whose lookup reports an error at a selected field that another field requires.
+    private static readonly string[] s_fieldAndDependentSelections =
+    [
+        "soft total label",
+        "total soft label"
+    ];
+
+    // The operations on an entity whose lookup reports an error below its value-type field, at the field or for the
+    // whole entity, with the field that requires a sub-field of it excluded or selected, and with a second source that
+    // nulls the entity.
+    private static readonly string[] s_valueTypeOperations =
+    [
+        "query($s: Boolean! = false) { user(id: 7) { info { region } total @include(if: $s) } }",
+        "{ user(id: 7) { info { region } total } }",
+        "query($s: Boolean! = false) { user(id: 8) { info { region } total @include(if: $s) } }",
+        "{ user(id: 8) { info { region } total } }",
+        "query($s: Boolean! = false) { user(id: 9) { info { region } total @include(if: $s) } }",
+        "query($s: Boolean! = false) { user(id: 7) { info { region } xboom total @include(if: $s) } }",
+        "query($s: Boolean! = false) { user(id: 8) { info { region } xboom total @include(if: $s) } }"
+    ];
+
     [Fact]
     public async Task Execute_Should_ReportTheErrorAtTheRaisingField_When_TheLookupOfAnEntityReturnsNull()
     {
@@ -148,6 +169,43 @@ public class LookupErrorPathTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Execute_Should_ReportTheErrorAtTheFieldAndOnTheDependent_When_TheLookupFailsAtASelectedField()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateGatewayAsync(sequence);
+
+        // act
+        var snapshot = await ExecuteInEveryHopOrderAsync(
+            gateway,
+            sequence,
+            s_fieldAndDependentSelections,
+            "{ user(id: 2) { $ } }");
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheDependentOrOnceWithoutPath_When_TheLookupFailsBelowAValueType()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateGatewayAsync(
+            sequence,
+            b => b.AddQueryType<ValueTypeSourceA.Query>(),
+            b => b.AddQueryType<ValueTypeSourceB.Query>(),
+            b => b.AddQueryType<ValueTypeSourceX.Query>(),
+            b => b.AddQueryType<ValueTypeSourceC.Query>());
+
+        // act
+        var snapshot = await ExecuteInEveryHopOrderAsync(gateway, sequence, s_valueTypeOperations, "$");
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
     public async Task Execute_Should_ReportTheErrorOnceWithoutPath_When_TheLookupSelectingOnlyTheTypeNameRaises()
     {
         // arrange
@@ -241,17 +299,28 @@ public class LookupErrorPathTests : FusionTestBase
         return body.ReplaceLineEndings("\n");
     }
 
-    private async Task<Gateway> CreateGatewayAsync(HopSequence sequence)
+    private Task<Gateway> CreateGatewayAsync(HopSequence sequence)
+        => CreateGatewayAsync(
+            sequence,
+            b => b.AddQueryType<SourceA.Query>().AddMutationType<SourceA.Mutation>(),
+            b => b.AddQueryType<SourceB.Query>(),
+            b => b.AddQueryType<SourceX.Query>(),
+            b => b.AddQueryType<SourceC.Query>());
+
+    private async Task<Gateway> CreateGatewayAsync(
+        HopSequence sequence,
+        Action<IRequestExecutorBuilder> configureA,
+        Action<IRequestExecutorBuilder> configureB,
+        Action<IRequestExecutorBuilder> configureX,
+        Action<IRequestExecutorBuilder> configureC)
     {
         var hopB = new SequencedHop(sequence, "B", deliveredOnResponse: false);
         var hopX = new SequencedHop(sequence, "X", deliveredOnResponse: false);
         var listener = new HopMergeListener(sequence, new() { ["b"] = "B", ["x"] = "X" });
-        var a = CreateSourceSchema(
-            "a",
-            b => b.AddQueryType<SourceA.Query>().AddMutationType<SourceA.Mutation>());
-        var b = CreateSourceSchema("b", b => b.AddQueryType<SourceB.Query>(), mockHttpResponse: hopB.SendAsync);
-        var x = CreateSourceSchema("x", b => b.AddQueryType<SourceX.Query>(), mockHttpResponse: hopX.SendAsync);
-        var c = CreateSourceSchema("c", b => b.AddQueryType<SourceC.Query>());
+        var a = CreateSourceSchema("a", configureA);
+        var b = CreateSourceSchema("b", configureB, mockHttpResponse: hopB.SendAsync);
+        var x = CreateSourceSchema("x", configureX, mockHttpResponse: hopX.SendAsync);
+        var c = CreateSourceSchema("c", configureC);
         hopB.Connect(b);
         hopX.Connect(x);
 
@@ -408,6 +477,83 @@ public class LookupErrorPathTests : FusionTestBase
         public record User(int Id)
         {
             public string? GetTotal([Require("sku")] string? sku) => "total-" + sku;
+        }
+    }
+
+    public static class ValueTypeSourceA
+    {
+        [EntityKey("id")]
+        public record User(int Id);
+
+        public class Query
+        {
+            public User? GetUser(int id) => new(id);
+
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id);
+        }
+    }
+
+    public static class ValueTypeSourceB
+    {
+        public record Info(string? Sku);
+
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id, IResolverContext context)
+            {
+                var path = id switch
+                {
+                    7 => context.Path.Append("info").Append("sku"),
+                    8 => context.Path.Append("info"),
+                    _ => context.Path
+                };
+                var message = id switch
+                {
+                    7 => "sku failed for 7",
+                    8 => "info failed for 8",
+                    _ => "entity failed for " + id
+                };
+
+                context.ReportError(ErrorBuilder.New().SetMessage(message).SetPath(path).Build());
+                return null;
+            }
+        }
+
+        [EntityKey("id")]
+        public record User(int Id, [property: Shareable] Info Info);
+    }
+
+    public static class ValueTypeSourceX
+    {
+        public record Info(string? Region);
+
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id, new Info("eu"));
+        }
+
+        [EntityKey("id")]
+        public record User(int Id, [property: Shareable] Info Info)
+        {
+            public string Xboom => throw new GraphQLException("xboom failed for " + Id);
+        }
+    }
+
+    public static class ValueTypeSourceC
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id);
+        }
+
+        [EntityKey("id")]
+        public record User(int Id)
+        {
+            public string? GetTotal([Require("info.sku")] string? sku) => "total-" + sku;
         }
     }
 

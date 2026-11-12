@@ -116,7 +116,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private Dictionary<Path, List<IError>>? _errorsByPath;
     private int _placedErrorCount;
     private List<IError>? _unplacedErrors;
-    private HashSet<IError>? _placedOnDependentErrors;
+    private HashSet<IError>? _placedErrors;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -813,21 +813,28 @@ AddErrors_Next:
     internal int PlacedErrorCount => _placedErrorCount;
 
     /// <summary>
-    /// Adds <paramref name="error"/> once without a path when the result completes, unless a dependent field
-    /// receives it before.
+    /// Adds <paramref name="error"/> once without a path when the result completes, unless it is marked as placed
+    /// with <see cref="MarkPlacedSince"/> by then.
     /// </summary>
     internal void AddErrorWithoutPathUnlessPlaced(IError error) => (_unplacedErrors ??= []).Add(error);
 
-    // Marks the error as received by a dependent field when an error was placed since placedErrorCount.
-    private void MarkPlacedOnDependent(IError error, int placedErrorCount)
+    /// <summary>
+    /// Marks <paramref name="error"/> as placed when an error was placed since <see cref="PlacedErrorCount"/> was
+    /// <paramref name="placedErrorCount"/>.
+    /// </summary>
+    /// <returns><c>true</c>, if an error was placed since then.</returns>
+    internal bool MarkPlacedSince(IError error, int placedErrorCount)
     {
-        if (_placedErrorCount != placedErrorCount)
+        if (_placedErrorCount == placedErrorCount)
         {
-            (_placedOnDependentErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(error);
+            return false;
         }
+
+        (_placedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(error);
+        return true;
     }
 
-    // Adds each error that no field received once without a path.
+    // Adds each error that was not placed once without a path.
     private void AddUnplacedErrorsWithoutPathUnsafe()
     {
         if (_unplacedErrors is not { Count: > 0 } errors)
@@ -835,11 +842,11 @@ AddErrors_Next:
             return;
         }
 
-        _placedOnDependentErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance);
+        _placedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance);
 
         foreach (var error in errors)
         {
-            if (_placedOnDependentErrors.Add(error))
+            if (_placedErrors.Add(error))
             {
                 AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(error)));
             }
@@ -948,7 +955,7 @@ AddErrors_Next:
                     resultSelectionSet,
                     originName,
                     fetch.Error);
-                MarkPlacedOnDependent(fetch.Error, placedErrorCount);
+                MarkPlacedSince(fetch.Error, placedErrorCount);
             }
         }
         finally
@@ -1023,7 +1030,7 @@ AddErrors_Next:
                         resultSelectionSet,
                         originName,
                         fetch.Error);
-                    MarkPlacedOnDependent(fetch.Error, placedErrorCount);
+                    MarkPlacedSince(fetch.Error, placedErrorCount);
                     continue;
                 }
 
@@ -1032,7 +1039,7 @@ AddErrors_Next:
                     resultSelectionSet,
                     fetch.Error,
                     element.CompactPath);
-                MarkPlacedOnDependent(fetch.Error, placedErrorCount);
+                MarkPlacedSince(fetch.Error, placedErrorCount);
 
                 if (!canExecutionContinue)
                 {
