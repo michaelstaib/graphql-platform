@@ -1491,7 +1491,7 @@ public class KeyHopFailureTests : FusionTestBase
         // arrange
         string[][] orders = [["B", "C", "I"], ["B", "I", "C"]];
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        using var gateway = await CreateInFlightRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
         var results = new List<string>();
 
         // act
@@ -1528,7 +1528,7 @@ public class KeyHopFailureTests : FusionTestBase
     {
         // arrange
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        using var gateway = await CreateMergeOrderedRaisedErrorSequencedGatewayAsync(sequence);
         sequence.Start(["I", "B", "C"]);
 
         // act
@@ -1542,6 +1542,29 @@ public class KeyHopFailureTests : FusionTestBase
             """
             data: {"userList":null}
             errors: [{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedError_When_TheKeyHopsAreMergedBeforeTheListIsNull()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateMergeOrderedRaisedErrorSequencedGatewayAsync(sequence);
+        sequence.Start(["B", "C", "I"]);
+
+        // act
+        var result = await ExecuteWithSortedErrorsAsync(
+            gateway,
+            "{ userList(ids: [96, 93]) { total badNN } }",
+            include: null);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"userList":null}
+            errors: [{"message":"C hop failed for sku-96","path":["userList",0,"total"]},{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
 
             """);
     }
@@ -1609,13 +1632,10 @@ public class KeyHopFailureTests : FusionTestBase
             enableRequestGrouping: true);
         sequence.Start(["B", "I", "C"]);
         var inFlightOrder = await ExecuteWithSortedErrorsAsync(inFlightGateway, query, include: null);
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
-        sequence.Start(["I", "B", "C"]);
-        var nulledFirstOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
         sequence.Start([]);
 
         // assert
-        new[] { requestInFlight, listNullFirst, inFlightOrder, nulledFirstOrder }.MatchInlineSnapshots(
+        new[] { requestInFlight, listNullFirst, inFlightOrder }.MatchInlineSnapshots(
         [
             """
             data: {"a":null,"b":[{"total":null}]}
@@ -1629,13 +1649,31 @@ public class KeyHopFailureTests : FusionTestBase
             data: {"a":null,"b":[{"total":null}]}
             errors: [{"message":"C hop failed for sku-96","path":["a",0,"total"]},{"message":"C hop failed for sku-96","path":["b",0,"total"]},{"message":"I hop failed for 93","path":["a",1,"badNN"]}]
 
-            """,
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedErrorOnlyOnTheOtherList_When_ThePrimaryListIsNulledFirst()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateMergeOrderedRaisedErrorSequencedGatewayAsync(sequence);
+        sequence.Start(["I", "B", "C"]);
+
+        // act
+        var result = await ExecuteWithSortedErrorsAsync(
+            gateway,
+            "{ a: userList(ids: [96, 93]) { total badNN } b: userList(ids: [96]) { total } }",
+            include: null);
+
+        // assert
+        result.MatchInlineSnapshot(
             """
             data: {"a":null,"b":[{"total":null}]}
             errors: [{"message":"C hop failed for sku-96","path":["b",0,"total"]},{"message":"I hop failed for 93","path":["a",1,"badNN"]}]
 
-            """
-        ]);
+            """);
     }
 
     [Fact]
@@ -4904,11 +4942,34 @@ public class KeyHopFailureTests : FusionTestBase
             includeOperationPlan: false);
     }
 
+    private async Task<Gateway> CreateMergeOrderedRaisedErrorSequencedGatewayAsync(HopSequence sequence)
+    {
+        var hopB = new SequencedHop(sequence, "B", deliveredOnResponse: false);
+        var hopC = new SequencedHop(sequence, "C", deliveredOnResponse: false);
+        var hopI = new SequencedHop(sequence, "I", deliveredOnResponse: false);
+        var listener = new HopMergeListener(sequence, new() { ["b"] = "B", ["c"] = "C", ["i"] = "I" });
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: hopB.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>(), mockHttpResponse: hopC.SendAsync);
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopC.Connect(c);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c), ("i", i)],
+            configureGatewayBuilder: builder => builder
+                .ModifyPlannerOptions(o => o.EnableRequestGrouping = true)
+                .AddDiagnosticEventListener(_ => listener),
+            includeOperationPlan: false);
+    }
+
     private async Task<string> ExecuteKeyHopRaceAsync(string[] order)
     {
         var sequence = new HopSequence();
         var hopQ = new MarkerHop(sequence, ["userById", "accountById"], fail: false);
         var hopK = new MarkerHop(sequence, ["userBySku", "accountByCode"], fail: true);
+        var listener = new MarkerMergeListener(sequence, ["userById", "userBySku", "accountById", "accountByCode"]);
         var p = CreateSourceSchema("p", b => b.AddQueryType<KeyP.Query>());
         var q = CreateSourceSchema("q", b => b.AddQueryType<KeyQ.Query>(), mockHttpResponse: hopQ.SendAsync);
         var k = CreateSourceSchema("k", b => b.AddQueryType<KeyK.Query>(), mockHttpResponse: hopK.SendAsync);
@@ -4916,8 +4977,9 @@ public class KeyHopFailureTests : FusionTestBase
         hopK.Connect(k);
         using var gateway = await CreateCompositeSchemaAsync(
             [("p", p), ("q", q), ("k", k)],
-            configureGatewayBuilder: builder =>
-                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = false),
+            configureGatewayBuilder: builder => builder
+                .ModifyPlannerOptions(o => o.EnableRequestGrouping = false)
+                .AddDiagnosticEventListener(_ => listener),
             includeOperationPlan: false);
 
         sequence.Start(order);
@@ -4930,6 +4992,7 @@ public class KeyHopFailureTests : FusionTestBase
         return result;
     }
 
+    // Answers the operation of a marker in the order of the current run. A MarkerMergeListener delivers it.
     private sealed class MarkerHop(HopSequence sequence, string[] markers, bool fail)
     {
         private HttpMessageInvoker? _invoker;
@@ -4945,12 +5008,55 @@ public class KeyHopFailureTests : FusionTestBase
 
             await sequence.WaitForTurnAsync(hop, cancellationToken);
 
-            var response = fail
+            return fail
                 ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
                 : await _invoker!.SendAsync(request, cancellationToken);
+        }
+    }
 
-            sequence.MarkDelivered(hop);
-            return response;
+    // Delivers the hops of the markers in the operations of a node once the node has queued its results for merging
+    // or recorded its errors.
+    private sealed class MarkerMergeListener(HopSequence sequence, string[] markers)
+        : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+            => TryDeliver([GetText(node.Operation)]) ?? base.ExecuteOperationNode(context, node, schemaName);
+
+        public override IDisposable ExecuteOperationBatchNode(
+            OperationPlanContext context,
+            OperationBatchExecutionNode node,
+            string schemaName)
+        {
+            var texts = new List<string>();
+
+            foreach (var operation in node.Operations)
+            {
+                texts.Add(GetText(operation.SourceText));
+            }
+
+            return TryDeliver(texts) ?? base.ExecuteOperationBatchNode(context, node, schemaName);
+        }
+
+        private Delivery? TryDeliver(List<string> texts)
+        {
+            var hops = markers.Where(m => texts.Any(t => t.Contains(m, StringComparison.Ordinal))).ToArray();
+            return hops.Length == 0 ? null : new Delivery(sequence, hops);
+        }
+
+        private static string GetText(OperationSourceText operation) => Encoding.UTF8.GetString(operation.Value.Span);
+
+        private sealed class Delivery(HopSequence sequence, string[] hops) : IDisposable
+        {
+            public void Dispose()
+            {
+                foreach (var hop in hops)
+                {
+                    sequence.MarkDelivered(hop);
+                }
+            }
         }
     }
 
