@@ -1901,6 +1901,81 @@ public partial class DeferTests
     }
 
     [Fact]
+    public async Task Defer_Should_DeliverHeldFieldError_When_IncrementalPlanFails()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        using var result = await client.PostAsync(
+            new OperationRequest("{ userGrid { id ... @defer { soft total } } }"),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var payloads = (await ReadPayloadsAsync(result))
+            .ConvertAll(payload => JsonNode.Parse(payload)!.ToJsonString(s_indentedJson));
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "userGrid": [
+                  [
+                    {
+                      "id": 1
+                    },
+                    {
+                      "id": 5
+                    }
+                  ],
+                  [
+                    {
+                      "id": 6
+                    }
+                  ]
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "userGrid"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The target path list container does not exist in the data."
+                    },
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "userGrid",
+                        0,
+                        1,
+                        "soft"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
     public async Task Defer_Should_CompleteStream_When_SkuFailsUnderDeferredRequireField()
     {
         // arrange
@@ -2259,6 +2334,8 @@ public partial class DeferTests
             public List<User?> GetUsers55() => [new(5), new(1), new(5)];
 
             public List<User?> GetUsers7() => [new(1), new(7), new(2)];
+
+            public List<List<User?>?> GetUserGrid() => [[new(1), new(5)], [new(6)]];
 
             [Lookup]
             [Internal]

@@ -763,6 +763,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     internal void SetHeldFieldErrors(List<IError> errors) => _heldFieldErrors = errors;
 
     /// <summary>
+    /// Gets the errors of the held fields that this plan has not written into its result, or
+    /// <c>null</c> if there are none.
+    /// </summary>
+    internal List<IError>? HeldFieldErrors => _heldFieldErrors;
+
+    /// <summary>
     /// Writes the values and errors set for the held fields into the result.
     /// </summary>
     internal void AddHeldFieldValues()
@@ -784,6 +790,8 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             {
                 _resultStore.AddError(error);
             }
+
+            _heldFieldErrors = null;
         }
     }
 

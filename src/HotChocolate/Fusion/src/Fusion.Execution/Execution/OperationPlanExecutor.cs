@@ -402,13 +402,17 @@ internal static partial class OperationPlanExecutor
                         .SetMessage(error.Message)
                         .Build();
                     payload = OperationResult.FromError(errorObj);
-                    MarkDeliveryGroupsFailed(deliveryGroups, [errorObj], ref failedDeliveryGroups);
+                    IReadOnlyList<IError> errors =
+                        incrementalPlanContext?.HeldFieldErrors is { } heldFieldErrors
+                            ? [.. heldFieldErrors, errorObj]
+                            : [errorObj];
+                    MarkDeliveryGroupsFailed(deliveryGroups, errors, ref failedDeliveryGroups);
                     CompleteDeliveryGroups(
                         deliveryGroups,
                         pendingCountByDeliveryGroup,
                         failedDeliveryGroups,
                         completed,
-                        errors: [errorObj]);
+                        errors);
                 }
                 else if (result is not null)
                 {
@@ -618,6 +622,11 @@ internal static partial class OperationPlanExecutor
                 executionCts,
                 requestArena);
 
+            if (parentResultStore.TakeHeldFieldErrors(incrementalPlan) is { } heldFieldErrors)
+            {
+                context.SetHeldFieldErrors(heldFieldErrors);
+            }
+
             // Copy parent-scope requirements into the child context.
             try
             {
@@ -756,11 +765,6 @@ internal static partial class OperationPlanExecutor
 
         parentValues[heldFields.Length] = requirementValues;
         childContext.SetParentValues(parentValues, heldFields, keys, parentResultStore.Operation);
-
-        if (parentResultStore.TakeHeldFieldErrors(incrementalPlan) is { } errors)
-        {
-            childContext.SetHeldFieldErrors(errors);
-        }
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)
