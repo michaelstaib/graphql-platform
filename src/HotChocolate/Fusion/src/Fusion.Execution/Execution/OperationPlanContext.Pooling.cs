@@ -190,6 +190,7 @@ public sealed partial class OperationPlanContext
         _requirementKeys = null;
         _heldFieldValues = default;
         _heldFields = default;
+        _heldFieldErrors = null;
         Traces =
 #if NET10_0_OR_GREATER
             [];

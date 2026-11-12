@@ -97,6 +97,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
+    private Dictionary<IncrementalPlan, List<IError>>? _heldFieldErrors;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -3327,12 +3328,12 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Writes the values of <paramref name="imported"/> into the objects at their result paths, one leaf
-    /// field per held field, named by the requirement key.
+    /// Writes the values of <paramref name="imported"/> into the objects at their result paths as the
+    /// leaf field named by the key of <paramref name="heldField"/>.
     /// </summary>
     internal void AddHeldFieldValues(
         ImmutableArray<VariableValues> imported,
-        ImmutableArray<OperationRequirement> heldFields)
+        OperationRequirement heldField)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -3364,36 +3365,173 @@ AddErrors_Next:
             foreach (var values in document.Root.EnumerateArray())
             {
                 var entry = imported[index++];
-                AddHeldFieldValuesUnsafe(GetStartResult(entry.Path), values, heldFields);
+                AddHeldFieldValueUnsafe(GetStartResult(entry.Path), values, heldField.Key);
 
                 var additionalTargets = new AdditionalTargets(this, entry.AdditionalPaths);
 
                 for (var i = 0; i < additionalTargets.Length; i++)
                 {
-                    AddHeldFieldValuesUnsafe(additionalTargets[i], values, heldFields);
+                    AddHeldFieldValueUnsafe(additionalTargets[i], values, heldField.Key);
                 }
             }
         }
     }
 
-    private void AddHeldFieldValuesUnsafe(
-        CompositeResultElement target,
-        SourceResultElement values,
-        ImmutableArray<OperationRequirement> heldFields)
+    private void AddHeldFieldValueUnsafe(CompositeResultElement target, SourceResultElement values, string key)
     {
         if (target.IsNullOrInvalidated || target.ValueKind is not JsonValueKind.Object)
         {
             return;
         }
 
-        foreach (var heldField in heldFields)
+        if (target.TryGetProperty(key, out var targetValue)
+            && values.TryGetProperty(key, out var value))
         {
-            if (target.TryGetProperty(heldField.Key, out var targetValue)
-                && values.TryGetProperty(heldField.Key, out var value))
+            _result.AssignSourceValue(targetValue, value);
+        }
+    }
+
+    /// <summary>
+    /// Moves the errors of the hidden held fields of <paramref name="incrementalPlan"/> out of this store,
+    /// so that <see cref="TakeHeldFieldErrors"/> hands them to the plan that delivers the fields.
+    /// </summary>
+    internal void DivertHeldFieldErrors(IncrementalPlan incrementalPlan)
+    {
+        if (_errors is not { Count: > 0 } errors || incrementalPlan.HeldFields.IsEmpty)
+        {
+            return;
+        }
+
+        List<IError>? diverted = null;
+        var kept = 0;
+
+        for (var i = 0; i < errors.Count; i++)
+        {
+            var error = errors[i];
+
+            if (IsHeldFieldError(error, incrementalPlan.HeldFields))
             {
-                _result.AssignSourceValue(targetValue, value);
+                (diverted ??= []).Add(error);
+            }
+            else
+            {
+                errors[kept++] = error;
             }
         }
+
+        if (diverted is null)
+        {
+            return;
+        }
+
+        errors.RemoveRange(kept, errors.Count - kept);
+        (_heldFieldErrors ??= []).Add(incrementalPlan, diverted);
+    }
+
+    /// <summary>
+    /// Gets the errors that <see cref="DivertHeldFieldErrors"/> moved out of this store for
+    /// <paramref name="incrementalPlan"/>, or <c>null</c> if there are none.
+    /// </summary>
+    internal List<IError>? TakeHeldFieldErrors(IncrementalPlan incrementalPlan)
+    {
+        if (_heldFieldErrors is null || !_heldFieldErrors.Remove(incrementalPlan, out var errors))
+        {
+            return null;
+        }
+
+        return errors;
+    }
+
+    private bool IsHeldFieldError(IError error, ImmutableArray<OperationRequirement> heldFields)
+    {
+        if (error.Path is not { } errorPath
+            || !TryGetResult(errorPath, out var fieldResult)
+            || !fieldResult.IsInternal)
+        {
+            return false;
+        }
+
+        foreach (var heldField in heldFields)
+        {
+            if (IsFieldPath(errorPath, heldField.Path, heldField.Key))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsFieldPath(Path path, SelectionPath anchor, string fieldName)
+    {
+        var buffer = s_objectPool.Rent(path.Length);
+        var segments = buffer.AsSpan(0, path.Length);
+
+        try
+        {
+            path.CopyTo(segments);
+
+            var fieldCount = CountFieldSegments(anchor);
+            var anchorIndex = 0;
+            var seen = 0;
+
+            foreach (var segment in segments)
+            {
+                if (segment is not string name)
+                {
+                    continue;
+                }
+
+                string expected;
+
+                if (seen < fieldCount)
+                {
+                    while (anchor[anchorIndex].Kind is not SelectionPathSegmentKind.Field)
+                    {
+                        anchorIndex++;
+                    }
+
+                    expected = anchor[anchorIndex++].Name;
+                }
+                else if (seen == fieldCount)
+                {
+                    expected = fieldName;
+                }
+                else
+                {
+                    return false;
+                }
+
+                if (!string.Equals(name, expected, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                seen++;
+            }
+
+            return seen == fieldCount + 1;
+        }
+        finally
+        {
+            segments.Clear();
+            s_objectPool.Return(buffer);
+        }
+    }
+
+    private static int CountFieldSegments(SelectionPath anchor)
+    {
+        var count = 0;
+
+        for (var i = 0; i < anchor.Length; i++)
+        {
+            if (anchor[i].Kind is SelectionPathSegmentKind.Field)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private VariableValues ImportVariableValuesEntryUnsafe(VariableValues source, Operation sourceOperation)

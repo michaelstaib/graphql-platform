@@ -1360,27 +1360,474 @@ public partial class DeferTests
         Assert.Equal(payloadCount ?? run.Payloads.Count, run.Payloads.Count);
     }
 
-    [Theory]
-    [InlineData(7)]
-    [InlineData(8)]
-    [InlineData(9)]
-    public async Task Defer_Should_CompleteStream_When_SubgraphFailsUnderDeferredRequireField(int userId)
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldValue_When_SiblingHeldFieldFails()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 5) { id soft sku total } }",
+            "{ user(id: 5) { id ... @defer { soft sku total } } }");
+
+        // assert
+        run.DeferredData.ToJsonString().MatchInlineSnapshot(
+            """
+            {"user":{"id":5,"soft":null,"sku":"sku-5","total":"total-sku-5"}}
+            """);
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldValue_When_SiblingHeldFieldFailsOnListItem()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ users5 { id soft sku total } }",
+            "{ users5 { id ... @defer { soft sku total } } }");
+
+        // assert
+        run.DeferredData.ToJsonString().MatchInlineSnapshot(
+            """
+            {"users5":[{"id":1,"soft":"soft-1","sku":"sku-1","total":"total-sku-1"},{"id":5,"soft":null,"sku":"sku-5","total":"total-sku-5"},{"id":6,"soft":"soft-6","sku":"sku-6","total":"total-sku-6"}]}
+            """);
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldErrorInDeferredPayload_When_HeldFieldFails()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 5) { id soft total } }",
+            "{ user(id: 5) { id ... @defer { soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {
+                  "id": 5
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "user",
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "data": {
+                    "soft": null,
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldErrorInDeferredPayload_When_HeldFieldFailsOnListItem()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ users5 { id soft total } }",
+            "{ users5 { id ... @defer { soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "users5": [
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 5
+                  },
+                  {
+                    "id": 6
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "users5"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "subPath": [
+                    0
+                  ],
+                  "data": {
+                    "soft": "soft-1",
+                    "total": "total-sku-1"
+                  }
+                },
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "users5",
+                        1,
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "subPath": [
+                    1
+                  ],
+                  "data": {
+                    "soft": null,
+                    "total": "total-sku-5"
+                  }
+                },
+                {
+                  "id": "0",
+                  "subPath": [
+                    2
+                  ],
+                  "data": {
+                    "soft": "soft-6",
+                    "total": "total-sku-6"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldErrorInDeferredPayload_When_HeldFieldFailsInMutationResult()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "mutation { createUser(id: 5) { id soft total } }",
+            "mutation { createUser(id: 5) { id ... @defer { soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "createUser": {
+                  "id": 5
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "createUser"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "createUser",
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "data": {
+                    "soft": null,
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteStream_When_SkuFailsUnderDeferredRequireField()
     {
         // arrange
         using var gateway = await CreateRequireGatewayAsync();
 
-        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        // act
+        var payloads = await ReadRequirePayloadsAsync(gateway, 7);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "errors": [
+                {
+                  "message": "The sku failed.",
+                  "path": [
+                    "user",
+                    "sku"
+                  ]
+                }
+              ],
+              "data": {
+                "user": {
+                  "id": 7
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepRequiredFieldErrorInInitialPayload_When_HeldFieldIsDeferredWithIt()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
 
         // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 7) { id soft total } }",
+            "{ user(id: 7) { id ... @defer { soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "errors": [
+                {
+                  "message": "The sku failed.",
+                  "path": [
+                    "user",
+                    "sku"
+                  ]
+                }
+              ],
+              "data": {
+                "user": {
+                  "id": 7
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteStream_When_LookupReturnsNullUnderDeferredRequireField()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync();
+
+        // act
+        var payloads = await ReadRequirePayloadsAsync(gateway, 8);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {
+                  "id": 8
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteStream_When_LookupFailsUnderDeferredRequireField()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync();
+
+        // act
+        var payloads = await ReadRequirePayloadsAsync(gateway, 9);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {
+                  "id": 9
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    private static async Task<List<string>> ReadRequirePayloadsAsync(Gateway gateway, int userId)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
         using var result = await client.PostAsync(
             new OperationRequest($"{{ user(id: {userId}) {{ id ... @defer {{ total }} }} }}"),
             new Uri("http://localhost:5000/graphql"),
             TestContext.Current.CancellationToken);
-        var payloads = await ReadPayloadsAsync(result);
 
-        // assert
-        Assert.Equal(2, payloads.Count);
-        Assert.False(JsonNode.Parse(payloads[^1])!["hasNext"]!.GetValue<bool>());
+        return (await ReadPayloadsAsync(result))
+            .ConvertAll(payload => JsonNode.Parse(payload)!.ToJsonString(s_indentedJson));
     }
 
     private Task<Gateway> CreateRequireGatewayAsync() => CreateRequireGatewayAsync("s1");
@@ -1484,7 +1931,11 @@ public partial class DeferTests
         {
             public string? Sku => Id == 7 ? throw new GraphQLException("The sku failed.") : "sku-" + Id;
 
-            public string? Soft => "soft-" + Id;
+            public string? Soft => Id switch
+            {
+                5 => throw new GraphQLException("The soft failed."),
+                _ => "soft-" + Id
+            };
         }
     }
 
@@ -1524,6 +1975,8 @@ public partial class DeferTests
             public User? GetUser(int id) => new(id);
 
             public List<User?> GetUsers() => [new(1), new(2), new(3)];
+
+            public List<User?> GetUsers5() => [new(1), new(5), new(6)];
 
             [Lookup]
             [Internal]

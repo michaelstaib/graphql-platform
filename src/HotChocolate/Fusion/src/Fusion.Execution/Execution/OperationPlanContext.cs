@@ -38,8 +38,9 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private readonly FetchResultStore _resultStore;
     private ImmutableArray<VariableValues> _requirementValues;
     private HashSet<string>? _requirementKeys;
-    private ImmutableArray<VariableValues> _heldFieldValues;
+    private ImmutableArray<VariableValues>[]? _heldFieldValues;
     private ImmutableArray<OperationRequirement> _heldFields;
+    private List<IError>? _heldFieldErrors;
     private readonly ExecutionState _executionState;
     private readonly INodeIdParser _nodeIdParser;
     private readonly IErrorHandler _errorHandler;
@@ -733,33 +734,62 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     }
 
     /// <summary>
-    /// Sets the values of the fields that the enclosing plan scope fetched and this plan delivers.
-    /// The result paths of <paramref name="parentValues"/> belong to <paramref name="parentOperation"/>.
+    /// Sets the values of the fields that the enclosing plan scope fetched and this plan delivers, one
+    /// entry of <paramref name="parentValues"/> per held field. The result paths belong to
+    /// <paramref name="parentOperation"/>.
     /// </summary>
     internal void SetHeldFieldValues(
-        ImmutableArray<VariableValues> parentValues,
+        ImmutableArray<VariableValues>[] parentValues,
         ImmutableArray<OperationRequirement> heldFields,
         Operation parentOperation)
     {
-        if (parentValues.IsDefaultOrEmpty)
+        var imported = new ImmutableArray<VariableValues>[parentValues.Length];
+
+        for (var i = 0; i < parentValues.Length; i++)
         {
-            return;
+            imported[i] = _resultStore.ImportVariableValues(parentValues[i], parentOperation);
         }
 
-        _heldFieldValues = _resultStore.ImportVariableValues(parentValues, parentOperation);
+        _heldFieldValues = imported;
         _heldFields = heldFields;
     }
 
     /// <summary>
-    /// Writes the values set by <see cref="SetHeldFieldValues"/> into the result.
+    /// Sets the errors of the held fields that the enclosing plan scope fetched and this plan delivers.
+    /// </summary>
+    internal void SetHeldFieldErrors(List<IError> errors) => _heldFieldErrors = errors;
+
+    /// <summary>
+    /// Writes the values and errors set for the held fields into the result.
     /// </summary>
     internal void AddHeldFieldValues()
     {
-        if (!_heldFieldValues.IsDefaultOrEmpty)
+        if (_heldFieldValues is { } heldFieldValues)
         {
-            _resultStore.AddHeldFieldValues(_heldFieldValues, _heldFields);
+            for (var i = 0; i < heldFieldValues.Length; i++)
+            {
+                if (!heldFieldValues[i].IsDefaultOrEmpty)
+                {
+                    _resultStore.AddHeldFieldValues(heldFieldValues[i], _heldFields[i]);
+                }
+            }
+        }
+
+        if (_heldFieldErrors is { } errors)
+        {
+            foreach (var error in errors)
+            {
+                _resultStore.AddError(error);
+            }
         }
     }
+
+    /// <summary>
+    /// Moves the errors of the held fields of <paramref name="incrementalPlan"/> out of the result, so that
+    /// the plan delivers them with the fields.
+    /// </summary>
+    internal void DivertHeldFieldErrors(IncrementalPlan incrementalPlan)
+        => _resultStore.DivertHeldFieldErrors(incrementalPlan);
 
     /// <summary>
     /// Gets the result store used to resolve requirements for child

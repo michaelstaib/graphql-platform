@@ -230,7 +230,10 @@ public sealed partial class OperationPlanner
                 rootNodes,
                 allNodes,
                 descriptor.DeliveryGroupSet,
-                planScopeRequirements);
+                planScopeRequirements)
+            {
+                HeldFields = [.. descriptor.HeldFields]
+            };
 
             incrementalPlansBuilder.Add(incrementalPlan);
         }
@@ -936,8 +939,8 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Registers each leaf field of the deferred group that only a step promoted into the enclosing
-    /// scope selects as a requirement that no step reads, so the plan delivers the field from the
-    /// value the enclosing scope fetched.
+    /// scope selects as a held field of the plan, so the plan delivers the field from the value the
+    /// enclosing scope fetched.
     /// </summary>
     private void AddHeldClientFields(
         IncrementalPlanDescriptor descriptor,
@@ -996,13 +999,14 @@ public sealed partial class OperationPlanner
                     continue;
                 }
 
-                descriptor.Requirements.Add(
+                var held = new OperationRequirement(
                     name,
-                    new OperationRequirement(
-                        name,
-                        definition.Type.ToTypeNode(),
-                        descriptor.Path,
-                        FieldSelectionMapParser.Parse(name)));
+                    definition.Type.ToTypeNode(),
+                    descriptor.Path,
+                    FieldSelectionMapParser.Parse(name));
+
+                descriptor.Requirements.Add(name, held);
+                descriptor.HeldFields.Add(held);
             }
         }
     }

@@ -54,7 +54,6 @@ public sealed class IncrementalPlan : IOperationPlan
             out var usesBatchNodes);
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
-        HeldFields = OperationPlanExecutor.GetHeldFields(this);
     }
 
     /// <summary>
@@ -88,15 +87,15 @@ public sealed class IncrementalPlan : IOperationPlan
     /// Gets the requirements that this plan resolves from its enclosing plan
     /// scope before it executes. Each requirement maps a variable used by this
     /// plan to a selection in the enclosing scope's result. A requirement that no
-    /// node reads names a leaf field of this plan that the enclosing scope fetched.
+    /// node reads and that is not a held field causes no work.
     /// </summary>
     public ImmutableArray<OperationRequirement> Requirements { get; }
 
     /// <summary>
-    /// Gets the requirements that no node of this plan reads. Their values are delivered as
-    /// the fields of the same name.
+    /// Gets the requirements that name a leaf field of this plan that the enclosing scope fetched.
+    /// Their values are delivered as the fields of the same name.
     /// </summary>
-    internal ImmutableArray<OperationRequirement> HeldFields { get; }
+    internal ImmutableArray<OperationRequirement> HeldFields { get; init; } = [];
 
     /// <summary>
     /// Gets the <see cref="ExecutionNode.Id"/> of the node that produces the

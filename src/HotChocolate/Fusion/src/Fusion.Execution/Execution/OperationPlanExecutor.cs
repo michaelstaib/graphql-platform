@@ -114,10 +114,6 @@ internal static partial class OperationPlanExecutor
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Complete the initial result while retaining data needed by active
-            // incremental plans.
-            var initialResult = rootContext.Complete(retainMemoryForDefer: true);
-
             // Compute the active delivery groups (one per @defer occurrence whose
             // @defer(if:) evaluates to true) and the incremental plans that will actually run.
             // An incremental plan is active if at least one of its delivery groups is active.
@@ -131,6 +127,24 @@ internal static partial class OperationPlanExecutor
             }
 
             var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(operationPlan, activeDeliveryGroupIds);
+
+            // The errors of held fields are delivered with the plan that delivers the fields.
+            foreach (var incrementalPlan in operationPlan.IncrementalPlans)
+            {
+                var deliveryGroups = deliveryGroupsByPlan[incrementalPlan];
+
+                if (!incrementalPlan.HeldFields.IsEmpty
+                    && !incrementalPlan.AllNodes.IsEmpty
+                    && !deliveryGroups.IsEmpty
+                    && GetEnabledDeliveryGroup(deliveryGroups[0].Parent, activeDeliveryGroupIds) is null)
+                {
+                    rootContext.DivertHeldFieldErrors(incrementalPlan);
+                }
+            }
+
+            // Complete the initial result while retaining data needed by active
+            // incremental plans.
+            var initialResult = rootContext.Complete(retainMemoryForDefer: true);
 
             // Mark top-level active delivery groups as pending on the initial
             // result. A group whose enclosing groups are all disabled is top-level.
@@ -722,31 +736,6 @@ internal static partial class OperationPlanExecutor
         childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
     }
 
-    internal static ImmutableArray<OperationRequirement> GetHeldFields(IncrementalPlan incrementalPlan)
-    {
-        if (incrementalPlan.Requirements.IsEmpty)
-        {
-            return [];
-        }
-
-        var consumed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var requirement in CollectParentScopeRequirements(incrementalPlan))
-        {
-            consumed.Add(requirement.Key);
-        }
-
-        var held = ImmutableArray.CreateBuilder<OperationRequirement>();
-        foreach (var requirement in incrementalPlan.Requirements)
-        {
-            if (!consumed.Contains(requirement.Key))
-            {
-                held.Add(requirement);
-            }
-        }
-
-        return held.ToImmutable();
-    }
-
     private static void CollectHeldFields(
         FetchResultStore parentResultStore,
         IncrementalPlan incrementalPlan,
@@ -758,12 +747,24 @@ internal static partial class OperationPlanExecutor
             return;
         }
 
-        var parentValues = parentResultStore.CreateVariableValueSets(
-            heldFields[0].Path,
-            requestVariables: [],
-            heldFields.AsSpan());
+        // Each held field maps on its own, so a field that failed in the enclosing scope
+        // does not drop the values of its siblings.
+        var parentValues = new ImmutableArray<VariableValues>[heldFields.Length];
+
+        for (var i = 0; i < heldFields.Length; i++)
+        {
+            parentValues[i] = parentResultStore.CreateVariableValueSets(
+                heldFields[i].Path,
+                requestVariables: [],
+                heldFields.AsSpan().Slice(i, 1));
+        }
 
         childContext.SetHeldFieldValues(parentValues, heldFields, parentResultStore.Operation);
+
+        if (parentResultStore.TakeHeldFieldErrors(incrementalPlan) is { } errors)
+        {
+            childContext.SetHeldFieldErrors(errors);
+        }
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)
@@ -1191,7 +1192,7 @@ internal static partial class OperationPlanExecutor
             results.Add(
                 new IncrementalObjectResult(
                     deliveryGroupId,
-                    errors,
+                    GetErrorsOfElement(element, errors),
                     subPath.IsRoot ? null : subPath,
                     CreateIncrementalData(document, element)));
             return;
@@ -1232,6 +1233,55 @@ internal static partial class OperationPlanExecutor
             deliveryGroupId,
             errors,
             results);
+    }
+
+    /// <summary>
+    /// Selects the errors that belong to <paramref name="element"/>. An error whose path
+    /// runs through a list item belongs to the item only; any other error belongs to every element.
+    /// </summary>
+    private static ImmutableList<IError>? GetErrorsOfElement(
+        CompositeResultElement element,
+        ImmutableList<IError>? errors)
+    {
+        if (errors is null)
+        {
+            return null;
+        }
+
+        ImmutableList<IError>.Builder? builder = null;
+
+        for (var i = 0; i < errors.Count; i++)
+        {
+            var error = errors[i];
+            var belongs = error.Path is not { } path
+                || !ContainsIndex(path)
+                || PathUtilities.IsPathInSubtree(path, element.Path, includeSelf: true);
+
+            if (!belongs && builder is null)
+            {
+                builder = ImmutableList.CreateBuilder<IError>();
+                builder.AddRange(errors.Take(i));
+            }
+            else if (belongs)
+            {
+                builder?.Add(error);
+            }
+        }
+
+        return builder is null ? errors : builder.ToImmutable();
+    }
+
+    private static bool ContainsIndex(Path path)
+    {
+        for (var segment = path; !segment.IsRoot; segment = segment.Parent)
+        {
+            if (segment is IndexerPathSegment)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool HasRemainingFieldSegments(SelectionPath selectionPath, int segmentIndex)

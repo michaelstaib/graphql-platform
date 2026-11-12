@@ -45,4 +45,10 @@ internal sealed class IncrementalPlanDescriptor(
     /// </summary>
     public SortedDictionary<string, OperationRequirement> Requirements { get; } =
         new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Leaf fields of this plan that the enclosing plan scope fetched and this plan delivers. Each
+    /// entry is also present in <see cref="Requirements"/>.
+    /// </summary>
+    public List<OperationRequirement> HeldFields { get; } = [];
 }
