@@ -885,6 +885,172 @@ public partial class DeferTests
 
     private static readonly JsonSerializerOptions s_indentedJson = new() { WriteIndented = true };
 
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldInDeferredPayload_When_ProviderStepIsPromoted()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 1) { id soft total } }",
+            "{ user(id: 1) { id ... @defer { soft total } } }");
+
+        // assert
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {
+                  "id": 1
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "data": {
+                    "soft": "soft-1",
+                    "total": "total-sku-1"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverHeldKeyInDeferredPayload_When_GroupSelectsKeyAndRequiringField()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 1) { id total } }",
+            "{ user(id: 1) { ... @defer { id total } } }");
+
+        // assert
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {}
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "data": {
+                    "id": 1,
+                    "total": "total-sku-1"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverHeldFieldInDeferredPayload_When_DeferIsInMutationResult()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "mutation { createUser(id: 1) { id soft total } }",
+            "mutation { createUser(id: 1) { id ... @defer { soft total } } }");
+
+        // assert
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "createUser": {
+                  "id": 1
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "createUser"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "data": {
+                    "soft": "soft-1",
+                    "total": "total-sku-1"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
     [Theory]
     [InlineData(
         "s1",
@@ -1081,6 +1247,97 @@ public partial class DeferTests
         "{ user(id: 1) { id sku ... @defer { total } } }",
         null,
         "b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft total } }",
+        "{ user(id: 1) { id ... @defer { soft total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id sku total } }",
+        "{ user(id: 1) { id ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft total } }",
+        "{ user(id: 1) { id ... @defer { soft ... @defer { total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft total } }",
+        "{ user(id: 1) { id ... @defer { total ... @defer { soft } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ users { id soft total } }",
+        "{ users { id ... @defer { soft total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { id soft total } }",
+        "mutation { createUser(id: 1) { id ... @defer { soft total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { ... @defer { id total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ users { id sku total } }",
+        "{ users { id ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { id sku total } }",
+        "mutation { createUser(id: 1) { id ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ users { id soft total } }",
+        "{ users { id ... @defer { soft ... @defer { total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ users { id soft total } }",
+        "{ users { id ... @defer { total ... @defer { soft } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { id soft total } }",
+        "mutation { createUser(id: 1) { id ... @defer { soft ... @defer { total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { id soft total } }",
+        "mutation { createUser(id: 1) { id ... @defer { total ... @defer { soft } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
         2)]
     public async Task Defer_Should_MatchPlainResult_When_DeferredGroupReadsRequirement(
         string schema,

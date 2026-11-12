@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Planning.Partitioners;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Types.Rewriters;
@@ -917,6 +918,8 @@ public sealed partial class OperationPlanner
             }
         }
 
+        AddHeldClientFields(descriptor, anchorFieldNames, promotedParentSteps, rewrittenIncrementalPlan);
+
         // Publish scope updates before processing additional descriptors.
         if (rootScopeState is not null)
         {
@@ -929,6 +932,79 @@ public sealed partial class OperationPlanner
         }
 
         return rewrittenIncrementalPlan;
+    }
+
+    /// <summary>
+    /// Registers each leaf field of the deferred group that only a step promoted into the enclosing
+    /// scope selects as a requirement that no step reads, so the plan delivers the field from the
+    /// value the enclosing scope fetched.
+    /// </summary>
+    private void AddHeldClientFields(
+        IncrementalPlanDescriptor descriptor,
+        HashSet<string> anchorFieldNames,
+        Dictionary<int, (ScopeState Scope, int ParentStepId)> promotedParentSteps,
+        ImmutableList<PlanStep> remainingSteps)
+    {
+        foreach (var (scope, parentStepId) in promotedParentSteps.Values)
+        {
+            if (scope.Steps.ById(parentStepId) is not OperationPlanStep promotedStep
+                || !TryLocateDeferRequirementTarget(
+                    promotedStep,
+                    descriptor.Path,
+                    out var promotedSelectionSet,
+                    out var promotedType)
+                || promotedType is not FusionComplexTypeDefinition complexType)
+            {
+                continue;
+            }
+
+            foreach (var selection in promotedSelectionSet.Selections)
+            {
+                if (selection is not FieldNode { Alias: null, SelectionSet: null } field
+                    || field.Arguments.Count > 0
+                    || field.Directives.Count > 0)
+                {
+                    continue;
+                }
+
+                var name = field.Name.Value;
+
+                if (!anchorFieldNames.Contains(name)
+                    || descriptor.Requirements.ContainsKey(name)
+                    || !complexType.Fields.TryGetField(name, allowInaccessibleFields: true, out var definition)
+                    || remainingSteps.OfType<OperationPlanStep>().Any(
+                        t => t.SchemaName is not null && SelectsFieldAtPath(t, descriptor.Path, name)))
+                {
+                    continue;
+                }
+
+                if (!TryLocateInternalSelectionSetAtPath(
+                    scope.InternalOperation.SelectionSet,
+                    descriptor.Path,
+                    out var internalSelectionSet))
+                {
+                    continue;
+                }
+
+                if (!SelectsResponseName(internalSelectionSet, name)
+                    && !TryMirrorDeferRequirementIntoInternalOperation(
+                        scope,
+                        descriptor.Path,
+                        promotedType,
+                        new SelectionSetNode([new FieldNode(name)])))
+                {
+                    continue;
+                }
+
+                descriptor.Requirements.Add(
+                    name,
+                    new OperationRequirement(
+                        name,
+                        definition.Type.ToTypeNode(),
+                        descriptor.Path,
+                        FieldSelectionMapParser.Parse(name)));
+            }
+        }
     }
 
     /// <summary>

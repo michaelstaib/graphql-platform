@@ -3326,6 +3326,76 @@ AddErrors_Next:
         return imported;
     }
 
+    /// <summary>
+    /// Writes the values of <paramref name="imported"/> into the objects at their result paths, one leaf
+    /// field per held field, named by the requirement key.
+    /// </summary>
+    internal void AddHeldFieldValues(
+        ImmutableArray<VariableValues> imported,
+        ImmutableArray<OperationRequirement> heldFields)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        using var buffer = new PooledArrayWriter();
+        buffer.Write("["u8);
+
+        for (var i = 0; i < imported.Length; i++)
+        {
+            if (i > 0)
+            {
+                buffer.Write(","u8);
+            }
+
+            foreach (var memory in imported[i].Values.AsSequence())
+            {
+                buffer.Write(memory.Span);
+            }
+        }
+
+        buffer.Write("]"u8);
+
+        lock (_lock)
+        {
+            var document = SourceResultDocument.Parse(_arena, new ReadOnlySequence<byte>(buffer.WrittenMemory));
+            _memory.Add(document);
+
+            var index = 0;
+
+            foreach (var values in document.Root.EnumerateArray())
+            {
+                var entry = imported[index++];
+                AddHeldFieldValuesUnsafe(GetStartResult(entry.Path), values, heldFields);
+
+                var additionalTargets = new AdditionalTargets(this, entry.AdditionalPaths);
+
+                for (var i = 0; i < additionalTargets.Length; i++)
+                {
+                    AddHeldFieldValuesUnsafe(additionalTargets[i], values, heldFields);
+                }
+            }
+        }
+    }
+
+    private void AddHeldFieldValuesUnsafe(
+        CompositeResultElement target,
+        SourceResultElement values,
+        ImmutableArray<OperationRequirement> heldFields)
+    {
+        if (target.IsNullOrInvalidated || target.ValueKind is not JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var heldField in heldFields)
+        {
+            if (target.TryGetProperty(heldField.Key, out var targetValue)
+                && values.TryGetProperty(heldField.Key, out var value))
+            {
+                _result.AssignSourceValue(targetValue, value);
+            }
+        }
+    }
+
     private VariableValues ImportVariableValuesEntryUnsafe(VariableValues source, Operation sourceOperation)
     {
         var path = ImportPath(source.Path, sourceOperation);

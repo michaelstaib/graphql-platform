@@ -38,6 +38,8 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private readonly FetchResultStore _resultStore;
     private ImmutableArray<VariableValues> _requirementValues;
     private HashSet<string>? _requirementKeys;
+    private ImmutableArray<VariableValues> _heldFieldValues;
+    private ImmutableArray<OperationRequirement> _heldFields;
     private readonly ExecutionState _executionState;
     private readonly INodeIdParser _nodeIdParser;
     private readonly IErrorHandler _errorHandler;
@@ -728,6 +730,35 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
         _requirementValues = _resultStore.ImportVariableValues(parentValues, parentOperation);
         _requirementKeys = keys;
+    }
+
+    /// <summary>
+    /// Sets the values of the fields that the enclosing plan scope fetched and this plan delivers.
+    /// The result paths of <paramref name="parentValues"/> belong to <paramref name="parentOperation"/>.
+    /// </summary>
+    internal void SetHeldFieldValues(
+        ImmutableArray<VariableValues> parentValues,
+        ImmutableArray<OperationRequirement> heldFields,
+        Operation parentOperation)
+    {
+        if (parentValues.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        _heldFieldValues = _resultStore.ImportVariableValues(parentValues, parentOperation);
+        _heldFields = heldFields;
+    }
+
+    /// <summary>
+    /// Writes the values set by <see cref="SetHeldFieldValues"/> into the result.
+    /// </summary>
+    internal void AddHeldFieldValues()
+    {
+        if (!_heldFieldValues.IsDefaultOrEmpty)
+        {
+            _resultStore.AddHeldFieldValues(_heldFieldValues, _heldFields);
+        }
     }
 
     /// <summary>

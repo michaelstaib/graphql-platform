@@ -649,6 +649,7 @@ internal static partial class OperationPlanExecutor
             context.Begin();
 
             await ExecuteQueryAsync(context, plan, executionCts.Token);
+            context.AddHeldFieldValues();
 
             // Keep result resources available for nested incremental plans.
             var deferredResult = context.Complete(retainMemoryForDefer: true);
@@ -686,6 +687,8 @@ internal static partial class OperationPlanExecutor
         IncrementalPlan incrementalPlan,
         OperationPlanContext childContext)
     {
+        CollectHeldFields(parentResultStore, incrementalPlan, childContext);
+
         var collected = CollectParentScopeRequirements(incrementalPlan);
         if (collected.Count == 0)
         {
@@ -717,6 +720,50 @@ internal static partial class OperationPlanExecutor
             requirementSpan);
 
         childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
+    }
+
+    internal static ImmutableArray<OperationRequirement> GetHeldFields(IncrementalPlan incrementalPlan)
+    {
+        if (incrementalPlan.Requirements.IsEmpty)
+        {
+            return [];
+        }
+
+        var consumed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var requirement in CollectParentScopeRequirements(incrementalPlan))
+        {
+            consumed.Add(requirement.Key);
+        }
+
+        var held = ImmutableArray.CreateBuilder<OperationRequirement>();
+        foreach (var requirement in incrementalPlan.Requirements)
+        {
+            if (!consumed.Contains(requirement.Key))
+            {
+                held.Add(requirement);
+            }
+        }
+
+        return held.ToImmutable();
+    }
+
+    private static void CollectHeldFields(
+        FetchResultStore parentResultStore,
+        IncrementalPlan incrementalPlan,
+        OperationPlanContext childContext)
+    {
+        var heldFields = incrementalPlan.HeldFields;
+        if (heldFields.IsEmpty)
+        {
+            return;
+        }
+
+        var parentValues = parentResultStore.CreateVariableValueSets(
+            heldFields[0].Path,
+            requestVariables: [],
+            heldFields.AsSpan());
+
+        childContext.SetHeldFieldValues(parentValues, heldFields, parentResultStore.Operation);
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)
