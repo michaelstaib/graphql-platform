@@ -29,7 +29,25 @@ response:
             "tax": 12
           }
         ]
-      }
+      },
+      "errors": [
+        {
+          "message": "volume unavailable for product B",
+          "path": [
+            "products",
+            1,
+            "estimate"
+          ]
+        },
+        {
+          "message": "volume unavailable for product B",
+          "path": [
+            "products",
+            1,
+            "tax"
+          ]
+        }
+      ]
     }
 sourceSchemas:
   - name: products

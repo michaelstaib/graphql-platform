@@ -66,14 +66,20 @@ internal partial class MiddlewareContext : IMiddlewareContext
         {
             foreach (var error in ex.Errors)
             {
-                ReportError(error);
+                if (configure is null)
+                {
+                    ReportError(error);
+                    continue;
+                }
+
+                ReportError(Configure(error, configure));
             }
         }
         else if (exception is AggregateException aggregateException)
         {
             foreach (var innerException in aggregateException.InnerExceptions)
             {
-                ReportError(innerException);
+                ReportError(innerException, configure);
             }
         }
         else
@@ -86,6 +92,69 @@ internal partial class MiddlewareContext : IMiddlewareContext
 
             ReportError(errorBuilder.Build());
         }
+    }
+
+    // Returns the configured error. An error that is not a plain error keeps its type and gets the changed message,
+    // code, extensions, exception, path and locations through its With methods. A removed path or removed locations
+    // are not applied to such an error.
+    private static IError Configure(IError error, Action<ErrorBuilder> configure)
+    {
+        var errorBuilder = ErrorBuilder.FromError(error);
+        configure(errorBuilder);
+        var configured = errorBuilder.Build();
+
+        if (error is Error)
+        {
+            return configured;
+        }
+
+        var result = error;
+
+        if (error.Message != configured.Message)
+        {
+            result = result.WithMessage(configured.Message);
+        }
+
+        if (error.Code != configured.Code)
+        {
+            result = result.WithCode(configured.Code);
+        }
+
+        if (!HaveSameExtensions(error.Extensions, configured.Extensions))
+        {
+            result = result.WithExtensions(configured.Extensions);
+        }
+
+        if (!ReferenceEquals(error.Exception, configured.Exception))
+        {
+            result = result.WithException(configured.Exception);
+        }
+
+        if (configured.Path is { } path && !path.Equals(error.Path))
+        {
+            result = result.WithPath(path);
+        }
+
+        if (configured.Locations is { } locations
+            && !locations.SequenceEqual(error.Locations ?? []))
+        {
+            result = result.WithLocations(locations);
+        }
+
+        return result;
+    }
+
+    private static bool HaveSameExtensions(
+        IReadOnlyDictionary<string, object?>? first,
+        IReadOnlyDictionary<string, object?>? second)
+    {
+        if (first is null || second is null)
+        {
+            return first is null && second is null;
+        }
+
+        return first.Count == second.Count
+            && first.All(pair => second.TryGetValue(pair.Key, out var value) && Equals(pair.Value, value));
     }
 
     public void ReportError(IError error)

@@ -1706,12 +1706,32 @@ internal sealed partial class FetchResultStore
             return true;
         }
 
+        var listError = false;
+
+        if (errorTrie is { Count: 0, Error: { } entitiesError })
+        {
+            var nullEntities = CountNullEntities(dataElement);
+            listError = nullEntities == 1;
+
+            // An error without an index that several null entities share is reported once without a path.
+            if (nullEntities > 1)
+            {
+                AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(entitiesError)));
+            }
+        }
+
         var index = 0;
 
         foreach (var entity in dataElement.EnumerateArray())
         {
             ref readonly var resultPath = ref resultPaths[index];
-            errorTrie.TryGetValue(index, out var entityErrorTrie);
+
+            if (!errorTrie.TryGetValue(index, out var entityErrorTrie)
+                && listError
+                && entity.ValueKind is JsonValueKind.Null)
+            {
+                entityErrorTrie = errorTrie;
+            }
 
             if (!SaveSafeResult(
                     resultData,
@@ -1728,6 +1748,21 @@ internal sealed partial class FetchResultStore
         }
 
         return true;
+    }
+
+    private static int CountNullEntities(SourceResultElement entities)
+    {
+        var count = 0;
+
+        foreach (var entity in entities.EnumerateArray())
+        {
+            if (entity.ValueKind is JsonValueKind.Null)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private bool SaveRepresentationSourceErrorsUnsafe(

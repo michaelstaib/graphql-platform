@@ -23,6 +23,10 @@ internal sealed partial class FetchResultStore
     /// </summary>
     internal int MissingTargetCount => _missingTargetCount;
 
+    private bool HasKeyFetchErrors => _keyFetchErrors is { Count: > 0 };
+
+    internal ConditionFlags IncludeFlags => new(_includeFlags, _wideIncludeFlags);
+
     // Records a reachable target that the hop currently creating its variables could neither fetch nor reuse.
     private void RecordMissingTargetUnsafe(CompositeResultElement target)
     {
@@ -44,12 +48,17 @@ internal sealed partial class FetchResultStore
     /// unreachable even when the row of the target itself is intact.
     /// </summary>
     internal bool IsReachableObjectUnsafe(CompositeResultElement target)
-    {
-        if (target.ValueKind is not JsonValueKind.Object)
-        {
-            return false;
-        }
+        => target.ValueKind is JsonValueKind.Object && IsReachablePathUnsafe(target, allowNullTarget: false);
 
+    /// <summary>
+    /// Gets whether none of the ancestors of <paramref name="target"/> up to the root is <c>null</c> or
+    /// invalidated. The target itself may be <c>null</c>.
+    /// </summary>
+    internal bool HasReachableAncestorsUnsafe(CompositeResultElement target)
+        => IsReachablePathUnsafe(target, allowNullTarget: true);
+
+    private bool IsReachablePathUnsafe(CompositeResultElement target, bool allowNullTarget)
+    {
         var path = target.CompactPath;
         var element = _result.Data;
 
@@ -84,7 +93,7 @@ internal sealed partial class FetchResultStore
             }
         }
 
-        return !element.IsNullOrInvalidated;
+        return allowNullTarget || !element.IsNullOrInvalidated;
     }
 
     private void ClearMissingTargets()
@@ -95,20 +104,34 @@ internal sealed partial class FetchResultStore
     }
 
     /// <summary>
-    /// Completes the non-null fields of the hops of <paramref name="plan"/> that are still undefined with a non-null
-    /// violation, for the targets the hops could not fetch and for the targets of the hops that
-    /// <paramref name="state"/> skipped because a dependency failed. The hops are completed in the order of their ids.
+    /// Completes the dependent fields of the hops of <paramref name="plan"/> that are still undefined, for the
+    /// targets the hops could not fetch and for the targets of the hops that <paramref name="state"/> skipped
+    /// because a dependency failed. A target whose requirement field failed reports that error on its dependent
+    /// fields, any other target completes its undefined non-null fields with a non-null violation. The hops are
+    /// completed by the depth of their dependencies, then by their ids.
     /// </summary>
+    /// <param name="plan">The plan whose hops are completed.</param>
+    /// <param name="state">The execution state of the plan.</param>
+    /// <param name="failure">
+    /// The execution node of the first hop that could not be completed and the exception that was thrown for it.
+    /// The remaining hops are still completed.
+    /// </param>
     /// <returns>
     /// <c>false</c>, if the null propagated to the root.
     /// </returns>
-    internal bool CompleteDependentFields(IOperationPlan plan, ExecutionState state)
+    internal bool CompleteDependentFields(
+        IOperationPlan plan,
+        ExecutionState state,
+        out (ExecutionNode Node, Exception Error)? failure)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        failure = null;
 
         lock (_lock)
         {
-            if (_missingTargetCount == 0 && !state.HasCompletingSkips)
+            var hasKeyFetchErrors = HasKeyFetchErrors;
+
+            if (_missingTargetCount == 0 && !state.HasCompletingSkips && !hasKeyFetchErrors)
             {
                 return true;
             }
@@ -125,7 +148,13 @@ internal sealed partial class FetchResultStore
                 }
 
                 hopCount = state.AppendCompletingSkippedNodes(plan, ref hops, hopCount);
-                Array.Sort(hops, 0, hopCount);
+
+                if (hasKeyFetchErrors)
+                {
+                    hopCount = AppendHopIds(plan, ref hops, hopCount);
+                }
+
+                SortByDependencyDepth(plan, hops.AsSpan(0, hopCount));
 
                 for (var i = 0; i < hopCount; i++)
                 {
@@ -134,9 +163,16 @@ internal sealed partial class FetchResultStore
                         continue;
                     }
 
-                    if (!CompleteHopUnsafe(plan, state, hops[i]))
+                    try
                     {
-                        return false;
+                        if (!CompleteHopUnsafe(plan, state, hops[i]))
+                        {
+                            return false;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        failure ??= (plan.GetNodeById(hops[i]), ex);
                     }
                 }
 
@@ -153,6 +189,144 @@ internal sealed partial class FetchResultStore
         }
     }
 
+    private static void SortByDependencyDepth(IOperationPlan plan, Span<int> hopIds)
+    {
+        var depths = ArrayPool<int>.Shared.Rent(plan.MaxNodeId + 1);
+        var keys = ArrayPool<long>.Shared.Rent(hopIds.Length);
+
+        try
+        {
+            depths.AsSpan(0, plan.MaxNodeId + 1).Fill(-1);
+
+            for (var i = 0; i < hopIds.Length; i++)
+            {
+                keys[i] = ((long)GetDependencyDepth(plan, hopIds[i], depths) << 32) | (uint)hopIds[i];
+            }
+
+            Array.Sort(keys, 0, hopIds.Length);
+
+            for (var i = 0; i < hopIds.Length; i++)
+            {
+                hopIds[i] = (int)(keys[i] & uint.MaxValue);
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(depths);
+            ArrayPool<long>.Shared.Return(keys);
+        }
+    }
+
+    private static int GetDependencyDepth(IOperationPlan plan, int nodeId, int[] depths)
+    {
+        if (depths[nodeId] >= 0)
+        {
+            return depths[nodeId];
+        }
+
+        depths[nodeId] = 0;
+        var depth = 0;
+        var node = FindPlanNode(plan, nodeId);
+
+        foreach (var dependency in node.Dependencies)
+        {
+            depth = Math.Max(depth, GetDependencyDepth(plan, dependency.Id, depths) + 1);
+        }
+
+        foreach (var dependency in node.OptionalDependencies)
+        {
+            depth = Math.Max(depth, GetDependencyDepth(plan, dependency.Id, depths) + 1);
+        }
+
+        depths[nodeId] = depth;
+        return depth;
+    }
+
+    private static IOperationPlanNode FindPlanNode(IOperationPlan plan, int nodeId)
+    {
+        var node = plan.GetNodeById(nodeId);
+
+        if (node.Id == nodeId)
+        {
+            return node;
+        }
+
+        // The id belongs to an operation definition inside a batch.
+        var definition = node switch
+        {
+            OperationBatchExecutionNode batch => FindDefinition(batch.Operations, nodeId),
+            ApolloOperationBatchExecutionNode batch => FindDefinition(batch.Operations, nodeId),
+            _ => null
+        };
+
+        return (IOperationPlanNode?)definition ?? node;
+    }
+
+    private static OperationDefinition? FindDefinition(ReadOnlySpan<OperationDefinition> operations, int nodeId)
+    {
+        foreach (var operation in operations)
+        {
+            if (operation.Id == nodeId)
+            {
+                return operation;
+            }
+        }
+
+        return null;
+    }
+
+    private static int AppendHopIds(IOperationPlan plan, ref int[] hops, int count)
+    {
+        foreach (var node in plan.AllNodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode { Requirements.Length: > 0 }:
+                case ApolloOperationExecutionNode { Requirements.Length: > 0 }:
+                    count = AppendHopId(ref hops, count, node.Id);
+                    break;
+
+                case OperationBatchExecutionNode batch:
+                    foreach (var operation in batch.Operations)
+                    {
+                        if (operation.Requirements.Length > 0)
+                        {
+                            count = AppendHopId(ref hops, count, operation.Id);
+                        }
+                    }
+
+                    break;
+
+                case ApolloOperationBatchExecutionNode batch:
+                    foreach (var operation in batch.Operations)
+                    {
+                        if (operation.Requirements.Length > 0)
+                        {
+                            count = AppendHopId(ref hops, count, operation.Id);
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        return count;
+    }
+
+    private static int AppendHopId(ref int[] hops, int count, int hopId)
+    {
+        if (count == hops.Length)
+        {
+            var grown = ArrayPool<int>.Shared.Rent(count * 2);
+            hops.AsSpan(0, count).CopyTo(grown);
+            ArrayPool<int>.Shared.Return(hops);
+            hops = grown;
+        }
+
+        hops[count++] = hopId;
+        return count;
+    }
+
     // Resolves the hop with the id and completes the targets that were recorded for it and, when the hop was skipped,
     // all of its targets. Only operations with requirements are hops, other nodes and the nodes that own a batch of
     // operations are not.
@@ -167,6 +341,7 @@ internal sealed partial class FetchResultStore
                     hopId,
                     state.IsCompletingSkip(plan, hopId),
                     [operation.Target],
+                    operation.Requirements,
                     operation.ResultSelectionSet);
 
             case ApolloOperationExecutionNode { Requirements.Length: > 0 } operation when operation.Id == hopId:
@@ -174,6 +349,7 @@ internal sealed partial class FetchResultStore
                     hopId,
                     state.IsCompletingSkip(plan, hopId),
                     [operation.Target],
+                    operation.Requirements,
                     operation.ResultSelectionSet);
 
             case OperationBatchExecutionNode batch:
@@ -205,9 +381,19 @@ internal sealed partial class FetchResultStore
             return operation switch
             {
                 SingleOperationDefinition single
-                    => CompleteHopUnsafe(hopId, isSkipped, [single.Target], single.ResultSelectionSet),
+                    => CompleteHopUnsafe(
+                        hopId,
+                        isSkipped,
+                        [single.Target],
+                        single.Requirements,
+                        single.ResultSelectionSet),
                 BatchOperationDefinition batch
-                    => CompleteHopUnsafe(hopId, isSkipped, batch.Targets, batch.ResultSelectionSet),
+                    => CompleteHopUnsafe(
+                        hopId,
+                        isSkipped,
+                        batch.Targets,
+                        batch.Requirements,
+                        batch.ResultSelectionSet),
                 _ => true
             };
         }
@@ -219,8 +405,11 @@ internal sealed partial class FetchResultStore
         int hopId,
         bool isSkipped,
         ReadOnlySpan<SelectionPath> targets,
+        ReadOnlySpan<OperationRequirement> requirements,
         ResultSelectionSet resultSelectionSet)
     {
+        var requirementFieldNames = HasKeyFetchErrors ? GetRequirementFieldNames(targets, requirements) : null;
+
         for (var i = 0; i < _missingTargetCount; i++)
         {
             if (_missingTargets[i * 2] != hopId)
@@ -232,27 +421,37 @@ internal sealed partial class FetchResultStore
                 _result,
                 new CompositeResultDocument.Cursor(_missingTargets[(i * 2) + 1]));
 
-            if (!_valueCompletion.CompleteUndefinedFields(target, resultSelectionSet))
+            if (!CompleteTargetUnsafe(target, requirementFieldNames, resultSelectionSet))
             {
                 return false;
             }
         }
 
-        if (!isSkipped)
+        if (isSkipped)
         {
-            return true;
-        }
+            var count = CollectCombinedElementsUnsafe(targets, ref _collectTargetCombined);
 
-        var count = CollectCombinedElementsUnsafe(targets, ref _collectTargetCombined);
-
-        for (var i = 0; i < count; i++)
-        {
-            if (!_valueCompletion.CompleteUndefinedFields(_collectTargetCombined[i], resultSelectionSet))
+            for (var i = 0; i < count; i++)
             {
-                return false;
+                if (!CompleteTargetUnsafe(_collectTargetCombined[i], requirementFieldNames, resultSelectionSet))
+                {
+                    return false;
+                }
             }
         }
 
-        return true;
+        return requirementFieldNames is null
+            || ReportKeyFetchErrorsOfNulledEntitiesUnsafe(targets, requirementFieldNames, resultSelectionSet);
+    }
+
+    private bool CompleteTargetUnsafe(
+        CompositeResultElement target,
+        List<string>? requirementFieldNames,
+        ResultSelectionSet resultSelectionSet)
+    {
+        return requirementFieldNames is not null
+            && TryGetKeyFetchErrorUnsafe(target.Path, requirementFieldNames, out var originName, out var error)
+                ? ReportKeyFetchErrorUnsafe(target, resultSelectionSet, originName, error)
+                : _valueCompletion.CompleteUndefinedFields(target, resultSelectionSet);
     }
 }

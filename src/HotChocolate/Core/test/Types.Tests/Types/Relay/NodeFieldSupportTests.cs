@@ -80,6 +80,55 @@ public class NodeFieldSupportTests
     }
 
     [Fact]
+    public async Task Nodes_Should_ReportTheErrorAtTheItemPath_When_NodeResolverThrowsGraphQLException()
+    {
+        // arrange
+        var executor =
+            await new ServiceCollection()
+                .AddGraphQLServer()
+                .ModifyCostOptions(o => o.DefaultListSize = 2)
+                .AddGlobalObjectIdentification()
+                .AddQueryType<Foo>()
+                .AddObjectType<Bar>(d => d
+                    .ImplementsNode()
+                    .IdField(t => t.Id)
+                    .ResolveNode((_, id) =>
+                        id == "123"
+                            ? throw new GraphQLException("node 123 failed")
+                            : Task.FromResult<Bar?>(new Bar { Id = id })))
+                .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ nodes(ids: [\"QmFyOjEyMw==\", \"QmFyOjEyNA==\"]) { id } }",
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {
+              "errors": [
+                {
+                  "message": "node 123 failed",
+                  "path": [
+                    "nodes",
+                    0
+                  ]
+                }
+              ],
+              "data": {
+                "nodes": [
+                  null,
+                  {
+                    "id": "QmFyOjEyNA=="
+                  }
+                ]
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task Nodes_Should_AwaitStartedNodeResolvers_When_LaterIdIsInvalid()
     {
         // arrange

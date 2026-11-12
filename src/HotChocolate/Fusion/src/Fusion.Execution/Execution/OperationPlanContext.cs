@@ -918,7 +918,14 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             return;
         }
 
-        if (!_resultStore.CompleteDependentFields(plan, ExecutionState))
+        var canExecutionContinue = _resultStore.CompleteDependentFields(plan, ExecutionState, out var failure);
+
+        if (failure is var (node, error))
+        {
+            DiagnosticEvents.ExecutionNodeError(this, node, error);
+        }
+
+        if (!canExecutionContinue)
         {
             ExecutionState.CancelProcessing();
         }
