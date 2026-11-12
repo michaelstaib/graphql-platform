@@ -885,13 +885,266 @@ public partial class DeferTests
 
     private static readonly JsonSerializerOptions s_indentedJson = new() { WriteIndented = true };
 
-    private async Task<Gateway> CreateRequireGatewayAsync()
+    [Theory]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id soft } }",
+        "mutation { createUser(id: 1) { id ... @defer { soft } } }",
+        null,
+        "a: 1, b: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id sku total } }",
+        "mutation { createUser(id: 1) { id ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id sku total } }",
+        "mutation { createUser(id: 1) { id sku ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id soft total } }",
+        "mutation { createUser(id: 1) { id ... @defer { soft ... @defer { total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id total } }",
+        "mutation { createUser(id: 1) { id ... @defer { ... @defer { total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id soft total } }",
+        "mutation { createUser(id: 1) { id ... @defer { total ... @defer { soft } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id total } }",
+        "mutation { createUser(id: 1) { id ... @defer(if: true) { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id total } }",
+        "mutation { createUser(id: 1) { id ... @defer(if: false) { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        1)]
+    [InlineData(
+        "s1",
+        "mutation { createUser(id: 1) { id total } }",
+        "mutation($d: Boolean!) { createUser(id: 1) { id ... @defer(if: $d) { total } } }",
+        false,
+        "a: 1, b: 1, c: 1",
+        1)]
+    [InlineData(
+        "s1",
+        "mutation { createUsers { id total } }",
+        "mutation { createUsers { id ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "mutation { createUsers { id soft total } }",
+        "mutation { createUsers { id ... @defer { soft total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "{ user(id: 1) { soft total } }",
+        "{ user(id: 1) { soft ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s1",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { ... @defer { id total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft } }",
+        "{ user(id: 1) { id ... @defer { soft } } }",
+        null,
+        "a: 1, b: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { id ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id sku total } }",
+        "{ user(id: 1) { id sku ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { id ... @defer { ... @defer { total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { id ... @defer(if: true) { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { id ... @defer(if: false) { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        1)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id total } }",
+        "query($d: Boolean!) { user(id: 1) { id ... @defer(if: $d) { total } } }",
+        false,
+        "a: 1, b: 1, c: 1",
+        1)]
+    [InlineData(
+        "s2",
+        "{ users { id total } }",
+        "{ users { id ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { id total } }",
+        "mutation { createUser(id: 1) { id ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s4",
+        "{ user(id: 1) { id sku total } }",
+        "{ user(id: 1) { id ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 2, c: 1",
+        2)]
+    [InlineData(
+        "s4",
+        "{ user(id: 1) { sku total } }",
+        "{ user(id: 1) { ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 2, c: 1",
+        2)]
+    [InlineData(
+        "s4",
+        "{ user(id: 1) { id sku total } }",
+        "{ user(id: 1) { ... @defer { id sku total } } }",
+        null,
+        "a: 1, b: 2, c: 1",
+        2)]
+    [InlineData(
+        "s4",
+        "{ user(id: 1) { id soft total } }",
+        "{ user(id: 1) { id ... @defer { soft total } } }",
+        null,
+        "a: 1, b: 2, c: 1",
+        2)]
+    [InlineData(
+        "s4",
+        "{ user(id: 1) { id total } }",
+        "{ user(id: 1) { id ... @defer { total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s4",
+        "{ user(id: 1) { id sku total } }",
+        "{ user(id: 1) { id sku ... @defer { total } } }",
+        null,
+        "b: 1, c: 1",
+        2)]
+    public async Task Defer_Should_MatchPlainResult_When_DeferredGroupReadsRequirement(
+        string schema,
+        string plainQuery,
+        string deferredQuery,
+        bool? deferIf,
+        string requestCounts,
+        int? payloadCount)
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync(schema);
+        var variables = deferIf is { } value ? new Dictionary<string, object?> { ["d"] = value } : null;
+
+        // act
+        var run = await RunRequireShapeAsync(gateway, plainQuery, deferredQuery, variables);
+
+        // assert
+        Assert.True(JsonNode.DeepEquals(run.PlainData, run.DeferredData), run.DeferredData.ToJsonString());
+        Assert.Equal(requestCounts, run.RequestCounts);
+        Assert.Equal(payloadCount ?? run.Payloads.Count, run.Payloads.Count);
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    public async Task Defer_Should_CompleteStream_When_SubgraphFailsUnderDeferredRequireField(int userId)
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync();
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        // act
+        using var result = await client.PostAsync(
+            new OperationRequest($"{{ user(id: {userId}) {{ id ... @defer {{ total }} }} }}"),
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(result);
+
+        // assert
+        Assert.Equal(2, payloads.Count);
+        Assert.False(JsonNode.Parse(payloads[^1])!["hasNext"]!.GetValue<bool>());
+    }
+
+    private Task<Gateway> CreateRequireGatewayAsync() => CreateRequireGatewayAsync("s1");
+
+    private async Task<Gateway> CreateRequireGatewayAsync(string schema)
     {
         var serverA = CreateSourceSchema(
             "a",
-            b => b.AddQueryType<RequireSourceA.Query>().AddMutationType<RequireSourceA.Mutation>());
-        var serverB = CreateSourceSchema("b", b => b.AddQueryType<RequireSourceB.Query>());
-        var serverC = CreateSourceSchema("c", b => b.AddQueryType<RequireSourceC.Query>());
+            schema == "s2"
+                ? b => b.AddQueryType<RequireSourceEmailA.Query>().AddMutationType<RequireSourceEmailA.Mutation>()
+                : b => b.AddQueryType<RequireSourceA.Query>().AddMutationType<RequireSourceA.Mutation>());
+        var serverB = CreateSourceSchema(
+            "b",
+            schema == "s4"
+                ? b => b.AddQueryType<RequireSourceRootB.Query>()
+                : b => b.AddQueryType<RequireSourceB.Query>());
+        var serverC = CreateSourceSchema(
+            "c",
+            schema == "s2"
+                ? b => b.AddQueryType<RequireSourceEmailC.Query>()
+                : b => b.AddQueryType<RequireSourceC.Query>());
 
         return await CreateCompositeSchemaAsync([("a", serverA), ("b", serverB), ("c", serverC)]);
     }
@@ -933,6 +1186,7 @@ public partial class DeferTests
     {
         public class Query
         {
+            [Shareable]
             public User? GetUser(int id) => new(id);
 
             public List<User?> GetUsers() => [new(1), new(2), new(3)];
@@ -945,6 +1199,8 @@ public partial class DeferTests
         public class Mutation
         {
             public User? CreateUser(int id) => new(id);
+
+            public List<User?> CreateUsers() => [new(1), new(2), new(3)];
         }
 
         [EntityKey("id")]
@@ -957,13 +1213,19 @@ public partial class DeferTests
         {
             [Lookup]
             [Internal]
-            public User? GetUserById(int id) => new(id);
+            public User? GetUserById(int id)
+                => id switch
+                {
+                    8 => null,
+                    9 => throw new GraphQLException("The b lookup failed."),
+                    _ => new User(id)
+                };
         }
 
         [EntityKey("id")]
         public record User(int Id)
         {
-            public string? Sku => "sku-" + Id;
+            public string? Sku => Id == 7 ? throw new GraphQLException("The sku failed.") : "sku-" + Id;
 
             public string? Soft => "soft-" + Id;
         }
@@ -980,6 +1242,63 @@ public partial class DeferTests
 
         [EntityKey("id")]
         public record User(int Id)
+        {
+            public string? GetTotal([Require("sku")] string? sku) => "total-" + sku;
+        }
+    }
+
+    private static class RequireSourceRootB
+    {
+        public class Query
+        {
+            [Shareable]
+            public RequireSourceB.User? GetUser(int id) => new(id);
+
+            [Lookup]
+            [Internal]
+            public RequireSourceB.User? GetUserById(int id) => new(id);
+        }
+    }
+
+    private static class RequireSourceEmailA
+    {
+        public class Query
+        {
+            public User? GetUser(int id) => new(id);
+
+            public List<User?> GetUsers() => [new(1), new(2), new(3)];
+
+            [Lookup]
+            [Internal]
+            public User? GetUserById(int id) => new(id);
+        }
+
+        public class Mutation
+        {
+            public User? CreateUser(int id) => new(id);
+
+            public List<User?> CreateUsers() => [new(1), new(2), new(3)];
+        }
+
+        [EntityKey("id")]
+        public record User(int Id)
+        {
+            [Shareable]
+            public string Email => "email-" + Id;
+        }
+    }
+
+    private static class RequireSourceEmailC
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public User? GetUserByEmail(string email) => new(email);
+        }
+
+        [EntityKey("email")]
+        public record User(string Email)
         {
             public string? GetTotal([Require("sku")] string? sku) => "total-" + sku;
         }
