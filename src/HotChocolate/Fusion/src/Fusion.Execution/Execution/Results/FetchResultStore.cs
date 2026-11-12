@@ -102,7 +102,7 @@ internal sealed partial class FetchResultStore : IDisposable
     internal FetchResultStore()
     {
         _jsonWriter = new JsonWriter(_variableWriter, new JsonWriterOptions { Indented = false });
-        _valueCompletion = new ValueCompletion(this, maxDepth: 32);
+        _valueCompletion = new ValueCompletion(this);
     }
 
     public CompositeResultDocument Result => _result;

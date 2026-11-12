@@ -195,6 +195,8 @@ public sealed partial class CompositeResultDocument : IDisposable
 
         Span<Cursor> chain = stackalloc Cursor[64];
         Span<DbRow> rows = stackalloc DbRow[64];
+        Cursor[]? rentedChain = null;
+        DbRow[]? rentedRows = null;
         chain[0] = current;
         rows[0] = firstRow;
         var written = 1;
@@ -202,17 +204,18 @@ public sealed partial class CompositeResultDocument : IDisposable
         var parentCursor = new Cursor(firstRow.Parent);
         while (!parentCursor.IsZero)
         {
+            if (written == chain.Length)
+            {
+                GrowPathChain(ref chain, ref rentedChain, written);
+                GrowPathChain(ref rows, ref rentedRows, written);
+            }
+
             var row = _metaDb.Get(parentCursor);
             chain[written] = parentCursor;
             rows[written] = row;
             written++;
 
             parentCursor = new Cursor(row.Parent);
-
-            if (written >= 64)
-            {
-                throw new InvalidOperationException("The path is to deep.");
-            }
         }
 
         Span<int> pathBuffer = stackalloc int[32];
@@ -245,7 +248,27 @@ public sealed partial class CompositeResultDocument : IDisposable
             parentTokenType = tokenType;
         }
 
+        if (rentedChain is not null)
+        {
+            ArrayPool<Cursor>.Shared.Return(rentedChain);
+            ArrayPool<DbRow>.Shared.Return(rentedRows!);
+        }
+
         return path.ToPath();
+    }
+
+    private static void GrowPathChain<T>(ref Span<T> buffer, ref T[]? rented, int written)
+    {
+        var array = ArrayPool<T>.Shared.Rent(buffer.Length * 2);
+        buffer[..written].CopyTo(array);
+
+        if (rented is not null)
+        {
+            ArrayPool<T>.Shared.Return(rented);
+        }
+
+        rented = array;
+        buffer = array;
     }
 
     internal Path CreatePath(Cursor current)
