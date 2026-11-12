@@ -920,16 +920,28 @@ public sealed partial class OperationPlanner
             droppedStepIds.Add(producer.Id);
         }
 
-        // A step that only fetched fields the enclosing scope now holds has nothing left to deliver.
-        foreach (var (providerStepId, _) in reroutedHeldFields.Keys)
+        // A step that fetches nothing the enclosing scope does not already hold at the anchor is dropped,
+        // and the fields of the deferred group that it selected are delivered as held fields.
+        var enclosingScope = ScopeStateFor(parentContext);
+        bool dropped;
+
+        do
         {
-            if (incrementalPlanSteps.ById(providerStepId) is OperationPlanStep provider
-                && droppedStepIds.IsSupersetOf(provider.Dependents)
-                && !SelectsAnchorField(provider, anchorFieldNames, reroutedHeldFields))
+            dropped = false;
+
+            foreach (var step in incrementalPlanSteps)
             {
-                droppedStepIds.Add(providerStepId);
+                if (step is OperationPlanStep { SchemaName: not null } candidate
+                    && !droppedStepIds.Contains(candidate.Id)
+                    && droppedStepIds.Count + 1 < incrementalPlanSteps.Count
+                    && droppedStepIds.IsSupersetOf(candidate.Dependents)
+                    && IsRedundantStep(descriptor, candidate, anchorFieldNames, reroutedHeldFields, enclosingScope))
+                {
+                    droppedStepIds.Add(candidate.Id);
+                    dropped = true;
+                }
             }
-        }
+        } while (dropped);
 
         var rewrittenIncrementalPlan = RewriteIncrementalPlanAfterDeferRequirementRouting(
             incrementalPlanSteps,
@@ -960,6 +972,8 @@ public sealed partial class OperationPlanner
                 descriptor.HeldFields.Add(heldField);
             }
         }
+
+        AddHeldEnclosingFields(descriptor, enclosingScope, rewrittenIncrementalPlan);
 
         // Publish scope updates before processing additional descriptors.
         if (rootScopeState is not null)
@@ -1110,24 +1124,242 @@ public sealed partial class OperationPlanner
         return false;
     }
 
-    private static bool SelectsAnchorField(
+    /// <summary>
+    /// Determines whether the enclosing scope unconditionally selects every field of the deferred group that
+    /// <paramref name="step"/> selects at the anchor. <c>__typename</c> is added to the enclosing scope.
+    /// </summary>
+    private bool IsRedundantStep(
+        IncrementalPlanDescriptor descriptor,
         OperationPlanStep step,
         HashSet<string> anchorFieldNames,
-        Dictionary<(int ProviderStepId, string FieldName), OperationRequirement> heldFields)
+        Dictionary<(int ProviderStepId, string FieldName), OperationRequirement> reroutedHeldFields,
+        ScopeState scope)
     {
-        foreach (var selection in GetStepEntitySelectionSet(step).Selections)
+        if (!step.Target.IsParentOfOrSame(descriptor.Path)
+            || !TryLocateInternalSelectionSetAtPath(
+                scope.InternalOperation.SelectionSet,
+                descriptor.Path,
+                out var enclosingSelectionSet))
         {
-            if (selection is not FieldNode field)
+            return false;
+        }
+
+        // A step that targets an ancestor of the anchor is redundant only if it selects nothing beside the
+        // path to the anchor.
+        var anchorSelectionSet = GetStepEntitySelectionSet(step);
+
+        for (var i = step.Target.Length; i < descriptor.Path.Length; i++)
+        {
+            var segment = descriptor.Path[i];
+
+            if (segment.Kind is SelectionPathSegmentKind.Root)
             {
-                return true;
+                continue;
+            }
+
+            if (segment.Kind is not SelectionPathSegmentKind.Field
+                || anchorSelectionSet.Selections is not [FieldNode { SelectionSet: { } inner } pathField]
+                || !(pathField.Alias?.Value ?? pathField.Name.Value).Equals(
+                    segment.Name,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            anchorSelectionSet = inner;
+        }
+
+        var selectsTypeName = false;
+
+        foreach (var selection in anchorSelectionSet.Selections)
+        {
+            if (selection is not FieldNode { SelectionSet: null } field)
+            {
+                return false;
             }
 
             var responseName = field.Alias?.Value ?? field.Name.Value;
 
-            if (anchorFieldNames.Contains(responseName) && !heldFields.ContainsKey((step.Id, responseName)))
+            if (!anchorFieldNames.Contains(responseName)
+                || reroutedHeldFields.ContainsKey((step.Id, responseName))
+                || TryFindEnclosingCopy(enclosingSelectionSet, field, out _))
             {
-                return true;
+                continue;
             }
+
+            if (!field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            selectsTypeName = true;
+        }
+
+        return !selectsTypeName || TryAddTypeNameToEnclosingScope(scope, descriptor.Path);
+    }
+
+    /// <summary>
+    /// Registers each leaf field of the deferred group that no step of the plan selects and that the
+    /// enclosing scope unconditionally selects at the anchor as a held field of the plan.
+    /// </summary>
+    private void AddHeldEnclosingFields(
+        IncrementalPlanDescriptor descriptor,
+        ScopeState scope,
+        ImmutableList<PlanStep> remainingSteps)
+    {
+        if (!TryLocateIncrementalPlanAnchor(
+                descriptor.Operation,
+                descriptor.Path,
+                out var anchorSelectionSet,
+                out var anchorType)
+            || anchorType is not FusionComplexTypeDefinition complexType
+            || !TryLocateInternalSelectionSetAtPath(
+                scope.InternalOperation.SelectionSet,
+                descriptor.Path,
+                out var enclosingSelectionSet))
+        {
+            return;
+        }
+
+        foreach (var selection in anchorSelectionSet.Selections)
+        {
+            if (selection is not FieldNode { SelectionSet: null } field)
+            {
+                continue;
+            }
+
+            var responseName = field.Alias?.Value ?? field.Name.Value;
+
+            if (descriptor.Requirements.ContainsKey(responseName)
+                || !TryFindEnclosingCopy(enclosingSelectionSet, field, out var enclosingResponseName)
+                || remainingSteps.OfType<OperationPlanStep>().Any(
+                    t => t.SchemaName is not null && SelectsFieldAtPath(t, descriptor.Path, responseName)))
+            {
+                continue;
+            }
+
+            ITypeNode type;
+
+            if (field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
+            {
+                type = new NonNullTypeNode(new NamedTypeNode("String"));
+            }
+            else if (complexType.Fields.TryGetField(
+                field.Name.Value,
+                allowInaccessibleFields: true,
+                out var definition))
+            {
+                type = definition.Type.ToTypeNode();
+            }
+            else
+            {
+                continue;
+            }
+
+            var held = new OperationRequirement(
+                responseName,
+                type,
+                descriptor.Path,
+                FieldSelectionMapParser.Parse(enclosingResponseName));
+
+            descriptor.Requirements.Add(responseName, held);
+            descriptor.HeldFields.Add(held);
+        }
+    }
+
+    private static bool TryFindEnclosingCopy(
+        SelectionSetNode enclosingSelectionSet,
+        FieldNode field,
+        [NotNullWhen(true)] out string? responseName)
+    {
+        foreach (var selection in enclosingSelectionSet.Selections)
+        {
+            if (selection is FieldNode { SelectionSet: null } candidate
+                && candidate.Name.Value.Equals(field.Name.Value, StringComparison.Ordinal)
+                && IsUnconditionallySelected(candidate)
+                && HasSameArguments(candidate, field))
+            {
+                var candidateName = candidate.Alias?.Value ?? candidate.Name.Value;
+
+                if (candidateName.Equals(field.Alias?.Value ?? field.Name.Value, StringComparison.Ordinal))
+                {
+                    responseName = candidateName;
+                    return true;
+                }
+            }
+        }
+
+        responseName = null;
+        return false;
+    }
+
+    private static bool HasSameArguments(FieldNode first, FieldNode second)
+    {
+        if (first.Arguments.Count != second.Arguments.Count)
+        {
+            return false;
+        }
+
+        foreach (var argument in first.Arguments)
+        {
+            var found = false;
+
+            foreach (var other in second.Arguments)
+            {
+                if (other.Name.Value.Equals(argument.Name.Value, StringComparison.Ordinal))
+                {
+                    found = SyntaxComparer.BySyntax.Equals(argument.Value, other.Value);
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Adds <c>__typename</c> at <paramref name="path"/> to a step of <paramref name="scope"/> that
+    /// unconditionally fetches the object at that path, and to the internal operation of the scope.
+    /// </summary>
+    private bool TryAddTypeNameToEnclosingScope(ScopeState scope, SelectionPath path)
+    {
+        for (var i = 0; i < scope.Steps.Count; i++)
+        {
+            if (scope.Steps[i] is not OperationPlanStep { SchemaName: not null, Conditions.Length: 0 } parentStep
+                || !parentStep.Target.IsParentOfOrSame(path)
+                || !TryLocateDeferRequirementTarget(parentStep, path, out var selectionSet, out var targetType))
+            {
+                continue;
+            }
+
+            var typeName = new FieldNode(IntrospectionFieldNames.TypeName);
+            var typeNameSelection = new SelectionSetNode([typeName]);
+
+            if (!TryMirrorDeferRequirementIntoInternalOperation(scope, path, targetType, typeNameSelection))
+            {
+                return false;
+            }
+
+            if (!TryFindEnclosingCopy(selectionSet, typeName, out _))
+            {
+                var updatedSelectionSet = new SelectionSetNode([.. selectionSet.Selections, typeName]);
+                var updatedStep = WithEntitySelectionSet(
+                    parentStep,
+                    ReplaceSelectionSetAtPath(
+                        GetStepEntitySelectionSet(parentStep),
+                        path,
+                        parentStep.Target.Length,
+                        updatedSelectionSet));
+
+                scope.Steps = scope.Steps.SetItem(i, updatedStep);
+            }
+
+            return true;
         }
 
         return false;
@@ -1320,6 +1552,11 @@ public sealed partial class OperationPlanner
         if (TryLocateInternalSelectionSetAtPath(
             updatedInternalOperation.SelectionSet, descriptor.Path, out var internalTargetSelectionSet))
         {
+            foreach (var heldField in descriptor.HeldFields)
+            {
+                fieldNames.Add(heldField.Key);
+            }
+
             var updatedInternalTargetSelectionSet = MakeFieldsVisible(internalTargetSelectionSet, fieldNames);
 
             if (!ReferenceEquals(updatedInternalTargetSelectionSet, internalTargetSelectionSet))

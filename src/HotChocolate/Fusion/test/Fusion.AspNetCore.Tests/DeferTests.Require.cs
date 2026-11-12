@@ -1339,6 +1339,97 @@ public partial class DeferTests
         null,
         "a: 1, b: 1, c: 1",
         2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id sku total } }",
+        "{ user(id: 1) { soft ... @defer { id sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft __typename sku total } }",
+        "{ user(id: 1) { id soft ... @defer { __typename sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id __typename sku total } }",
+        "{ user(id: 1) { soft ... @defer { id __typename sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft __typename sku total } }",
+        "{ user(id: 1) { id soft ... @defer { id __typename sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id total } }",
+        "{ user(id: 1) { soft ... @defer { id total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id sku } }",
+        "{ user(id: 1) { id sku ... @defer { id } } }",
+        null,
+        "a: 1, b: 1",
+        1)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id sku total } }",
+        "{ user(id: 1) { soft ... @defer(label: \"x\") { id sku total } ... @defer(label: \"y\") { id } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        null)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id sku total } }",
+        "{ user(id: 1) { soft ... @defer { sku ... @defer { id total } } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ users { soft id sku total } }",
+        "{ users { soft ... @defer { id sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id sku total } }",
+        "query($d: Boolean!) { user(id: 1) { soft ... @defer(if: $d) { id sku total } } }",
+        true,
+        "a: 1, b: 1, c: 1",
+        null)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { soft id sku total } }",
+        "query($d: Boolean!) { user(id: 1) { soft ... @defer(if: $d) { id sku total } } }",
+        false,
+        "a: 1, b: 1, c: 1",
+        1)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft sku total } }",
+        "query($d: Boolean!) { user(id: 1) { id soft ... @defer(if: $d) { sku total } } }",
+        true,
+        "a: 1, b: 1, c: 1",
+        null)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id soft sku total } }",
+        "query($d: Boolean!) { user(id: 1) { id soft ... @defer(if: $d) { sku total } } }",
+        false,
+        "a: 1, b: 1, c: 1",
+        1)]
     public async Task Defer_Should_MatchPlainResult_When_DeferredGroupReadsRequirement(
         string schema,
         string plainQuery,
