@@ -525,7 +525,10 @@ public sealed partial class OperationPlanner
         // such step at index 0; a lookup-anchored seed may produce it anywhere in
         // the list (or several, chained through each other), so every step is
         // considered.
-        var producers = FindDeferRequirementProducers(incrementalPlanSteps, descriptor.Path);
+        var producers = FindDeferRequirementProducers(
+            incrementalPlanSteps,
+            descriptor.Path,
+            GetAnchorFieldNames(descriptor));
 
         if (producers.IsEmpty)
         {
@@ -591,8 +594,19 @@ public sealed partial class OperationPlanner
             return rootScopeState;
         }
 
+        // A step that reads a requirement from a step that stays in this plan reads all of its
+        // requirements in this plan, so it is never fed by both scopes.
+        var keptInPlanStepIds = new HashSet<int>();
+
         foreach (var (downstreamStepId, downstreamStep) in downstreamByStepId)
         {
+            if (ReadsRequirementFromRemainingStep(incrementalPlanSteps, downstreamStep, producerIds)
+                && TryProvideRequirementsInPlan(ref incrementalPlanSteps, downstreamStep, producerIds, resolver))
+            {
+                keptInPlanStepIds.Add(downstreamStepId);
+                continue;
+            }
+
             foreach (var (_, requirement) in downstreamStep.Requirements)
             {
                 // A requirement must sit at or above the defer's own anchor: at the
@@ -727,22 +741,36 @@ public sealed partial class OperationPlanner
 
         // Every remaining step's requirement anchored exactly at the defer's own path is
         // retried against the parent scope; the edge and the now-unconsumed field are
-        // cleaned up below once it succeeds.
+        // cleaned up below once it succeeds. A step is rerouted only when every requirement it
+        // reads from a step that stays in this plan can be rerouted.
         var rerouted = new List<(int ProviderStepId, int DownstreamStepId, string FieldName)>();
+        var liftedRequirementKeys = new HashSet<(int StepId, string Key)>();
+        foreach (var entry in lifted)
+        {
+            liftedRequirementKeys.Add((entry.DownstreamStepId, entry.Requirement.Key));
+        }
 
         foreach (var step in incrementalPlanSteps)
         {
-            if (step is not OperationPlanStep downstreamStep || producerIds.Contains(downstreamStep.Id))
+            if (step is not OperationPlanStep downstreamStep
+                || producerIds.Contains(downstreamStep.Id)
+                || keptInPlanStepIds.Contains(downstreamStep.Id))
             {
                 continue;
             }
 
+            var scopeState = ScopeStateFor(parentContext);
+            var stepsBeforeReroute = scopeState.Steps;
+            var internalOperationBeforeReroute = scopeState.InternalOperation;
+            var stepLifted = new List<LiftedDeferRequirement>();
+            var stepRerouted = new List<(int ProviderStepId, int DownstreamStepId, string FieldName)>();
+            var readsRemainingStep = false;
+
             foreach (var (_, requirement) in downstreamStep.Requirements)
             {
-                if (!requirement.Path.Equals(descriptor.Path))
-                {
-                    continue;
-                }
+                // A requirement the pure-producer routing already lifted is read from the
+                // parent scope whether or not it is rerouted here.
+                var isLifted = liftedRequirementKeys.Contains((downstreamStep.Id, requirement.Key));
 
                 if (TryFindDeferRequirementProvider(incrementalPlanSteps, downstreamStep, requirement)
                         is not { } providerStep
@@ -755,12 +783,18 @@ public sealed partial class OperationPlanner
 
                 // The provider must target the defer's own anchor or one of its ancestors,
                 // matching FindDeferRequirementProducers' own restriction above.
-                if (!providerStep.Target.IsParentOfOrSame(descriptor.Path))
+                if (!requirement.Path.Equals(descriptor.Path)
+                    || !providerStep.Target.IsParentOfOrSame(descriptor.Path))
                 {
-                    continue;
+                    if (isLifted)
+                    {
+                        continue;
+                    }
+
+                    readsRemainingStep = true;
+                    break;
                 }
 
-                var scopeState = ScopeStateFor(parentContext);
                 var resolvedParentStepId = (int?)null;
 
                 foreach (var candidateSchema in scopeState.Steps
@@ -786,17 +820,33 @@ public sealed partial class OperationPlanner
                 {
                     // The immediate parent scope cannot serve it either; fall back to
                     // the existing in-plan chaining onto providerStep.
-                    continue;
+                    if (isLifted)
+                    {
+                        continue;
+                    }
+
+                    readsRemainingStep = true;
+                    break;
                 }
 
-                lifted.Add(new LiftedDeferRequirement(requirement, downstreamStep.Id, resolvedId, scopeState));
+                stepLifted.Add(new LiftedDeferRequirement(requirement, downstreamStep.Id, resolvedId, scopeState));
 
                 var fieldName = requirement.InternalAlias ?? ExtractRootFieldName(requirement.Map.ToString());
                 if (fieldName is not null)
                 {
-                    rerouted.Add((providerStep.Id, downstreamStep.Id, fieldName));
+                    stepRerouted.Add((providerStep.Id, downstreamStep.Id, fieldName));
                 }
             }
+
+            if (readsRemainingStep)
+            {
+                scopeState.Steps = stepsBeforeReroute;
+                scopeState.InternalOperation = internalOperationBeforeReroute;
+                continue;
+            }
+
+            lifted.AddRange(stepLifted);
+            rerouted.AddRange(stepRerouted);
         }
 
         if (lifted.Count == 0)
@@ -1351,63 +1401,22 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
-            if (!TryLocateDeferRequirementTarget(
+            if (!TryAddDeferRequirementToStep(
                 parentStep,
-                requirement.Path,
-                out _,
-                out var targetType))
-            {
-                continue;
-            }
-
-            SelectionSetNode injectionSelections;
-            try
-            {
-                injectionSelections = resolver.Rewrite(requirement.Map, targetType);
-            }
-            catch
-            {
-                continue;
-            }
-
-            var stepIndex = SelectionSetIndexer.Create(parentStep.Definition).ToBuilder();
-            var targetId = stepIndex.GetId(
-                LocateSelectionSetAtPath(
-                    GetStepEntitySelectionSet(parentStep),
-                    requirement.Path,
-                    parentStep.Target.Length));
-
-            var dependentsBeforeInline = parentStep.Dependents;
-
-            RegisterRequirementSelectionSets(injectionSelections, stepIndex);
-
-            if (!TryInlineSelectionSetIntoStep(
-                parentStep,
-                targetId,
-                targetType,
-                requirement.Path,
-                injectionSelections,
-                dependentStepId: 0,
-                stepIndex,
-                new RequirementAliasContext([], RequirementAliasRegistry.Empty),
+                requirement,
+                resolver,
                 out var updatedParentStep,
-                out var unresolvable,
-                out var fieldsWithRequirements))
+                out var targetType,
+                out var injectionSelections,
+                out isPartiallyResolvable))
             {
+                if (isPartiallyResolvable)
+                {
+                    return false;
+                }
+
                 continue;
             }
-
-            if (!unresolvable.IsEmpty || !fieldsWithRequirements.IsEmpty)
-            {
-                isPartiallyResolvable = true;
-                return false;
-            }
-
-            updatedParentStep = updatedParentStep with
-            {
-                Dependents = dependentsBeforeInline,
-                SelectionSets = SelectionSetIndexer.CreateIdSet(updatedParentStep.Definition.SelectionSet, stepIndex)
-            };
 
             scopeState.Steps = scopeState.Steps.SetItem(i, updatedParentStep);
 
@@ -1422,6 +1431,81 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Adds the field selection of <paramref name="requirement"/> to <paramref name="step"/> at the
+    /// requirement's path. Nothing is added and <paramref name="isPartiallyResolvable"/> is set when
+    /// the step can host only part of the requirement.
+    /// </summary>
+    private bool TryAddDeferRequirementToStep(
+        OperationPlanStep step,
+        OperationRequirement requirement,
+        ValueSelectionToSelectionSetRewriter resolver,
+        out OperationPlanStep updatedStep,
+        out ITypeDefinition targetType,
+        out SelectionSetNode injectionSelections,
+        out bool isPartiallyResolvable)
+    {
+        updatedStep = step;
+        injectionSelections = null!;
+        isPartiallyResolvable = false;
+
+        if (!TryLocateDeferRequirementTarget(
+            step,
+            requirement.Path,
+            out _,
+            out targetType))
+        {
+            return false;
+        }
+
+        try
+        {
+            injectionSelections = resolver.Rewrite(requirement.Map, targetType);
+        }
+        catch
+        {
+            return false;
+        }
+
+        var stepIndex = SelectionSetIndexer.Create(step.Definition).ToBuilder();
+        var targetId = stepIndex.GetId(
+            LocateSelectionSetAtPath(
+                GetStepEntitySelectionSet(step),
+                requirement.Path,
+                step.Target.Length));
+
+        RegisterRequirementSelectionSets(injectionSelections, stepIndex);
+
+        if (!TryInlineSelectionSetIntoStep(
+            step,
+            targetId,
+            targetType,
+            requirement.Path,
+            injectionSelections,
+            dependentStepId: 0,
+            stepIndex,
+            new RequirementAliasContext([], RequirementAliasRegistry.Empty),
+            out var inlinedStep,
+            out var unresolvable,
+            out var fieldsWithRequirements))
+        {
+            return false;
+        }
+
+        if (!unresolvable.IsEmpty || !fieldsWithRequirements.IsEmpty)
+        {
+            isPartiallyResolvable = true;
+            return false;
+        }
+
+        updatedStep = inlinedStep with
+        {
+            Dependents = step.Dependents,
+            SelectionSets = SelectionSetIndexer.CreateIdSet(inlinedStep.Definition.SelectionSet, stepIndex)
+        };
+        return true;
     }
 
     private static void AddParentStepDependent(ScopeState scopeState, int providerStepId, int dependentStepId)
@@ -1582,6 +1666,166 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
+    /// Determines whether one of <paramref name="step"/>'s requirements is provided by a step
+    /// that is not in <paramref name="producerIds"/>.
+    /// </summary>
+    private bool ReadsRequirementFromRemainingStep(
+        ImmutableList<PlanStep> incrementalPlanSteps,
+        OperationPlanStep step,
+        HashSet<int> producerIds)
+    {
+        foreach (var (_, requirement) in step.Requirements)
+        {
+            if (TryFindDeferRequirementProvider(incrementalPlanSteps, step, requirement) is not null
+                && !IsProvidedByProducer(incrementalPlanSteps, step, requirement, producerIds))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Makes a step that <paramref name="step"/> depends on and that is not in
+    /// <paramref name="producerIds"/> select each requirement of <paramref name="step"/> that a
+    /// step in <paramref name="producerIds"/> provides. <paramref name="incrementalPlanSteps"/> is
+    /// unchanged when one cannot be provided.
+    /// </summary>
+    private bool TryProvideRequirementsInPlan(
+        ref ImmutableList<PlanStep> incrementalPlanSteps,
+        OperationPlanStep step,
+        HashSet<int> producerIds,
+        ValueSelectionToSelectionSetRewriter resolver)
+    {
+        var steps = incrementalPlanSteps;
+
+        foreach (var (_, requirement) in step.Requirements)
+        {
+            if (!IsProvidedByProducer(steps, step, requirement, producerIds))
+            {
+                continue;
+            }
+
+            // The value of an aliased requirement is read under its alias.
+            if (requirement.InternalAlias is not null
+                || ExtractRootFieldName(requirement.Map.ToString()) is not { } fieldName)
+            {
+                return false;
+            }
+
+            var provided = false;
+
+            // A step that already selects the field is preferred over one that is extended with it.
+            for (var pass = 0; pass < 2 && !provided; pass++)
+            {
+                for (var i = 0; i < steps.Count; i++)
+                {
+                    if (steps[i] is not OperationPlanStep { SchemaName: not null } candidate
+                        || producerIds.Contains(candidate.Id)
+                        || !candidate.Dependents.Contains(step.Id)
+                        || !candidate.Target.IsParentOfOrSame(requirement.Path))
+                    {
+                        continue;
+                    }
+
+                    if (pass == 0)
+                    {
+                        if (SelectsFieldAtPath(candidate, requirement.Path, fieldName))
+                        {
+                            provided = true;
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    if (TryAddDeferRequirementToStep(
+                        candidate,
+                        requirement,
+                        resolver,
+                        out var updatedCandidate,
+                        out _,
+                        out _,
+                        out _))
+                    {
+                        steps = steps.SetItem(i, updatedCandidate);
+                        provided = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!provided)
+            {
+                return false;
+            }
+        }
+
+        incrementalPlanSteps = steps;
+        return true;
+    }
+
+    /// <summary>
+    /// Determines whether a step in <paramref name="producerIds"/> that <paramref name="step"/>
+    /// depends on selects the field of <paramref name="requirement"/> at the requirement's path.
+    /// </summary>
+    private bool IsProvidedByProducer(
+        ImmutableList<PlanStep> incrementalPlanSteps,
+        OperationPlanStep step,
+        OperationRequirement requirement,
+        HashSet<int> producerIds)
+    {
+        var fieldName = requirement.InternalAlias ?? ExtractRootFieldName(requirement.Map.ToString());
+
+        if (fieldName is null)
+        {
+            return false;
+        }
+
+        foreach (var producerId in producerIds)
+        {
+            if (incrementalPlanSteps.ById(producerId) is OperationPlanStep producer
+                && producer.Dependents.Contains(step.Id)
+                && producer.Target.IsParentOfOrSame(requirement.Path)
+                && SelectsFieldAtPath(producer, requirement.Path, fieldName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="step"/> selects a field with the response name
+    /// <paramref name="fieldName"/> on the object at <paramref name="path"/>.
+    /// </summary>
+    private bool SelectsFieldAtPath(OperationPlanStep step, SelectionPath path, string fieldName)
+    {
+        return TryLocateDeferRequirementTarget(step, path, out var selectionSet, out _)
+            && SelectsField(selectionSet, fieldName);
+
+        static bool SelectsField(SelectionSetNode selectionSet, string fieldName)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode field
+                        when (field.Alias?.Value ?? field.Name.Value).Equals(fieldName, StringComparison.Ordinal):
+                        return true;
+
+                    case InlineFragmentNode fragment when SelectsField(fragment.SelectionSet, fieldName):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Walks past any in-plan producer that does nothing but relay the same field under
     /// a different schema, returning the step and requirement that first ground it.
     /// </summary>
@@ -1675,14 +1919,59 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
+    /// Collects the response names of the fields that <paramref name="descriptor"/> selects at its
+    /// anchor, descending through inline fragments.
+    /// </summary>
+    private HashSet<string> GetAnchorFieldNames(IncrementalPlanDescriptor descriptor)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        SelectionSetNode anchorSelectionSet;
+
+        if (descriptor.Path.IsRoot)
+        {
+            anchorSelectionSet = descriptor.Operation.SelectionSet;
+        }
+        else if (!TryLocateIncrementalPlanAnchor(
+            descriptor.Operation,
+            descriptor.Path,
+            out anchorSelectionSet,
+            out _))
+        {
+            return names;
+        }
+
+        CollectResponseNames(anchorSelectionSet, names);
+        return names;
+
+        static void CollectResponseNames(SelectionSetNode selectionSet, HashSet<string> names)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode field:
+                        names.Add(field.Alias?.Value ?? field.Name.Value);
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        CollectResponseNames(fragment.SelectionSet, names);
+                        break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Finds every step in <paramref name="incrementalPlanSteps"/> that targets
     /// <paramref name="anchorPath"/> or one of its ancestors and whose every selected field
     /// is consumed by one of its dependents as a requirement that does not lie below
-    /// <paramref name="anchorPath"/>.
+    /// <paramref name="anchorPath"/>. A step at <paramref name="anchorPath"/> that selects one of
+    /// <paramref name="anchorFieldNames"/> delivers it and is not a producer.
     /// </summary>
     private static ImmutableArray<OperationPlanStep> FindDeferRequirementProducers(
         ImmutableList<PlanStep> incrementalPlanSteps,
-        SelectionPath anchorPath)
+        SelectionPath anchorPath,
+        HashSet<string> anchorFieldNames)
     {
         var producers = ImmutableArray.CreateBuilder<OperationPlanStep>();
 
@@ -1692,7 +1981,7 @@ public sealed partial class OperationPlanner
                 && operationStep.SchemaName is not null
                 && !operationStep.Dependents.IsEmpty
                 && operationStep.Target.IsParentOfOrSame(anchorPath)
-                && IsPureRequirementProducer(operationStep, incrementalPlanSteps, anchorPath))
+                && IsPureRequirementProducer(operationStep, incrementalPlanSteps, anchorPath, anchorFieldNames))
             {
                 producers.Add(operationStep);
             }
@@ -1704,12 +1993,14 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Determines whether <paramref name="step"/> selects nothing at <paramref name="anchorPath"/>
     /// except leaf fields that its dependents consume as requirements that do not lie below
-    /// <paramref name="anchorPath"/>.
+    /// <paramref name="anchorPath"/>, and, when it targets <paramref name="anchorPath"/>, none of
+    /// <paramref name="anchorFieldNames"/>.
     /// </summary>
     private static bool IsPureRequirementProducer(
         OperationPlanStep step,
         ImmutableList<PlanStep> incrementalPlanSteps,
-        SelectionPath anchorPath)
+        SelectionPath anchorPath,
+        HashSet<string> anchorFieldNames)
     {
         var anchorSelectionSet = LocateSelectionSetAtPath(
             GetStepEntitySelectionSet(step),
@@ -1718,6 +2009,11 @@ public sealed partial class OperationPlanner
 
         var ownFields = new HashSet<string>(StringComparer.Ordinal);
         if (!TryCollectLeafFieldNames(anchorSelectionSet, ownFields) || ownFields.Count == 0)
+        {
+            return false;
+        }
+
+        if (step.Target.Equals(anchorPath) && ownFields.Overlaps(anchorFieldNames))
         {
             return false;
         }

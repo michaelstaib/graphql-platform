@@ -1119,6 +1119,38 @@ AddErrors_Next:
     }
 
     /// <summary>
+    /// Determines whether an object at <paramref name="selectionSet"/> holds no value for the field
+    /// of one of <paramref name="requirements"/>.
+    /// </summary>
+    internal bool HasTargetWithoutRequirementValue(
+        SelectionPath selectionSet,
+        ReadOnlySpan<OperationRequirement> requirements)
+    {
+        lock (_lock)
+        {
+            foreach (var element in CollectTargetElementsUnsafe(selectionSet))
+            {
+                if (element.ValueKind is not JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                foreach (var requirement in requirements)
+                {
+                    if (TryGetSimpleRequirementFieldName(requirement, out var fieldName)
+                        && (!element.TryGetProperty(fieldName, out var value)
+                            || value.ValueKind is JsonValueKind.Undefined))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Creates a deduplicated set of variable values across multiple target selection paths.
     /// Elements from all targets are combined and deduplication is applied globally, so that
     /// entities at different target locations that produce identical variable values are merged

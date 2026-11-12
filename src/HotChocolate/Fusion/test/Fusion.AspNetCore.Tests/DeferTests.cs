@@ -20,7 +20,7 @@ using OperationRequest = HotChocolate.Transport.OperationRequest;
 
 namespace HotChocolate.Fusion;
 
-public class DeferTests : FusionTestBase
+public partial class DeferTests : FusionTestBase
 {
     [Fact]
     public async Task Defer_Single_Fragment_Returns_Incremental_Response()

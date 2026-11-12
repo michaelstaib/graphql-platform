@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -715,6 +716,12 @@ internal static partial class OperationPlanExecutor
             anchor,
             requestVariables: [],
             requirementSpan);
+
+        Debug.Assert(
+            !parentValues.IsDefaultOrEmpty
+                || !parentResultStore.HasTargetWithoutRequirementValue(anchor, requirementSpan),
+            "The enclosing plan holds an object at the anchor of a deferred plan "
+            + "without a requirement value that the deferred plan reads from it.");
 
         childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
     }
