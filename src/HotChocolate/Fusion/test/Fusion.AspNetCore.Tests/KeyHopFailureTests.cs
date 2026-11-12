@@ -1409,7 +1409,7 @@ public class KeyHopFailureTests : FusionTestBase
         // arrange
         string[][] orders = [["B", "C", "I"], ["B", "I", "C"]];
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        using var gateway = await CreateInFlightRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
         var results = new List<string>();
 
         // act
@@ -1526,7 +1526,7 @@ public class KeyHopFailureTests : FusionTestBase
 
         // act
         var requestInFlight = await ExecuteInEveryHopOrderAsync(
-            CreateRaisedErrorSequencedGatewayAsync,
+            CreateInFlightRaisedErrorSequencedGatewayAsync,
             query,
             include: null,
             ["B", "C", "I"],
@@ -1545,15 +1545,15 @@ public class KeyHopFailureTests : FusionTestBase
             [aError]);
 
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        using var inFlightGateway = await CreateInFlightRaisedErrorSequencedGatewayAsync(
+            sequence,
+            enableRequestGrouping: true);
         sequence.Start(["B", "I", "C"]);
-        var inFlightOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
-        sequence.Start(["I", "B", "C"]);
-        var nulledFirstOrder = await ExecuteWithSortedErrorsAsync(gateway, query, include: null);
+        var inFlightOrder = await ExecuteWithSortedErrorsAsync(inFlightGateway, query, include: null);
         sequence.Start([]);
 
         // assert
-        new[] { requestInFlight, listNullFirst, inFlightOrder, nulledFirstOrder }.MatchInlineSnapshots(
+        new[] { requestInFlight, listNullFirst, inFlightOrder }.MatchInlineSnapshots(
         [
             """
             data: {"a":null,"b":[{"total":null}]}
@@ -1567,13 +1567,31 @@ public class KeyHopFailureTests : FusionTestBase
             data: {"a":null,"b":[{"total":null}]}
             errors: [{"message":"C hop failed for sku-96","path":["a",0,"total"]},{"message":"C hop failed for sku-96","path":["b",0,"total"]},{"message":"I hop failed for 93","path":["a",1,"badNN"]}]
 
-            """,
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedErrorOnlyOnTheOtherList_When_ThePrimaryListIsNulledFirst()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateMergeOrderedRaisedErrorSequencedGatewayAsync(sequence);
+        sequence.Start(["I", "B", "C"]);
+
+        // act
+        var result = await ExecuteWithSortedErrorsAsync(
+            gateway,
+            "{ a: userList(ids: [96, 93]) { total badNN } b: userList(ids: [96]) { total } }",
+            include: null);
+
+        // assert
+        result.MatchInlineSnapshot(
             """
             data: {"a":null,"b":[{"total":null}]}
             errors: [{"message":"C hop failed for sku-96","path":["b",0,"total"]},{"message":"I hop failed for 93","path":["a",1,"badNN"]}]
 
-            """
-        ]);
+            """);
     }
 
     [Fact]
@@ -2065,11 +2083,23 @@ public class KeyHopFailureTests : FusionTestBase
         }
     }
 
-    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+    private Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(HopSequence sequence, bool enableRequestGrouping)
+        => CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping, hopIWaitsForRequestOfC: false);
+
+    // Answers hop I only after the request of hop C was sent, so the target of hop C is in flight when I nulls it.
+    private Task<Gateway> CreateInFlightRaisedErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping)
+        => CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping, hopIWaitsForRequestOfC: true);
+
+    private async Task<Gateway> CreateRaisedErrorSequencedGatewayAsync(
+        HopSequence sequence,
+        bool enableRequestGrouping,
+        bool hopIWaitsForRequestOfC)
     {
         var hopB = new SequencedHop(sequence, "B");
         var hopC = new SequencedHop(sequence, "C");
-        var hopI = new SequencedHop(sequence, "I");
+        var hopI = new SequencedHop(sequence, "I", hopIWaitsForRequestOfC ? "C" : null);
         var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
         var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: hopB.SendAsync);
         var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>(), mockHttpResponse: hopC.SendAsync);
@@ -2415,6 +2445,7 @@ public class KeyHopFailureTests : FusionTestBase
 
         private string[] _order = [];
         private TaskCompletionSource[] _delivered = [];
+        private ConcurrentDictionary<string, TaskCompletionSource> _requested = new();
 
         public void Start(string[] order)
         {
@@ -2422,7 +2453,13 @@ public class KeyHopFailureTests : FusionTestBase
             _delivered = order
                 .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
                 .ToArray();
+            _requested = new ConcurrentDictionary<string, TaskCompletionSource>();
         }
+
+        public void MarkRequested(string hop) => GetRequested(hop).TrySetResult();
+
+        public Task WaitForRequestAsync(string hop, CancellationToken cancellationToken)
+            => GetRequested(hop).Task.WaitAsync(s_timeout, cancellationToken);
 
         public async Task WaitForTurnAsync(string hop, CancellationToken cancellationToken)
         {
@@ -2443,11 +2480,20 @@ public class KeyHopFailureTests : FusionTestBase
                 _delivered[index].TrySetResult();
             }
         }
+
+        private TaskCompletionSource GetRequested(string hop)
+            => _requested.GetOrAdd(
+                hop,
+                _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
     }
 
-    // A hop that is answered in the order of the current run. It is delivered once its response is read, or, when
-    // deliveredOnResponse is false, once a HopMergeListener reports it.
-    private sealed class SequencedHop(HopSequence sequence, string hop, bool deliveredOnResponse = true)
+    // A hop that is answered in the order of the current run, after the request of waitForRequestOf was sent. It is
+    // delivered once its response is read, or, when deliveredOnResponse is false, once a HopMergeListener reports it.
+    private sealed class SequencedHop(
+        HopSequence sequence,
+        string hop,
+        string? waitForRequestOf = null,
+        bool deliveredOnResponse = true)
     {
         private HttpMessageInvoker? _invoker;
 
@@ -2457,6 +2503,12 @@ public class KeyHopFailureTests : FusionTestBase
         public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
         {
             var cancellationToken = TestContext.Current.CancellationToken;
+            sequence.MarkRequested(hop);
+
+            if (waitForRequestOf is not null)
+            {
+                await sequence.WaitForRequestAsync(waitForRequestOf, cancellationToken);
+            }
 
             await sequence.WaitForTurnAsync(hop, cancellationToken);
             var response = await _invoker!.SendAsync(request, cancellationToken);
