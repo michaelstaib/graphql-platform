@@ -1077,7 +1077,7 @@ internal static partial class OperationPlanExecutor
 
         var selectionPath = bestDeliveryGroup.Path ?? SelectionPath.Root;
         var builder = ImmutableList.CreateBuilder<IIncrementalResult>();
-        var responsePaths = errors is { Count: > 0 } ? new List<Path>() : null;
+        var responsePaths = errors is { Count: > 0 } ? new Dictionary<Path, int>() : null;
 
         CollectIncrementalResults(
             document,
@@ -1111,7 +1111,7 @@ internal static partial class OperationPlanExecutor
         Path subPath,
         Path responsePath,
         int deliveryGroupId,
-        List<Path>? responsePaths,
+        Dictionary<Path, int>? responsePaths,
         ImmutableList<IIncrementalResult>.Builder results)
     {
         if (element.IsNullMarker)
@@ -1157,7 +1157,7 @@ internal static partial class OperationPlanExecutor
                     errors: null,
                     subPath.IsRoot ? null : subPath,
                     CreateIncrementalData(document, element)));
-            responsePaths?.Add(responsePath);
+            responsePaths?[responsePath] = results.Count - 1;
             return;
         }
 
@@ -1202,14 +1202,14 @@ internal static partial class OperationPlanExecutor
 
     private static void PlaceErrors(
         ImmutableList<IError> errors,
-        List<Path> responsePaths,
+        Dictionary<Path, int> resultIndexByPath,
         ImmutableList<IIncrementalResult>.Builder results)
     {
         var errorsByResult = new ImmutableList<IError>.Builder?[results.Count];
 
         foreach (var error in errors)
         {
-            var index = FindResultContaining(responsePaths, error.Path);
+            var index = FindResultContaining(resultIndexByPath, error.Path);
             (errorsByResult[index < 0 ? 0 : index] ??= ImmutableList.CreateBuilder<IError>()).Add(error);
         }
 
@@ -1223,40 +1223,17 @@ internal static partial class OperationPlanExecutor
         }
     }
 
-    private static int FindResultContaining(List<Path> responsePaths, Path? errorPath)
+    private static int FindResultContaining(Dictionary<Path, int> resultIndexByPath, Path? errorPath)
     {
-        if (errorPath is null)
+        for (var current = errorPath; current is not null; current = current.IsRoot ? null : current.Parent)
         {
-            return -1;
-        }
-
-        var bestIndex = -1;
-        var bestLength = -1;
-
-        for (var i = 0; i < responsePaths.Count; i++)
-        {
-            var responsePath = responsePaths[i];
-
-            if (responsePath.Length <= bestLength || responsePath.Length > errorPath.Length)
+            if (resultIndexByPath.TryGetValue(current, out var index))
             {
-                continue;
-            }
-
-            var current = errorPath;
-
-            while (current.Length > responsePath.Length)
-            {
-                current = current.Parent;
-            }
-
-            if (current.Equals(responsePath))
-            {
-                bestIndex = i;
-                bestLength = responsePath.Length;
+                return index;
             }
         }
 
-        return bestIndex;
+        return -1;
     }
 
     private static bool HasRemainingFieldSegments(SelectionPath selectionPath, int segmentIndex)
