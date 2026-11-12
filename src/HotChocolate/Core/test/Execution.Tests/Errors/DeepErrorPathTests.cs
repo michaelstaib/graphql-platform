@@ -15,7 +15,7 @@ public class DeepErrorPathTests
     public async Task ExecuteAsync_Should_ReportFullPath_When_FieldErrorIsNestedInObjects(int depth)
     {
         // arrange
-        SkipWhenValidationOverflowsTheStack(depth);
+        SkipWhenDepthIsNotSupported(depth);
         var executor = await CreateExecutorAsync();
         var query = BuildQuery("child", depth);
 
@@ -36,7 +36,7 @@ public class DeepErrorPathTests
     public async Task ExecuteAsync_Should_ReportFullPath_When_FieldErrorIsNestedInLists(int depth)
     {
         // arrange
-        SkipWhenValidationOverflowsTheStack(depth);
+        SkipWhenDepthIsNotSupported(depth);
         var executor = await CreateExecutorAsync();
         var query = BuildQuery("children", depth);
 
@@ -83,12 +83,10 @@ public class DeepErrorPathTests
             path);
     }
 
-    private static void SkipWhenValidationOverflowsTheStack(int depth)
+    private static void SkipWhenDepthIsNotSupported(int depth)
     {
 #if NET8_0
-        Assert.SkipWhen(
-            depth >= 150,
-            "On net8.0 this depth overflows the stack, in execution in Release builds and in validation in Debug builds.");
+        Assert.SkipWhen(depth >= 150, "This nesting depth is not supported on net8.0.");
 #endif
     }
 
