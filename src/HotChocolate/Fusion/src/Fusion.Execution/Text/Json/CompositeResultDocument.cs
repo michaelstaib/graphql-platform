@@ -201,57 +201,63 @@ public sealed partial class CompositeResultDocument : IDisposable
         rows[0] = firstRow;
         var written = 1;
 
-        var parentCursor = new Cursor(firstRow.Parent);
-        while (!parentCursor.IsZero)
-        {
-            if (written == chain.Length)
-            {
-                GrowPathChain(ref chain, ref rentedChain, written);
-                GrowPathChain(ref rows, ref rentedRows, written);
-            }
-
-            var row = _metaDb.Get(parentCursor);
-            chain[written] = parentCursor;
-            rows[written] = row;
-            written++;
-
-            parentCursor = new Cursor(row.Parent);
-        }
-
         Span<int> pathBuffer = stackalloc int[32];
         var path = new CompactPathBuilder(pathBuffer, pooled ? Volatile.Read(ref _pathPool) : null);
-        var parentTokenType = ElementTokenType.StartObject;
 
-        for (var i = written - 1; i >= 0; i--)
+        try
         {
-            var cursor = chain[i];
-            var tokenType = rows[i].TokenType;
-
-            if (tokenType == ElementTokenType.PropertyName)
+            var parentCursor = new Cursor(firstRow.Parent);
+            while (!parentCursor.IsZero)
             {
-                Debug.Assert(rows[i].OperationReferenceType is OperationReferenceType.Selection);
-                path.AppendField(rows[i].OperationReferenceId);
-                i--; // skip over the actual value
-            }
-            else if (written - 1 > i)
-            {
-                var arrayParentCursor = chain[i + 1];
-
-                if (parentTokenType is ElementTokenType.StartArray)
+                if (written == chain.Length)
                 {
-                    // arrayIndex = abs(child) - (abs(parent) + 1)
-                    var arrayIndex = cursor.Index - (arrayParentCursor.Index + 1);
-                    path.AppendIndex(arrayIndex);
+                    GrowPathChain(ref chain, ref rentedChain, written);
+                    GrowPathChain(ref rows, ref rentedRows, written);
                 }
+
+                var row = _metaDb.Get(parentCursor);
+                chain[written] = parentCursor;
+                rows[written] = row;
+                written++;
+
+                parentCursor = new Cursor(row.Parent);
             }
 
-            parentTokenType = tokenType;
-        }
+            var parentTokenType = ElementTokenType.StartObject;
 
-        if (rentedChain is not null)
+            for (var i = written - 1; i >= 0; i--)
+            {
+                var cursor = chain[i];
+                var tokenType = rows[i].TokenType;
+
+                if (tokenType == ElementTokenType.PropertyName)
+                {
+                    Debug.Assert(rows[i].OperationReferenceType is OperationReferenceType.Selection);
+                    path.AppendField(rows[i].OperationReferenceId);
+                    i--; // skip over the actual value
+                }
+                else if (written - 1 > i)
+                {
+                    var arrayParentCursor = chain[i + 1];
+
+                    if (parentTokenType is ElementTokenType.StartArray)
+                    {
+                        // arrayIndex = abs(child) - (abs(parent) + 1)
+                        var arrayIndex = cursor.Index - (arrayParentCursor.Index + 1);
+                        path.AppendIndex(arrayIndex);
+                    }
+                }
+
+                parentTokenType = tokenType;
+            }
+        }
+        finally
         {
-            ArrayPool<Cursor>.Shared.Return(rentedChain);
-            ArrayPool<DbRow>.Shared.Return(rentedRows!);
+            if (rentedChain is not null)
+            {
+                ArrayPool<Cursor>.Shared.Return(rentedChain);
+                ArrayPool<DbRow>.Shared.Return(rentedRows!);
+            }
         }
 
         return path.ToPath();

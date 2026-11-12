@@ -1,21 +1,14 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization.Metadata;
+using HotChocolate.Transport;
+using HotChocolate.Transport.Http;
 
 namespace HotChocolate.Fusion;
 
 public class DeepSelectionTests : FusionTestBase
 {
-    private static readonly JsonDocumentOptions s_documentOptions = new() { MaxDepth = 512 };
-    private static readonly JsonSerializerOptions s_serializerOptions = new()
-    {
-        MaxDepth = 512,
-        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
-    };
-
     [Theory]
     [InlineData(33)]
     [InlineData(34)]
@@ -28,14 +21,17 @@ public class DeepSelectionTests : FusionTestBase
             CreateSourceSchemaText(depth),
             mockHttpResponse: _ => CreateResponse(sourceSchemaResult));
         using var gateway = await CreateCompositeSchemaAsync([("A", server)], includeOperationPlan: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest("{ " + CreateSelection(depth) + " }");
 
         // act
-        var lines = await PostAsync(gateway.CreateClient(), "{ " + CreateSelection(depth) + " }", "application/json");
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
 
         // assert
-        var result = Assert.Single(lines);
-        Assert.Equal(Serialize(sourceSchemaResult["data"]), Serialize(result["data"]));
-        Assert.Equal(Serialize(sourceSchemaResult["errors"]), Serialize(result["errors"]));
+        await MatchSnapshotAsync(gateway, request, result, postFix: depth.ToString());
     }
 
     [Theory]
@@ -50,17 +46,28 @@ public class DeepSelectionTests : FusionTestBase
             CreateSourceSchemaText(depth),
             mockHttpResponse: _ => CreateResponse(sourceSchemaResult));
         using var gateway = await CreateCompositeSchemaAsync([("A", server)], includeOperationPlan: false);
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest("{ ... @defer { " + CreateSelection(depth) + " } }");
 
         // act
-        var lines = await PostAsync(
-            gateway.CreateClient(),
-            "{ ... @defer { " + CreateSelection(depth) + " } }",
-            "application/jsonl");
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        var body = await result.HttpResponseMessage.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
         // assert
-        var incremental = Assert.Single(lines.SelectMany(GetIncremental));
-        Assert.Equal(Serialize(sourceSchemaResult["data"]), Serialize(incremental["data"]));
-        Assert.Equal(Serialize(sourceSchemaResult["errors"]), Serialize(incremental["errors"]));
+        await MatchSnapshotAsync(gateway, request, result, postFix: depth.ToString(), stableStream: true);
+        GetEnvelopes(body).MatchInlineSnapshots(
+            [
+                """
+                {"pending":[{"id":"0","path":[]}],"hasNext":true}
+                """,
+                """
+                {"incremental":[{"id":"0"}],"completed":[{"id":"0"}],"hasNext":false}
+                """
+            ]);
     }
 
     private static string CreateSourceSchemaText(int depth)
@@ -118,27 +125,29 @@ public class DeepSelectionTests : FusionTestBase
                     new MediaTypeHeaderValue("application/json"))
             });
 
-    private static IEnumerable<JsonNode> GetIncremental(JsonNode line)
-        => line["incremental"]?.AsArray().Select(t => t!) ?? [];
+    private static List<string> GetEnvelopes(string body)
+    {
+        var envelopes = new List<string>();
+
+        foreach (var line in body.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var envelope = JsonNode.Parse(line)!.AsObject();
+            envelope.Remove("data");
+            envelope.Remove("errors");
+
+            foreach (var item in envelope["incremental"]?.AsArray() ?? [])
+            {
+                var incremental = item!.AsObject();
+                incremental.Remove("data");
+                incremental.Remove("errors");
+            }
+
+            envelopes.Add(envelope.ToJsonString());
+        }
+
+        return envelopes;
+    }
 
     private static string Serialize(JsonNode? node)
-        => node?.ToJsonString(s_serializerOptions) ?? "null";
-
-    private static async Task<List<JsonNode>> PostAsync(HttpClient client, string query, string accept)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("http://localhost:5000/graphql"));
-        request.Content = new StringContent(
-            JsonSerializer.Serialize(new { query }),
-            Encoding.UTF8,
-            "application/json");
-        request.Headers.Add("Accept", accept);
-
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
-        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-
-        return body
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => JsonNode.Parse(line, documentOptions: s_documentOptions)!)
-            .ToList();
-    }
+        => node?.ToJsonString() ?? "null";
 }
