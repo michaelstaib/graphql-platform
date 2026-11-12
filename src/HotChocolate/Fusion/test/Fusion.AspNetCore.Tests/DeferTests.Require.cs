@@ -1815,6 +1815,92 @@ public partial class DeferTests
     }
 
     [Fact]
+    public async Task Defer_Should_DeliverErrorOnce_When_FailingListItemHasNoEntry()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ users7 { id sku total } }",
+            "{ users7 { id ... @defer { sku total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "users7": [
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 7
+                  },
+                  {
+                    "id": 2
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "users7"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The sku failed.",
+                      "path": [
+                        "users7",
+                        1,
+                        "sku"
+                      ]
+                    }
+                  ],
+                  "subPath": [
+                    0
+                  ],
+                  "data": {
+                    "sku": "sku-1",
+                    "total": "total-sku-1"
+                  }
+                },
+                {
+                  "id": "0",
+                  "subPath": [
+                    2
+                  ],
+                  "data": {
+                    "sku": "sku-2",
+                    "total": "total-sku-2"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
     public async Task Defer_Should_CompleteStream_When_SkuFailsUnderDeferredRequireField()
     {
         // arrange
@@ -2171,6 +2257,8 @@ public partial class DeferTests
             public List<User?> GetUsers15() => [new(1), new(5)];
 
             public List<User?> GetUsers55() => [new(5), new(1), new(5)];
+
+            public List<User?> GetUsers7() => [new(1), new(7), new(2)];
 
             [Lookup]
             [Internal]
