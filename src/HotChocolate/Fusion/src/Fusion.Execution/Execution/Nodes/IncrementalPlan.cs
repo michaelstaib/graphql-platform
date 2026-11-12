@@ -36,18 +36,23 @@ public sealed class IncrementalPlan : IOperationPlan
     /// The requirements that this plan resolves from its enclosing plan scope
     /// before it executes.
     /// </param>
+    /// <param name="heldFields">
+    /// The requirements that name a leaf field of this plan that the enclosing scope fetched.
+    /// </param>
     public IncrementalPlan(
         Operation operation,
         ImmutableArray<ExecutionNode> rootNodes,
         ImmutableArray<ExecutionNode> allNodes,
         ImmutableArray<DeliveryGroup> deliveryGroups,
-        ImmutableArray<OperationRequirement> requirements)
+        ImmutableArray<OperationRequirement> requirements,
+        ImmutableArray<OperationRequirement> heldFields)
     {
         Operation = operation;
         RootNodes = rootNodes;
         AllNodes = allNodes;
         DeliveryGroups = deliveryGroups;
         Requirements = requirements.IsDefault ? [] : requirements;
+        HeldFields = heldFields.IsDefault ? [] : heldFields;
         _nodesById = CreateNodeLookup(
             allNodes,
             out var usesDynamicSchemaNames,
@@ -95,7 +100,7 @@ public sealed class IncrementalPlan : IOperationPlan
     /// Gets the requirements that name a leaf field of this plan that the enclosing scope fetched.
     /// Their values are delivered as the fields of the same name.
     /// </summary>
-    internal ImmutableArray<OperationRequirement> HeldFields { get; init; } = [];
+    internal ImmutableArray<OperationRequirement> HeldFields { get; }
 
     /// <summary>
     /// Gets the <see cref="ExecutionNode.Id"/> of the node that produces the

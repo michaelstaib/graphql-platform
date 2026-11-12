@@ -330,7 +330,8 @@ public partial class DeferTests : FusionTestBase
                                     incrementalPlan.RootNodes,
                                     incrementalPlan.AllNodes,
                                     deliveryGroups,
-                                    incrementalPlan.Requirements)
+                                    incrementalPlan.Requirements,
+                                    incrementalPlan.HeldFields)
                             ],
                             plan.SearchSpace,
                             plan.ExpandedNodes));

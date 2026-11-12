@@ -231,10 +231,8 @@ public sealed partial class OperationPlanner
                 rootNodes,
                 allNodes,
                 descriptor.DeliveryGroupSet,
-                planScopeRequirements)
-            {
-                HeldFields = [.. descriptor.HeldFields]
-            };
+                planScopeRequirements,
+                [.. descriptor.HeldFields]);
 
             incrementalPlansBuilder.Add(incrementalPlan);
         }

@@ -210,7 +210,8 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                 rootIncrementalPlanNodes,
                 incrementalPlanNodes,
                 incrementalPlanDeliveryGroupsBuilder.ToImmutable(),
-                incrementalPlanRequirements)
+                incrementalPlanRequirements,
+                ParseHeldFields(incrementalPlanOperation, incrementalPlanNodes, incrementalPlanRequirements))
             {
                 ParentNodeId = incrementalPlanElement.GetProperty("parentNodeId").GetInt32()
             };
@@ -219,6 +220,119 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
         }
 
         return builder.ToImmutable();
+    }
+
+    /// <summary>
+    /// Selects the requirements that name a leaf field of the plan by their key, that no node of the plan
+    /// reads, and that <paramref name="operation"/> selects at the requirement path.
+    /// </summary>
+    private static ImmutableArray<OperationRequirement> ParseHeldFields(
+        Operation operation,
+        ImmutableArray<ExecutionNode> nodes,
+        ImmutableArray<OperationRequirement> requirements)
+    {
+        ImmutableArray<OperationRequirement>.Builder? heldFields = null;
+
+        foreach (var requirement in requirements)
+        {
+            if (requirement.InternalAlias is null
+                && requirement.Map.ToString().Equals(requirement.Key, StringComparison.Ordinal)
+                && !IsReadByNode(nodes, requirement.Key)
+                && SelectsResponseNameAtPath(operation, requirement.Path, requirement.Key))
+            {
+                (heldFields ??= ImmutableArray.CreateBuilder<OperationRequirement>()).Add(requirement);
+            }
+        }
+
+        return heldFields?.ToImmutable() ?? [];
+    }
+
+    private static bool IsReadByNode(ImmutableArray<ExecutionNode> nodes, string key)
+    {
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode operationNode when ContainsKey(operationNode.Requirements, key):
+                case ApolloOperationExecutionNode apolloNode when ContainsKey(apolloNode.Requirements, key):
+                    return true;
+
+                case OperationBatchExecutionNode batchNode:
+                    foreach (var definition in batchNode.Operations)
+                    {
+                        if (ContainsKey(definition.Requirements, key))
+                        {
+                            return true;
+                        }
+                    }
+                    break;
+
+                case ApolloOperationBatchExecutionNode apolloBatchNode:
+                    foreach (var definition in apolloBatchNode.Operations)
+                    {
+                        if (ContainsKey(definition.Requirements, key))
+                        {
+                            return true;
+                        }
+                    }
+                    break;
+            }
+        }
+
+        return false;
+
+        static bool ContainsKey(ReadOnlySpan<OperationRequirement> requirements, string key)
+        {
+            foreach (var requirement in requirements)
+            {
+                if (requirement.Key.Equals(key, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool SelectsResponseNameAtPath(Operation operation, SelectionPath path, string responseName)
+    {
+        var selectionSet = operation.RootSelectionSet;
+        Selection? selection = null;
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            var segment = path[i];
+
+            switch (segment.Kind)
+            {
+                case SelectionPathSegmentKind.Root:
+                    continue;
+
+                case SelectionPathSegmentKind.InlineFragment:
+                    if (selection is null
+                        || !operation.Schema.Types.TryGetType<IObjectTypeDefinition>(segment.Name, out var objectType))
+                    {
+                        return false;
+                    }
+
+                    selectionSet = operation.GetSelectionSet(selection, objectType);
+                    continue;
+
+                default:
+                    if (selectionSet is null || !selectionSet.TryGetSelection(segment.Name, out selection))
+                    {
+                        return false;
+                    }
+
+                    selectionSet = selection.Type.NamedType() is IObjectTypeDefinition namedType
+                        ? operation.GetSelectionSet(selection, namedType)
+                        : null;
+                    continue;
+            }
+        }
+
+        return selectionSet?.TryGetSelection(responseName, out _) == true;
     }
 
     private Operation ParseOperation(JsonElement operationElement)

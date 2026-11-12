@@ -1270,6 +1270,71 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             parsedIncrementalPlanNode.Dependencies.Length);
     }
 
+    [Theory]
+    [InlineData("{ user(id: 1) { id ... @defer { soft total } } }", "soft")]
+    [InlineData("{ user(id: 1) { id soft ... @defer { soft sku total } } }", "sku")]
+    public void Parse_Should_DeriveHeldFields_When_IncrementalPlanDeliversFieldsOfEnclosingScope(
+        string operation,
+        string heldFields)
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+                user(id: Int!): User
+                userById(id: Int!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: Int!
+                email: String! @shareable
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: Int!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: Int!
+                sku: String
+                soft: String
+            }
+            """,
+            """
+            # name: c
+            type Query {
+                userByEmail(email: String!): User @lookup @internal
+            }
+
+            type User @key(fields: "email") {
+                email: String!
+                total(sku: String @require(field: "sku")): String
+            }
+            """);
+        var originalPlan = PlanOperation(schema, operation);
+
+        using var buffer = new PooledArrayWriter();
+        new JsonOperationPlanFormatter().Format(buffer, originalPlan);
+
+        var compiler = new OperationCompiler(
+            schema,
+            new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
+                new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
+        var parser = new JsonOperationPlanParser(compiler);
+
+        // act
+        var parsedPlan = parser.Parse(buffer.WrittenMemory);
+
+        // assert
+        var originalHeldFields = Assert.Single(originalPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
+        var parsedHeldFields = Assert.Single(parsedPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
+        Assert.Equal(heldFields, string.Join(", ", originalHeldFields));
+        Assert.Equal(heldFields, string.Join(", ", parsedHeldFields));
+    }
+
     [Fact]
     public void Parse_Plan_Without_BatchingGroupId_As_StandaloneOperations()
     {
