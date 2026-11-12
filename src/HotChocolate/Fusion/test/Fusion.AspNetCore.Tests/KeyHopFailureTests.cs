@@ -1446,7 +1446,7 @@ public class KeyHopFailureTests : FusionTestBase
     {
         // arrange
         var sequence = new HopSequence();
-        using var gateway = await CreateRaisedErrorSequencedGatewayAsync(sequence, enableRequestGrouping: true);
+        using var gateway = await CreateMergeOrderedRaisedErrorSequencedGatewayAsync(sequence);
         sequence.Start(["I", "B", "C"]);
 
         // act
@@ -1460,6 +1460,29 @@ public class KeyHopFailureTests : FusionTestBase
             """
             data: {"userList":null}
             errors: [{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
+
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheRaisedError_When_TheKeyHopsAreMergedBeforeTheListIsNull()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateMergeOrderedRaisedErrorSequencedGatewayAsync(sequence);
+        sequence.Start(["B", "C", "I"]);
+
+        // act
+        var result = await ExecuteWithSortedErrorsAsync(
+            gateway,
+            "{ userList(ids: [96, 93]) { total badNN } }",
+            include: null);
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            data: {"userList":null}
+            errors: [{"message":"C hop failed for sku-96","path":["userList",0,"total"]},{"message":"I hop failed for 93","path":["userList",1,"badNN"]}]
 
             """);
     }
@@ -2081,6 +2104,28 @@ public class KeyHopFailureTests : FusionTestBase
             includeOperationPlan: false);
     }
 
+    private async Task<Gateway> CreateMergeOrderedRaisedErrorSequencedGatewayAsync(HopSequence sequence)
+    {
+        var hopB = new SequencedHop(sequence, "B", deliveredOnResponse: false);
+        var hopC = new SequencedHop(sequence, "C", deliveredOnResponse: false);
+        var hopI = new SequencedHop(sequence, "I", deliveredOnResponse: false);
+        var listener = new HopMergeListener(sequence, new() { ["b"] = "B", ["c"] = "C", ["i"] = "I" });
+        var a = CreateSourceSchema("a", b => b.AddQueryType<A.Query>());
+        var b = CreateSourceSchema("b", b => b.AddQueryType<B.Query>(), mockHttpResponse: hopB.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<CNested.Query>(), mockHttpResponse: hopC.SendAsync);
+        var i = CreateSourceSchema("i", b => b.AddQueryType<I.Query>(), mockHttpResponse: hopI.SendAsync);
+        hopB.Connect(b);
+        hopC.Connect(c);
+        hopI.Connect(i);
+
+        return await CreateCompositeSchemaAsync(
+            [("a", a), ("b", b), ("c", c), ("i", i)],
+            configureGatewayBuilder: builder => builder
+                .ModifyPlannerOptions(o => o.EnableRequestGrouping = true)
+                .AddDiagnosticEventListener(_ => listener),
+            includeOperationPlan: false);
+    }
+
     private async Task<string> ExecuteKeyHopRaceAsync(string[] order)
     {
         var sequence = new HopSequence();
@@ -2400,7 +2445,9 @@ public class KeyHopFailureTests : FusionTestBase
         }
     }
 
-    private sealed class SequencedHop(HopSequence sequence, string hop)
+    // A hop that is answered in the order of the current run. It is delivered once its response is read, or, when
+    // deliveredOnResponse is false, once a HopMergeListener reports it.
+    private sealed class SequencedHop(HopSequence sequence, string hop, bool deliveredOnResponse = true)
     {
         private HttpMessageInvoker? _invoker;
 
@@ -2414,9 +2461,39 @@ public class KeyHopFailureTests : FusionTestBase
             await sequence.WaitForTurnAsync(hop, cancellationToken);
             var response = await _invoker!.SendAsync(request, cancellationToken);
             await response.Content.LoadIntoBufferAsync();
-            sequence.MarkDelivered(hop);
+
+            if (deliveredOnResponse)
+            {
+                sequence.MarkDelivered(hop);
+            }
 
             return response;
+        }
+    }
+
+    // Delivers the hop of a source schema once its node has queued its result for merging, so that the result is
+    // merged before the result of any hop answered after it.
+    private sealed class HopMergeListener(HopSequence sequence, Dictionary<string, string> hopsBySchema)
+        : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+            => TryDeliver(schemaName) ?? base.ExecuteOperationNode(context, node, schemaName);
+
+        public override IDisposable ExecuteOperationBatchNode(
+            OperationPlanContext context,
+            OperationBatchExecutionNode node,
+            string schemaName)
+            => TryDeliver(schemaName) ?? base.ExecuteOperationBatchNode(context, node, schemaName);
+
+        private Delivery? TryDeliver(string schemaName)
+            => hopsBySchema.TryGetValue(schemaName, out var hop) ? new Delivery(sequence, hop) : null;
+
+        private sealed class Delivery(HopSequence sequence, string hop) : IDisposable
+        {
+            public void Dispose() => sequence.MarkDelivered(hop);
         }
     }
 
