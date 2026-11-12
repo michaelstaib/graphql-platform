@@ -3407,7 +3407,8 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Moves the errors of the hidden held fields of <paramref name="incrementalPlan"/> out of this store.
+    /// Moves the errors of the hidden fields that the held fields of <paramref name="incrementalPlan"/> read
+    /// out of this store. An error is reported at the path of each held field that reads the failed field.
     /// </summary>
     internal void DivertHeldFieldErrors(IncrementalPlan incrementalPlan)
     {
@@ -3422,12 +3423,36 @@ AddErrors_Next:
         for (var i = 0; i < errors.Count; i++)
         {
             var error = errors[i];
+            var isHidden = false;
 
-            if (IsHeldFieldError(error, incrementalPlan.HeldFields))
+            if (error.Path is { } errorPath && TryGetResult(errorPath, out var fieldResult))
             {
-                (diverted ??= []).Add(error);
+                foreach (var heldField in incrementalPlan.HeldFields)
+                {
+                    var sourceName = GetHeldFieldSourceName(heldField);
+
+                    if (!IsFieldPath(errorPath, heldField.Path, sourceName))
+                    {
+                        continue;
+                    }
+
+                    var isSameName = sourceName.Equals(heldField.Key, StringComparison.Ordinal);
+
+                    if (fieldResult.IsInternal)
+                    {
+                        isHidden = true;
+                    }
+                    else if (isSameName)
+                    {
+                        continue;
+                    }
+
+                    (diverted ??= []).Add(
+                        isSameName ? error : error.WithPath(ReplaceFieldName(errorPath, heldField.Key)));
+                }
             }
-            else
+
+            if (!isHidden)
             {
                 errors[kept++] = error;
             }
@@ -3442,6 +3467,16 @@ AddErrors_Next:
         (_heldFieldErrors ??= []).Add(incrementalPlan, diverted);
     }
 
+    private static string GetHeldFieldSourceName(OperationRequirement heldField)
+        => heldField.Map is PathNode { PathSegment: { PathSegment: null } segment }
+            ? segment.FieldName.Value
+            : heldField.Key;
+
+    private static Path ReplaceFieldName(Path path, string fieldName)
+        => path is IndexerPathSegment indexer
+            ? ReplaceFieldName(indexer.Parent, fieldName).Append(indexer.Index)
+            : path.Parent.Append(fieldName);
+
     /// <summary>
     /// Gets the errors that <see cref="DivertHeldFieldErrors"/> moved out of this store for
     /// <paramref name="incrementalPlan"/>, or <c>null</c> if there are none.
@@ -3454,26 +3489,6 @@ AddErrors_Next:
         }
 
         return errors;
-    }
-
-    private bool IsHeldFieldError(IError error, ImmutableArray<OperationRequirement> heldFields)
-    {
-        if (error.Path is not { } errorPath
-            || !TryGetResult(errorPath, out var fieldResult)
-            || !fieldResult.IsInternal)
-        {
-            return false;
-        }
-
-        foreach (var heldField in heldFields)
-        {
-            if (IsFieldPath(errorPath, heldField.Path, heldField.Key))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static bool IsFieldPath(Path path, SelectionPath anchor, string fieldName)

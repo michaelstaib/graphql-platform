@@ -1276,6 +1276,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
     [InlineData("{ user(id: 1) { id ... @defer { soft sku note total } } }", new[] { "sku", "soft", "note" })]
     [InlineData("{ user(id: 1) { id ... @defer { note total soft } } }", new[] { "note", "soft" })]
     [InlineData("{ user(id: 1) { id ... @defer { sku note soft total } } }", new[] { "sku", "note", "soft" })]
+    [InlineData("{ user(id: 1) { id k: sku ... @defer { s: sku total } } }", new[] { "s" })]
     public void Parse_Should_DeriveHeldFieldsInPlanOrder_When_IncrementalPlanDeliversFieldsOfEnclosingScope(
         string operation,
         string[] heldFields)

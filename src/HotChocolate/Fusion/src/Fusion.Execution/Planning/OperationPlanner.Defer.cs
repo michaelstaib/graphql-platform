@@ -1005,18 +1005,19 @@ public sealed partial class OperationPlanner
 
             foreach (var selection in promotedSelectionSet.Selections)
             {
-                if (selection is not FieldNode { Alias: null, SelectionSet: null } field
-                    || field.Arguments.Count > 0
-                    || field.Directives.Count > 0)
+                if (selection is not FieldNode { SelectionSet: null } field || field.Directives.Count > 0)
                 {
                     continue;
                 }
 
-                var name = field.Name.Value;
+                var name = field.Alias?.Value ?? field.Name.Value;
 
                 if (!anchorFieldNames.Contains(name)
                     || descriptor.Requirements.ContainsKey(name)
-                    || !complexType.Fields.TryGetField(name, allowInaccessibleFields: true, out var definition)
+                    || !complexType.Fields.TryGetField(
+                        field.Name.Value,
+                        allowInaccessibleFields: true,
+                        out var definition)
                     || remainingSteps.OfType<OperationPlanStep>().Any(
                         t => t.SchemaName is not null && SelectsFieldAtPath(t, descriptor.Path, name)))
                 {
@@ -1036,7 +1037,7 @@ public sealed partial class OperationPlanner
                         scope,
                         descriptor.Path,
                         promotedType,
-                        new SelectionSetNode([new FieldNode(name)])))
+                        new SelectionSetNode([field])))
                 {
                     continue;
                 }
@@ -1269,13 +1270,8 @@ public sealed partial class OperationPlanner
                 && IsUnconditionallySelected(candidate)
                 && HasSameArguments(candidate, field))
             {
-                var candidateName = candidate.Alias?.Value ?? candidate.Name.Value;
-
-                if (candidateName.Equals(field.Alias?.Value ?? field.Name.Value, StringComparison.Ordinal))
-                {
-                    responseName = candidateName;
-                    return true;
-                }
+                responseName = candidate.Alias?.Value ?? candidate.Name.Value;
+                return true;
             }
         }
 
@@ -1371,6 +1367,15 @@ public sealed partial class OperationPlanner
         if (descriptor.Path.IsRoot || descriptor.Operation.Operation != OperationType.Query)
         {
             return false;
+        }
+
+        // A held field is absorbed with the plan only if the enclosing scope selects it under the same name.
+        foreach (var heldField in descriptor.HeldFields)
+        {
+            if (!heldField.Map.ToString().Equals(heldField.Key, StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
 
         // Restricted to a single surviving producer: multiple concurrent client-visible

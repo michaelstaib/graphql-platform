@@ -1458,6 +1458,55 @@ public partial class DeferTests
         null,
         "a: 1, b: 1, c: 1",
         2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id sku s: sku total } }",
+        "{ user(id: 1) { id sku ... @defer { s: sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id k: sku sku total } }",
+        "{ user(id: 1) { id k: sku ... @defer { sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id k: sku s: sku total } }",
+        "{ user(id: 1) { id k: sku ... @defer { s: sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { soft t: __typename i: id s: sku total } }",
+        "mutation { createUser(id: 1) { soft ... @defer { t: __typename i: id s: sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id label(prefix: \"a\") sku total } }",
+        "{ user(id: 1) { id label(prefix: \"a\") ... @defer { label(prefix: \"a\") sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id x: label(prefix: \"a\") y: label(prefix: \"a\") sku total } }",
+        "{ user(id: 1) { id x: label(prefix: \"a\") ... @defer { y: label(prefix: \"a\") sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "{ user(id: 1) { id x: label(prefix: \"a\") y: label(prefix: \"b\") sku total } }",
+        "{ user(id: 1) { id x: label(prefix: \"a\") ... @defer { y: label(prefix: \"b\") sku total } } }",
+        null,
+        "a: 1, b: 2, c: 1",
+        2)]
     public async Task Defer_Should_MatchPlainResult_When_DeferredGroupReadsRequirement(
         string schema,
         string plainQuery,
@@ -1702,6 +1751,146 @@ public partial class DeferTests
                   ],
                   "data": {
                     "soft": null,
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportHeldFieldErrorUnderDeferredName_When_HeldFieldIsAliased()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 5) { id sku t: soft s: soft total } }",
+            "{ user(id: 5) { id sku t: soft ... @defer { s: soft total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "errors": [
+                {
+                  "message": "The soft failed.",
+                  "path": [
+                    "user",
+                    "t"
+                  ]
+                }
+              ],
+              "data": {
+                "user": {
+                  "id": 5,
+                  "sku": "sku-5",
+                  "t": null
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "user",
+                        "s"
+                      ]
+                    }
+                  ],
+                  "data": {
+                    "s": null,
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportHeldFieldErrorUnderDeferredName_When_PromotedHeldFieldIsAliased()
+    {
+        // arrange
+        using var gateway = await CreateRequireGatewayAsync("s2");
+
+        // act
+        var run = await RunRequireShapeAsync(
+            gateway,
+            "{ user(id: 5) { id s: soft sku total } }",
+            "{ user(id: 5) { id ... @defer { s: soft sku total } } }");
+
+        // assert
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {
+                  "id": 5
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "user",
+                        "s"
+                      ]
+                    }
+                  ],
+                  "data": {
+                    "s": null,
+                    "sku": "sku-5",
                     "total": "total-sku-5"
                   }
                 }
@@ -2640,6 +2829,8 @@ public partial class DeferTests
                 5 => throw new GraphQLException("The soft failed."),
                 _ => "soft-" + Id
             };
+
+            public string? GetLabel(string? prefix) => prefix + "label-" + Id;
         }
     }
 

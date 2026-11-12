@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Language;
 using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
@@ -107,7 +108,7 @@ public sealed class IncrementalPlan : IOperationPlan
         foreach (var requirement in requirements)
         {
             if (requirement.InternalAlias is null
-                && requirement.Map.ToString().Equals(requirement.Key, StringComparison.Ordinal)
+                && requirement.Map is PathNode { PathSegment.PathSegment: null }
                 && !IsReadByNode(nodes, requirement.Key)
                 && GetSelectionSet(operation, requirement.Path)?.TryGetSelection(requirement.Key, out _) == true)
             {
