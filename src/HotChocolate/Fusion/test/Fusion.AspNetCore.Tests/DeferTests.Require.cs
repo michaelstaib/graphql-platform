@@ -1378,6 +1378,56 @@ public partial class DeferTests
             {"user":{"id":5,"soft":null,"sku":"sku-5","total":"total-sku-5"}}
             """);
         run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "user": {
+                  "id": 5
+                }
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "user"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "user",
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "data": {
+                    "soft": null,
+                    "sku": "sku-5",
+                    "total": "total-sku-5"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
     }
 
     [Fact]
@@ -1398,6 +1448,90 @@ public partial class DeferTests
             {"users5":[{"id":1,"soft":"soft-1","sku":"sku-1","total":"total-sku-1"},{"id":5,"soft":null,"sku":"sku-5","total":"total-sku-5"},{"id":6,"soft":"soft-6","sku":"sku-6","total":"total-sku-6"}]}
             """);
         run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
+        run.Payloads.MatchInlineSnapshots(
+        [
+            """
+            {
+              "data": {
+                "users5": [
+                  {
+                    "id": 1
+                  },
+                  {
+                    "id": 5
+                  },
+                  {
+                    "id": 6
+                  }
+                ]
+              },
+              "pending": [
+                {
+                  "id": "0",
+                  "path": [
+                    "users5"
+                  ]
+                }
+              ],
+              "hasNext": true
+            }
+            """,
+            """
+            {
+              "incremental": [
+                {
+                  "id": "0",
+                  "subPath": [
+                    0
+                  ],
+                  "data": {
+                    "soft": "soft-1",
+                    "sku": "sku-1",
+                    "total": "total-sku-1"
+                  }
+                },
+                {
+                  "id": "0",
+                  "errors": [
+                    {
+                      "message": "The soft failed.",
+                      "path": [
+                        "users5",
+                        1,
+                        "soft"
+                      ]
+                    }
+                  ],
+                  "subPath": [
+                    1
+                  ],
+                  "data": {
+                    "soft": null,
+                    "sku": "sku-5",
+                    "total": "total-sku-5"
+                  }
+                },
+                {
+                  "id": "0",
+                  "subPath": [
+                    2
+                  ],
+                  "data": {
+                    "soft": "soft-6",
+                    "sku": "sku-6",
+                    "total": "total-sku-6"
+                  }
+                }
+              ],
+              "completed": [
+                {
+                  "id": "0"
+                }
+              ],
+              "hasNext": false
+            }
+            """
+        ]);
     }
 
     [Fact]
