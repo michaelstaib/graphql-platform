@@ -2161,6 +2161,7 @@ public class KeyHopFailureTests : FusionTestBase
         var sequence = new HopSequence();
         var hopQ = new MarkerHop(sequence, ["userById", "accountById"], fail: false);
         var hopK = new MarkerHop(sequence, ["userBySku", "accountByCode"], fail: true);
+        var listener = new MarkerMergeListener(sequence, ["userById", "userBySku", "accountById", "accountByCode"]);
         var p = CreateSourceSchema("p", b => b.AddQueryType<KeyP.Query>());
         var q = CreateSourceSchema("q", b => b.AddQueryType<KeyQ.Query>(), mockHttpResponse: hopQ.SendAsync);
         var k = CreateSourceSchema("k", b => b.AddQueryType<KeyK.Query>(), mockHttpResponse: hopK.SendAsync);
@@ -2168,8 +2169,9 @@ public class KeyHopFailureTests : FusionTestBase
         hopK.Connect(k);
         using var gateway = await CreateCompositeSchemaAsync(
             [("p", p), ("q", q), ("k", k)],
-            configureGatewayBuilder: builder =>
-                builder.ModifyPlannerOptions(o => o.EnableRequestGrouping = false),
+            configureGatewayBuilder: builder => builder
+                .ModifyPlannerOptions(o => o.EnableRequestGrouping = false)
+                .AddDiagnosticEventListener(_ => listener),
             includeOperationPlan: false);
 
         sequence.Start(order);
@@ -2182,6 +2184,7 @@ public class KeyHopFailureTests : FusionTestBase
         return result;
     }
 
+    // Answers the operation of a marker in the order of the current run. A MarkerMergeListener delivers it.
     private sealed class MarkerHop(HopSequence sequence, string[] markers, bool fail)
     {
         private HttpMessageInvoker? _invoker;
@@ -2197,12 +2200,55 @@ public class KeyHopFailureTests : FusionTestBase
 
             await sequence.WaitForTurnAsync(hop, cancellationToken);
 
-            var response = fail
+            return fail
                 ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
                 : await _invoker!.SendAsync(request, cancellationToken);
+        }
+    }
 
-            sequence.MarkDelivered(hop);
-            return response;
+    // Delivers the hops of the markers in the operations of a node once the node has queued its results for merging
+    // or recorded its errors.
+    private sealed class MarkerMergeListener(HopSequence sequence, string[] markers)
+        : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+            => TryDeliver([GetText(node.Operation)]) ?? base.ExecuteOperationNode(context, node, schemaName);
+
+        public override IDisposable ExecuteOperationBatchNode(
+            OperationPlanContext context,
+            OperationBatchExecutionNode node,
+            string schemaName)
+        {
+            var texts = new List<string>();
+
+            foreach (var operation in node.Operations)
+            {
+                texts.Add(GetText(operation.SourceText));
+            }
+
+            return TryDeliver(texts) ?? base.ExecuteOperationBatchNode(context, node, schemaName);
+        }
+
+        private Delivery? TryDeliver(List<string> texts)
+        {
+            var hops = markers.Where(m => texts.Any(t => t.Contains(m, StringComparison.Ordinal))).ToArray();
+            return hops.Length == 0 ? null : new Delivery(sequence, hops);
+        }
+
+        private static string GetText(OperationSourceText operation) => Encoding.UTF8.GetString(operation.Value.Span);
+
+        private sealed class Delivery(HopSequence sequence, string[] hops) : IDisposable
+        {
+            public void Dispose()
+            {
+                foreach (var hop in hops)
+                {
+                    sequence.MarkDelivered(hop);
+                }
+            }
         }
     }
 
