@@ -538,11 +538,6 @@ public sealed partial class OperationPlanner
         var anchorFieldNames = GetAnchorFieldNames(descriptor);
         var producers = FindDeferRequirementProducers(incrementalPlanSteps, descriptor.Path, anchorFieldNames);
 
-        if (producers.IsEmpty)
-        {
-            return incrementalPlanSteps;
-        }
-
         var producerIds = new HashSet<int>();
         foreach (var producer in producers)
         {
@@ -565,11 +560,6 @@ public sealed partial class OperationPlanner
                     downstreamByStepId[dependentStepId] = dependentStep;
                 }
             }
-        }
-
-        if (downstreamByStepId.Count == 0)
-        {
-            return incrementalPlanSteps;
         }
 
         // Route each requirement through a scope-walker: at each scope, try
@@ -2451,7 +2441,8 @@ public sealed partial class OperationPlanner
     /// <paramref name="anchorPath"/> or one of its ancestors and whose every selected field
     /// is consumed by one of its dependents as a requirement that does not lie below
     /// <paramref name="anchorPath"/>. Each of <paramref name="anchorFieldNames"/> stays selected
-    /// at <paramref name="anchorPath"/> by a step that is not returned.
+    /// at <paramref name="anchorPath"/> by a step that is not returned, unless only a step that runs the
+    /// mutation selects it.
     /// </summary>
     private ImmutableArray<OperationPlanStep> FindDeferRequirementProducers(
         ImmutableList<PlanStep> incrementalPlanSteps,
@@ -2473,7 +2464,7 @@ public sealed partial class OperationPlanner
         }
 
         // A field of the deferred group that only producers select is kept by the one
-        // closest to the anchor.
+        // closest to the anchor. A step that runs the mutation is never kept.
         foreach (var fieldName in anchorFieldNames.Order(StringComparer.Ordinal))
         {
             OperationPlanStep? closestProducer = null;
@@ -2500,7 +2491,8 @@ public sealed partial class OperationPlanner
                 }
             }
 
-            if (!isSelectedByRemainingStep && closestProducer is not null)
+            if (!isSelectedByRemainingStep
+                && closestProducer is { Definition.Operation: not OperationType.Mutation })
             {
                 producers.Remove(closestProducer);
             }

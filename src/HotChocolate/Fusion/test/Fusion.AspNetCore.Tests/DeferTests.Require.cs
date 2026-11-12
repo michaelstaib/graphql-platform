@@ -1430,6 +1430,34 @@ public partial class DeferTests
         false,
         "a: 1, b: 1, c: 1",
         1)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { soft id sku total } }",
+        "mutation { createUser(id: 1) { soft ... @defer { id sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { id soft __typename sku total } }",
+        "mutation { createUser(id: 1) { id soft ... @defer { __typename sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUsers { soft id sku total } }",
+        "mutation { createUsers { soft ... @defer { id sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
+    [InlineData(
+        "s2",
+        "mutation { createUser(id: 1) { email id sku total } }",
+        "mutation { createUser(id: 1) { email ... @defer { id sku total } } }",
+        null,
+        "a: 1, b: 1, c: 1",
+        2)]
     public async Task Defer_Should_MatchPlainResult_When_DeferredGroupReadsRequirement(
         string schema,
         string plainQuery,
