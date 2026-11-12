@@ -79,7 +79,7 @@ public sealed class IncrementalPlan : IOperationPlan
         AllNodes = allNodes;
         DeliveryGroups = deliveryGroups;
         Requirements = requirements.IsDefault ? [] : requirements;
-        HeldFields = heldFields.IsDefault ? [] : heldFields;
+        HeldFields = heldFields.IsDefaultOrEmpty ? [] : OrderBySelection(operation, heldFields);
         _nodesById = CreateNodeLookup(
             allNodes,
             out var usesDynamicSchemaNames,
@@ -116,6 +116,62 @@ public sealed class IncrementalPlan : IOperationPlan
         }
 
         return heldFields?.ToImmutable() ?? [];
+    }
+
+    private static ImmutableArray<OperationRequirement> OrderBySelection(
+        Operation operation,
+        ImmutableArray<OperationRequirement> heldFields)
+    {
+        if (heldFields.Length == 1)
+        {
+            return heldFields;
+        }
+
+        var paths = new List<SelectionPath>();
+        var entries = new (int PathIndex, int Position, int Order)[heldFields.Length];
+
+        for (var i = 0; i < heldFields.Length; i++)
+        {
+            var heldField = heldFields[i];
+            var pathIndex = paths.IndexOf(heldField.Path);
+
+            if (pathIndex == -1)
+            {
+                pathIndex = paths.Count;
+                paths.Add(heldField.Path);
+            }
+
+            entries[i] = (pathIndex, GetPosition(operation, heldField), i);
+        }
+
+        Array.Sort(entries);
+
+        var ordered = ImmutableArray.CreateBuilder<OperationRequirement>(entries.Length);
+
+        foreach (var entry in entries)
+        {
+            ordered.Add(heldFields[entry.Order]);
+        }
+
+        return ordered.MoveToImmutable();
+    }
+
+    private static int GetPosition(Operation operation, OperationRequirement heldField)
+    {
+        if (GetSelectionSet(operation, heldField.Path) is { } selectionSet)
+        {
+            var selections = selectionSet.Selections;
+
+            for (var i = 0; i < selections.Length; i++)
+            {
+                if (selections[i].ResponseName.Equals(heldField.Key, StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+        }
+
+        return int.MaxValue;
     }
 
     private static bool IsReadByNode(ImmutableArray<ExecutionNode> nodes, string key)

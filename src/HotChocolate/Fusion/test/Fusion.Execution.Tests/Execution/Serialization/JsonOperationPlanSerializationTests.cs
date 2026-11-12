@@ -1271,11 +1271,14 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
     }
 
     [Theory]
-    [InlineData("{ user(id: 1) { id ... @defer { soft total } } }", "soft")]
-    [InlineData("{ user(id: 1) { id soft ... @defer { soft sku total } } }", "sku")]
-    public void Parse_Should_DeriveHeldFields_When_IncrementalPlanDeliversFieldsOfEnclosingScope(
+    [InlineData("{ user(id: 1) { id ... @defer { soft total } } }", new[] { "soft" })]
+    [InlineData("{ user(id: 1) { id soft ... @defer { soft sku total } } }", new[] { "sku" })]
+    [InlineData("{ user(id: 1) { id ... @defer { soft sku note total } } }", new[] { "sku", "soft", "note" })]
+    [InlineData("{ user(id: 1) { id ... @defer { note total soft } } }", new[] { "note", "soft" })]
+    [InlineData("{ user(id: 1) { id ... @defer { sku note soft total } } }", new[] { "sku", "note", "soft" })]
+    public void Parse_Should_DeriveHeldFieldsInPlanOrder_When_IncrementalPlanDeliversFieldsOfEnclosingScope(
         string operation,
-        string heldFields)
+        string[] heldFields)
     {
         // arrange
         var schema = ComposeHeldFieldSchema();
@@ -1296,8 +1299,8 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         // assert
         var originalHeldFields = Assert.Single(originalPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
         var parsedHeldFields = Assert.Single(parsedPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
-        Assert.Equal(heldFields, string.Join(", ", originalHeldFields));
-        Assert.Equal(heldFields, string.Join(", ", parsedHeldFields));
+        Assert.Equal(heldFields, originalHeldFields);
+        Assert.Equal(heldFields, parsedHeldFields);
     }
 
     [Fact]
@@ -1346,6 +1349,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
                 id: Int!
                 sku: String
                 soft: String
+                note: String
             }
             """,
             """
