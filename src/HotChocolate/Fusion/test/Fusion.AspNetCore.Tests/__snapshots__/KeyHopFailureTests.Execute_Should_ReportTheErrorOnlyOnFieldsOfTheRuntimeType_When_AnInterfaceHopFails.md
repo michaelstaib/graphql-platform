@@ -4,7 +4,7 @@
 
 ```text
 data: {"nullablePetList":[null,{"name":600}]}
-errors: [{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]}]
+errors: [{"message":"DN hop failed for 94","path":["nullablePetList",0,"barkNN"]},{"message":"PN hop failed for 94"}]
 
 ```
 

@@ -299,6 +299,9 @@ internal sealed partial class FetchResultStore
         _unstampedKeyFetchErrors?.Clear();
         _reportedKeyFetches?.Clear();
         _errorsByPath?.Clear();
+        _placedErrorCount = 0;
+        _unplacedErrors?.Clear();
+        _placedErrors?.Clear();
         ClearIdentitySet(ref _recordedKeyFetchErrors);
         ClearIdentitySet(ref _dependentErrors);
     }

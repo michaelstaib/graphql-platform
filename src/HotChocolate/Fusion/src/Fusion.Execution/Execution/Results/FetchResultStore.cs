@@ -114,6 +114,9 @@ internal sealed partial class FetchResultStore : IDisposable
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
     private Dictionary<Path, List<IError>>? _errorsByPath;
+    private int _placedErrorCount;
+    private List<IError>? _unplacedErrors;
+    private HashSet<IError>? _placedErrors;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -548,6 +551,7 @@ internal sealed partial class FetchResultStore : IDisposable
     {
         if (error.Path is { } path)
         {
+            _placedErrorCount++;
             _errorsByPath ??= [];
 
             if (!_errorsByPath.TryGetValue(path, out var errorsAtPath))
@@ -803,6 +807,54 @@ AddErrors_Next:
         errors.Clear();
     }
 
+    /// <summary>
+    /// Gets the number of errors added at a path or pocketed so far, which grows whenever an error is placed.
+    /// </summary>
+    internal int PlacedErrorCount => _placedErrorCount;
+
+    /// <summary>
+    /// Adds <paramref name="error"/> once without a path when the result completes, unless it is marked as placed
+    /// with <see cref="MarkPlacedSince"/> by then.
+    /// </summary>
+    internal void AddErrorWithoutPathUnlessPlaced(IError error) => (_unplacedErrors ??= []).Add(error);
+
+    /// <summary>
+    /// Marks <paramref name="error"/> as placed when an error was placed since <see cref="PlacedErrorCount"/> was
+    /// <paramref name="placedErrorCount"/>.
+    /// </summary>
+    /// <returns><c>true</c>, if an error was placed since then.</returns>
+    internal bool MarkPlacedSince(IError error, int placedErrorCount)
+    {
+        if (_placedErrorCount == placedErrorCount)
+        {
+            return false;
+        }
+
+        (_placedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(error);
+        return true;
+    }
+
+    // Adds each error that was not placed once without a path.
+    private void AddUnplacedErrorsWithoutPathUnsafe()
+    {
+        if (_unplacedErrors is not { Count: > 0 } errors)
+        {
+            return;
+        }
+
+        _placedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance);
+
+        foreach (var error in errors)
+        {
+            if (_placedErrors.Add(error))
+            {
+                AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(error)));
+            }
+        }
+
+        errors.Clear();
+    }
+
     private bool ReportKeyFetchErrorsOfNulledEntitiesUnsafe(
         ReadOnlySpan<SelectionPath> targets,
         List<string> requirementFieldNames,
@@ -897,11 +949,13 @@ AddErrors_Next:
         {
             foreach (var (originName, fetch) in errors)
             {
+                var placedErrorCount = _placedErrorCount;
                 _valueCompletion.ReportDependentErrorOnNulledTarget(
                     entityPath,
                     resultSelectionSet,
                     originName,
                     fetch.Error);
+                MarkPlacedSince(fetch.Error, placedErrorCount);
             }
         }
         finally
@@ -967,6 +1021,8 @@ AddErrors_Next:
         {
             foreach (var (originName, fetch) in errors)
             {
+                var placedErrorCount = _placedErrorCount;
+
                 if (element.IsNullOrInvalidated)
                 {
                     _valueCompletion.ReportDependentErrorOnNulledTarget(
@@ -974,10 +1030,18 @@ AddErrors_Next:
                         resultSelectionSet,
                         originName,
                         fetch.Error);
+                    MarkPlacedSince(fetch.Error, placedErrorCount);
                     continue;
                 }
 
-                if (!_valueCompletion.BuildErrorResult(element, resultSelectionSet, fetch.Error, element.CompactPath))
+                var canExecutionContinue = _valueCompletion.BuildDependentErrorResult(
+                    element,
+                    resultSelectionSet,
+                    fetch.Error,
+                    element.CompactPath);
+                MarkPlacedSince(fetch.Error, placedErrorCount);
+
+                if (!canExecutionContinue)
                 {
                     return false;
                 }
@@ -1266,6 +1330,7 @@ AddErrors_Next:
 
     internal void PocketError(Path path, IError error, ResultSelectionSet source)
     {
+        _placedErrorCount++;
         _pocketedErrors ??= [];
 
         if (!_pocketedErrors.TryAdd(path, error))
@@ -1363,6 +1428,7 @@ AddErrors_Next:
     /// </summary>
     internal SubFieldPocket PocketSubFieldError(Path path, IError error, CompositeResultElement field, int depth)
     {
+        _placedErrorCount++;
         var identity = new ErrorIdentity(path, null, error);
         _subFieldPocketsByError ??= new Dictionary<ErrorIdentity, SubFieldPocket>(ErrorIdentityComparer.Instance);
 
@@ -1691,6 +1757,7 @@ AddErrors_Next:
         {
             _valueCompletion.FinalizePocketedErrors(_result.Data);
             _valueCompletion.FinalizeInaccessibleRuntimeTypes(_result.Data);
+            AddUnplacedErrorsWithoutPathUnsafe();
         }
     }
 

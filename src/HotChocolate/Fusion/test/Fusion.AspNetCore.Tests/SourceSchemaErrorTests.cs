@@ -5,6 +5,7 @@ using HotChocolate.Execution;
 using HotChocolate.Language;
 using HotChocolate.Resolvers;
 using HotChocolate.Transport.Http;
+using HotChocolate.Types;
 using HotChocolate.Types.Composite;
 using Microsoft.Extensions.DependencyInjection;
 using OperationRequest = HotChocolate.Transport.OperationRequest;
@@ -1214,6 +1215,37 @@ public class SourceSchemaErrorTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorAtTheRaisingField_When_TheSourceReturnsNoDataForANonNullValueType()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<SourceSchema11.Query>());
+
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server1)],
+            includeOperationPlan: false);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var snapshot = Snapshot.Create();
+
+        // act
+        foreach (var query in new[] { "{ info { code } }", "{ info { code label } }" })
+        {
+            using var result = await client.PostAsync(
+                new OperationRequest(query),
+                new Uri("http://localhost:5000/graphql"),
+                TestContext.Current.CancellationToken);
+            var body = await result.HttpResponseMessage.Content.ReadAsStringAsync(
+                TestContext.Current.CancellationToken);
+            snapshot.Add(body, query, "json");
+        }
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
     public static class SourceSchema1
     {
         public class Query
@@ -1398,6 +1430,24 @@ public class SourceSchemaErrorTests : FusionTestBase
                         .SetCode("NOT_FOUND")
                         .SetPath(context.Path)
                         .Build());
+        }
+    }
+
+    public static class SourceSchema11
+    {
+        public class Query
+        {
+            [GraphQLType<NonNullType<ObjectType<Info>>>]
+            public Info GetInfo() => new();
+        }
+
+        public class Info
+        {
+            public string GetCode()
+                => throw new GraphQLException("Could not resolve Info.code");
+
+            public string? GetLabel()
+                => "label";
         }
     }
 }
