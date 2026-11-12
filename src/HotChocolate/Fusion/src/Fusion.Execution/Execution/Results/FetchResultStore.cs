@@ -3407,8 +3407,7 @@ AddErrors_Next:
     }
 
     /// <summary>
-    /// Moves the errors of the hidden held fields of <paramref name="incrementalPlan"/> out of this store,
-    /// so that <see cref="TakeHeldFieldErrors"/> hands them to the plan that delivers the fields.
+    /// Moves the errors of the hidden held fields of <paramref name="incrementalPlan"/> out of this store.
     /// </summary>
     internal void DivertHeldFieldErrors(IncrementalPlan incrementalPlan)
     {

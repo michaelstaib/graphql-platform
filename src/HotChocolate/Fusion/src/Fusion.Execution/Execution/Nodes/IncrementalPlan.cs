@@ -91,8 +91,7 @@ public sealed class IncrementalPlan : IOperationPlan
     /// <summary>
     /// Gets the requirements that this plan resolves from its enclosing plan
     /// scope before it executes. Each requirement maps a variable used by this
-    /// plan to a selection in the enclosing scope's result. A requirement that no
-    /// node reads and that is not a held field causes no work.
+    /// plan to a selection in the enclosing scope's result.
     /// </summary>
     public ImmutableArray<OperationRequirement> Requirements { get; }
 
