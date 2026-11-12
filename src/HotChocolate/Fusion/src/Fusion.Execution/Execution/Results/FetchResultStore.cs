@@ -97,7 +97,20 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
-    private Dictionary<(Path, string), IError>? _keyFetchErrors;
+    private Dictionary<Path, ResultSelectionSet>? _pocketedErrorSources;
+    private Dictionary<Path, List<Path>>? _pocketedErrorPaths;
+    private const int MaxRetainedSetSize = 1024;
+    private List<SubFieldPocket>? _subFieldPockets;
+    private Dictionary<CompositeResultDocument.Cursor, List<SubFieldPocket>>? _subFieldPocketsByElement;
+    private Dictionary<ErrorIdentity, SubFieldPocket>? _subFieldPocketsByError;
+    private Stack<List<SubFieldPocket>>? _subFieldPocketListPool;
+    private int _subFieldPocketCount;
+    private HashSet<ErrorIdentity>? _recordedKeyFetchErrors;
+    private HashSet<ErrorIdentity>? _dependentErrors;
+    private Dictionary<CompositeResultDocument.Cursor, List<ResultSelectionSet?>>? _failedValueTypeFetches;
+    private Dictionary<(Path, string), List<KeyFetchError>>? _keyFetchErrors;
+    private Dictionary<Path, List<string>>? _keyFetchNames;
+    private List<KeyFetchError>? _unstampedKeyFetchErrors;
     private Dictionary<Path, CompactPath>? _keyFetchPaths;
     private HashSet<(CompactPath, ResultSelectionSet)>? _reportedKeyFetches;
     private Dictionary<Path, List<IError>>? _errorsByPath;
@@ -222,25 +235,24 @@ internal sealed partial class FetchResultStore : IDisposable
                     }
 
                     var resultData = _result.Data;
+                    var canExecutionContinue = true;
+
+                    // Once the null reached the root, the remaining results only report their errors.
                     for (i = 0; i < results.Length; i++)
                     {
                         var result = results[i];
                         _memory.Add(result);
 
-                        if (!SaveSafeResult(
-                                resultData,
-                                result.Path,
-                                result.AdditionalPaths,
-                                dataElementsSpan[i],
-                                errorTriesSpan[i],
-                                resultSelectionSet))
-                        {
-                            RegisterRemainingResults(_memory, results, i);
-                            return false;
-                        }
+                        canExecutionContinue &= SaveSafeResult(
+                            resultData,
+                            result.Path,
+                            result.AdditionalPaths,
+                            dataElementsSpan[i],
+                            errorTriesSpan[i],
+                            resultSelectionSet);
                     }
 
-                    return true;
+                    return canExecutionContinue;
                 }
                 catch
                 {
@@ -522,11 +534,13 @@ internal sealed partial class FetchResultStore : IDisposable
             var partial = document.Root;
             var data = _result.Data;
 
-            return _valueCompletion.BuildResult(
+            var canExecutionContinue = _valueCompletion.BuildResult(
                 partial,
                 data,
                 errorTrie: null,
                 resultSelectionSet: resultSelectionSet);
+            StampKeyFetchErrors(resultSelectionSet);
+            return canExecutionContinue;
         }
     }
 
@@ -592,43 +606,50 @@ internal sealed partial class FetchResultStore : IDisposable
     {
         lock (_lock)
         {
-            ref var path = ref MemoryMarshal.GetReference(paths);
-            ref var end = ref Unsafe.Add(ref path, paths.Length);
-            var resultData = _result.Data;
-
-            while (Unsafe.IsAddressLessThan(ref path, ref end))
+            try
             {
-                if (resultData.IsInvalidated)
-                {
-                    return false;
-                }
+                ref var path = ref MemoryMarshal.GetReference(paths);
+                ref var end = ref Unsafe.Add(ref path, paths.Length);
+                var resultData = _result.Data;
 
-                var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
-                if (element.IsNullOrInvalidated)
+                while (Unsafe.IsAddressLessThan(ref path, ref end))
                 {
-                    // The start element is an ancestor when the target is below a null value.
-                    if (element.CompactPath.Length == path.Length)
+                    if (resultData.IsInvalidated)
                     {
-                        _valueCompletion.ReportErrorOnNulledTarget(element.CompactPath, resultSelectionSet, error);
+                        return false;
                     }
 
-                    goto AddErrors_Next;
-                }
+                    var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
+                    if (element.IsNullOrInvalidated)
+                    {
+                        // The start element is an ancestor when the target is below a null value.
+                        if (element.CompactPath.Length == path.Length)
+                        {
+                            _valueCompletion.ReportErrorOnNulledTarget(element.CompactPath, resultSelectionSet, error);
+                        }
 
-                var canExecutionContinue =
-                    _valueCompletion.BuildErrorResult(
-                        element,
-                        resultSelectionSet,
-                        error,
-                        element.CompactPath);
-                if (!canExecutionContinue)
-                {
-                    resultData.Invalidate();
-                    return false;
-                }
+                        goto AddErrors_Next;
+                    }
+
+                    var canExecutionContinue =
+                        _valueCompletion.BuildErrorResult(
+                            element,
+                            resultSelectionSet,
+                            error,
+                            element.CompactPath);
+                    if (!canExecutionContinue)
+                    {
+                        resultData.Invalidate();
+                        return false;
+                    }
 
 AddErrors_Next:
-                path = ref Unsafe.Add(ref path, 1)!;
+                    path = ref Unsafe.Add(ref path, 1)!;
+                }
+            }
+            finally
+            {
+                StampKeyFetchErrors(resultSelectionSet);
             }
         }
 
@@ -642,38 +663,45 @@ AddErrors_Next:
     {
         lock (_lock)
         {
-            ref var path = ref MemoryMarshal.GetReference(paths);
-            ref var end = ref Unsafe.Add(ref path, paths.Length);
-            var resultData = _result.Data;
-
-            while (Unsafe.IsAddressLessThan(ref path, ref end))
+            try
             {
-                if (resultData.IsInvalidated)
-                {
-                    return false;
-                }
+                ref var path = ref MemoryMarshal.GetReference(paths);
+                ref var end = ref Unsafe.Add(ref path, paths.Length);
+                var resultData = _result.Data;
 
-                var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
-                if (element.IsNullOrInvalidated)
+                while (Unsafe.IsAddressLessThan(ref path, ref end))
                 {
-                    _valueCompletion.ReportErrorOnNulledTarget(path, resultSelectionSet, error);
-                    goto AddErrors_Next;
-                }
+                    if (resultData.IsInvalidated)
+                    {
+                        return false;
+                    }
 
-                var canExecutionContinue =
-                    _valueCompletion.BuildErrorResult(
-                        element,
-                        resultSelectionSet,
-                        error,
-                        path);
-                if (!canExecutionContinue)
-                {
-                    resultData.Invalidate();
-                    return false;
-                }
+                    var element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
+                    if (element.IsNullOrInvalidated)
+                    {
+                        _valueCompletion.ReportErrorOnNulledTarget(path, resultSelectionSet, error);
+                        goto AddErrors_Next;
+                    }
+
+                    var canExecutionContinue =
+                        _valueCompletion.BuildErrorResult(
+                            element,
+                            resultSelectionSet,
+                            error,
+                            path);
+                    if (!canExecutionContinue)
+                    {
+                        resultData.Invalidate();
+                        return false;
+                    }
 
 AddErrors_Next:
-                path = ref Unsafe.Add(ref path, 1);
+                    path = ref Unsafe.Add(ref path, 1);
+                }
+            }
+            finally
+            {
+                StampKeyFetchErrors(resultSelectionSet);
             }
         }
 
@@ -692,53 +720,122 @@ AddErrors_Next:
     {
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            RecordKeyFetchError(entityPath, entityCompactPath, responseName, error);
+            RecordKeyFetchError(
+                entityPath,
+                entityCompactPath,
+                responseName,
+                resultSelectionSet.TryGetChild(responseName),
+                error);
         }
     }
 
     /// <summary>
-    /// Records the error of a failed fetch of the field <paramref name="responseName"/>
-    /// of the entity at <paramref name="entityPath"/>.
+    /// Records the error of a failed fetch of the field <paramref name="name"/> of the entity at
+    /// <paramref name="entityPath"/>, or of each sub-field in <paramref name="fetched"/> when the fetch
+    /// selected sub-fields of the field. The name of a sub-field is its dot separated path from the entity.
     /// </summary>
     internal void RecordKeyFetchError(
         Path entityPath,
         CompactPath entityCompactPath,
-        string responseName,
+        string name,
+        ResultSelectionSet? fetched,
         IError error)
     {
+        if (fetched is { ResponseNames.Length: > 0 })
+        {
+            foreach (var responseName in fetched.ResponseNames)
+            {
+                RecordKeyFetchError(
+                    entityPath,
+                    entityCompactPath,
+                    name + "." + responseName,
+                    fetched.TryGetChild(responseName),
+                    error);
+            }
+
+            return;
+        }
+
         _keyFetchPaths ??= [];
         _keyFetchPaths[entityPath] = entityCompactPath;
         _keyFetchErrors ??= [];
-        _keyFetchErrors.TryAdd((entityPath, responseName), error);
+
+        if (!_keyFetchErrors.TryGetValue((entityPath, name), out var errors))
+        {
+            errors = [];
+            _keyFetchErrors.Add((entityPath, name), errors);
+            _keyFetchNames ??= [];
+
+            if (!_keyFetchNames.TryGetValue(entityPath, out var names))
+            {
+                names = [];
+                _keyFetchNames.Add(entityPath, names);
+            }
+
+            names.Add(name);
+        }
+
+        _recordedKeyFetchErrors ??= new HashSet<ErrorIdentity>(ErrorIdentityComparer.Instance);
+
+        if (!_recordedKeyFetchErrors.Add(new ErrorIdentity(entityPath, name, error)))
+        {
+            return;
+        }
+
+        var keyFetchError = new KeyFetchError(error);
+        errors.Add(keyFetchError);
+        (_unstampedKeyFetchErrors ??= []).Add(keyFetchError);
+    }
+
+    // Assigns the source, whose result or error is being added, to the errors recorded since the last call.
+    private void StampKeyFetchErrors(ResultSelectionSet source)
+    {
+        if (_unstampedKeyFetchErrors is not { Count: > 0 } errors)
+        {
+            return;
+        }
+
+        foreach (var error in errors)
+        {
+            error.Source = source;
+        }
+
+        errors.Clear();
     }
 
     private bool ReportKeyFetchErrorsOfNulledEntitiesUnsafe(
         ReadOnlySpan<SelectionPath> targets,
         List<string> requirementFieldNames,
-        ResultSelectionSet resultSelectionSet)
+        ResultSelectionSet resultSelectionSet,
+        HopOrder hopOrder)
     {
-        List<(Path, string, IError)>? candidates = null;
+        List<Path>? entityPaths = null;
 
-        foreach (var ((entityPath, name), error) in _keyFetchErrors!)
+        foreach (var (entityPath, names) in _keyFetchNames!)
         {
-            if (requirementFieldNames.Contains(name) && IsEntityOfTargets(entityPath, targets))
+            if (HasRequirementFieldName(names, requirementFieldNames) && IsEntityOfTargets(entityPath, targets))
             {
-                candidates ??= [];
-                candidates.Add((entityPath, name, error));
+                entityPaths ??= [];
+                entityPaths.Add(entityPath);
             }
         }
 
-        if (candidates is null)
+        if (entityPaths is null)
         {
             return true;
         }
 
-        foreach (var (entityPath, originName, error) in candidates)
+        foreach (var entityPath in entityPaths)
         {
+            if (!TryGetKeyFetchErrorsUnsafe(entityPath, requirementFieldNames, hopOrder, out var errors))
+            {
+                continue;
+            }
+
             if (TryGetResult(entityPath, out var element))
             {
                 if (element.IsNullOrInvalidated
-                    && !ReportKeyFetchErrorUnsafe(element, resultSelectionSet, originName, error))
+                    && !ReportKeyFetchErrorsUnsafe(element, resultSelectionSet, errors))
                 {
                     return false;
                 }
@@ -746,24 +843,70 @@ AddErrors_Next:
             else if (_keyFetchPaths is not null && _keyFetchPaths.TryGetValue(entityPath, out var compactPath))
             {
                 // The entity is below a null value.
-                ReportKeyFetchErrorBelowNullUnsafe(compactPath, resultSelectionSet, originName, error);
+                ReportKeyFetchErrorsBelowNullUnsafe(compactPath, resultSelectionSet, errors);
             }
         }
 
         return true;
     }
 
-    private void ReportKeyFetchErrorBelowNullUnsafe(
+    private static bool HasRequirementFieldName(List<string> names, List<string> requirementFieldNames)
+    {
+        foreach (var name in names)
+        {
+            if (IsRequirementFieldName(name, requirementFieldNames))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A recorded name belongs to a requirement when it is the requirement field or one of its parent fields.
+    private static bool IsRequirementFieldName(string name, List<string> requirementFieldNames)
+    {
+        foreach (var requirementFieldName in requirementFieldNames)
+        {
+            if (requirementFieldName.Length == name.Length
+                ? requirementFieldName.Equals(name, StringComparison.Ordinal)
+                : requirementFieldName.Length > name.Length
+                    && requirementFieldName[name.Length] == '.'
+                    && requirementFieldName.StartsWith(name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ReportKeyFetchErrorsBelowNullUnsafe(
         CompactPath entityPath,
         ResultSelectionSet resultSelectionSet,
-        string originName,
-        IError error)
+        List<(string OriginName, KeyFetchError Fetch)> errors)
     {
         _reportedKeyFetches ??= [];
 
-        if (_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
+        if (!_reportedKeyFetches.Add((entityPath, resultSelectionSet)))
         {
-            _valueCompletion.ReportDependentErrorOnNulledTarget(entityPath, resultSelectionSet, originName, error);
+            return;
+        }
+
+        try
+        {
+            foreach (var (originName, fetch) in errors)
+            {
+                _valueCompletion.ReportDependentErrorOnNulledTarget(
+                    entityPath,
+                    resultSelectionSet,
+                    originName,
+                    fetch.Error);
+            }
+        }
+        finally
+        {
+            StampKeyFetchErrors(resultSelectionSet);
         }
     }
 
@@ -808,11 +951,10 @@ AddErrors_Next:
         return false;
     }
 
-    private bool ReportKeyFetchErrorUnsafe(
+    private bool ReportKeyFetchErrorsUnsafe(
         CompositeResultElement element,
         ResultSelectionSet resultSelectionSet,
-        string originName,
-        IError error)
+        List<(string OriginName, KeyFetchError Fetch)> errors)
     {
         _reportedKeyFetches ??= [];
 
@@ -821,40 +963,216 @@ AddErrors_Next:
             return true;
         }
 
-        if (element.IsNullOrInvalidated)
+        try
         {
-            _valueCompletion.ReportDependentErrorOnNulledTarget(
-                element.CompactPath,
-                resultSelectionSet,
-                originName,
-                error);
+            foreach (var (originName, fetch) in errors)
+            {
+                if (element.IsNullOrInvalidated)
+                {
+                    _valueCompletion.ReportDependentErrorOnNulledTarget(
+                        element.CompactPath,
+                        resultSelectionSet,
+                        originName,
+                        fetch.Error);
+                    continue;
+                }
+
+                if (!_valueCompletion.BuildErrorResult(element, resultSelectionSet, fetch.Error, element.CompactPath))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            StampKeyFetchErrors(resultSelectionSet);
+        }
+    }
+
+    // Gets the field with the dot separated path name of the entity at entityPath when its value is null.
+    private bool TryGetNullValue(Path entityPath, string name, out CompositeResultElement field)
+    {
+        var path = entityPath;
+        var start = 0;
+
+        while (start < name.Length)
+        {
+            var end = name.IndexOf('.', start);
+
+            if (end < 0)
+            {
+                end = name.Length;
+            }
+
+            path = path.Append(name[start..end]);
+            start = end + 1;
+        }
+
+        return TryGetResult(path, out field) && field.IsNullOrInvalidated;
+    }
+
+    // Gets the distinct errors that left the requirement fields of the entity missing, ordered by the dependency depth
+    // and then the id of the hop that recorded them. These are the errors recorded for a requirement field or its
+    // parent fields, or, when there are none, the errors recorded below the null requirement field or parent field
+    // whose null reached it.
+    private bool TryGetKeyFetchErrorsUnsafe(
+        Path entityPath,
+        List<string>? requirementFieldNames,
+        HopOrder hopOrder,
+        [NotNullWhen(true)] out List<(string OriginName, KeyFetchError Fetch)>? errors)
+    {
+        errors = null;
+
+        if (requirementFieldNames is null)
+        {
+            return false;
+        }
+
+        foreach (var requirementFieldName in requirementFieldNames)
+        {
+            var hasRecordedErrors = false;
+            var name = requirementFieldName;
+
+            while (true)
+            {
+                if (_keyFetchErrors!.TryGetValue((entityPath, name), out var recorded))
+                {
+                    foreach (var fetch in recorded)
+                    {
+                        hasRecordedErrors = true;
+                        AddKeyFetchError(ref errors, name, fetch);
+                    }
+                }
+
+                if (!TryGetParentName(ref name))
+                {
+                    break;
+                }
+            }
+
+            if (hasRecordedErrors)
+            {
+                continue;
+            }
+
+            name = requirementFieldName;
+
+            do
+            {
+                if (TryGetNullValue(entityPath, name, out var field))
+                {
+                    if (field.Selection is { } selection)
+                    {
+                        AddPropagatedKeyFetchErrors(ref errors, entityPath, name, selection);
+                    }
+
+                    break;
+                }
+            }
+            while (TryGetParentName(ref name));
+        }
+
+        if (errors is null)
+        {
+            return false;
+        }
+
+        SortBySource(errors, hopOrder);
+        return true;
+
+        static bool TryGetParentName(ref string name)
+        {
+            var index = name.LastIndexOf('.');
+
+            if (index < 0)
+            {
+                return false;
+            }
+
+            name = name[..index];
             return true;
         }
 
-        return _valueCompletion.BuildErrorResult(element, resultSelectionSet, error, element.CompactPath);
-    }
-
-    private bool TryGetKeyFetchErrorUnsafe(
-        Path entityPath,
-        List<string>? requirementFieldNames,
-        [NotNullWhen(true)] out string? originName,
-        [NotNullWhen(true)] out IError? error)
-    {
-        if (requirementFieldNames is not null)
+        // Adds the errors recorded for the fields below the null field name of the entity whose null reached it.
+        void AddPropagatedKeyFetchErrors(
+            ref List<(string OriginName, KeyFetchError Fetch)>? errors,
+            Path entityPath,
+            string name,
+            Selection selection)
         {
-            foreach (var name in requirementFieldNames)
+            if (_keyFetchNames is null || !_keyFetchNames.TryGetValue(entityPath, out var recordedNames))
             {
-                if (_keyFetchErrors!.TryGetValue((entityPath, name), out error))
+                return;
+            }
+
+            foreach (var recordedName in recordedNames)
+            {
+                if (recordedName.Length > name.Length
+                    && recordedName[name.Length] == '.'
+                    && recordedName.StartsWith(name, StringComparison.Ordinal)
+                    && _valueCompletion.IsNullPropagatedTo(selection, recordedName, name.Length + 1))
                 {
-                    originName = name;
-                    return true;
+                    foreach (var fetch in _keyFetchErrors![(entityPath, recordedName)])
+                    {
+                        AddKeyFetchError(ref errors, recordedName, fetch);
+                    }
                 }
             }
         }
 
-        originName = null;
-        error = null;
-        return false;
+        void AddKeyFetchError(
+            ref List<(string OriginName, KeyFetchError Fetch)>? errors,
+            string name,
+            KeyFetchError fetch)
+        {
+            if (errors is null)
+            {
+                errors = [];
+
+                if (_dependentErrors is null)
+                {
+                    _dependentErrors = new HashSet<ErrorIdentity>(ErrorIdentityComparer.Instance);
+                }
+                else if (_dependentErrors.Count > 0)
+                {
+                    _dependentErrors.Clear();
+                }
+            }
+
+            if (_dependentErrors!.Add(new ErrorIdentity(entityPath, null, fetch.Error)))
+            {
+                errors.Add((name, fetch));
+            }
+        }
+    }
+
+    // Orders the errors by the hop that recorded them and keeps the recording order of errors of the same hop.
+    private static void SortBySource(List<(string OriginName, KeyFetchError Fetch)> errors, HopOrder hopOrder)
+    {
+        for (var i = 1; i < errors.Count; i++)
+        {
+            var error = errors[i];
+            var key = hopOrder.GetKey(error.Fetch.Source);
+            var j = i - 1;
+
+            while (j >= 0 && hopOrder.GetKey(errors[j].Fetch.Source) > key)
+            {
+                errors[j + 1] = errors[j];
+                j--;
+            }
+
+            errors[j + 1] = error;
+        }
+    }
+
+    // An error recorded for a field of an entity and the result selection set of the source that recorded it.
+    private sealed class KeyFetchError(IError error)
+    {
+        public IError Error { get; } = error;
+
+        public ResultSelectionSet? Source { get; set; }
     }
 
     private static List<string> GetRequirementFieldNames(
@@ -895,15 +1213,15 @@ AddErrors_Next:
         switch (map)
         {
             case PathNode path:
-                names.Add(internalAlias ?? path.PathSegment.FieldName.Value);
+                names.Add(GetRequirementFieldName(path.PathSegment, internalAlias));
                 break;
 
             case PathObjectValueSelectionNode pathObject:
-                names.Add(internalAlias ?? pathObject.Path.PathSegment.FieldName.Value);
+                names.Add(GetRequirementFieldName(pathObject.Path.PathSegment, internalAlias));
                 break;
 
             case PathListValueSelectionNode pathList:
-                names.Add(internalAlias ?? pathList.Path.PathSegment.FieldName.Value);
+                names.Add(GetRequirementFieldName(pathList.Path.PathSegment, internalAlias));
                 break;
 
             case ObjectValueSelectionNode objectValue:
@@ -933,55 +1251,385 @@ AddErrors_Next:
         }
     }
 
-    internal void PocketError(Path path, IError error)
+    // Gets the dot separated path of the fields of the segment, where the alias replaces the first field.
+    private static string GetRequirementFieldName(PathSegmentNode segment, string? internalAlias)
+    {
+        var name = internalAlias ?? segment.FieldName.Value;
+
+        for (var current = segment.PathSegment; current is not null; current = current.PathSegment)
+        {
+            name = name + "." + current.FieldName.Value;
+        }
+
+        return name;
+    }
+
+    internal void PocketError(Path path, IError error, ResultSelectionSet source)
     {
         _pocketedErrors ??= [];
-        _pocketedErrors.TryAdd(path, error);
+
+        if (!_pocketedErrors.TryAdd(path, error))
+        {
+            return;
+        }
+
+        _pocketedErrorSources ??= [];
+        _pocketedErrorSources[path] = source;
+        _pocketedErrorPaths ??= [];
+
+        for (var current = path; ; current = current.Parent)
+        {
+            if (!_pocketedErrorPaths.TryGetValue(current, out var paths))
+            {
+                paths = [];
+                _pocketedErrorPaths.Add(current, paths);
+            }
+
+            paths.Add(path);
+
+            if (current.IsRoot)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records the <paramref name="error"/> pocketed at <paramref name="path"/> for the internal field
+    /// <paramref name="name"/> of the entity at the parent of <paramref name="path"/>, with the source that pocketed
+    /// it.
+    /// </summary>
+    internal void RecordPocketedKeyFetchError(
+        Path path,
+        CompactPath entityCompactPath,
+        string name,
+        IError error)
+    {
+        var start = _unstampedKeyFetchErrors?.Count ?? 0;
+
+        RecordKeyFetchError(path.Parent, entityCompactPath, name, fetched: null, error);
+
+        if (_unstampedKeyFetchErrors is not { } errors
+            || errors.Count == start
+            || _pocketedErrorSources is null
+            || !_pocketedErrorSources.TryGetValue(path, out var source))
+        {
+            return;
+        }
+
+        for (var i = start; i < errors.Count; i++)
+        {
+            errors[i].Source = source;
+        }
+
+        errors.RemoveRange(start, errors.Count - start);
+    }
+
+    /// <summary>
+    /// Records that the source of <paramref name="fetched"/> failed for the value-type field
+    /// <paramref name="field"/> without returning an object for it.
+    /// </summary>
+    internal void RecordFailedValueTypeFetch(CompositeResultElement field, ResultSelectionSet? fetched)
+    {
+        _failedValueTypeFetches ??= [];
+
+        if (!_failedValueTypeFetches.TryGetValue(field.Cursor, out var fetches))
+        {
+            fetches = [];
+            _failedValueTypeFetches.Add(field.Cursor, fetches);
+        }
+
+        fetches.Add(fetched);
+    }
+
+    /// <summary>
+    /// Gets the result selection sets of the sources that failed for the value-type field <paramref name="field"/>,
+    /// where <c>null</c> stands for a source that fetched the whole field.
+    /// </summary>
+    internal bool TryGetFailedValueTypeFetches(
+        CompositeResultElement field,
+        [NotNullWhen(true)] out List<ResultSelectionSet?>? fetches)
+    {
+        fetches = null;
+        return _failedValueTypeFetches?.TryGetValue(field.Cursor, out fetches) == true;
+    }
+
+    /// <summary>
+    /// Pockets the <paramref name="error"/> of the sub-field at <paramref name="path"/>, which lies
+    /// <paramref name="depth"/> path segments below the value-type field <paramref name="field"/>, so that it is
+    /// reported at <paramref name="path"/> whether or not the value-type field is <c>null</c> when the error is
+    /// applied. An error that is the same as an error already pocketed at <paramref name="path"/> is ignored, and the
+    /// pocket of that error is returned.
+    /// </summary>
+    internal SubFieldPocket PocketSubFieldError(Path path, IError error, CompositeResultElement field, int depth)
+    {
+        var identity = new ErrorIdentity(path, null, error);
+        _subFieldPocketsByError ??= new Dictionary<ErrorIdentity, SubFieldPocket>(ErrorIdentityComparer.Instance);
+
+        if (_subFieldPocketsByError.TryGetValue(identity, out var pocketed))
+        {
+            return pocketed;
+        }
+
+        var pocket = new SubFieldPocket(path, error, field, depth, _result.LayoutVersion);
+        _subFieldPocketsByError.Add(identity, pocket);
+        (_subFieldPockets ??= []).Add(pocket);
+        _subFieldPocketCount++;
+        _subFieldPocketsByElement ??= [];
+
+        for (var current = field; ; current = current.Parent)
+        {
+            if (!_subFieldPocketsByElement.TryGetValue(current.Cursor, out var pockets))
+            {
+                pockets = _subFieldPocketListPool?.Count > 0 ? _subFieldPocketListPool.Pop() : [];
+                _subFieldPocketsByElement.Add(current.Cursor, pockets);
+            }
+
+            pockets.Add(pocket);
+
+            if (current.IsRoot)
+            {
+                break;
+            }
+        }
+
+        return pocket;
+    }
+
+    private void ClearSubFieldPockets()
+    {
+        if (_subFieldPocketsByElement is { Count: > 0 })
+        {
+            _subFieldPocketListPool ??= [];
+
+            foreach (var pockets in _subFieldPocketsByElement.Values)
+            {
+                if (_subFieldPocketListPool.Count < MaxRetainedSetSize && pockets.Capacity <= 64)
+                {
+                    pockets.Clear();
+                    _subFieldPocketListPool.Push(pockets);
+                }
+            }
+
+            if (_subFieldPocketsByElement.Count > MaxRetainedSetSize)
+            {
+                _subFieldPocketsByElement = null;
+            }
+            else
+            {
+                _subFieldPocketsByElement.Clear();
+            }
+        }
+
+        if (_subFieldPocketsByError is { Count: > MaxRetainedSetSize })
+        {
+            _subFieldPocketsByError = null;
+        }
+        else
+        {
+            _subFieldPocketsByError?.Clear();
+        }
+
+        if (_subFieldPockets is { Count: > MaxRetainedSetSize })
+        {
+            _subFieldPockets = null;
+        }
+        else
+        {
+            _subFieldPockets?.Clear();
+        }
+
+        _subFieldPocketCount = 0;
     }
 
     internal bool HasPocketedErrors
-        => _pocketedErrors?.Count > 0;
+        => _pocketedErrors?.Count > 0 || _subFieldPocketCount > 0;
+
+    internal bool HasPathPocketedErrors => _pocketedErrors?.Count > 0;
 
     internal List<KeyValuePair<Path, IError>> GetPocketedErrorsSnapshot()
         => _pocketedErrors is { Count: > 0 } errors
             ? [.. errors]
             : [];
 
-    internal bool RemovePocketedError(Path path)
-        => _pocketedErrors?.Remove(path) ?? false;
-
-    internal void RemovePocketedErrorsInSubtree(Path path)
+    /// <summary>
+    /// Gets the paths of the errors pocketed at or below <paramref name="path"/>, which can include paths whose error
+    /// was removed since.
+    /// </summary>
+    internal bool TryGetPocketedErrorPaths(Path path, [NotNullWhen(true)] out List<Path>? paths)
     {
-        if (_pocketedErrors is not { Count: > 0 })
+        paths = null;
+        return _pocketedErrors is { Count: > 0 } && _pocketedErrorPaths?.TryGetValue(path, out paths) == true;
+    }
+
+    internal bool TryGetPocketedError(Path path, [NotNullWhen(true)] out IError? error)
+    {
+        error = null;
+        return _pocketedErrors?.TryGetValue(path, out error) == true;
+    }
+
+    /// <summary>
+    /// Gets the sub-field pockets below <paramref name="element"/> in the order they were pocketed, which can
+    /// include removed pockets.
+    /// </summary>
+    internal bool TryGetSubFieldPockets(
+        CompositeResultElement element,
+        [NotNullWhen(true)] out List<SubFieldPocket>? pockets)
+    {
+        pockets = null;
+        return _subFieldPocketCount > 0 && _subFieldPocketsByElement?.TryGetValue(element.Cursor, out pockets) == true;
+    }
+
+    /// <summary>
+    /// Gets every sub-field pocket in the order they were pocketed, which can include removed pockets.
+    /// </summary>
+    internal List<SubFieldPocket>? GetSubFieldPockets()
+        => _subFieldPocketCount > 0 ? _subFieldPockets : null;
+
+    /// <summary>
+    /// Drops the removed pockets from the list of the sub-field pockets below <paramref name="element"/>.
+    /// </summary>
+    internal void CompactSubFieldPocketsAt(CompositeResultElement element)
+    {
+        if (_subFieldPocketsByElement is null
+            || !_subFieldPocketsByElement.TryGetValue(element.Cursor, out var pockets))
         {
             return;
         }
 
-        List<Path>? pathsToRemove = null;
+        var count = 0;
 
-        foreach (var errorPath in _pocketedErrors.Keys)
+        for (var i = 0; i < pockets.Count; i++)
         {
-            if (PathUtilities.IsPathInSubtree(errorPath, path, includeSelf: true))
+            if (!pockets[i].IsRemoved)
             {
-                pathsToRemove ??= [];
-                pathsToRemove.Add(errorPath);
+                pockets[count++] = pockets[i];
             }
         }
 
-        if (pathsToRemove is null)
+        pockets.RemoveRange(count, pockets.Count - count);
+    }
+
+    /// <summary>
+    /// Drops the paths whose error was removed from the list of the paths pocketed at or below
+    /// <paramref name="path"/>.
+    /// </summary>
+    internal void CompactPocketedErrorPathsAt(Path path)
+    {
+        if (_pocketedErrorPaths is null || !_pocketedErrorPaths.TryGetValue(path, out var paths))
         {
             return;
         }
 
-        foreach (var pathToRemove in pathsToRemove)
+        var count = 0;
+
+        for (var i = 0; i < paths.Count; i++)
         {
-            _pocketedErrors.Remove(pathToRemove);
+            if (_pocketedErrors?.ContainsKey(paths[i]) == true)
+            {
+                paths[count++] = paths[i];
+            }
+        }
+
+        paths.RemoveRange(count, paths.Count - count);
+    }
+
+    internal bool RemovePocketedError(Path path)
+    {
+        _pocketedErrorSources?.Remove(path);
+        return _pocketedErrors?.Remove(path) ?? false;
+    }
+
+    internal void RemoveSubFieldPocket(SubFieldPocket pocket)
+    {
+        if (!pocket.IsRemoved)
+        {
+            pocket.IsRemoved = true;
+            _subFieldPocketCount--;
+            _subFieldPocketsByError!.Remove(new ErrorIdentity(pocket.Path, null, pocket.Error));
         }
     }
 
+    /// <summary>
+    /// Removes the errors pocketed at or below <paramref name="path"/>, except the errors pocketed by
+    /// <see cref="PocketSubFieldError"/>.
+    /// </summary>
+    internal void RemovePocketedErrorsInSubtree(Path path)
+    {
+        if (_pocketedErrors is not { Count: > 0 }
+            || _pocketedErrorPaths is null
+            || !_pocketedErrorPaths.Remove(path, out var paths))
+        {
+            return;
+        }
+
+        foreach (var pathToRemove in paths)
+        {
+            _pocketedErrors.Remove(pathToRemove);
+            _pocketedErrorSources?.Remove(pathToRemove);
+        }
+    }
+
+    // The error of a sub-field below a value-type field that is applied to its path once the result is known.
+    internal sealed class SubFieldPocket(
+        Path path,
+        IError error,
+        CompositeResultElement field,
+        int depth,
+        int layoutVersion)
+    {
+        public Path Path { get; } = path;
+
+        public IError Error { get; } = error;
+
+        public CompositeResultElement Field { get; } = field;
+
+        // The number of path segments between the value-type field and the sub-field.
+        public int Depth { get; } = depth;
+
+        // The layout version of the result when the pocket was created. Field is at its path only while the result
+        // still has this layout version.
+        public int LayoutVersion { get; } = layoutVersion;
+
+        public bool IsRemoved { get; set; }
+    }
+
+    // An error and the path, and the dot separated field name below the path, where it was recorded.
+    private readonly record struct ErrorIdentity(Path Path, string? Name, IError Error);
+
+    // Compares recorded errors by their path, field name, message, code and extensions.
+    private sealed class ErrorIdentityComparer : IEqualityComparer<ErrorIdentity>
+    {
+        public static ErrorIdentityComparer Instance { get; } = new();
+
+        public bool Equals(ErrorIdentity x, ErrorIdentity y)
+            => x.Path.Equals(y.Path)
+                && string.Equals(x.Name, y.Name, StringComparison.Ordinal)
+                && IsSameError(x.Error, y.Error);
+
+        public int GetHashCode(ErrorIdentity obj)
+            => HashCode.Combine(
+                obj.Path,
+                obj.Name,
+                obj.Error.Message,
+                obj.Error.Code,
+                obj.Error.Extensions?.Count ?? -1);
+    }
+
     internal bool TryGetResult(Path path, out CompositeResultElement element)
+        => TryGetResult(path, out element, out _);
+
+    /// <summary>
+    /// Gets the value at <paramref name="path"/> and whether the root or a value between the root and that value is
+    /// <c>null</c> or invalidated.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the value at <paramref name="path"/> exists.
+    /// </returns>
+    internal bool TryGetResult(Path path, out CompositeResultElement element, out bool isBelowNullValue)
     {
         element = _result.Data;
+        isBelowNullValue = false;
 
         if (path.IsRoot)
         {
@@ -997,6 +1645,8 @@ AddErrors_Next:
 
             for (var i = 0; i < segments.Length; i++)
             {
+                isBelowNullValue |= element.IsNullOrInvalidated;
+
                 switch (segments[i])
                 {
                     case string fieldName:
@@ -1064,20 +1714,21 @@ AddErrors_Next:
                 resultSelectionSet);
         }
 
-        if (!SaveSafeResult(resultData, path, dataElement, errorTrie, resultSelectionSet))
-        {
-            return false;
-        }
+        var canExecutionContinue = SaveSafeResult(resultData, path, dataElement, errorTrie, resultSelectionSet);
 
+        // Once the null reached the root, the remaining targets only report the errors of the source.
         for (var i = 0; i < additionalTargets.Length; i++)
         {
-            if (!SaveSafeResult(resultData, additionalTargets, i, dataElement, errorTrie, resultSelectionSet))
+            if (!canExecutionContinue && errorTrie is null)
             {
                 return false;
             }
+
+            canExecutionContinue &=
+                SaveSafeResult(resultData, additionalTargets, i, dataElement, errorTrie, resultSelectionSet);
         }
 
-        return true;
+        return canExecutionContinue;
     }
 
     /// <summary>
@@ -1350,6 +2001,7 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
+            ReportSourceErrorsBelowNullRoot(path, dataElement, errorTrie, resultSelectionSet);
             return false;
         }
 
@@ -1368,6 +2020,7 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
+            ReportSourceErrorsBelowNullRoot(path, dataElement, errorTrie, resultSelectionSet);
             return false;
         }
 
@@ -1375,12 +2028,14 @@ AddErrors_Next:
 
         if (element.IsNullOrInvalidated)
         {
-            if (errorTrie?.FindFirstError() is { } nulledError)
+            if (errorTrie is not null)
             {
-                _valueCompletion.ReportErrorOnNulledTarget(
+                _valueCompletion.ReportSourceErrorsOnNulledTarget(
                     path.IsRoot ? element.CompactPath : path,
                     resultSelectionSet,
-                    nulledError);
+                    dataElement,
+                    errorTrie);
+                StampKeyFetchErrors(resultSelectionSet);
             }
 
             return true;
@@ -1392,6 +2047,7 @@ AddErrors_Next:
                 element,
                 errorTrie,
                 resultSelectionSet);
+        StampKeyFetchErrors(resultSelectionSet);
 
         if (canExecutionContinue)
         {
@@ -1412,6 +2068,11 @@ AddErrors_Next:
     {
         if (resultData.IsNullOrInvalidated)
         {
+            ReportSourceErrorsBelowNullRoot(
+                additionalTargets.GetPath(index),
+                dataElement,
+                errorTrie,
+                resultSelectionSet);
             return false;
         }
 
@@ -1422,6 +2083,19 @@ AddErrors_Next:
             dataElement,
             errorTrie,
             resultSelectionSet);
+    }
+
+    private void ReportSourceErrorsBelowNullRoot(
+        CompactPath path,
+        SourceResultElement dataElement,
+        ErrorTrie? errorTrie,
+        ResultSelectionSet resultSelectionSet)
+    {
+        if (errorTrie is not null)
+        {
+            _valueCompletion.ReportSourceErrorsOnNulledTarget(path, resultSelectionSet, dataElement, errorTrie);
+            StampKeyFetchErrors(resultSelectionSet);
+        }
     }
 
     public ImmutableArray<VariableValues> CreateVariableValueSets(

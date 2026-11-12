@@ -1,0 +1,346 @@
+title: Upgrade_Should_ReportThePocketedSubFieldError_When_TheStandInFailedForAValueType
+request:
+  document: |
+    query testQuery {
+      trendingMedia {
+        __typename
+        info {
+          a
+          b
+        }
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "trendingMedia": [
+          {
+            "__typename": "Book",
+            "info": {
+              "a": null,
+              "b": "Info: SW5mbzoxMTc3NDY1NTIw"
+            }
+          },
+          {
+            "__typename": "Book",
+            "info": {
+              "a": null,
+              "b": "Info: SW5mbzoxNzA0NTUwNjU3"
+            }
+          },
+          {
+            "__typename": "Book",
+            "info": {
+              "a": null,
+              "b": "Info: SW5mbzozNzY4NTEzOTI5"
+            }
+          }
+        ]
+      },
+      "errors": [
+        {
+          "message": "Unexpected Execution Error",
+          "path": [
+            "trendingMedia",
+            0,
+            "info",
+            "a"
+          ]
+        },
+        {
+          "message": "Unexpected Execution Error",
+          "path": [
+            "trendingMedia",
+            1,
+            "info",
+            "a"
+          ]
+        },
+        {
+          "message": "Unexpected Execution Error",
+          "path": [
+            "trendingMedia",
+            2,
+            "info",
+            "a"
+          ]
+        }
+      ]
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        mediaById(id: ID!): Media @lookup
+      }
+
+      type Book implements Media @key(fields: "id") {
+        id: ID!
+        info: Info @shareable @implement
+      }
+
+      type Info {
+        a: String @shareable
+        b: String
+      }
+
+      interface Media {
+        id: ID!
+        info: Info
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          kind: OperationBatch
+          items:
+            - document: |
+                query testQuery_487a7996_2($__fusion_1_id: ID!) {
+                  mediaById(id: $__fusion_1_id) {
+                    __typename
+                  }
+                }
+              variables: |
+                [
+                  {
+                    "__fusion_1_id": "TWVkaWE6MzYwMDExMzk5Mg=="
+                  },
+                  {
+                    "__fusion_1_id": "TWVkaWE6Mzg1ODYyNDc0NA=="
+                  },
+                  {
+                    "__fusion_1_id": "TWVkaWE6MTQ5MDg3Nzcy"
+                  }
+                ]
+            - document: |
+                query testQuery_487a7996_3($__fusion_2_id: ID!) {
+                  mediaById(id: $__fusion_2_id) {
+                    __typename
+                    info {
+                      b
+                    }
+                  }
+                }
+              variables: |
+                [
+                  {
+                    "__fusion_2_id": "TWVkaWE6MzYwMDExMzk5Mg=="
+                  },
+                  {
+                    "__fusion_2_id": "TWVkaWE6Mzg1ODYyNDc0NA=="
+                  },
+                  {
+                    "__fusion_2_id": "TWVkaWE6MTQ5MDg3Nzcy"
+                  }
+                ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "mediaById": {
+                    "__typename": "Book",
+                    "info": {
+                      "b": "Info: SW5mbzoxNzA0NTUwNjU3"
+                    }
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "mediaById": {
+                    "__typename": "Book",
+                    "info": {
+                      "b": "Info: SW5mbzozNzY4NTEzOTI5"
+                    }
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "mediaById": {
+                    "__typename": "Book"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "mediaById": {
+                    "__typename": "Book",
+                    "info": {
+                      "b": "Info: SW5mbzoxMTc3NDY1NTIw"
+                    }
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "mediaById": {
+                    "__typename": "Book"
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "mediaById": {
+                    "__typename": "Book"
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        trendingMedia: [Media!]!
+        mediaByKey(id: ID!): Media @lookup @internal
+      }
+
+      type Info {
+        a: String @shareable
+      }
+
+      type Media @interfaceObject @key(fields: "id") {
+        id: ID!
+        info: Info @shareable @error
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_487a7996_1 {
+              trendingMedia {
+                info {
+                  a
+                }
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "errors": [
+                  {
+                    "message": "Unexpected Execution Error",
+                    "path": [
+                      "trendingMedia",
+                      0,
+                      "info"
+                    ]
+                  },
+                  {
+                    "message": "Unexpected Execution Error",
+                    "path": [
+                      "trendingMedia",
+                      1,
+                      "info"
+                    ]
+                  },
+                  {
+                    "message": "Unexpected Execution Error",
+                    "path": [
+                      "trendingMedia",
+                      2,
+                      "info"
+                    ]
+                  }
+                ],
+                "data": {
+                  "trendingMedia": [
+                    {
+                      "info": null,
+                      "id": "TWVkaWE6MzYwMDExMzk5Mg=="
+                    },
+                    {
+                      "info": null,
+                      "id": "TWVkaWE6Mzg1ODYyNDc0NA=="
+                    },
+                    {
+                      "info": null,
+                      "id": "TWVkaWE6MTQ5MDg3Nzcy"
+                    }
+                  ]
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery {
+          trendingMedia {
+            __typename
+            info {
+              a
+              b
+            }
+            id @fusion__requirement
+          }
+        }
+      name: testQuery
+      hash: 9a7dd9d38eeb5f6b0b5f46eb0b590ecd
+      searchSpace: 1
+      expandedNodes: 2
+  nodes:
+    - id: 1
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_487a7996_1 {
+          trendingMedia {
+            info {
+              a
+            }
+            id
+          }
+        }
+    - id: 2
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_487a7996_2($__fusion_1_id: ID!) {
+          mediaById(id: $__fusion_1_id) {
+            __typename
+          }
+        }
+      source: $.mediaById
+      target: $.trendingMedia
+      batchingGroupId: 4
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_487a7996_3($__fusion_2_id: ID!) {
+          mediaById(id: $__fusion_2_id) {
+            __typename
+            info {
+              b
+            }
+          }
+        }
+      source: $.mediaById
+      target: $.trendingMedia
+      batchingGroupId: 4
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1

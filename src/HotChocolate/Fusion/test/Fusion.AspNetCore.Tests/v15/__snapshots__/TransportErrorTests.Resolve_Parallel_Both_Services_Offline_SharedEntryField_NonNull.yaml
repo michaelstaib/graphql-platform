@@ -10,11 +10,25 @@ request:
 response:
   body: |
     {
+      "data": {
+        "viewer": {
+          "userId": null,
+          "name": null
+        }
+      },
       "errors": [
         {
           "message": "Unexpected Execution Error",
           "path": [
-            "viewer"
+            "viewer",
+            "name"
+          ]
+        },
+        {
+          "message": "Unexpected Execution Error",
+          "path": [
+            "viewer",
+            "userId"
           ]
         }
       ]

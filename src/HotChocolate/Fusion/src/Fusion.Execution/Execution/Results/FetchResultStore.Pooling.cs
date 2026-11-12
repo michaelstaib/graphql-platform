@@ -93,13 +93,7 @@ internal sealed partial class FetchResultStore
             new ConditionFlags(_deferFlags, _wideDeferFlags),
             _pathPool);
 
-        _errors?.Clear();
-        _pocketedErrors?.Clear();
-        ClearMissingTargets();
-        _keyFetchErrors?.Clear();
-        _keyFetchPaths?.Clear();
-        _reportedKeyFetches?.Clear();
-        _errorsByPath?.Clear();
+        ClearErrorState();
 
         _valueCompletion.Initialize(_schema, _errorHandler, _errorHandlingMode);
 
@@ -148,13 +142,7 @@ internal sealed partial class FetchResultStore
         RecycleRequestVariableValueArrays();
 
         // clear errors
-        _errors?.Clear();
-        _pocketedErrors?.Clear();
-        ClearMissingTargets();
-        _keyFetchErrors?.Clear();
-        _keyFetchPaths?.Clear();
-        _reportedKeyFetches?.Clear();
-        _errorsByPath?.Clear();
+        ClearErrorState();
 
         // drop the arena memory of the variable and leaf key writers
         _variableWriter.Release();
@@ -294,5 +282,40 @@ internal sealed partial class FetchResultStore
         {
             dict.Clear();
         }
+    }
+
+    private void ClearErrorState()
+    {
+        _errors?.Clear();
+        _pocketedErrors?.Clear();
+        _pocketedErrorSources?.Clear();
+        _pocketedErrorPaths = null;
+        ClearSubFieldPockets();
+        _failedValueTypeFetches = null;
+        ClearMissingTargets();
+        _keyFetchErrors?.Clear();
+        _keyFetchNames = null;
+        _keyFetchPaths?.Clear();
+        _unstampedKeyFetchErrors?.Clear();
+        _reportedKeyFetches?.Clear();
+        _errorsByPath?.Clear();
+        ClearIdentitySet(ref _recordedKeyFetchErrors);
+        ClearIdentitySet(ref _dependentErrors);
+    }
+
+    private static void ClearIdentitySet(ref HashSet<ErrorIdentity>? set)
+    {
+        if (set is null)
+        {
+            return;
+        }
+
+        if (set.Count > MaxRetainedSetSize)
+        {
+            set = null;
+            return;
+        }
+
+        set.Clear();
     }
 }

@@ -1,4 +1,4 @@
-title: Viewer_Remains_Uninitialized_Promotes_One_Pocketed_Error_To_Parent
+title: Viewer_NonNull_With_Error_And_Nullable_Children_Pockets_Child_Error
 request:
   document: |
     {
@@ -11,13 +11,17 @@ response:
   body: |
     {
       "data": {
-        "viewer": null
+        "viewer": {
+          "a": null,
+          "b": "Viewer"
+        }
       },
       "errors": [
         {
           "message": "Unexpected Execution Error",
           "path": [
-            "viewer"
+            "viewer",
+            "a"
           ]
         }
       ]
@@ -30,7 +34,7 @@ sourceSchemas:
       }
 
       type Query {
-        viewer: Viewer @shareable @error
+        viewer: Viewer! @shareable @error
       }
 
       type Viewer @shareable {
@@ -57,9 +61,7 @@ sourceSchemas:
                     ]
                   }
                 ],
-                "data": {
-                  "viewer": null
-                }
+                "data": null
               }
   - name: B
     schema: |
@@ -68,7 +70,7 @@ sourceSchemas:
       }
 
       type Query {
-        viewer: Viewer @shareable @null
+        viewer: Viewer! @shareable
       }
 
       type Viewer @shareable {
@@ -88,7 +90,9 @@ sourceSchemas:
             - |
               {
                 "data": {
-                  "viewer": null
+                  "viewer": {
+                    "b": "Viewer"
+                  }
                 }
               }
 operationPlan:

@@ -120,4 +120,81 @@ public class InterfaceObjectUpgradeTests : FusionTestBase
         // assert
         await MatchSnapshotAsync(gateway, request, result);
     }
+
+    [Fact]
+    public async Task Upgrade_Should_ReportThePocketedSubFieldError_When_TheStandInFailedForAValueType()
+    {
+        // arrange
+        using var serverA = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+              mediaById(id: ID!): Media @lookup
+            }
+
+            interface Media {
+              id: ID!
+              info: Info
+            }
+
+            type Info {
+              a: String @shareable
+              b: String
+            }
+
+            type Book implements Media @key(fields: "id") {
+              id: ID!
+              info: Info @shareable @implement
+            }
+
+            directive @implement on FIELD_DEFINITION
+            """);
+        using var serverB = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+              trendingMedia: [Media!]!
+              mediaByKey(id: ID!): Media @lookup @internal
+            }
+
+            type Media @interfaceObject @key(fields: "id") {
+              id: ID!
+              info: Info @shareable @error
+            }
+
+            type Info {
+              a: String @shareable
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", serverA),
+            ("B", serverB)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query testQuery {
+              trendingMedia {
+                __typename
+                info {
+                  a
+                  b
+                }
+              }
+            }
+            """);
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result);
+    }
 }

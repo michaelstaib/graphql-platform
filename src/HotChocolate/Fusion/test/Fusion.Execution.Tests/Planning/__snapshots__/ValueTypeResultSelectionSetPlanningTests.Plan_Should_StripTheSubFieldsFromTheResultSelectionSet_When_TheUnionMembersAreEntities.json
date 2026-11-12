@@ -1,0 +1,87 @@
+{
+  "version": "1.2.0",
+  "id": "81443dd25f7103120e62eda9a09b79b460c9ab51c5688b0fa7029230cf8cf89f",
+  "operation": {
+    "kind": "Query",
+    "document": "{ item { __typename @fusion__requirement ... on Product { name price id @fusion__requirement } ... on Book { title pages id @fusion__requirement } } }",
+    "id": "123456789101112",
+    "hash": "123456789101112",
+    "shortHash": "123456789101112"
+  },
+  "searchSpace": 2,
+  "expandedNodes": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Operation",
+      "schema": "a",
+      "operation": {
+        "name": "Op_123456789101112_1",
+        "kind": "Query",
+        "document": "query Op_123456789101112_1 { item { __typename ... on Product { name id } ... on Book { title id } } }",
+        "hash": "425d0baf3b2563a6f41595a44c79914858b62401f63a7186a1a2b60db3660306",
+        "shortHash": "425d0baf",
+        "xxHash": 1320624863837117331
+      },
+      "resultSelectionSet": "{ item }"
+    },
+    {
+      "id": 2,
+      "type": "Operation",
+      "schema": "b",
+      "operation": {
+        "name": "Op_123456789101112_2",
+        "kind": "Query",
+        "document": "query Op_123456789101112_2($__fusion_1_id: Int!) { lookups { bookById(id: $__fusion_1_id) { pages } } }",
+        "hash": "69d7b9aa1a625c14b3920d5c3ab150704e4acdd1ca3600b8508701924f190291",
+        "shortHash": "69d7b9aa",
+        "xxHash": 13402201006855684788
+      },
+      "lookupTypeName": "Book",
+      "resultSelectionSet": "{ pages }",
+      "source": "$.lookups.bookById",
+      "target": "$.item\u003CBook\u003E",
+      "batchingGroupId": 4,
+      "requirements": [
+        {
+          "name": "__fusion_1_id",
+          "type": "Int!",
+          "path": "$.item\u003CBook\u003E",
+          "selectionMap": "id"
+        }
+      ],
+      "dependencies": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "type": "Operation",
+      "schema": "b",
+      "operation": {
+        "name": "Op_123456789101112_3",
+        "kind": "Query",
+        "document": "query Op_123456789101112_3($__fusion_2_id: Int!) { lookups { productById(id: $__fusion_2_id) { price } } }",
+        "hash": "479ae7294a0e0ff7029b504d835fdf1f599f499a22151a54364b1b1076585074",
+        "shortHash": "479ae729",
+        "xxHash": 7854385634316507710
+      },
+      "lookupTypeName": "Product",
+      "resultSelectionSet": "{ price }",
+      "source": "$.lookups.productById",
+      "target": "$.item\u003CProduct\u003E",
+      "batchingGroupId": 4,
+      "requirements": [
+        {
+          "name": "__fusion_2_id",
+          "type": "Int!",
+          "path": "$.item\u003CProduct\u003E",
+          "selectionMap": "id"
+        }
+      ],
+      "dependencies": [
+        1
+      ]
+    }
+  ]
+}

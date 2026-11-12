@@ -1,0 +1,25 @@
+# Execute_Should_ReportTheErrorOnALeafOfEachNullableObjectInEveryOrder_When_TheSourceRaises
+
+## info { left { x } right { y } label }, intact list
+
+```text
+data: {"userList":[{"info":{"left":null,"right":null,"label":"label-98"}},{"info":{"left":{"x":"x-2"},"right":{"y":"y-2"},"label":"label-2"}}]}
+errors: [{"message":"info failed for 98","path":["userList",0,"info","left","x"]},{"message":"info failed for 98","path":["userList",0,"info","right","y"]}]
+
+```
+
+## info { left { x } right { y } label }, nulled list
+
+```text
+data: {"userList":null}
+errors: [{"message":"I hop failed for 93","path":["userList",1,"badNN"]},{"message":"info failed for 98","path":["userList",0,"info","left","x"]},{"message":"info failed for 98","path":["userList",0,"info","right","y"]}]
+
+```
+
+## info { left { x } right { y } label }, nullable items
+
+```text
+data: {"nullableUsers":[{"info":{"left":null,"right":null,"label":"label-98"},"badNN":98},null]}
+errors: [{"message":"I hop failed for 93","path":["nullableUsers",1,"badNN"]},{"message":"info failed for 98","path":["nullableUsers",0,"info","left","x"]},{"message":"info failed for 98","path":["nullableUsers",0,"info","right","y"]}]
+
+```
