@@ -112,12 +112,12 @@ internal sealed class DeferOperationRewriter
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(partitioning);
 
-        var occurrences = DeferOccurrenceCollector.Collect(
+        var collection = DeferOccurrenceCollector.Collect(
             operation,
             partitioning.ByFragment,
             _inlineUnlabeledNestedDefers);
 
-        var effectiveSetByLocation = DeferEffectiveSetResolver.Resolve(occurrences);
+        var effectiveSetByLocation = DeferEffectiveSetResolver.Resolve(collection.Occurrences);
 
         var mainOperation = BuildMainOperation(operation, partitioning.ByFragment);
 
@@ -126,21 +126,26 @@ internal sealed class DeferOperationRewriter
             return new DeferSplitResult(mainOperation, []);
         }
 
-        var incrementalPlanDescriptors = BuildIncrementalPlanOperations(operation, occurrences, effectiveSetByLocation);
+        var incrementalPlanDescriptors = BuildIncrementalPlanOperations(
+            operation,
+            collection,
+            effectiveSetByLocation,
+            partitioning.ByFragment);
 
         return new DeferSplitResult(mainOperation, incrementalPlanDescriptors);
     }
 
     private static ImmutableArray<IncrementalPlanDescriptor> BuildIncrementalPlanOperations(
         OperationDefinitionNode operation,
-        List<FieldOccurrence> occurrences,
-        Dictionary<FieldLocation, DeliveryGroupSetKey> effectiveSetByLocation)
+        DeferCollectionResult collection,
+        Dictionary<FieldLocation, DeliveryGroupSetKey> effectiveSetByLocation,
+        IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment)
     {
         // Bucket occurrences by effective delivery group set. The key is sorted
         // by DeliveryGroup Id so the order is stable.
         var buckets = new Dictionary<DeliveryGroupSetKey, IncrementalPlanBucket>();
 
-        foreach (var occurrence in occurrences)
+        foreach (var occurrence in collection.Occurrences)
         {
             var key = effectiveSetByLocation[new FieldLocation(occurrence.ParentPath, occurrence.ResponseName)];
 
@@ -149,13 +154,16 @@ internal sealed class DeferOperationRewriter
                 continue;
             }
 
-            if (!buckets.TryGetValue(key, out var bucket))
-            {
-                bucket = new IncrementalPlanBucket(key);
-                buckets[key] = bucket;
-            }
+            GetOrAddBucket(buckets, key).Add(occurrence);
+        }
 
-            bucket.Add(occurrence);
+        // Each conditional @defer nested in a delivery group adds a @skip-guarded inline copy
+        // to that group's own incremental plan.
+        foreach (var conditionalFragment in collection.ConditionalFragments)
+        {
+            var key = new DeliveryGroupSetKey([conditionalFragment.EnclosingDeliveryGroup]);
+
+            GetOrAddBucket(buckets, key).Add(conditionalFragment);
         }
 
         if (buckets.Count == 0)
@@ -176,7 +184,7 @@ internal sealed class DeferOperationRewriter
 
         foreach (var bucket in ordered)
         {
-            var incrementalPlanOperation = BuildIncrementalPlanOperation(operation, bucket);
+            var incrementalPlanOperation = BuildIncrementalPlanOperation(operation, bucket, byFragment);
             var path = DeterminePath(bucket.Key);
             var parent = ResolveParentDescriptor(bucket.Key, descriptorByKey);
             var descriptor = new IncrementalPlanDescriptor(
@@ -190,6 +198,19 @@ internal sealed class DeferOperationRewriter
         }
 
         return incrementalPlanDescriptors.ToImmutable();
+    }
+
+    private static IncrementalPlanBucket GetOrAddBucket(
+        Dictionary<DeliveryGroupSetKey, IncrementalPlanBucket> buckets,
+        DeliveryGroupSetKey key)
+    {
+        if (!buckets.TryGetValue(key, out var bucket))
+        {
+            bucket = new IncrementalPlanBucket(key);
+            buckets[key] = bucket;
+        }
+
+        return bucket;
     }
 
     private OperationDefinitionNode BuildMainOperation(
@@ -221,25 +242,7 @@ internal sealed class DeferOperationRewriter
                 // fetches the fields eagerly.
                 if (usage.IfVariable is not null)
                 {
-                    var skipDirective = new DirectiveNode(
-                        null,
-                        new NameNode("skip"),
-                        [
-                            new ArgumentNode(
-                                null,
-                                new NameNode("if"),
-                                new VariableNode(new NameNode(usage.IfVariable)))
-                        ]);
-
-                    var stripped = StripDeferDirective(inlineFragment);
-                    var nested = StripDeferFromSelectionSet(stripped.SelectionSet, byFragment);
-
-                    if (!ReferenceEquals(nested, stripped.SelectionSet))
-                    {
-                        stripped = stripped.WithSelectionSet(nested);
-                    }
-
-                    selections.Add(stripped.WithDirectives([.. stripped.Directives, skipDirective]));
+                    selections.Add(CreateSkipGuardedCopy(inlineFragment, usage.IfVariable, byFragment));
                 }
 
                 modified = true;
@@ -290,9 +293,36 @@ internal sealed class DeferOperationRewriter
         return new SelectionSetNode(selections);
     }
 
+    private static InlineFragmentNode CreateSkipGuardedCopy(
+        InlineFragmentNode deferFragment,
+        string ifVariable,
+        IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment)
+    {
+        var skipDirective = new DirectiveNode(
+            null,
+            new NameNode("skip"),
+            [
+                new ArgumentNode(
+                    null,
+                    new NameNode("if"),
+                    new VariableNode(new NameNode(ifVariable)))
+            ]);
+
+        var stripped = StripDeferDirective(deferFragment);
+        var nested = StripDeferFromSelectionSet(stripped.SelectionSet, byFragment);
+
+        if (!ReferenceEquals(nested, stripped.SelectionSet))
+        {
+            stripped = stripped.WithSelectionSet(nested);
+        }
+
+        return stripped.WithDirectives([.. stripped.Directives, skipDirective]);
+    }
+
     private static OperationDefinitionNode BuildIncrementalPlanOperation(
         OperationDefinitionNode rootOperation,
-        IncrementalPlanBucket bucket)
+        IncrementalPlanBucket bucket,
+        IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment)
     {
         // Build a tree of PathNodes keyed by FieldPathSegment. Each leaf
         // carries the FieldNodes (per optional type condition) contributed
@@ -310,6 +340,20 @@ internal sealed class DeferOperationRewriter
             }
 
             node.AddContribution(occurrence.ResponseName, occurrence.FieldNode, occurrence.TypeCondition);
+        }
+
+        foreach (var conditionalFragment in bucket.ConditionalFragments)
+        {
+            var node = root;
+            for (var i = 0; i < conditionalFragment.ParentPath.Length; i++)
+            {
+                node = node.GetOrAddChild(conditionalFragment.ParentPath[i]);
+            }
+
+            var ifVariable = byFragment[conditionalFragment.Fragment].IfVariable!;
+            node.AddConditionalCopy(
+                conditionalFragment.ParentTypeCondition,
+                CreateSkipGuardedCopy(conditionalFragment.Fragment, ifVariable, byFragment));
         }
 
         var rootSelectionSet = BuildSelectionSetFromPathNode(
@@ -486,6 +530,13 @@ internal sealed class DeferOperationRewriter
                     [],
                     new SelectionSetNode(bucketEntry.Fields.ToArray<ISelectionNode>())));
             }
+        }
+
+        foreach (var (typeCondition, copy) in node.ConditionalCopies)
+        {
+            selections.Add(typeCondition is null
+                ? copy
+                : new InlineFragmentNode(null, typeCondition, [], new SelectionSetNode([copy])));
         }
 
         // Child path nodes: wrap in the original field node (preserving
@@ -686,13 +737,18 @@ internal sealed class DeferOperationRewriter
     {
         public DeliveryGroupSetKey Key { get; } = key;
         public List<FieldOccurrence> Occurrences { get; } = [];
+        public List<ConditionalFragmentOccurrence> ConditionalFragments { get; } = [];
 
         public void Add(FieldOccurrence occurrence) => Occurrences.Add(occurrence);
+
+        public void Add(ConditionalFragmentOccurrence conditionalFragment) =>
+            ConditionalFragments.Add(conditionalFragment);
     }
 
     private sealed class PathNode
     {
         public List<(string ResponseName, FieldNode FieldNode, NamedTypeNode? TypeCondition)> Contributions { get; } = [];
+        public List<(NamedTypeNode? TypeCondition, InlineFragmentNode Copy)> ConditionalCopies { get; } = [];
         public Dictionary<FieldPathSegment, PathNode> Children { get; } = [];
 
         public PathNode GetOrAddChild(FieldPathSegment segment)
@@ -704,6 +760,11 @@ internal sealed class DeferOperationRewriter
             }
 
             return child;
+        }
+
+        public void AddConditionalCopy(NamedTypeNode? typeCondition, InlineFragmentNode copy)
+        {
+            ConditionalCopies.Add((typeCondition, copy));
         }
 
         public void AddContribution(string responseName, FieldNode fieldNode, NamedTypeNode? typeCondition)
