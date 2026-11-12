@@ -1,23 +1,18 @@
-using HotChocolate.Fusion.Diagnostics;
-using HotChocolate.Fusion.Execution;
-using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Resolvers;
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
 using HotChocolate.Types.Composite;
 using HotChocolate.Types.Relay;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion;
 
 public class LookupErrorPathTests : FusionTestBase
 {
-    // The selections of the entity, with the raising field first, in the middle and last. boom is non-null and raises,
-    // so the lookup of B returns null. For soft, which is nullable, and for ghost, the lookup of B reports an error at
-    // soft or at a field that is not selected and returns null. xboom is non-null and raises in X, so the entity is
-    // null before the result of B arrives when X is answered first.
+    // The selections of the entity, with the raising field first, in the middle and last, nullable, non-null and
+    // unselected, and with a second source that nulls the entity first in one hop order.
     private static readonly string[] s_selections =
     [
         "boom nick title label",
@@ -33,6 +28,25 @@ public class LookupErrorPathTests : FusionTestBase
         "nick ghost xboom label"
     ];
 
+    // The selections of an entity whose lookup reports an error for the whole entity and errors at soft and boom.
+    private static readonly string[] s_rootAndFieldErrorSelections =
+    [
+        "soft nick label",
+        "boom nick label",
+        "nick soft code label",
+        "soft nick xboom label",
+        "nick soft code xboom label"
+    ];
+
+    // The selections of an entity whose lookup reports an error at a field that is not selected, with and without a
+    // field that requires a field of the lookup.
+    private static readonly string[] s_dependentSelections =
+    [
+        "nick total label",
+        "total label",
+        "nick label"
+    ];
+
     [Fact]
     public async Task Execute_Should_ReportTheErrorAtTheRaisingField_When_TheLookupOfAnEntityReturnsNull()
     {
@@ -41,7 +55,7 @@ public class LookupErrorPathTests : FusionTestBase
         using var gateway = await CreateGatewayAsync(sequence);
 
         // act
-        var snapshot = await ExecuteInEveryHopOrderAsync(gateway, sequence, "{ user(id: 2) { $ } }");
+        var snapshot = await ExecuteInEveryHopOrderAsync(gateway, sequence, s_selections, "{ user(id: 2) { $ } }");
 
         // assert
         snapshot.MatchMarkdownSnapshot();
@@ -55,7 +69,7 @@ public class LookupErrorPathTests : FusionTestBase
         using var gateway = await CreateGatewayAsync(sequence);
 
         // act
-        var snapshot = await ExecuteInEveryHopOrderAsync(gateway, sequence, "{ users { $ } }");
+        var snapshot = await ExecuteInEveryHopOrderAsync(gateway, sequence, s_selections, "{ users { $ } }");
 
         // assert
         snapshot.MatchMarkdownSnapshot();
@@ -69,7 +83,11 @@ public class LookupErrorPathTests : FusionTestBase
         using var gateway = await CreateGatewayAsync(sequence);
 
         // act
-        var snapshot = await ExecuteInEveryHopOrderAsync(gateway, sequence, "mutation { createUser(id: 2) { $ } }");
+        var snapshot = await ExecuteInEveryHopOrderAsync(
+            gateway,
+            sequence,
+            s_selections,
+            "mutation { createUser(id: 2) { $ } }");
 
         // assert
         snapshot.MatchMarkdownSnapshot();
@@ -86,6 +104,7 @@ public class LookupErrorPathTests : FusionTestBase
         var snapshot = await ExecuteInEveryHopOrderAsync(
             gateway,
             sequence,
+            s_selections,
             "{ user(id: 2) { id ... @defer { $ } } }");
 
         // assert
@@ -93,10 +112,66 @@ public class LookupErrorPathTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Execute_Should_ReportEachLookupErrorOnce_When_TheLookupFailsForTheEntityAndItsFields()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateGatewayAsync(sequence);
+
+        // act
+        var snapshot = await ExecuteInEveryHopOrderAsync(
+            gateway,
+            sequence,
+            s_rootAndFieldErrorSelections,
+            "{ user(id: 4) { $ } }");
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnTheDependentOnly_When_TheLookupFailsAtAnUnselectedField()
+    {
+        // arrange
+        var sequence = new HopSequence();
+        using var gateway = await CreateGatewayAsync(sequence);
+
+        // act
+        var snapshot = await ExecuteInEveryHopOrderAsync(
+            gateway,
+            sequence,
+            s_dependentSelections,
+            "{ user(id: 5) { $ } }");
+
+        // assert
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReportTheErrorOnceWithoutPath_When_TheLookupSelectingOnlyTheTypeNameRaises()
+    {
+        // arrange
+        using var gateway = await CreateTypeNameGatewayAsync(b => b.AddQueryType<TypeNameReviewErrorSourceB.Query>());
+
+        // act
+        var result = await ExecuteAsync(
+            gateway,
+            "{ entity(id: 2) { id ... @defer { __typename ... on Product { far } } } }");
+
+        // assert
+        result.MatchInlineSnapshot(
+            """
+            {"data":{"entity":{"id":"2"}},"pending":[{"id":"0","path":["entity"]}],"hasNext":true}
+            {"incremental":[{"id":"0","errors":[{"message":"review read failed"}],"data":{"__typename":"Review"}}],"completed":[{"id":"0"}],"hasNext":false}
+
+            """);
+    }
+
+    [Fact]
     public async Task Execute_Should_ReportTheErrorOnlyOnFieldsWithoutAValue_When_TheLookupSelectingTheTypeNameRaises()
     {
         // arrange
-        using var gateway = await CreateTypeNameGatewayAsync(raisesError: true);
+        using var gateway = await CreateTypeNameGatewayAsync(b => b.AddQueryType<TypeNameSourceB.ErrorQuery>());
 
         // act
         var plain = await ExecuteAsync(gateway, "{ entities { id __typename ... on Product { far } } }");
@@ -115,7 +190,7 @@ public class LookupErrorPathTests : FusionTestBase
     public async Task Execute_Should_CompleteOnlyFieldsWithoutAValue_When_TheLookupSelectingTheTypeNameReturnsNull()
     {
         // arrange
-        using var gateway = await CreateTypeNameGatewayAsync(raisesError: false);
+        using var gateway = await CreateTypeNameGatewayAsync(b => b.AddQueryType<TypeNameSourceB.NullQuery>());
 
         // act
         var plain = await ExecuteAsync(gateway, "{ entities { id __typename ... on Product { far } } }");
@@ -133,11 +208,12 @@ public class LookupErrorPathTests : FusionTestBase
     private static async Task<Snapshot> ExecuteInEveryHopOrderAsync(
         Gateway gateway,
         HopSequence sequence,
+        string[] selections,
         string template)
     {
         var snapshot = Snapshot.Create();
 
-        foreach (var selection in s_selections)
+        foreach (var selection in selections)
         {
             var query = template.Replace("$", selection);
             sequence.Start(["B", "X"]);
@@ -167,24 +243,26 @@ public class LookupErrorPathTests : FusionTestBase
 
     private async Task<Gateway> CreateGatewayAsync(HopSequence sequence)
     {
-        var hopB = new SequencedHop(sequence, "B");
-        var hopX = new SequencedHop(sequence, "X");
+        var hopB = new SequencedHop(sequence, "B", deliveredOnResponse: false);
+        var hopX = new SequencedHop(sequence, "X", deliveredOnResponse: false);
         var listener = new HopMergeListener(sequence, new() { ["b"] = "B", ["x"] = "X" });
         var a = CreateSourceSchema(
             "a",
             b => b.AddQueryType<SourceA.Query>().AddMutationType<SourceA.Mutation>());
         var b = CreateSourceSchema("b", b => b.AddQueryType<SourceB.Query>(), mockHttpResponse: hopB.SendAsync);
         var x = CreateSourceSchema("x", b => b.AddQueryType<SourceX.Query>(), mockHttpResponse: hopX.SendAsync);
+        var c = CreateSourceSchema("c", b => b.AddQueryType<SourceC.Query>());
         hopB.Connect(b);
         hopX.Connect(x);
 
         return await CreateCompositeSchemaAsync(
-            [("a", a), ("b", b), ("x", x)],
+            [("a", a), ("b", b), ("x", x), ("c", c)],
             configureGatewayBuilder: builder => builder.AddDiagnosticEventListener(_ => listener),
             includeOperationPlan: false);
     }
 
-    private async Task<Gateway> CreateTypeNameGatewayAsync(bool raisesError)
+    private async Task<Gateway> CreateTypeNameGatewayAsync(
+        Func<IRequestExecutorBuilder, IRequestExecutorBuilder> configureQuery)
     {
         var a = CreateSourceSchema(
             "a",
@@ -193,97 +271,11 @@ public class LookupErrorPathTests : FusionTestBase
                 .AddType<TypeNameSourceA.Review>());
         var b = CreateSourceSchema(
             "b",
-            b => (raisesError
-                    ? b.AddQueryType<TypeNameSourceB.ErrorQuery>()
-                    : b.AddQueryType<TypeNameSourceB.NullQuery>())
-                .AddType<TypeNameSourceB.Review>());
+            b => configureQuery(b).AddType<TypeNameSourceB.Review>());
 
         return await CreateCompositeSchemaAsync(
             [("a", a), ("b", b)],
             includeOperationPlan: false);
-    }
-
-    // Starts runs that answer the hops in a given order.
-    private sealed class HopSequence
-    {
-        private HopRun _run = new([]);
-
-        public HopRun Current => _run;
-
-        public void Start(string[] order) => _run = new HopRun(order);
-    }
-
-    // Answers each hop once the hop before it in the order was merged.
-    private sealed class HopRun(string[] order)
-    {
-        private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(30);
-
-        private readonly TaskCompletionSource[] _merged = order
-            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
-            .ToArray();
-
-        public async Task WaitForTurnAsync(string hop, CancellationToken cancellationToken)
-        {
-            var index = Array.IndexOf(order, hop);
-
-            if (index > 0)
-            {
-                await _merged[index - 1].Task.WaitAsync(s_timeout, cancellationToken);
-            }
-        }
-
-        public void MarkMerged(string hop)
-        {
-            var index = Array.IndexOf(order, hop);
-
-            if (index >= 0)
-            {
-                _merged[index].TrySetResult();
-            }
-        }
-    }
-
-    // Sends the requests of a hop to its source schema once it is the turn of the hop.
-    private sealed class SequencedHop(HopSequence sequence, string hop)
-    {
-        private HttpMessageInvoker? _invoker;
-
-        public void Connect(TestServer server)
-            => _invoker = new HttpMessageInvoker(server.CreateHandler());
-
-        public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request)
-        {
-            var cancellationToken = TestContext.Current.CancellationToken;
-            await sequence.Current.WaitForTurnAsync(hop, cancellationToken);
-            var response = await _invoker!.SendAsync(request, cancellationToken);
-            await response.Content.LoadIntoBufferAsync();
-            return response;
-        }
-    }
-
-    // Marks the hop of a source schema merged once its node has queued its result for merging.
-    private sealed class HopMergeListener(HopSequence sequence, Dictionary<string, string> hopsBySchema)
-        : FusionExecutionDiagnosticEventListener
-    {
-        public override IDisposable ExecuteOperationNode(
-            OperationPlanContext context,
-            OperationExecutionNode node,
-            string schemaName)
-            => TryMarkMerged(schemaName) ?? base.ExecuteOperationNode(context, node, schemaName);
-
-        public override IDisposable ExecuteOperationBatchNode(
-            OperationPlanContext context,
-            OperationBatchExecutionNode node,
-            string schemaName)
-            => TryMarkMerged(schemaName) ?? base.ExecuteOperationBatchNode(context, node, schemaName);
-
-        private Merge? TryMarkMerged(string schemaName)
-            => hopsBySchema.TryGetValue(schemaName, out var hop) ? new Merge(sequence.Current, hop) : null;
-
-        private sealed class Merge(HopRun run, string hop) : IDisposable
-        {
-            public void Dispose() => run.MarkMerged(hop);
-        }
     }
 
     public static class SourceA
@@ -324,6 +316,36 @@ public class LookupErrorPathTests : FusionTestBase
                     return null;
                 }
 
+                if (id == 4)
+                {
+                    context.ReportError(
+                        ErrorBuilder.New()
+                            .SetMessage("entity failed for 4")
+                            .SetPath(context.Path)
+                            .Build());
+                    context.ReportError(
+                        ErrorBuilder.New()
+                            .SetMessage("soft failed for 4")
+                            .SetPath(context.Path.Append("soft"))
+                            .Build());
+                    context.ReportError(
+                        ErrorBuilder.New()
+                            .SetMessage("boom failed for 4")
+                            .SetPath(context.Path.Append("boom"))
+                            .Build());
+                    return null;
+                }
+
+                if (id == 5)
+                {
+                    context.ReportError(
+                        ErrorBuilder.New()
+                            .SetMessage("hidden failed for 5")
+                            .SetPath(context.Path.Append("hidden"))
+                            .Build());
+                    return null;
+                }
+
                 if (id == 2 && context.IsSelected("ghost"))
                 {
                     context.ReportError(
@@ -352,6 +374,8 @@ public class LookupErrorPathTests : FusionTestBase
             public string Boom => Id == 2 ? throw new GraphQLException("boom failed for 2") : "boom-" + Id;
 
             public string? Soft => "soft-" + Id;
+
+            public string? Sku => "sku-" + Id;
         }
     }
 
@@ -368,7 +392,22 @@ public class LookupErrorPathTests : FusionTestBase
         {
             public string? Label => "label-" + Id;
 
-            public string Xboom => Id == 2 ? throw new GraphQLException("xboom failed for 2") : "xboom-" + Id;
+            public string Xboom => Id is 2 or 4 ? throw new GraphQLException("xboom failed for " + Id) : "xboom-" + Id;
+        }
+    }
+
+    public static class SourceC
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById(int id) => new(id);
+        }
+
+        [EntityKey("id")]
+        public record User(int Id)
+        {
+            public string? GetTotal([Require("sku")] string? sku) => "total-" + sku;
         }
     }
 
@@ -377,6 +416,8 @@ public class LookupErrorPathTests : FusionTestBase
         public class Query
         {
             public IEntity[] GetEntities() => [new Product(1), new Review(2)];
+
+            public IEntity? GetEntity(int id) => id == 1 ? new Product(id) : new Review(id);
 
             [Lookup, Internal]
             public Product? GetProductById([ID] int id) => new(id);
@@ -433,6 +474,19 @@ public class LookupErrorPathTests : FusionTestBase
         public record Review([property: ID] int Id)
         {
             public string Other => "other " + Id;
+        }
+    }
+
+    public static class TypeNameReviewErrorSourceB
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public TypeNameSourceB.Product? GetProductById([ID] int id) => new(id);
+
+            [Lookup, Internal]
+            public TypeNameSourceB.Review? GetReviewById([ID] int id)
+                => throw new GraphQLException("review read failed");
         }
     }
 }

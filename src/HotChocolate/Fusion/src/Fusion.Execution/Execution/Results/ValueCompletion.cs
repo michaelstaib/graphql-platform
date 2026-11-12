@@ -314,10 +314,9 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path of each field selected by
-    /// <paramref name="resultSelectionSet"/> that holds no leaf value of another source, and to the sub-field that the
-    /// value-type rule selects for a value-type field. When every such field holds a leaf value, the error is added
-    /// once without a path.
+    /// Assigns the <paramref name="error"/> of the source of <paramref name="resultSelectionSet"/> like
+    /// <see cref="BuildDependentErrorResult"/>. When it lands on no field, it is added once without a path unless a
+    /// dependent field receives it.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the execution can continue.
@@ -329,14 +328,38 @@ internal sealed class ValueCompletion
         IError error,
         CompactPath path)
     {
+        var placedErrorCount = _store.PlacedErrorCount;
+        var canExecutionContinue = BuildDependentErrorResult(target, resultSelectionSet, error, path);
+
+        if (_store.PlacedErrorCount == placedErrorCount)
+        {
+            _store.AddErrorWithoutPathUnlessPlaced(error);
+        }
+
+        return canExecutionContinue;
+    }
+
+    /// <summary>
+    /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path of each field selected by
+    /// <paramref name="resultSelectionSet"/> that holds no leaf value of another source, and to the sub-field that the
+    /// value-type rule selects for a value-type field.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the execution can continue.
+    /// <c>false</c>, if the execution needs to be halted.
+    /// </returns>
+    public bool BuildDependentErrorResult(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        IError error,
+        CompactPath path)
+    {
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
         _store.RecordKeyFetchErrors(errorPath, path, resultSelectionSet, error);
 
         // Below a null value the error is added without null propagation.
         var propagate = _store.HasReachableAncestorsUnsafe(target);
-        var hasErrorField = false;
-        var hasLeafValue = false;
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -349,22 +372,11 @@ internal sealed class ValueCompletion
                 return true;
             }
 
-            if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsExcluded)
-            {
-                continue;
-            }
-
             // A leaf that another source completed keeps its value.
-            if (!fieldResult.IsInternal && HoldsLeafValue(fieldResult))
-            {
-                hasLeafValue = true;
-                continue;
-            }
-
-            hasErrorField = true;
-
-            if (fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult)
+                || fieldResult.IsInternal
+                || fieldResult.IsExcluded
+                || HoldsLeafValue(fieldResult))
             {
                 continue;
             }
@@ -434,12 +446,6 @@ internal sealed class ValueCompletion
             }
         }
 
-        // An error whose fields all hold the values of other sources belongs on no field.
-        if (hasLeafValue && !hasErrorField)
-        {
-            _store.AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(error)));
-        }
-
         return true;
     }
 
@@ -485,11 +491,30 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
+    /// Adds the <paramref name="error"/> of the source of <paramref name="resultSelectionSet"/> like
+    /// <see cref="AddErrorOnNulledTarget"/>. When it lands on no field, it is added once without a path unless a
+    /// dependent field receives it.
+    /// </summary>
+    public void ReportErrorOnNulledTarget(
+        CompactPath targetPath,
+        ResultSelectionSet resultSelectionSet,
+        IError error)
+    {
+        var placedErrorCount = _store.PlacedErrorCount;
+        AddErrorOnNulledTarget(targetPath, resultSelectionSet, error);
+
+        if (_store.PlacedErrorCount == placedErrorCount)
+        {
+            _store.AddErrorWithoutPathUnlessPlaced(error);
+        }
+    }
+
+    /// <summary>
     /// Adds the <paramref name="error"/> to the client-visible fields other than <c>__typename</c> of
     /// <paramref name="resultSelectionSet"/> that the runtime type of the target at <paramref name="targetPath"/>
     /// includes, when the target is <c>null</c> or below a <c>null</c> value.
     /// </summary>
-    public void ReportErrorOnNulledTarget(
+    private void AddErrorOnNulledTarget(
         CompactPath targetPath,
         ResultSelectionSet resultSelectionSet,
         IError error)
@@ -535,7 +560,7 @@ internal sealed class ValueCompletion
     /// Adds the errors of <paramref name="errorTrie"/>, which the source of <paramref name="resultSelectionSet"/>
     /// raised for the target at <paramref name="targetPath"/> together with the data <paramref name="source"/>, to
     /// the client-visible fields they belong to, when the target is <c>null</c> or below a <c>null</c> value. An
-    /// error below a field that the source did not fetch is added once without a path.
+    /// error that belongs on no such field is added once without a path unless a dependent field receives it.
     /// </summary>
     public void ReportSourceErrorsOnNulledTarget(
         CompactPath targetPath,
@@ -546,7 +571,6 @@ internal sealed class ValueCompletion
         if (errorTrie.Error is { } error)
         {
             ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
-            return;
         }
 
         AddErrorsOfUnfetchedFields(resultSelectionSet, errorTrie);
@@ -598,8 +622,8 @@ internal sealed class ValueCompletion
     }
 
     // Adds the errors that the source raised for the field of a nulled target, whose source value is value, to the
-    // client-visible fields they belong to and records them for the dependents of the entity. An error below a value
-    // the source returned that belongs on no client-visible field is added without a path.
+    // client-visible fields they belong to and records them for the dependents of the entity. An error that belongs on
+    // no client-visible field is added once without a path, unless a dependent field receives it.
     private void AddFieldErrorsOnNulledTarget(
         KeyFetchErrorOrigin origin,
         Path fieldPath,
@@ -613,7 +637,11 @@ internal sealed class ValueCompletion
         {
             _store.RecordKeyFetchError(origin.EntityPath, origin.EntityCompactPath, origin.Name, fetched, error);
 
-            if (selection is not null)
+            if (selection is null)
+            {
+                _store.AddErrorWithoutPathUnlessPlaced(error);
+            }
+            else
             {
                 AddErrorAtField(anchor: null, fieldPath, selection, fetched, error);
             }
@@ -666,7 +694,11 @@ internal sealed class ValueCompletion
             _store.RecordKeyFetchError(origin.EntityPath, origin.EntityCompactPath, origin.Name, fetched, fieldError);
         }
 
-        if (selection is not null)
+        if (selection is null)
+        {
+            AddErrorsWithoutPath(fieldErrorTrie);
+        }
+        else
         {
             AddErrorsBelowField(anchor: null, fieldPath, selection, fetched, fieldErrorTrie);
         }
@@ -832,12 +864,12 @@ internal sealed class ValueCompletion
     // The value-type field whose sub-field errors are pocketed, and the length of its path.
     private readonly record struct PocketAnchor(CompositeResultElement Field, int PathLength);
 
-    // Adds each error of errorTrie once without a path.
+    // Adds each error of errorTrie once without a path, unless a dependent field receives it.
     private void AddErrorsWithoutPath(ErrorTrie errorTrie)
     {
         foreach (var error in EnumerateErrors(errorTrie))
         {
-            _store.AddError(_errorHandler.Handle(ErrorHelper.WithoutPath(error)));
+            _store.AddErrorWithoutPathUnlessPlaced(error);
         }
     }
 
@@ -1236,7 +1268,7 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Reports the <paramref name="error"/> of the failed field <paramref name="originName"/> like
-    /// <see cref="ReportErrorOnNulledTarget"/>, unless the origin field is a client-visible non-null field.
+    /// <see cref="AddErrorOnNulledTarget"/>, unless the origin field is a client-visible non-null field.
     /// <paramref name="originName"/> is the dot separated path of the failed field from the target.
     /// </summary>
     public void ReportDependentErrorOnNulledTarget(
@@ -1252,7 +1284,7 @@ internal sealed class ValueCompletion
             && selectionSet.TryGetSelection(originFieldName, out var originSelection)
             && (originSelection.IsInternal || !originSelection.IsNonNull))
         {
-            ReportErrorOnNulledTarget(targetPath, resultSelectionSet, error);
+            AddErrorOnNulledTarget(targetPath, resultSelectionSet, error);
         }
     }
 
@@ -1703,7 +1735,53 @@ internal sealed class ValueCompletion
                 target.CompactPath);
         }
 
-        return BuildErrorResult(target, resultSelectionSet, fallbackError, target.CompactPath);
+        var canExecutionContinue = BuildErrorResult(target, resultSelectionSet, fallbackError, target.CompactPath);
+
+        if (sourceValueKind is JsonValueKind.Null && errorTrie is { Count: > 0 })
+        {
+            AddFieldErrorsOfNullSource(target, resultSelectionSet, errorTrie);
+        }
+
+        return canExecutionContinue;
+    }
+
+    // Adds the errors that the source, which returned null for the target, raised below the target besides the error
+    // for the whole target, each at its own path, or once without a path when it belongs on no field that ends null.
+    private void AddFieldErrorsOfNullSource(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        ErrorTrie errorTrie)
+    {
+        var targetPath = target.CompactPath.ToPath(target.Operation);
+        var selectionSet = _store.GetRuntimeSelectionSetUnsafe(target.CompactPath);
+
+        AddErrorsOfUnfetchedFields(resultSelectionSet, errorTrie);
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (!TryGetFieldErrorTrie(errorTrie, resultSelectionSet, responseName, out var fieldErrorTrie)
+                || fieldErrorTrie.FindFirstError() is not { } fieldError)
+            {
+                continue;
+            }
+
+            if (!target.IsNullOrInvalidated
+                && target.TryGetProperty(responseName, out var fieldResult)
+                && HoldsLeafValue(fieldResult))
+            {
+                AddErrorsWithoutPath(fieldErrorTrie);
+                continue;
+            }
+
+            AddFieldErrorsOnNulledTarget(
+                new KeyFetchErrorOrigin(targetPath, target.CompactPath, responseName),
+                targetPath.Append(responseName),
+                GetVisibleSelection(selectionSet, responseName),
+                resultSelectionSet.TryGetChild(responseName),
+                default,
+                fieldErrorTrie,
+                fieldError);
+        }
     }
 
     /// <summary>
@@ -1782,6 +1860,7 @@ internal sealed class ValueCompletion
         ErrorTrie errorTrie)
     {
         var targetPath = target.CompactPath.ToPath(target.Operation);
+        var selectionSet = _store.GetRuntimeSelectionSetUnsafe(target.CompactPath);
         var isReachable = _store.HasReachableAncestorsUnsafe(target);
         var canExecutionContinue = true;
 
@@ -1795,44 +1874,40 @@ internal sealed class ValueCompletion
 
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
-            if (!TryGetFieldErrorTrie(errorTrie, resultSelectionSet, responseName, out var fieldErrorTrie))
+            if (!TryGetFieldErrorTrie(errorTrie, resultSelectionSet, responseName, out var fieldErrorTrie)
+                || fieldErrorTrie.FindFirstError() is not { } fieldError)
             {
                 continue;
             }
 
+            var childSet = resultSelectionSet.TryGetChild(responseName);
+
+            // Once the null propagated past the target, the errors of the other fields are added below that null.
+            if (!canExecutionContinue || !isReachable || target.IsNullOrInvalidated)
+            {
+                AddFieldErrorsOnNulledTarget(
+                    new KeyFetchErrorOrigin(targetPath, target.CompactPath, responseName),
+                    targetPath.Append(responseName),
+                    GetVisibleSelection(selectionSet, responseName),
+                    childSet,
+                    default,
+                    fieldErrorTrie,
+                    fieldError);
+                continue;
+            }
+
+            // The errors of a field that is not client-visible, or holds the value of another source, belong on no
+            // field of the target.
             if (!target.TryGetProperty(responseName, out var fieldResult)
                 || fieldResult.IsInternal
-                || fieldResult.IsExcluded)
-            {
-                continue;
-            }
-
-            if (HoldsLeafValue(fieldResult))
+                || fieldResult.IsExcluded
+                || HoldsLeafValue(fieldResult))
             {
                 AddErrorsWithoutPath(fieldErrorTrie);
                 continue;
             }
 
             var selection = fieldResult.AssertSelection();
-            var childSet = resultSelectionSet.TryGetChild(responseName);
-
-            // Once the null propagated past the target, the errors of the other fields are added below that null.
-            if (!canExecutionContinue || !isReachable || target.IsNullOrInvalidated)
-            {
-                if (fieldErrorTrie.FindFirstError() is { } fieldError)
-                {
-                    AddFieldErrorsOnNulledTarget(
-                        new KeyFetchErrorOrigin(targetPath, target.CompactPath, responseName),
-                        targetPath.Append(responseName),
-                        selection,
-                        childSet,
-                        default,
-                        fieldErrorTrie,
-                        fieldError);
-                }
-
-                continue;
-            }
 
             // A value-type field keeps its value for the other sources that fetch it, unless the value-type rule
             // puts the error on the field, which makes it null.

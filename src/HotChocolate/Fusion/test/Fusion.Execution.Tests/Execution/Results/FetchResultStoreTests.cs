@@ -1060,9 +1060,10 @@ public sealed class FetchResultStoreTests : FusionTestBase
         const string payload = """{"data":{"aliasedFoo":{"id":"1","aliasedValue":null}}}""";
 
         // act
-        var errorPaths = AddErrorToAliasedField(payload);
+        var (added, completed, errorPaths) = AddErrorToAliasedField(payload);
 
         // assert
+        Assert.True(added && completed);
         Assert.Equal("aliasedFoo.aliasedValue", Assert.Single(errorPaths));
     }
 
@@ -1073,15 +1074,100 @@ public sealed class FetchResultStoreTests : FusionTestBase
         const string payload = """{"data":{"aliasedFoo":{"id":"1","aliasedValue":"value"}}}""";
 
         // act
-        var errorPaths = AddErrorToAliasedField(payload);
+        var (added, completed, errorPaths) = AddErrorToAliasedField(payload);
 
         // assert
+        Assert.True(added && completed);
         Assert.Equal("no path", Assert.Single(errorPaths));
     }
 
+    [Fact]
+    public void AddErrors_Should_ReportTheErrorOnceWithoutPath_When_OnlyTheTypeNameOfANulledTargetIsSelected()
+    {
+        // arrange
+        const string payload = """{"data":{"foo":{"id":"1","__typename":"Foo","value":null}}}""";
+
+        // act
+        var (added, completed, errorPaths) = AddErrorForTypeName(payload);
+
+        // assert
+        Assert.True(added && completed);
+        Assert.Equal(["foo.value", "no path"], errorPaths);
+    }
+
+    [Fact]
+    public void AddErrors_Should_ReportTheErrorOnceWithoutPath_When_OnlyTheTypeNameOfATargetIsSelected()
+    {
+        // arrange
+        const string payload = """{"data":{"foo":{"id":"1","__typename":"Foo","value":"value"}}}""";
+
+        // act
+        var (added, completed, errorPaths) = AddErrorForTypeName(payload);
+
+        // assert
+        Assert.True(added && completed);
+        Assert.Equal(["no path"], errorPaths);
+    }
+
+    // Adds the partial result of the payload for { foo { id __typename value } }, then an error of a source that
+    // fetched only the __typename of foo, and returns whether both were added and the paths of the errors of the
+    // completed result.
+    private static (bool Added, bool Completed, List<string> ErrorPaths) AddErrorForTypeName(string payload)
+    {
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              foo: Foo
+            }
+
+            type Foo {
+              id: ID!
+              value: String!
+            }
+            """);
+        var plan = PlanOperation(schema, "{ foo { id __typename value } }");
+        var node = (OperationExecutionNode)plan.RootNodes.Single();
+        var typeNameSelectionSet = ResultSelectionSet.Create(
+            Utf8GraphQLParser.Parse("{ __typename }")
+                .Definitions
+                .OfType<OperationDefinitionNode>()
+                .Single()
+                .SelectionSet,
+            schema);
+
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        using var store = new FetchResultStore();
+        store.Initialize(
+            resultArena,
+            schema,
+            DefaultErrorHandler.Default,
+            plan.Operation,
+            ErrorHandlingMode.Propagate,
+            includeFlags: default,
+            deferFlags: default,
+            pathSegmentLocalPoolCapacity: 16);
+
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        var document = SourceResultDocument.Parse(sourceArena, bytes, bytes.Length);
+        var added = store.AddPartialResults(
+            SelectionPath.Root,
+            [new SourceSchemaResult(CompactPath.Root, document)],
+            node.ResultSelectionSet,
+            containsErrors: false);
+        var completed = store.AddErrors(
+            ErrorBuilder.New().SetMessage("boom").Build(),
+            typeNameSelectionSet,
+            HotChocolate.Path.Root.Append("foo"));
+
+        store.FinalizePocketedErrors();
+        return (added, completed, store.Errors!.Select(error => error.Path?.Print() ?? "no path").ToList());
+    }
+
     // Adds the partial result of the payload for { aliasedFoo: foo { id aliasedValue: value } }, then an error for the
-    // aliasedValue field, and returns the paths of the errors.
-    private static List<string> AddErrorToAliasedField(string payload)
+    // aliasedValue field, and returns whether both were added and the paths of the errors of the completed result.
+    private static (bool Added, bool Completed, List<string> ErrorPaths) AddErrorToAliasedField(string payload)
     {
         var schema = ComposeSchema(
             """
@@ -1098,7 +1184,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
         var plan = PlanOperation(
             schema,
             "{ aliasedFoo: foo { id aliasedValue: value } }");
-        var node = Assert.IsType<OperationExecutionNode>(Assert.Single(plan.RootNodes));
+        var node = (OperationExecutionNode)plan.RootNodes.Single();
         var fieldSelectionSet = ResultSelectionSet.Create(
             Utf8GraphQLParser.Parse("{ aliasedValue: value }")
                 .Definitions
@@ -1132,8 +1218,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             fieldSelectionSet,
             HotChocolate.Path.Root.Append("aliasedFoo"));
 
-        Assert.True(added && completed);
-        return store.Errors!.Select(error => error.Path?.Print() ?? "no path").ToList();
+        store.FinalizePocketedErrors();
+        return (added, completed, store.Errors!.Select(error => error.Path?.Print() ?? "no path").ToList());
     }
 
     [Fact]
