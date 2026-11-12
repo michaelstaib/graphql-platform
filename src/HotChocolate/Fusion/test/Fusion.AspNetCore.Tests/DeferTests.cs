@@ -5535,7 +5535,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("1");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } } }",
             "query { users { id nick } }");
@@ -5560,7 +5560,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } } }",
             "query { users { id nick } }");
@@ -5585,7 +5585,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("3");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } } }",
             "query { users { id nick } }");
@@ -5610,7 +5610,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("1", "3");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } } }",
             "query { users { id nick } }");
@@ -5635,7 +5635,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2-1");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id friends { id ... @defer { nick } } } }",
             "query { users { id friends { id nick } } }");
@@ -5660,7 +5660,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "mutation { createUsers { id ... @defer { nick } } }",
             "mutation { createUsers { id nick } }");
@@ -5685,7 +5685,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("pathless-2");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { pathless } } }",
             "query { users { id pathless } }");
@@ -5713,7 +5713,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("strict-2");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { nullableUsers { id ... @defer { strictNick } } }",
             "query { nullableUsers { id strictNick } }");
@@ -5738,7 +5738,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2", "nick2-2");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } ... @defer { nick nick2 } } }",
             "query { users { id nick nick2 } }");
@@ -5775,7 +5775,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } ... @defer { nick } } }",
             "query { users { id nick } }");
@@ -5803,7 +5803,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2", "nick2-3");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer(label: \"a\") { nick } ... @defer(label: \"b\") { nick nick2 } } }",
             "query { users { id nick nick2 } }");
@@ -5840,7 +5840,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("2", "nick2-3");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick ... @defer { nick2 } } } }",
             "query { users { id nick nick2 } }");
@@ -5868,7 +5868,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateFailingNickGatewayAsync("1", "nick2-3");
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users { id ... @defer { nick } ... @defer { nick nick2 } } }",
             "query { users { id nick nick2 } }");
@@ -5905,7 +5905,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users(ids: [\"1\", \"9\", \"3\"]) { id ... @defer { soft } } }",
             "query { users(ids: [\"1\", \"9\", \"3\"]) { id soft } }");
@@ -5924,6 +5924,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -5933,7 +5934,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"9\"]) { id ... @defer { soft } } } }",
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"9\"]) { id soft } } }");
@@ -5949,6 +5950,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -5958,7 +5960,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users(ids: [\"1\", \"1\", \"3\"]) { id ... @defer { items { name } } } }",
             "query { users(ids: [\"1\", \"1\", \"3\"]) { id items { name } } }");
@@ -5977,6 +5979,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -5986,7 +5989,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id ... @defer { items { name } } } } }",
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id items { name } } } }");
@@ -6002,6 +6005,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -6011,7 +6015,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users(ids: [\"1\", \"1\", \"3\"]) { id ... @defer { boom } } }",
             "query { users(ids: [\"1\", \"1\", \"3\"]) { id boom } }");
@@ -6030,6 +6034,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -6039,7 +6044,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id ... @defer { boom } } } }",
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id boom } } }");
@@ -6055,6 +6060,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -6064,7 +6070,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { users(ids: [\"1\", \"1\", \"3\"]) { id ... @defer { obj { bb } } } }",
             "query { users(ids: [\"1\", \"1\", \"3\"]) { id obj { bb } } }");
@@ -6083,6 +6089,7 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
 
     [Fact]
@@ -6092,7 +6099,7 @@ public class DeferTests : FusionTestBase
         using var gateway = await CreateDeferredLookupGatewayAsync();
 
         // act
-        var (payloads, deferredErrors, plainErrors) = await ExecuteDeferredAndPlainAsync(
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
             gateway,
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id ... @defer { obj { bb } } } } }",
             "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id obj { bb } } } }");
@@ -6108,7 +6115,9 @@ public class DeferTests : FusionTestBase
             """
         ]);
         Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
     }
+
     private static List<string> GetIncrementalEntries(List<string> payloads)
     {
         var entries = new List<string>();
@@ -6209,7 +6218,11 @@ public class DeferTests : FusionTestBase
         ]);
     }
 
-    private static async Task<(List<string> Payloads, List<string> DeferredErrors, List<string> PlainErrors)>
+    private static async Task<(
+        List<string> Payloads,
+        List<string> DeferredErrors,
+        List<string> PlainErrors,
+        JsonNode PlainData)>
         ExecuteDeferredAndPlainAsync(Gateway gateway, string deferredQuery, string plainQuery)
     {
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
@@ -6246,9 +6259,10 @@ public class DeferTests : FusionTestBase
         }
 
         var plainErrors = new List<string>();
-        AddErrors(JsonNode.Parse(Assert.Single(plainPayloads))!.AsObject(), plainErrors);
+        var plainResponse = JsonNode.Parse(Assert.Single(plainPayloads))!.AsObject();
+        AddErrors(plainResponse, plainErrors);
 
-        return (payloads, deferredErrors, plainErrors);
+        return (payloads, deferredErrors, plainErrors, plainResponse["data"]!);
 
         static void AddErrors(JsonObject container, List<string> errors)
         {

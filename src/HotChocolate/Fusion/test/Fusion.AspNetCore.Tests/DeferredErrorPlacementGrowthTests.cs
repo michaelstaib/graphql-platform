@@ -20,7 +20,9 @@ public class DeferredErrorPlacementGrowthTests : FusionTestBase
         // arrange
         var sourceA = CreateSourceSchema("A", x => x.AddQueryType<SourceA.Query>());
         var sourceB = CreateSourceSchema("B", x => x.AddQueryType<SourceB.Query>());
-        using var gateway = await CreateCompositeSchemaAsync([("A", sourceA), ("B", sourceB)], includeOperationPlan: false);
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", sourceA), ("B", sourceB)],
+            includeOperationPlan: false);
         using var client = GraphQLHttpClient.Create(gateway.CreateClient());
         const int n = 2000;
 
