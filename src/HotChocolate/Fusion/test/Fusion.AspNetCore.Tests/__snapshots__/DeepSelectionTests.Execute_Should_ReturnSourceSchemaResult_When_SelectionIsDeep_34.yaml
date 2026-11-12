@@ -1,0 +1,545 @@
+title: Execute_Should_ReturnSourceSchemaResult_When_SelectionIsDeep
+request:
+  document: |
+    {
+      root {
+        next {
+          next {
+            next {
+              next {
+                next {
+                  next {
+                    next {
+                      next {
+                        next {
+                          next {
+                            next {
+                              next {
+                                next {
+                                  next {
+                                    next {
+                                      next {
+                                        next {
+                                          next {
+                                            next {
+                                              next {
+                                                next {
+                                                  next {
+                                                    next {
+                                                      next {
+                                                        next {
+                                                          next {
+                                                            next {
+                                                              next {
+                                                                next {
+                                                                  next {
+                                                                    next {
+                                                                      next {
+                                                                        next {
+                                                                          next {
+                                                                            name
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "root": {
+          "next": {
+            "next": {
+              "next": {
+                "next": {
+                  "next": {
+                    "next": {
+                      "next": {
+                        "next": {
+                          "next": {
+                            "next": {
+                              "next": {
+                                "next": {
+                                  "next": {
+                                    "next": {
+                                      "next": {
+                                        "next": {
+                                          "next": {
+                                            "next": {
+                                              "next": {
+                                                "next": {
+                                                  "next": {
+                                                    "next": {
+                                                      "next": {
+                                                        "next": {
+                                                          "next": {
+                                                            "next": {
+                                                              "next": {
+                                                                "next": {
+                                                                  "next": {
+                                                                    "next": {
+                                                                      "next": {
+                                                                        "next": {
+                                                                          "next": {
+                                                                            "next": {
+                                                                              "name": null
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "message": "Name failed.",
+          "path": [
+            "root",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "next",
+            "name"
+          ]
+        }
+      ]
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        root: L0
+      }
+
+      type L0 {
+        next: L1
+      }
+
+      type L1 {
+        next: L2
+      }
+
+      type L10 {
+        next: L11
+      }
+
+      type L11 {
+        next: L12
+      }
+
+      type L12 {
+        next: L13
+      }
+
+      type L13 {
+        next: L14
+      }
+
+      type L14 {
+        next: L15
+      }
+
+      type L15 {
+        next: L16
+      }
+
+      type L16 {
+        next: L17
+      }
+
+      type L17 {
+        next: L18
+      }
+
+      type L18 {
+        next: L19
+      }
+
+      type L19 {
+        next: L20
+      }
+
+      type L2 {
+        next: L3
+      }
+
+      type L20 {
+        next: L21
+      }
+
+      type L21 {
+        next: L22
+      }
+
+      type L22 {
+        next: L23
+      }
+
+      type L23 {
+        next: L24
+      }
+
+      type L24 {
+        next: L25
+      }
+
+      type L25 {
+        next: L26
+      }
+
+      type L26 {
+        next: L27
+      }
+
+      type L27 {
+        next: L28
+      }
+
+      type L28 {
+        next: L29
+      }
+
+      type L29 {
+        next: L30
+      }
+
+      type L3 {
+        next: L4
+      }
+
+      type L30 {
+        next: L31
+      }
+
+      type L31 {
+        next: L32
+      }
+
+      type L32 {
+        next: L33
+      }
+
+      type L33 {
+        next: L34
+      }
+
+      type L34 {
+        name: String
+      }
+
+      type L4 {
+        next: L5
+      }
+
+      type L5 {
+        next: L6
+      }
+
+      type L6 {
+        next: L7
+      }
+
+      type L7 {
+        next: L8
+      }
+
+      type L8 {
+        next: L9
+      }
+
+      type L9 {
+        next: L10
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_53b4a936_1 {
+              root {
+                next {
+                  next {
+                    next {
+                      next {
+                        next {
+                          next {
+                            next {
+                              next {
+                                next {
+                                  next {
+                                    next {
+                                      next {
+                                        next {
+                                          next {
+                                            next {
+                                              next {
+                                                next {
+                                                  next {
+                                                    next {
+                                                      next {
+                                                        next {
+                                                          next {
+                                                            next {
+                                                              next {
+                                                                next {
+                                                                  next {
+                                                                    next {
+                                                                      next {
+                                                                        next {
+                                                                          next {
+                                                                            next {
+                                                                              next {
+                                                                                next {
+                                                                                  next {
+                                                                                    name
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        response:
+          contentType: application/json
+          results:
+            - |
+              {
+                "errors": [
+                  {
+                    "message": "Name failed.",
+                    "path": [
+                      "root",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "next",
+                      "name"
+                    ]
+                  }
+                ],
+                "data": {
+                  "root": {
+                    "next": {
+                      "next": {
+                        "next": {
+                          "next": {
+                            "next": {
+                              "next": {
+                                "next": {
+                                  "next": {
+                                    "next": {
+                                      "next": {
+                                        "next": {
+                                          "next": {
+                                            "next": {
+                                              "next": {
+                                                "next": {
+                                                  "next": {
+                                                    "next": {
+                                                      "next": {
+                                                        "next": {
+                                                          "next": {
+                                                            "next": {
+                                                              "next": {
+                                                                "next": {
+                                                                  "next": {
+                                                                    "next": {
+                                                                      "next": {
+                                                                        "next": {
+                                                                          "next": {
+                                                                            "next": {
+                                                                              "next": {
+                                                                                "next": {
+                                                                                  "next": {
+                                                                                    "next": {
+                                                                                      "next": {
+                                                                                        "name": null
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }

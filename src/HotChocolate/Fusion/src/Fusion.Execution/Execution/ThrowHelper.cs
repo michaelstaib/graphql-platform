@@ -118,9 +118,6 @@ internal static class ThrowHelper
     public static NotSupportedException ValueCompletionTypeNotSupported(IType type)
         => new($"The type {type} is not supported.");
 
-    public static NotSupportedException ValueCompletionDepthNotAllowed(int depth)
-        => new($"The depth {depth} is not allowed.");
-
     public static ArgumentOutOfRangeException InvalidCostOptionValue(
         string optionName,
         double value)
