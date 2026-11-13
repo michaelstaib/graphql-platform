@@ -1779,6 +1779,7 @@ public partial class DeferTests
             "{ user(id: 5) { id sku t: soft ... @defer { s: soft total } } }");
 
         // assert
+        run.RequestCounts.MatchInlineSnapshot("a: 1, b: 1, c: 1");
         run.Payloads.MatchInlineSnapshots(
         [
             """
