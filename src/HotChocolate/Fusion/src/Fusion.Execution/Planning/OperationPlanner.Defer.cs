@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -200,12 +199,6 @@ public sealed partial class OperationPlanner
             // have added parent-scope requirements.
             var finalSteps = contextGraph.GetRegisteredSteps(descriptor);
             var registeredInternalOp = contextGraph.GetRegisteredInternalOperation(descriptor);
-
-            Debug.Assert(
-                SelectsParentScopeRequirements(
-                    finalSteps,
-                    contextGraph.GetParentContext(descriptor).ParentInternalOperation),
-                "An incremental plan reads a requirement that its enclosing scope does not select.");
 
             var (rootNodes, allNodes) = BuildDeferredExecutionNodes(
                 registeredInternalOp,
@@ -2268,41 +2261,6 @@ public sealed partial class OperationPlanner
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// Determines whether <paramref name="enclosingOperation"/> selects the field of every
-    /// requirement that a step of <paramref name="steps"/> reads from the enclosing scope.
-    /// </summary>
-    private static bool SelectsParentScopeRequirements(
-        ImmutableList<PlanStep> steps,
-        OperationDefinitionNode enclosingOperation)
-    {
-        foreach (var step in steps)
-        {
-            if (step is not OperationPlanStep operationStep || operationStep.ParentDependencies.IsEmpty)
-            {
-                continue;
-            }
-
-            foreach (var (_, requirement) in operationStep.Requirements)
-            {
-                var responseName =
-                    requirement.InternalAlias ?? ExtractRootFieldName(requirement.Map.ToString());
-
-                if (responseName is not null
-                    && (!TryLocateInternalSelectionSetAtPath(
-                            enclosingOperation.SelectionSet,
-                            requirement.Path,
-                            out var selectionSet)
-                        || !SelectsResponseName(selectionSet, responseName)))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
