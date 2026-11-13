@@ -38,6 +38,9 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private readonly FetchResultStore _resultStore;
     private ImmutableArray<VariableValues> _requirementValues;
     private HashSet<string>? _requirementKeys;
+    private ImmutableArray<VariableValues>[]? _heldFieldValues;
+    private ImmutableArray<OperationRequirement> _heldFields;
+    private List<IError>? _heldFieldErrors;
     private readonly ExecutionState _executionState;
     private readonly INodeIdParser _nodeIdParser;
     private readonly IErrorHandler _errorHandler;
@@ -715,13 +718,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// </summary>
     internal void SetRequirements(
         ImmutableArray<VariableValues> parentValues,
-        HashSet<string> keys,
+        HashSet<string>? keys,
         Operation parentOperation)
     {
-        ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(parentOperation);
 
-        if (parentValues.IsDefaultOrEmpty || keys.Count == 0)
+        if (parentValues.IsDefaultOrEmpty || keys is not { Count: > 0 })
         {
             return;
         }
@@ -729,6 +731,75 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         _requirementValues = _resultStore.ImportVariableValues(parentValues, parentOperation);
         _requirementKeys = keys;
     }
+
+    /// <summary>
+    /// Sets the values this plan reads from the enclosing plan scope. <paramref name="parentValues"/> holds
+    /// one entry per held field, followed by the entry of the requirements named by <paramref name="keys"/>.
+    /// The result paths belong to <paramref name="parentOperation"/>.
+    /// </summary>
+    internal void SetParentValues(
+        ImmutableArray<VariableValues>[] parentValues,
+        ImmutableArray<OperationRequirement> heldFields,
+        HashSet<string>? keys,
+        Operation parentOperation)
+    {
+        _resultStore.ImportVariableValues(parentValues, parentOperation);
+        _heldFieldValues = parentValues;
+        _heldFields = heldFields;
+
+        var requirementValues = parentValues[heldFields.Length];
+
+        if (!requirementValues.IsEmpty && keys is { Count: > 0 })
+        {
+            _requirementValues = requirementValues;
+            _requirementKeys = keys;
+        }
+    }
+
+    /// <summary>
+    /// Sets the errors of the held fields that the enclosing plan scope fetched and this plan delivers.
+    /// </summary>
+    internal void SetHeldFieldErrors(List<IError> errors) => _heldFieldErrors = errors;
+
+    /// <summary>
+    /// Gets the errors of the held fields that this plan has not written into its result, or
+    /// <c>null</c> if there are none.
+    /// </summary>
+    internal List<IError>? HeldFieldErrors => _heldFieldErrors;
+
+    /// <summary>
+    /// Writes the values and errors set for the held fields into the result.
+    /// </summary>
+    internal void AddHeldFieldValues()
+    {
+        if (_heldFieldValues is { } heldFieldValues)
+        {
+            for (var i = 0; i < _heldFields.Length; i++)
+            {
+                if (!heldFieldValues[i].IsDefaultOrEmpty)
+                {
+                    _resultStore.AddHeldFieldValues(heldFieldValues[i], _heldFields[i]);
+                }
+            }
+        }
+
+        if (_heldFieldErrors is { } errors)
+        {
+            foreach (var error in errors)
+            {
+                _resultStore.AddError(error);
+            }
+
+            _heldFieldErrors = null;
+        }
+    }
+
+    /// <summary>
+    /// Moves the errors of the held fields of <paramref name="incrementalPlan"/> out of the result, so that
+    /// the plan delivers them with the fields.
+    /// </summary>
+    internal void DivertHeldFieldErrors(IncrementalPlan incrementalPlan)
+        => _resultStore.DivertHeldFieldErrors(incrementalPlan);
 
     /// <summary>
     /// Gets the result store used to resolve requirements for child

@@ -20,7 +20,7 @@ using OperationRequest = HotChocolate.Transport.OperationRequest;
 
 namespace HotChocolate.Fusion;
 
-public class DeferTests : FusionTestBase
+public partial class DeferTests : FusionTestBase
 {
     [Fact]
     public async Task Defer_Single_Fragment_Returns_Incremental_Response()
@@ -330,7 +330,8 @@ public class DeferTests : FusionTestBase
                                     incrementalPlan.RootNodes,
                                     incrementalPlan.AllNodes,
                                     deliveryGroups,
-                                    incrementalPlan.Requirements)
+                                    incrementalPlan.Requirements,
+                                    incrementalPlan.HeldFields)
                             ],
                             plan.SearchSpace,
                             plan.ExpandedNodes));
@@ -5780,5 +5781,804 @@ public class DeferTests : FusionTestBase
             [Shareable]
             public string Sku => $"sku-{Code}";
         }
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnFirstListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("1");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","errors":[{"message":"Nick of user 1 failed.","path":["users",0,"nick"]}],"subPath":[0],"data":{"nick":null}},{"id":"0","subPath":[1],"data":{"nick":"Nick 2"}},{"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnMiddleListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"nick":"Nick 1"}},{"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["users",1,"nick"]}],"subPath":[1],"data":{"nick":null}},{"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnLastListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"nick":"Nick 1"}},{"id":"0","subPath":[1],"data":{"nick":"Nick 2"}},{"id":"0","errors":[{"message":"Nick of user 3 failed.","path":["users",2,"nick"]}],"subPath":[2],"data":{"nick":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachItemErrorOnce_When_DeferredFieldFailsOnTwoListItems()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("1", "3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","errors":[{"message":"Nick of user 1 failed.","path":["users",0,"nick"]}],"subPath":[0],"data":{"nick":null}},{"id":"0","subPath":[1],"data":{"nick":"Nick 2"}},{"id":"0","errors":[{"message":"Nick of user 3 failed.","path":["users",2,"nick"]}],"subPath":[2],"data":{"nick":null}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnNestedListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2-1");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id friends { id ... @defer { nick } } } }",
+            "query { users { id friends { id nick } } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"users":[{"id":"1","friends":[{"id":"1-1"},{"id":"1-2"}]},{"id":"2","friends":[{"id":"2-1"},{"id":"2-2"}]},{"id":"3","friends":[{"id":"3-1"},{"id":"3-2"}]}]},"pending":[{"id":"0","path":["users"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0,"friends",0],"data":{"nick":"Nick 1-1"}},{"id":"0","subPath":[0,"friends",1],"data":{"nick":"Nick 1-2"}},{"id":"0","errors":[{"message":"Nick of user 2-1 failed.","path":["users",1,"friends",0,"nick"]}],"subPath":[1,"friends",0],"data":{"nick":null}},{"id":"0","subPath":[1,"friends",1],"data":{"nick":"Nick 2-2"}},{"id":"0","subPath":[2,"friends",0],"data":{"nick":"Nick 3-1"}},{"id":"0","subPath":[2,"friends",1],"data":{"nick":"Nick 3-2"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportItemErrorOnce_When_DeferredFieldFailsOnMutationListItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "mutation { createUsers { id ... @defer { nick } } }",
+            "mutation { createUsers { id nick } }");
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"createUsers":[{"id":"1"},{"id":"2"},{"id":"3"}]},"pending":[{"id":"0","path":["createUsers"]}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"0","subPath":[0],"data":{"nick":"Nick 1"}},{"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["createUsers",1,"nick"]}],"subPath":[1],"data":{"nick":null}},{"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}],"completed":[{"id":"0"}],"hasNext":false}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_PlaceErrorOnFirstEntryOnce_When_SubgraphErrorHasNoPath()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("pathless-2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { pathless } } }",
+            "query { users { id pathless } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Pathless of user 2 failed."}],"subPath":[0],"data":{"pathless":"Pathless 1"}}
+            """,
+            """
+            {"id":"0","subPath":[1],"data":{"pathless":null}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"pathless":"Pathless 3"}}
+            """
+        ]);
+        Assert.Single(deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_PlaceErrorOnFirstEntry_When_DeferredItemIsNulledInDeferredPlan()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("strict-2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { nullableUsers { id ... @defer { strictNick } } }",
+            "query { nullableUsers { id strictNick } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Strict nick of user 2 failed.","path":["nullableUsers",1,"strictNick"]}],"subPath":[0],"data":{"strictNick":"Strict nick 1"}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"strictNick":"Strict nick 3"}}
+            """
+        ]);
+        Assert.Single(deferredErrors);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachErrorOnce_When_SiblingDeferFragmentsOverlap()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2", "nick2-2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } ... @defer { nick nick2 } } }",
+            "query { users { id nick nick2 } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["users",1,"nick"]}],"subPath":[1],"data":{"nick":null}}
+            """,
+            """
+            {"id":"0","subPath":[0],"data":{"nick":"Nick 1"}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}
+            """,
+            """
+            {"id":"1","errors":[{"message":"Nick2 of user 2 failed.","path":["users",1,"nick2"]}],"subPath":[1],"data":{"nick2":null}}
+            """,
+            """
+            {"id":"1","subPath":[0],"data":{"nick2":"Nick2 1"}}
+            """,
+            """
+            {"id":"1","subPath":[2],"data":{"nick2":"Nick2 3"}}
+            """
+        ]);
+        Assert.Equal(plainErrors.Order(), deferredErrors.Order());
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportErrorOnce_When_SiblingDeferFragmentsAreIdentical()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } ... @defer { nick } } }",
+            "query { users { id nick } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["users",1,"nick"]}],"subPath":[1],"data":{"nick":null}}
+            """,
+            """
+            {"id":"0","subPath":[0],"data":{"nick":"Nick 1"}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}
+            """
+        ]);
+        Assert.Equal(plainErrors.Order(), deferredErrors.Order());
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachErrorOnce_When_LabelledSiblingDeferFragmentsOverlap()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2", "nick2-3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer(label: \"a\") { nick } ... @defer(label: \"b\") { nick nick2 } } }",
+            "query { users { id nick nick2 } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["users",1,"nick"]}],"subPath":[1],"data":{"nick":null}}
+            """,
+            """
+            {"id":"0","subPath":[0],"data":{"nick":"Nick 1"}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}
+            """,
+            """
+            {"id":"1","errors":[{"message":"Nick2 of user 3 failed.","path":["users",2,"nick2"]}],"subPath":[2],"data":{"nick2":null}}
+            """,
+            """
+            {"id":"1","subPath":[0],"data":{"nick2":"Nick2 1"}}
+            """,
+            """
+            {"id":"1","subPath":[1],"data":{"nick2":"Nick2 2"}}
+            """
+        ]);
+        Assert.Equal(plainErrors.Order(), deferredErrors.Order());
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachErrorOnce_When_NestedDeferFragmentsTargetTheSameItem()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("2", "nick2-3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick ... @defer { nick2 } } } }",
+            "query { users { id nick nick2 } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nick of user 2 failed.","path":["users",1,"nick"]}],"subPath":[1],"data":{"nick":null,"nick2":"Nick2 2"}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Nick2 of user 3 failed.","path":["users",2,"nick2"]}],"subPath":[2],"data":{"nick":"Nick 3","nick2":null}}
+            """,
+            """
+            {"id":"0","subPath":[0],"data":{"nick":"Nick 1","nick2":"Nick2 1"}}
+            """
+        ]);
+        Assert.Equal(plainErrors.Order(), deferredErrors.Order());
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachErrorOnce_When_OverlappingSiblingDeferFragmentsFailOnDifferentItems()
+    {
+        // arrange
+        using var gateway = await CreateFailingNickGatewayAsync("1", "nick2-3");
+
+        // act
+        var (payloads, deferredErrors, plainErrors, _) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users { id ... @defer { nick } ... @defer { nick nick2 } } }",
+            "query { users { id nick nick2 } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nick of user 1 failed.","path":["users",0,"nick"]}],"subPath":[0],"data":{"nick":null}}
+            """,
+            """
+            {"id":"0","subPath":[1],"data":{"nick":"Nick 2"}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"nick":"Nick 3"}}
+            """,
+            """
+            {"id":"1","errors":[{"message":"Nick2 of user 3 failed.","path":["users",2,"nick2"]}],"subPath":[2],"data":{"nick2":null}}
+            """,
+            """
+            {"id":"1","subPath":[0],"data":{"nick2":"Nick2 1"}}
+            """,
+            """
+            {"id":"1","subPath":[1],"data":{"nick2":"Nick2 2"}}
+            """
+        ]);
+        Assert.Equal(plainErrors.Order(), deferredErrors.Order());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredLookupThrowsInList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users(ids: [\"1\", \"9\", \"3\"]) { id ... @defer { soft } } }",
+            "query { users(ids: [\"1\", \"9\", \"3\"]) { id soft } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Lookup failed.","path":["users",1,"soft"]}],"subPath":[1],"data":{"soft":null}}
+            """,
+            """
+            {"id":"0","subPath":[0],"data":{"soft":"soft 1"}}
+            """,
+            """
+            {"id":"0","subPath":[2],"data":{"soft":"soft 3"}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredLookupThrowsInNestedList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"9\"]) { id ... @defer { soft } } } }",
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"9\"]) { id soft } } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Lookup failed.","path":["user","friends",1,"soft"]}],"subPath":[1],"data":{"soft":null}}
+            """,
+            """
+            {"id":"0","subPath":[0],"data":{"soft":"soft 1"}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredFieldHasFailingListItemInList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users(ids: [\"1\", \"1\", \"3\"]) { id ... @defer { items { name } } } }",
+            "query { users(ids: [\"1\", \"1\", \"3\"]) { id items { name } } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Item failed.","path":["users",0,"items",1,"name"]}],"subPath":[0],"data":{"items":[{"name":"name a"},{"name":null},{"name":"name c"}]}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Item failed.","path":["users",1,"items",1,"name"]}],"subPath":[1],"data":{"items":[{"name":"name a"},{"name":null},{"name":"name c"}]}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Item failed.","path":["users",2,"items",1,"name"]}],"subPath":[2],"data":{"items":[{"name":"name a"},{"name":null},{"name":"name c"}]}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredFieldHasFailingListItemInNestedList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id ... @defer { items { name } } } } }",
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id items { name } } } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Item failed.","path":["user","friends",0,"items",1,"name"]}],"subPath":[0],"data":{"items":[{"name":"name a"},{"name":null},{"name":"name c"}]}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Item failed.","path":["user","friends",1,"items",1,"name"]}],"subPath":[1],"data":{"items":[{"name":"name a"},{"name":null},{"name":"name c"}]}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredFieldThrowsInList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users(ids: [\"1\", \"1\", \"3\"]) { id ... @defer { boom } } }",
+            "query { users(ids: [\"1\", \"1\", \"3\"]) { id boom } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Boom.","path":["users",0,"boom"]}],"subPath":[0],"data":{"boom":null}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Boom.","path":["users",1,"boom"]}],"subPath":[1],"data":{"boom":null}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Boom.","path":["users",2,"boom"]}],"subPath":[2],"data":{"boom":null}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredFieldThrowsInNestedList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id ... @defer { boom } } } }",
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id boom } } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Boom.","path":["user","friends",0,"boom"]}],"subPath":[0],"data":{"boom":null}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Boom.","path":["user","friends",1,"boom"]}],"subPath":[1],"data":{"boom":null}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredNestedFieldThrowsInList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { users(ids: [\"1\", \"1\", \"3\"]) { id ... @defer { obj { bb } } } }",
+            "query { users(ids: [\"1\", \"1\", \"3\"]) { id obj { bb } } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nested field failed.","path":["users",0,"obj","bb"]}],"subPath":[0],"data":{"obj":{"bb":null}}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Nested field failed.","path":["users",1,"obj","bb"]}],"subPath":[1],"data":{"obj":{"bb":null}}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Nested field failed.","path":["users",2,"obj","bb"]}],"subPath":[2],"data":{"obj":{"bb":null}}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    [Fact]
+    public async Task Defer_Should_EqualPlainResult_When_DeferredNestedFieldThrowsInNestedList()
+    {
+        // arrange
+        using var gateway = await CreateDeferredLookupGatewayAsync();
+
+        // act
+        var (payloads, deferredErrors, plainErrors, plainData) = await ExecuteDeferredAndPlainAsync(
+            gateway,
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id ... @defer { obj { bb } } } } }",
+            "query { user(id: \"1\") { id friends(ids: [\"1\", \"1\"]) { id obj { bb } } } }");
+
+        // assert
+        GetIncrementalEntries(payloads).MatchInlineSnapshots(
+        [
+            """
+            {"id":"0","errors":[{"message":"Nested field failed.","path":["user","friends",0,"obj","bb"]}],"subPath":[0],"data":{"obj":{"bb":null}}}
+            """,
+            """
+            {"id":"0","errors":[{"message":"Nested field failed.","path":["user","friends",1,"obj","bb"]}],"subPath":[1],"data":{"obj":{"bb":null}}}
+            """
+        ]);
+        Assert.Equal(plainErrors, deferredErrors);
+        Assert.Equal(plainData.ToJsonString(), MergeIncrementalPayloads(payloads).ToJsonString());
+    }
+
+    private static List<string> GetIncrementalEntries(List<string> payloads)
+    {
+        var entries = new List<string>();
+
+        foreach (var payload in payloads)
+        {
+            foreach (var entry in JsonNode.Parse(payload)!.AsObject()["incremental"]?.AsArray() ?? [])
+            {
+                entries.Add(entry!.ToJsonString());
+            }
+        }
+
+        entries.Sort(StringComparer.Ordinal);
+        return entries;
+    }
+
+    private async Task<Gateway> CreateDeferredLookupGatewayAsync()
+    {
+        var server1 = CreateSourceSchema("A", b => b.AddQueryType<DeferredLookupSourceA.Query>());
+        var server2 = CreateSourceSchema("B", b => b.AddQueryType<DeferredLookupSourceB.Query>());
+
+        return await CreateCompositeSchemaAsync([("A", server1), ("B", server2)]);
+    }
+
+    private static class DeferredLookupSourceA
+    {
+        public class Query
+        {
+            public User GetUser([GraphQLType<NonNullType<IdType>>] string id) => new(id);
+
+            public IEnumerable<User> GetUsers([GraphQLType<NonNullType<ListType<NonNullType<IdType>>>>] string[] ids)
+                => ids.Select(t => new User(t));
+        }
+
+        [EntityKey("id")]
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id)
+        {
+            public IEnumerable<User> GetFriends(
+                [GraphQLType<NonNullType<ListType<NonNullType<IdType>>>>] string[] ids)
+                => ids.Select(t => new User(t));
+        }
+    }
+
+    private static class DeferredLookupSourceB
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([GraphQLType<NonNullType<IdType>>] string id)
+                => id == "9" ? throw new GraphQLException("Lookup failed.") : new User(id);
+        }
+
+        [EntityKey("id")]
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id)
+        {
+            public string? GetSoft() => "soft " + Id;
+
+            public string? GetBoom() => throw new GraphQLException("Boom.");
+
+            public Obj? GetObj() => new();
+
+            public IEnumerable<Item?> GetItems() => [new("a"), new("b"), new("c")];
+        }
+
+        public class Obj
+        {
+            public string? GetBb() => throw new GraphQLException("Nested field failed.");
+        }
+
+        public record Item(string Key)
+        {
+            public string? GetName() => Key == "b" ? throw new GraphQLException("Item failed.") : "name " + Key;
+        }
+    }
+
+    private async Task<Gateway> CreateFailingNickGatewayAsync(params string[] failingIds)
+    {
+        var server1 = CreateSourceSchema(
+            "A",
+            b => b
+                .AddQueryType<FailingNickSourceA.Query>()
+                .AddMutationType<FailingNickSourceA.Mutation>());
+
+        var server2 = CreateSourceSchema(
+            "B",
+            b => b
+                .AddQueryType<FailingNickSourceB.Query>()
+                .AddErrorFilter(
+                    e => e.Message.StartsWith("Pathless", StringComparison.Ordinal)
+                        ? ErrorBuilder.FromError(e).SetPath(null).Build()
+                        : e),
+            configureServices: s => s.AddSingleton(new FailingNickSourceB.FailingIds([.. failingIds])));
+
+        return await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+    }
+
+    private static async Task<(
+        List<string> Payloads,
+        List<string> DeferredErrors,
+        List<string> PlainErrors,
+        JsonNode PlainData)>
+        ExecuteDeferredAndPlainAsync(Gateway gateway, string deferredQuery, string plainQuery)
+    {
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var uri = new Uri("http://localhost:5000/graphql");
+
+        using var deferredResult = await client.PostAsync(
+            new OperationRequest(deferredQuery),
+            uri,
+            TestContext.Current.CancellationToken);
+        var payloads = await ReadPayloadsAsync(deferredResult);
+
+        using var plainResult = await client.PostAsync(
+            new OperationRequest(plainQuery),
+            uri,
+            TestContext.Current.CancellationToken);
+        var plainPayloads = await ReadPayloadsAsync(plainResult);
+
+        var deferredErrors = new List<string>();
+
+        foreach (var payload in payloads)
+        {
+            var response = JsonNode.Parse(payload)!.AsObject();
+            AddErrors(response, deferredErrors);
+
+            foreach (var incremental in response["incremental"]?.AsArray() ?? [])
+            {
+                AddErrors(incremental!.AsObject(), deferredErrors);
+            }
+
+            foreach (var completed in response["completed"]?.AsArray() ?? [])
+            {
+                AddErrors(completed!.AsObject(), deferredErrors);
+            }
+        }
+
+        var plainErrors = new List<string>();
+        var plainResponse = JsonNode.Parse(Assert.Single(plainPayloads))!.AsObject();
+        AddErrors(plainResponse, plainErrors);
+
+        return (payloads, deferredErrors, plainErrors, plainResponse["data"]!);
+
+        static void AddErrors(JsonObject container, List<string> errors)
+        {
+            foreach (var error in container["errors"]?.AsArray() ?? [])
+            {
+                errors.Add(error!.ToJsonString());
+            }
+        }
+    }
+
+    private static class FailingNickSourceA
+    {
+        public class Query
+        {
+            public IEnumerable<User> GetUsers() => [new("1"), new("2"), new("3")];
+
+            public IEnumerable<User?> GetNullableUsers() => [new("1"), new("2"), new("3")];
+        }
+
+        public class Mutation
+        {
+            public IEnumerable<User> CreateUsers() => [new("1"), new("2"), new("3")];
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>, Shareable] string Id)
+        {
+            public IEnumerable<User> GetFriends() => [new(Id + "-1"), new(Id + "-2")];
+        }
+    }
+
+    private static class FailingNickSourceB
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([GraphQLType<NonNullType<IdType>>] string id) => new(id);
+        }
+
+        public record User([property: GraphQLType<NonNullType<IdType>>] string Id)
+        {
+            public string? GetNick([Service] FailingIds failingIds)
+                => failingIds.Ids.Contains(Id)
+                    ? throw new GraphQLException("Nick of user " + Id + " failed.")
+                    : "Nick " + Id;
+
+            public string? GetNick2([Service] FailingIds failingIds)
+                => failingIds.Ids.Contains("nick2-" + Id)
+                    ? throw new GraphQLException("Nick2 of user " + Id + " failed.")
+                    : "Nick2 " + Id;
+
+            public string GetStrictNick([Service] FailingIds failingIds)
+                => failingIds.Ids.Contains("strict-" + Id)
+                    ? throw new GraphQLException("Strict nick of user " + Id + " failed.")
+                    : "Strict nick " + Id;
+
+            public string? GetPathless([Service] FailingIds failingIds)
+                => failingIds.Ids.Contains("pathless-" + Id)
+                    ? throw new GraphQLException("Pathless of user " + Id + " failed.")
+                    : "Pathless " + Id;
+        }
+
+        public sealed record FailingIds(ImmutableHashSet<string> Ids);
     }
 }

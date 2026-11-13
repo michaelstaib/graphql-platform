@@ -90,7 +90,8 @@ public class OperationPlanDeliveryPathTests : FusionTestBase
             incremental.RootNodes,
             incremental.AllNodes,
             [group],
-            incremental.Requirements);
+            incremental.Requirements,
+            incremental.HeldFields);
 
         // act
         var exception = Assert.Throws<InvalidOperationException>(() => OperationPlan.Create(

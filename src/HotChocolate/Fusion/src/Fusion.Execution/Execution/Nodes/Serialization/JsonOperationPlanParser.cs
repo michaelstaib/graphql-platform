@@ -210,7 +210,11 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                 rootIncrementalPlanNodes,
                 incrementalPlanNodes,
                 incrementalPlanDeliveryGroupsBuilder.ToImmutable(),
-                incrementalPlanRequirements)
+                incrementalPlanRequirements,
+                IncrementalPlan.DeriveHeldFields(
+                    incrementalPlanOperation,
+                    incrementalPlanNodes,
+                    incrementalPlanRequirements))
             {
                 ParentNodeId = incrementalPlanElement.GetProperty("parentNodeId").GetInt32()
             };

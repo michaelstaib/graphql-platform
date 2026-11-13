@@ -97,6 +97,7 @@ internal sealed partial class FetchResultStore : IDisposable
     private readonly ValueCompletion _valueCompletion;
     private List<IError>? _errors;
     private Dictionary<Path, IError>? _pocketedErrors;
+    private Dictionary<IncrementalPlan, List<IError>>? _heldFieldErrors;
     private bool _disposed;
 
     internal FetchResultStore()
@@ -3298,32 +3299,268 @@ AddErrors_Next:
         ImmutableArray<VariableValues> source,
         Operation sourceOperation)
     {
+        ImportVariableValues(new Span<ImmutableArray<VariableValues>>(ref source), sourceOperation);
+        return source;
+    }
+
+    /// <summary>
+    /// Imports the variable value sets that one child incremental plan reads from
+    /// <paramref name="sourceOperation"/>, replacing each set with its imported form. A list that the
+    /// sets address is created once and fits every set.
+    /// </summary>
+    internal void ImportVariableValues(
+        Span<ImmutableArray<VariableValues>> sources,
+        Operation sourceOperation)
+    {
         ArgumentNullException.ThrowIfNull(sourceOperation);
 
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (source.IsDefaultOrEmpty)
+        lock (_lock)
         {
-            return [];
+            for (var i = 0; i < sources.Length; i++)
+            {
+                var source = sources[i];
+
+                if (source.IsDefaultOrEmpty)
+                {
+                    sources[i] = [];
+                    continue;
+                }
+
+                var builder = ImmutableArray.CreateBuilder<VariableValues>(source.Length);
+
+                foreach (var entry in source)
+                {
+                    builder.Add(ImportVariableValuesEntryUnsafe(entry, sourceOperation));
+                }
+
+                sources[i] = builder.MoveToImmutable();
+            }
         }
 
-        var builder = ImmutableArray.CreateBuilder<VariableValues>(source.Length);
+        InitializeTargetPaths(sources);
+    }
 
-        ImmutableArray<VariableValues> imported;
+    /// <summary>
+    /// Writes the values of <paramref name="imported"/> into the objects at their result paths as the
+    /// leaf field named by the key of <paramref name="heldField"/>.
+    /// </summary>
+    internal void AddHeldFieldValues(
+        ImmutableArray<VariableValues> imported,
+        OperationRequirement heldField)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        using var buffer = new PooledArrayWriter();
+        buffer.Write("["u8);
+
+        for (var i = 0; i < imported.Length; i++)
+        {
+            if (i > 0)
+            {
+                buffer.Write(","u8);
+            }
+
+            foreach (var memory in imported[i].Values.AsSequence())
+            {
+                buffer.Write(memory.Span);
+            }
+        }
+
+        buffer.Write("]"u8);
 
         lock (_lock)
         {
-            foreach (var entry in source)
-            {
-                builder.Add(ImportVariableValuesEntryUnsafe(entry, sourceOperation));
-            }
+            var document = SourceResultDocument.Parse(_arena, new ReadOnlySequence<byte>(buffer.WrittenMemory));
+            _memory.Add(document);
 
-            imported = builder.MoveToImmutable();
+            var index = 0;
+
+            foreach (var values in document.Root.EnumerateArray())
+            {
+                var entry = imported[index++];
+                AddHeldFieldValueUnsafe(GetStartResult(entry.Path), values, heldField.Key);
+
+                var additionalTargets = new AdditionalTargets(this, entry.AdditionalPaths);
+
+                for (var i = 0; i < additionalTargets.Length; i++)
+                {
+                    AddHeldFieldValueUnsafe(additionalTargets[i], values, heldField.Key);
+                }
+            }
+        }
+    }
+
+    private void AddHeldFieldValueUnsafe(CompositeResultElement target, SourceResultElement values, string key)
+    {
+        if (target.IsNullOrInvalidated || target.ValueKind is not JsonValueKind.Object)
+        {
+            return;
         }
 
-        InitializeTargetPaths(imported);
+        if (target.TryGetProperty(key, out var targetValue)
+            && values.TryGetProperty(key, out var value))
+        {
+            _result.AssignSourceValue(targetValue, value);
+        }
+    }
 
-        return imported;
+    /// <summary>
+    /// Moves the errors of the hidden fields that the held fields of <paramref name="incrementalPlan"/> read
+    /// out of this store. An error is reported at the path of each held field that reads the failed field.
+    /// </summary>
+    internal void DivertHeldFieldErrors(IncrementalPlan incrementalPlan)
+    {
+        if (_errors is not { Count: > 0 } errors || incrementalPlan.HeldFields.IsEmpty)
+        {
+            return;
+        }
+
+        List<IError>? diverted = null;
+        var kept = 0;
+
+        for (var i = 0; i < errors.Count; i++)
+        {
+            var error = errors[i];
+            var isHidden = false;
+
+            if (error.Path is { } errorPath && TryGetResult(errorPath, out var fieldResult))
+            {
+                foreach (var heldField in incrementalPlan.HeldFields)
+                {
+                    var sourceName = GetHeldFieldSourceName(heldField);
+
+                    if (!IsFieldPath(errorPath, heldField.Path, sourceName))
+                    {
+                        continue;
+                    }
+
+                    var isSameName = sourceName.Equals(heldField.Key, StringComparison.Ordinal);
+
+                    if (fieldResult.IsInternal)
+                    {
+                        isHidden = true;
+                    }
+                    else if (isSameName)
+                    {
+                        continue;
+                    }
+
+                    (diverted ??= []).Add(
+                        isSameName ? error : error.WithPath(ReplaceFieldName(errorPath, heldField.Key)));
+                }
+            }
+
+            if (!isHidden)
+            {
+                errors[kept++] = error;
+            }
+        }
+
+        if (diverted is null)
+        {
+            return;
+        }
+
+        errors.RemoveRange(kept, errors.Count - kept);
+        (_heldFieldErrors ??= []).Add(incrementalPlan, diverted);
+    }
+
+    private static string GetHeldFieldSourceName(OperationRequirement heldField)
+        => heldField.Map is PathNode { PathSegment: { PathSegment: null } segment }
+            ? segment.FieldName.Value
+            : heldField.Key;
+
+    private static Path ReplaceFieldName(Path path, string fieldName)
+        => path is IndexerPathSegment indexer
+            ? ReplaceFieldName(indexer.Parent, fieldName).Append(indexer.Index)
+            : path.Parent.Append(fieldName);
+
+    /// <summary>
+    /// Gets the errors that <see cref="DivertHeldFieldErrors"/> moved out of this store for
+    /// <paramref name="incrementalPlan"/>, or <c>null</c> if there are none.
+    /// </summary>
+    internal List<IError>? TakeHeldFieldErrors(IncrementalPlan incrementalPlan)
+    {
+        if (_heldFieldErrors is null || !_heldFieldErrors.Remove(incrementalPlan, out var errors))
+        {
+            return null;
+        }
+
+        return errors;
+    }
+
+    private static bool IsFieldPath(Path path, SelectionPath anchor, string fieldName)
+    {
+        var buffer = s_objectPool.Rent(path.Length);
+        var segments = buffer.AsSpan(0, path.Length);
+
+        try
+        {
+            path.CopyTo(segments);
+
+            var fieldCount = CountFieldSegments(anchor);
+            var anchorIndex = 0;
+            var seen = 0;
+
+            foreach (var segment in segments)
+            {
+                if (segment is not string name)
+                {
+                    continue;
+                }
+
+                string expected;
+
+                if (seen < fieldCount)
+                {
+                    while (anchor[anchorIndex].Kind is not SelectionPathSegmentKind.Field)
+                    {
+                        anchorIndex++;
+                    }
+
+                    expected = anchor[anchorIndex++].Name;
+                }
+                else if (seen == fieldCount)
+                {
+                    expected = fieldName;
+                }
+                else
+                {
+                    return false;
+                }
+
+                if (!string.Equals(name, expected, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                seen++;
+            }
+
+            return seen == fieldCount + 1;
+        }
+        finally
+        {
+            segments.Clear();
+            s_objectPool.Return(buffer);
+        }
+    }
+
+    private static int CountFieldSegments(SelectionPath anchor)
+    {
+        var count = 0;
+
+        for (var i = 0; i < anchor.Length; i++)
+        {
+            if (anchor[i].Kind is SelectionPathSegmentKind.Field)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private VariableValues ImportVariableValuesEntryUnsafe(VariableValues source, Operation sourceOperation)
@@ -3777,13 +4014,8 @@ AddErrors_Next:
         return element;
     }
 
-    private void InitializeTargetPaths(ImmutableArray<VariableValues> importedValues)
+    private void InitializeTargetPaths(ReadOnlySpan<ImmutableArray<VariableValues>> importedSets)
     {
-        if (importedValues.IsDefaultOrEmpty)
-        {
-            return;
-        }
-
         lock (_lock)
         {
             // Track list containers that need imported elements.
@@ -3795,12 +4027,15 @@ AddErrors_Next:
             {
                 var hasPathBelowMissingList = false;
 
-                foreach (var entry in importedValues)
+                foreach (var importedValues in importedSets)
                 {
-                    TrackListContainerUnsafe(entry.Path, ref containers, ref hasPathBelowMissingList);
-                    foreach (var additional in entry.AdditionalPaths.AsSpan())
+                    foreach (var entry in importedValues)
                     {
-                        TrackListContainerUnsafe(additional, ref containers, ref hasPathBelowMissingList);
+                        TrackListContainerUnsafe(entry.Path, ref containers, ref hasPathBelowMissingList);
+                        foreach (var additional in entry.AdditionalPaths.AsSpan())
+                        {
+                            TrackListContainerUnsafe(additional, ref containers, ref hasPathBelowMissingList);
+                        }
                     }
                 }
 

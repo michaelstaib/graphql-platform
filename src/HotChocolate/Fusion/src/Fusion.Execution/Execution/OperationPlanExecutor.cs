@@ -114,10 +114,6 @@ internal static partial class OperationPlanExecutor
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Complete the initial result while retaining data needed by active
-            // incremental plans.
-            var initialResult = rootContext.Complete(retainMemoryForDefer: true);
-
             // Compute the active delivery groups (one per @defer occurrence whose
             // @defer(if:) evaluates to true) and the incremental plans that will actually run.
             // An incremental plan is active if at least one of its delivery groups is active.
@@ -131,6 +127,24 @@ internal static partial class OperationPlanExecutor
             }
 
             var deliveryGroupsByPlan = ResolveDeliveryGroupsByPlan(operationPlan, activeDeliveryGroupIds);
+
+            // The errors of held fields are delivered with the plan that delivers the fields.
+            foreach (var incrementalPlan in operationPlan.IncrementalPlans)
+            {
+                var deliveryGroups = deliveryGroupsByPlan[incrementalPlan];
+
+                if (!incrementalPlan.HeldFields.IsEmpty
+                    && !incrementalPlan.AllNodes.IsEmpty
+                    && !deliveryGroups.IsEmpty
+                    && GetEnabledDeliveryGroup(deliveryGroups[0].Parent, activeDeliveryGroupIds) is null)
+                {
+                    rootContext.DivertHeldFieldErrors(incrementalPlan);
+                }
+            }
+
+            // Complete the initial result while retaining data needed by active
+            // incremental plans.
+            var initialResult = rootContext.Complete(retainMemoryForDefer: true);
 
             // Mark top-level active delivery groups as pending on the initial
             // result. A group whose enclosing groups are all disabled is top-level.
@@ -388,13 +402,17 @@ internal static partial class OperationPlanExecutor
                         .SetMessage(error.Message)
                         .Build();
                     payload = OperationResult.FromError(errorObj);
-                    MarkDeliveryGroupsFailed(deliveryGroups, [errorObj], ref failedDeliveryGroups);
+                    IReadOnlyList<IError> errors =
+                        incrementalPlanContext?.HeldFieldErrors is { } heldFieldErrors
+                            ? [.. heldFieldErrors, errorObj]
+                            : [errorObj];
+                    MarkDeliveryGroupsFailed(deliveryGroups, errors, ref failedDeliveryGroups);
                     CompleteDeliveryGroups(
                         deliveryGroups,
                         pendingCountByDeliveryGroup,
                         failedDeliveryGroups,
                         completed,
-                        errors: [errorObj]);
+                        errors);
                 }
                 else if (result is not null)
                 {
@@ -604,6 +622,11 @@ internal static partial class OperationPlanExecutor
                 executionCts,
                 requestArena);
 
+            if (parentResultStore.TakeHeldFieldErrors(incrementalPlan) is { } heldFieldErrors)
+            {
+                context.SetHeldFieldErrors(heldFieldErrors);
+            }
+
             // Copy parent-scope requirements into the child context.
             try
             {
@@ -649,6 +672,7 @@ internal static partial class OperationPlanExecutor
             context.Begin();
 
             await ExecuteQueryAsync(context, plan, executionCts.Token);
+            context.AddHeldFieldValues();
 
             // Keep result resources available for nested incremental plans.
             var deferredResult = context.Complete(retainMemoryForDefer: true);
@@ -678,7 +702,7 @@ internal static partial class OperationPlanExecutor
     }
 
     /// <summary>
-    /// Collects requirements satisfied by the enclosing plan scope and
+    /// Collects the requirements and held fields satisfied by the enclosing plan scope and
     /// installs their values on the child context.
     /// </summary>
     private static void CollectIncrementalPlanRequirements(
@@ -686,37 +710,63 @@ internal static partial class OperationPlanExecutor
         IncrementalPlan incrementalPlan,
         OperationPlanContext childContext)
     {
+        var heldFields = incrementalPlan.HeldFields;
         var collected = CollectParentScopeRequirements(incrementalPlan);
-        if (collected.Count == 0)
+
+        if (collected.Count == 0 && heldFields.IsEmpty)
         {
             return;
         }
 
-        var anchor = collected[0].Path;
-        for (var i = 1; i < collected.Count; i++)
+        ImmutableArray<VariableValues> requirementValues = [];
+        HashSet<string>? keys = null;
+
+        if (collected.Count > 0)
         {
-            if (!collected[i].Path.Equals(anchor))
+            keys = new HashSet<string>(collected.Count, StringComparer.Ordinal);
+
+            var anchor = collected[0].Path;
+            for (var i = 1; i < collected.Count; i++)
             {
-                throw new InvalidOperationException(
-                    "Deferred incremental plan has parent-sourced requirements at different anchor paths; "
-                    + "one-time materialization assumes a single anchor.");
+                if (!collected[i].Path.Equals(anchor))
+                {
+                    throw new InvalidOperationException(
+                        "Deferred incremental plan has parent-sourced requirements at different anchor paths; "
+                        + "one-time materialization assumes a single anchor.");
+                }
             }
+
+            var requirementSpan = new OperationRequirement[collected.Count];
+            for (var i = 0; i < collected.Count; i++)
+            {
+                requirementSpan[i] = collected[i];
+                keys.Add(collected[i].Key);
+            }
+
+            requirementValues = parentResultStore.CreateVariableValueSets(
+                anchor,
+                requestVariables: [],
+                requirementSpan);
         }
 
-        var requirementSpan = new OperationRequirement[collected.Count];
-        var keys = new HashSet<string>(collected.Count, StringComparer.Ordinal);
-        for (var i = 0; i < collected.Count; i++)
+        if (heldFields.IsEmpty)
         {
-            requirementSpan[i] = collected[i];
-            keys.Add(collected[i].Key);
+            childContext.SetRequirements(requirementValues, keys, parentResultStore.Operation);
+            return;
         }
 
-        var parentValues = parentResultStore.CreateVariableValueSets(
-            anchor,
-            requestVariables: [],
-            requirementSpan);
+        var parentValues = new ImmutableArray<VariableValues>[heldFields.Length + 1];
 
-        childContext.SetRequirements(parentValues, keys, parentResultStore.Operation);
+        for (var i = 0; i < heldFields.Length; i++)
+        {
+            parentValues[i] = parentResultStore.CreateVariableValueSets(
+                heldFields[i].Path,
+                requestVariables: [],
+                heldFields.AsSpan().Slice(i, 1));
+        }
+
+        parentValues[heldFields.Length] = requirementValues;
+        childContext.SetParentValues(parentValues, heldFields, keys, parentResultStore.Operation);
     }
 
     private static List<OperationRequirement> CollectParentScopeRequirements(IncrementalPlan incrementalPlan)
@@ -1059,7 +1109,8 @@ internal static partial class OperationPlanExecutor
     /// <c>incremental.data</c> to be a map of fields to merge at the pending
     /// path, not the fully rooted result. When the delivery path crosses a list,
     /// the pending path ends at the first list and each concrete descendant is
-    /// emitted with a relative field-and-index <c>subPath</c>.
+    /// emitted with a relative field-and-index <c>subPath</c>. Each error is carried
+    /// by the entry whose response path contains the error path, otherwise by the first entry.
     /// </summary>
     private static bool TryCreateIncrementalResults(
         OperationResultData rootData,
@@ -1076,6 +1127,7 @@ internal static partial class OperationPlanExecutor
 
         var selectionPath = bestDeliveryGroup.Path ?? SelectionPath.Root;
         var builder = ImmutableList.CreateBuilder<IIncrementalResult>();
+        var responsePaths = errors is { Count: > 0 } ? new Dictionary<Path, int>() : null;
 
         CollectIncrementalResults(
             document,
@@ -1085,9 +1137,15 @@ internal static partial class OperationPlanExecutor
             fieldIndex: 0,
             pendingFieldCount,
             Path.Root,
+            Path.Root,
             bestDeliveryGroup.Id,
-            errors,
+            responsePaths,
             builder);
+
+        if (responsePaths is { Count: > 0 })
+        {
+            PlaceErrors(errors!, responsePaths, builder);
+        }
 
         incrementalResults = builder.ToImmutable();
         return incrementalResults.Count > 0;
@@ -1101,8 +1159,9 @@ internal static partial class OperationPlanExecutor
         int fieldIndex,
         int pendingFieldCount,
         Path subPath,
+        Path responsePath,
         int deliveryGroupId,
-        ImmutableList<IError>? errors,
+        Dictionary<Path, int>? responsePaths,
         ImmutableList<IIncrementalResult>.Builder results)
     {
         if (element.IsNullMarker)
@@ -1131,8 +1190,9 @@ internal static partial class OperationPlanExecutor
                     fieldIndex,
                     pendingFieldCount,
                     subPath.Append(i),
+                    responsePaths is null ? responsePath : responsePath.Append(i),
                     deliveryGroupId,
-                    errors,
+                    responsePaths,
                     results);
             }
 
@@ -1144,9 +1204,10 @@ internal static partial class OperationPlanExecutor
             results.Add(
                 new IncrementalObjectResult(
                     deliveryGroupId,
-                    errors,
+                    errors: null,
                     subPath.IsRoot ? null : subPath,
                     CreateIncrementalData(document, element)));
+            responsePaths?[responsePath] = results.Count - 1;
             return;
         }
 
@@ -1162,8 +1223,9 @@ internal static partial class OperationPlanExecutor
                 fieldIndex,
                 pendingFieldCount,
                 subPath,
+                responsePath,
                 deliveryGroupId,
-                errors,
+                responsePaths,
                 results);
             return;
         }
@@ -1182,9 +1244,46 @@ internal static partial class OperationPlanExecutor
             fieldIndex + 1,
             pendingFieldCount,
             fieldIndex < pendingFieldCount ? subPath : subPath.Append(segment.Name),
+            responsePaths is null ? responsePath : responsePath.Append(segment.Name),
             deliveryGroupId,
-            errors,
+            responsePaths,
             results);
+    }
+
+    private static void PlaceErrors(
+        ImmutableList<IError> errors,
+        Dictionary<Path, int> resultIndexByPath,
+        ImmutableList<IIncrementalResult>.Builder results)
+    {
+        var errorsByResult = new ImmutableList<IError>.Builder?[results.Count];
+
+        foreach (var error in errors)
+        {
+            var index = FindResultContaining(resultIndexByPath, error.Path);
+            (errorsByResult[index < 0 ? 0 : index] ??= ImmutableList.CreateBuilder<IError>()).Add(error);
+        }
+
+        for (var i = 0; i < errorsByResult.Length; i++)
+        {
+            if (errorsByResult[i] is { } placed)
+            {
+                var result = (IncrementalObjectResult)results[i];
+                results[i] = new IncrementalObjectResult(result.Id, placed.ToImmutable(), result.SubPath, result.Data);
+            }
+        }
+    }
+
+    private static int FindResultContaining(Dictionary<Path, int> resultIndexByPath, Path? errorPath)
+    {
+        for (var current = errorPath; current is not null; current = current.IsRoot ? null : current.Parent)
+        {
+            if (resultIndexByPath.TryGetValue(current, out var index))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     private static bool HasRemainingFieldSegments(SelectionPath selectionPath, int segmentIndex)

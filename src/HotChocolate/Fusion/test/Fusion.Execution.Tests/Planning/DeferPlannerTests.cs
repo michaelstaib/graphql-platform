@@ -2740,10 +2740,10 @@ public class DeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Defer_ProviderServesTwoRequirements_Should_KeepEdge_When_OnlyOneIsRerouted()
+    public void Defer_ProviderServesTwoRequirements_Should_ServeBothInPlan_When_OnlyOneCanBeRerouted()
     {
         // arrange
-        // currencyCode also lives on accounts and reroutes to the parent; regionCode does not.
+        // currencyCode also lives on accounts and could reroute to the parent; regionCode cannot.
         var schema = ComposeSchema(
             """
             # name: accounts

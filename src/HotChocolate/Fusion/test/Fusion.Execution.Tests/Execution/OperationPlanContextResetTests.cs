@@ -209,7 +209,8 @@ public sealed class OperationPlanContextResetTests : FusionTestBase
             rootNodes,
             nodes,
             deliveryGroups: [],
-            requirements: []);
+            requirements: [],
+            heldFields: []);
 
         Assert.Equal(usesDynamicSchemaNames, plan.UsesDynamicSchemaNames);
         Assert.Equal(usesBatchNodes, plan.UsesBatchNodes);

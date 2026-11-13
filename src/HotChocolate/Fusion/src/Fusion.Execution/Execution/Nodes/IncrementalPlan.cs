@@ -1,4 +1,7 @@
 using System.Collections.Immutable;
+using HotChocolate.Execution;
+using HotChocolate.Fusion.Language;
+using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Nodes;
 
@@ -34,7 +37,8 @@ public sealed class IncrementalPlan : IOperationPlan
     /// </param>
     /// <param name="requirements">
     /// The requirements that this plan resolves from its enclosing plan scope
-    /// before it executes.
+    /// before it executes. A requirement that names a leaf field of this plan that no node of the
+    /// plan reads is delivered as that field.
     /// </param>
     public IncrementalPlan(
         Operation operation,
@@ -42,18 +46,221 @@ public sealed class IncrementalPlan : IOperationPlan
         ImmutableArray<ExecutionNode> allNodes,
         ImmutableArray<DeliveryGroup> deliveryGroups,
         ImmutableArray<OperationRequirement> requirements)
+        : this(
+            operation,
+            rootNodes,
+            allNodes,
+            deliveryGroups,
+            requirements,
+            DeriveHeldFields(operation, allNodes, requirements))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of <see cref="IncrementalPlan"/> with the held fields of the plan.
+    /// </summary>
+    /// <param name="operation">The GraphQL operation associated with this incremental plan.</param>
+    /// <param name="rootNodes">The root execution nodes of this incremental plan.</param>
+    /// <param name="allNodes">All execution nodes belonging to this incremental plan.</param>
+    /// <param name="deliveryGroups">The delivery group set, sorted ascending by <see cref="DeliveryGroup.Id"/>.</param>
+    /// <param name="requirements">The requirements that this plan resolves from its enclosing plan scope.</param>
+    /// <param name="heldFields">
+    /// The requirements that name a leaf field of this plan that the enclosing scope fetched.
+    /// </param>
+    internal IncrementalPlan(
+        Operation operation,
+        ImmutableArray<ExecutionNode> rootNodes,
+        ImmutableArray<ExecutionNode> allNodes,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        ImmutableArray<OperationRequirement> requirements,
+        ImmutableArray<OperationRequirement> heldFields)
     {
         Operation = operation;
         RootNodes = rootNodes;
         AllNodes = allNodes;
         DeliveryGroups = deliveryGroups;
         Requirements = requirements.IsDefault ? [] : requirements;
+        HeldFields = heldFields.IsDefaultOrEmpty ? [] : OrderBySelection(operation, heldFields);
         _nodesById = CreateNodeLookup(
             allNodes,
             out var usesDynamicSchemaNames,
             out var usesBatchNodes);
         UsesDynamicSchemaNames = usesDynamicSchemaNames;
         UsesBatchNodes = usesBatchNodes;
+    }
+
+    /// <summary>
+    /// Selects the requirements that name a leaf field of the plan by their key, that no node of the plan
+    /// reads, and that <paramref name="operation"/> selects at the requirement path.
+    /// </summary>
+    internal static ImmutableArray<OperationRequirement> DeriveHeldFields(
+        Operation operation,
+        ImmutableArray<ExecutionNode> nodes,
+        ImmutableArray<OperationRequirement> requirements)
+    {
+        if (requirements.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        ImmutableArray<OperationRequirement>.Builder? heldFields = null;
+
+        foreach (var requirement in requirements)
+        {
+            if (requirement.InternalAlias is null
+                && requirement.Map is PathNode { PathSegment.PathSegment: null }
+                && !IsReadByNode(nodes, requirement.Key)
+                && GetSelectionSet(operation, requirement.Path)?.TryGetSelection(requirement.Key, out _) == true)
+            {
+                (heldFields ??= ImmutableArray.CreateBuilder<OperationRequirement>()).Add(requirement);
+            }
+        }
+
+        return heldFields?.ToImmutable() ?? [];
+    }
+
+    private static ImmutableArray<OperationRequirement> OrderBySelection(
+        Operation operation,
+        ImmutableArray<OperationRequirement> heldFields)
+    {
+        if (heldFields.Length == 1)
+        {
+            return heldFields;
+        }
+
+        var paths = new List<SelectionPath>();
+        var entries = new (int PathIndex, int Position, int Order)[heldFields.Length];
+
+        for (var i = 0; i < heldFields.Length; i++)
+        {
+            var heldField = heldFields[i];
+            var pathIndex = paths.IndexOf(heldField.Path);
+
+            if (pathIndex == -1)
+            {
+                pathIndex = paths.Count;
+                paths.Add(heldField.Path);
+            }
+
+            entries[i] = (pathIndex, GetPosition(operation, heldField), i);
+        }
+
+        Array.Sort(entries);
+
+        var ordered = ImmutableArray.CreateBuilder<OperationRequirement>(entries.Length);
+
+        foreach (var entry in entries)
+        {
+            ordered.Add(heldFields[entry.Order]);
+        }
+
+        return ordered.MoveToImmutable();
+    }
+
+    private static int GetPosition(Operation operation, OperationRequirement heldField)
+    {
+        if (GetSelectionSet(operation, heldField.Path) is { } selectionSet)
+        {
+            var selections = selectionSet.Selections;
+
+            for (var i = 0; i < selections.Length; i++)
+            {
+                if (selections[i].ResponseName.Equals(heldField.Key, StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+        }
+
+        return int.MaxValue;
+    }
+
+    private static bool IsReadByNode(ImmutableArray<ExecutionNode> nodes, string key)
+    {
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode operationNode when ContainsKey(operationNode.Requirements, key):
+                case ApolloOperationExecutionNode apolloNode when ContainsKey(apolloNode.Requirements, key):
+                    return true;
+
+                case OperationBatchExecutionNode batchNode:
+                    foreach (var definition in batchNode.Operations)
+                    {
+                        if (ContainsKey(definition.Requirements, key))
+                        {
+                            return true;
+                        }
+                    }
+                    break;
+
+                case ApolloOperationBatchExecutionNode apolloBatchNode:
+                    foreach (var definition in apolloBatchNode.Operations)
+                    {
+                        if (ContainsKey(definition.Requirements, key))
+                        {
+                            return true;
+                        }
+                    }
+                    break;
+            }
+        }
+
+        return false;
+
+        static bool ContainsKey(ReadOnlySpan<OperationRequirement> requirements, string key)
+        {
+            foreach (var requirement in requirements)
+            {
+                if (requirement.Key.Equals(key, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static SelectionSet? GetSelectionSet(Operation operation, SelectionPath path)
+    {
+        var selectionSet = operation.RootSelectionSet;
+        Selection? selection = null;
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            var segment = path[i];
+
+            switch (segment.Kind)
+            {
+                case SelectionPathSegmentKind.Root:
+                    continue;
+
+                case SelectionPathSegmentKind.InlineFragment:
+                    if (selection is null
+                        || !operation.Schema.Types.TryGetType<IObjectTypeDefinition>(segment.Name, out var objectType))
+                    {
+                        return null;
+                    }
+
+                    selectionSet = operation.GetSelectionSet(selection, objectType);
+                    continue;
+
+                default:
+                    if (selectionSet is null || !selectionSet.TryGetSelection(segment.Name, out selection))
+                    {
+                        return null;
+                    }
+
+                    selectionSet = selection.Type.NamedType() is IObjectTypeDefinition namedType
+                        ? operation.GetSelectionSet(selection, namedType)
+                        : null;
+                    continue;
+            }
+        }
+
+        return selectionSet;
     }
 
     /// <summary>
@@ -89,6 +296,12 @@ public sealed class IncrementalPlan : IOperationPlan
     /// plan to a selection in the enclosing scope's result.
     /// </summary>
     public ImmutableArray<OperationRequirement> Requirements { get; }
+
+    /// <summary>
+    /// Gets the requirements that name a leaf field of this plan that the enclosing scope fetched.
+    /// Their values are delivered as the fields of the same name.
+    /// </summary>
+    internal ImmutableArray<OperationRequirement> HeldFields { get; }
 
     /// <summary>
     /// Gets the <see cref="ExecutionNode.Id"/> of the node that produces the

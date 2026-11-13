@@ -1270,6 +1270,102 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
             parsedIncrementalPlanNode.Dependencies.Length);
     }
 
+    [Theory]
+    [InlineData("{ user(id: 1) { id ... @defer { soft total } } }", new[] { "soft" })]
+    [InlineData("{ user(id: 1) { id soft ... @defer { soft sku total } } }", new[] { "sku" })]
+    [InlineData("{ user(id: 1) { id ... @defer { soft sku note total } } }", new[] { "sku", "soft", "note" })]
+    [InlineData("{ user(id: 1) { id ... @defer { note total soft } } }", new[] { "note", "soft" })]
+    [InlineData("{ user(id: 1) { id ... @defer { sku note soft total } } }", new[] { "sku", "note", "soft" })]
+    [InlineData("{ user(id: 1) { id k: sku ... @defer { s: sku total } } }", new[] { "s" })]
+    public void Parse_Should_DeriveHeldFieldsInPlanOrder_When_IncrementalPlanDeliversFieldsOfEnclosingScope(
+        string operation,
+        string[] heldFields)
+    {
+        // arrange
+        var schema = ComposeHeldFieldSchema();
+        var originalPlan = PlanOperation(schema, operation);
+
+        using var buffer = new PooledArrayWriter();
+        new JsonOperationPlanFormatter().Format(buffer, originalPlan);
+
+        var compiler = new OperationCompiler(
+            schema,
+            new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
+                new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
+        var parser = new JsonOperationPlanParser(compiler);
+
+        // act
+        var parsedPlan = parser.Parse(buffer.WrittenMemory);
+
+        // assert
+        var originalHeldFields = Assert.Single(originalPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
+        var parsedHeldFields = Assert.Single(parsedPlan.IncrementalPlans).HeldFields.Select(t => t.Key);
+        Assert.Equal(heldFields, originalHeldFields);
+        Assert.Equal(heldFields, parsedHeldFields);
+    }
+
+    [Fact]
+    public void Constructor_Should_DeriveHeldFields_When_RequirementsNameFieldsOfPlan()
+    {
+        // arrange
+        var schema = ComposeHeldFieldSchema();
+        var plan = Assert.Single(
+            PlanOperation(schema, "{ user(id: 1) { id ... @defer { soft total } } }").IncrementalPlans);
+
+        // act
+        var rebuilt = new IncrementalPlan(
+            plan.Operation,
+            plan.RootNodes,
+            plan.AllNodes,
+            plan.DeliveryGroups,
+            plan.Requirements);
+
+        // assert
+        Assert.Equal(["soft"], rebuilt.HeldFields.Select(t => t.Key));
+        Assert.Equal(plan.HeldFields.Select(t => t.Key), rebuilt.HeldFields.Select(t => t.Key));
+    }
+
+    private static FusionSchemaDefinition ComposeHeldFieldSchema()
+    {
+        return ComposeSchema(
+            """
+            # name: a
+            type Query {
+                user(id: Int!): User
+                userById(id: Int!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: Int!
+                email: String! @shareable
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: Int!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+                id: Int!
+                sku: String
+                soft: String
+                note: String
+            }
+            """,
+            """
+            # name: c
+            type Query {
+                userByEmail(email: String!): User @lookup @internal
+            }
+
+            type User @key(fields: "email") {
+                email: String!
+                total(sku: String @require(field: "sku")): String
+            }
+            """);
+    }
+
     [Fact]
     public void Parse_Plan_Without_BatchingGroupId_As_StandaloneOperations()
     {

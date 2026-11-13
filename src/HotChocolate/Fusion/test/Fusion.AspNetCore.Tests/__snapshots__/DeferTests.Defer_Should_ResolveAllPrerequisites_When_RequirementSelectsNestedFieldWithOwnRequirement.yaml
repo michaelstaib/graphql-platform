@@ -104,6 +104,7 @@ sourceSchemas:
                   raw
                   id
                 }
+                id
               }
             }
           variables: |
@@ -119,7 +120,8 @@ sourceSchemas:
                     "owner": {
                       "raw": 5,
                       "id": "2"
-                    }
+                    },
+                    "id": "1"
                   }
                 }
               }
@@ -143,24 +145,6 @@ sourceSchemas:
                 "data": {
                   "userById": {
                     "computed": 40
-                  }
-                }
-              }
-      - request:
-          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
-          document: |
-            query Op_defer_8 {
-              product {
-                id
-              }
-            }
-        response:
-          results:
-            - |
-              {
-                "data": {
-                  "product": {
-                    "id": "1"
                   }
                 }
               }
@@ -253,6 +237,7 @@ operationPlan:
         {
           product {
             id
+            id @fusion__requirement
           }
         }
       hash: 5772a5cdca9030403458eb8799fd0718
@@ -275,8 +260,12 @@ operationPlan:
     - deliveryGroupIds:
         - 0
       parentNodeId: 1
+      requirements:
+        - name: __fusion_4_id
+          selectionMap: >-
+            id
       nodes:
-        - id: 2
+        - id: 1
           type: Operation
           schema: C
           operation: |
@@ -298,10 +287,9 @@ operationPlan:
               selectionMap: >-
                 id
           dependencies:
+            - id: 2
             - id: 3
-            - id: 4
-            - id: 8
-        - id: 3
+        - id: 2
           type: Operation
           schema: A
           operation: |
@@ -311,6 +299,7 @@ operationPlan:
                   raw
                   id
                 }
+                id
               }
             }
           source: $.productById
@@ -320,8 +309,8 @@ operationPlan:
               selectionMap: >-
                 id
           dependencies:
-            - id: 8
-        - id: 4
+            - parentNodeId: 1
+        - id: 3
           type: Operation
           schema: A
           operation: |
@@ -340,9 +329,9 @@ operationPlan:
               selectionMap: >-
                 id
           dependencies:
-            - id: 3
-            - id: 5
-        - id: 5
+            - id: 2
+            - id: 4
+        - id: 4
           type: Operation
           schema: B
           operation: |
@@ -358,13 +347,4 @@ operationPlan:
               selectionMap: >-
                 id
           dependencies:
-            - id: 3
-        - id: 8
-          type: Operation
-          schema: A
-          operation: |
-            query Op_defer_8 {
-              product {
-                id
-              }
-            }
+            - id: 2
