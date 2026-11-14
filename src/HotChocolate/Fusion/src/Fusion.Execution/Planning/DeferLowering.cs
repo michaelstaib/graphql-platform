@@ -72,20 +72,22 @@ internal static class DeferLowering
 
             if (!HasDeferDirective(fragment))
             {
-                var content = LowerList(items, scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false));
+                var content = LowerList(
+                    items,
+                    scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false, false));
                 result.Add(fragment.WithSelectionSet(new SelectionSetNode(content)));
                 return;
             }
 
             var isDeferrable = DeferCondition.TryCreate(fragment, out var condition);
-            var plainScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false);
+            var plainScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false, true);
             List<ISelectionNode>? deferredContent = null;
             var coverage = Coverage.Empty;
 
             if (isDeferrable)
             {
                 // The content is lowered first, so a nested fragment that was inlined is part of it.
-                var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true);
+                var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true, true);
                 coverage = Coverage.Create(scope, fragment.TypeCondition);
                 deferredContent = Prune(LowerList(items, deferredScope), coverage);
             }
@@ -108,7 +110,7 @@ internal static class DeferLowering
                 result.Add(CreatePlainCopy(fragment, variableName, LowerList(items, plainScope)));
             }
 
-            // The deferred copy drops the leaf fields that are selected outside of any deferred fragment.
+            // The deferred copy drops the leaf fields that an enclosing selection at the same place selects.
             result.Add(CreateDeferredCopy(fragment, condition, deferredContent));
         }
 
@@ -414,25 +416,29 @@ internal static class DeferLowering
             ITypeDefinition? type,
             NamedTypeNode? typeCondition,
             IReadOnlyList<ISelectionNode> items,
-            bool deferred)
+            bool deferred,
+            bool hasDeferDirective)
         {
-            var inDeferred = InDeferred || deferred;
-            return new Scope(type, IsRoot, inDeferred, new Level(items, !inDeferred, typeCondition, Level));
+            // The own fields of a fragment with @defer are enclosing selections for the fragments inside of it,
+            // in its plain copy and in its deferred copy.
+            var isEnclosing = hasDeferDirective || Level.IsEnclosing;
+            return new Scope(type, IsRoot, InDeferred || deferred, new Level(items, isEnclosing, typeCondition, Level));
         }
     }
 
     /// <summary>
-    /// A selection list on one field level. <paramref name="IsOutsideDeferred"/> is <c>true</c> when no
-    /// deferred fragment encloses the list.
+    /// A selection list on one field level. <paramref name="IsEnclosing"/> is <c>true</c> when the list is
+    /// outside of any deferred fragment or is the own content of a fragment with <c>@defer</c> at this level.
     /// </summary>
     private sealed record Level(
         IReadOnlyList<ISelectionNode> Items,
-        bool IsOutsideDeferred,
+        bool IsEnclosing,
         NamedTypeNode? OwnerTypeCondition,
         Level? Outer);
 
     /// <summary>
-    /// The fields that are selected without conditions outside of any deferred fragment at a place.
+    /// The fields that an enclosing selection at a place selects without conditions: outside of any deferred
+    /// fragment, or as an own field of an enclosing deferred fragment.
     /// </summary>
     private sealed class Coverage
     {
@@ -452,7 +458,7 @@ internal static class DeferLowering
 
             for (var level = scope.Level; level is not null; level = level.Outer)
             {
-                if (level.IsOutsideDeferred)
+                if (level.IsEnclosing)
                 {
                     coverage.Collect(level.Items, typeConditions);
                 }

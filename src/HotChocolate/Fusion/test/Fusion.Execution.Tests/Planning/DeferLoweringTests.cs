@@ -332,7 +332,7 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_DropLeafFromDeferredCopy_When_LeafIsSelectedOutsideDeferredFragment()
+    public void Lower_Should_KeepRemainingLeafInDeferredCopy_When_NormalizerAlreadyDroppedSelectedLeaf()
     {
         // arrange
         const string operation =
@@ -1267,6 +1267,334 @@ public class DeferLoweringTests : FusionTestBase
                 ... on User @skip(if: $s) @include(if: $x) {
                   ... @include(if: $v) @defer(if: $v, label: "mail") {
                     email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_DropLeafFromInnerFragment_When_OuterDeferredFragmentSelectsLeaf_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    ... @defer(label: "o") {
+                        name
+                        ... @defer(label: "i") {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                ... @defer(label: "o") {
+                  name
+                  ... @defer(label: "i") {
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineInnerFragment_When_OuterDeferredFragmentSelectsEveryLeaf_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    ... @defer(label: "o") {
+                        name
+                        ... @defer(label: "i") {
+                            name
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                ... @defer(label: "o") {
+                  name
+                  ... {
+                    name
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepLeafInSiblingFragment_When_OtherDeferredFragmentSelectsLeaf_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    ... @defer(label: "a") {
+                        name
+                    }
+                    ... @defer(label: "b") {
+                        name
+                        nick
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                ... @defer(label: "a") {
+                  name
+                }
+                ... @defer(label: "b") {
+                  name
+                  nick
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_DropLeafFromInnerFragmentInBothCopies_When_OuterFragmentIsSwitchable_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query($o: Boolean!) {
+                user(id: "1") {
+                    ... @defer(if: $o, label: "o") {
+                        name
+                        ... @defer(label: "i") {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($o: Boolean!) {
+              user(id: "1") {
+                ... @skip(if: $o) {
+                  name
+                  ... @defer(label: "i") {
+                    nick
+                  }
+                }
+                ... @include(if: $o) @defer(if: $o, label: "o") {
+                  name
+                  ... @defer(label: "i") {
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepLeafInInnerFragment_When_OuterLeafIsConditional_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") {
+                    ... @defer(label: "o") {
+                        name @include(if: $x)
+                        ... @defer(label: "i") {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") {
+                ... @defer(label: "o") {
+                  name @include(if: $x)
+                  ... @defer(label: "i") {
+                    name
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepLeafInInnerFragment_When_OuterLeafIsInTypedFragment_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    ... @defer(label: "o") {
+                        ... on User {
+                            name
+                        }
+                        ... @defer(label: "i") {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                ... @defer(label: "o") {
+                  ... on User {
+                    name
+                  }
+                  ... @defer(label: "i") {
+                    name
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_DropLeafInBothCopies_When_SwitchableFragmentIsInDeferredFragment_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query($o: Boolean!) {
+                ... @defer(label: "d") {
+                    user(id: "1") {
+                        ... @defer(if: $o, label: "o") {
+                            name
+                            ... @defer(label: "i") {
+                                name
+                                nick
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($o: Boolean!) {
+              ... @defer(label: "d") {
+                user(id: "1") {
+                  ... @skip(if: $o) {
+                    name
+                    ... @defer(label: "i") {
+                      nick
+                    }
+                  }
+                  ... @include(if: $o) @defer(if: $o, label: "o") {
+                    name
+                    ... @defer(label: "i") {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragment_When_OnlyInnerFragmentHasNewLeafAfterCoverage_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        name
+                        ... @defer(label: "i") {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                ... {
+                  name
+                  ... @defer(label: "i") {
+                    nick
                   }
                 }
               }
