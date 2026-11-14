@@ -74,20 +74,20 @@ internal static class DeferLowering
             {
                 var content = LowerList(
                     items,
-                    scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false, false));
+                    scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false));
                 result.Add(fragment.WithSelectionSet(new SelectionSetNode(content)));
                 return;
             }
 
             var isDeferrable = DeferCondition.TryCreate(fragment, out var condition);
-            var plainScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false, true);
+            var plainScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false);
             List<ISelectionNode>? deferredContent = null;
             var coverage = Coverage.Empty;
 
             if (isDeferrable)
             {
                 // The content is lowered first, so a nested fragment that was inlined is part of it.
-                var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true, true);
+                var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true);
                 coverage = Coverage.Create(scope, fragment.TypeCondition);
                 deferredContent = Prune(LowerList(items, deferredScope), coverage);
             }
@@ -407,33 +407,25 @@ internal static class DeferLowering
         public Level Level { get; }
 
         public static Scope Root(ITypeDefinition type, IReadOnlyList<ISelectionNode> items)
-            => new(type, true, false, new Level(items, true, null, null));
+            => new(type, true, false, new Level(items, null, null));
 
         public Scope EnterField(ITypeDefinition? type, IReadOnlyList<ISelectionNode> items)
-            => new(type, false, InDeferred, new Level(items, true, null, null));
+            => new(type, false, InDeferred, new Level(items, null, null));
 
         public Scope EnterFragment(
             ITypeDefinition? type,
             NamedTypeNode? typeCondition,
             IReadOnlyList<ISelectionNode> items,
-            bool deferred,
-            bool hasDeferDirective)
-        {
-            // The own fields of a fragment with @defer are enclosing selections for the fragments inside of it,
-            // in its plain copy and in its deferred copy.
-            var isEnclosing = hasDeferDirective || Level.IsEnclosing;
-            return new Scope(type, IsRoot, InDeferred || deferred, new Level(items, isEnclosing, typeCondition, Level));
-        }
+            bool deferred)
+            => new(type, IsRoot, InDeferred || deferred, new Level(items, typeCondition, Level));
     }
 
     /// <summary>
-    /// A selection list on one field level. <paramref name="IsEnclosing"/> is <c>true</c> when the list is
-    /// the selection set of the operation or of a field, is the own content of a fragment with <c>@defer</c> at
-    /// this level, or is a fragment without <c>@defer</c> nested in such a list.
+    /// A selection list on one field level, with the type condition of the fragment that owns it and the list
+    /// that encloses it at the same level.
     /// </summary>
     private sealed record Level(
         IReadOnlyList<ISelectionNode> Items,
-        bool IsEnclosing,
         NamedTypeNode? OwnerTypeCondition,
         Level? Outer);
 
@@ -459,10 +451,7 @@ internal static class DeferLowering
 
             for (var level = scope.Level; level is not null; level = level.Outer)
             {
-                if (level.IsEnclosing)
-                {
-                    coverage.Collect(level.Items, typeConditions);
-                }
+                coverage.Collect(level.Items, typeConditions);
 
                 if (level.OwnerTypeCondition is not null)
                 {
