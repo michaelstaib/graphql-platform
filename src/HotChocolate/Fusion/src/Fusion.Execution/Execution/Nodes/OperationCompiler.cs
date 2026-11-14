@@ -15,6 +15,7 @@ public sealed class OperationCompiler
 {
     private readonly FusionSchemaDefinition _schema;
     private readonly DocumentRewriter _documentRewriter;
+    private readonly DocumentRewriter _keepDeferRewriter;
     private readonly ObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>> _fieldsPool;
     private readonly TypeNameField _typeNameField;
     private readonly int _maxAllowedIncludeConditions;
@@ -33,7 +34,8 @@ public sealed class OperationCompiler
         _fieldsPool = fieldsPool;
         _maxAllowedIncludeConditions = maxAllowedIncludeConditions;
         _maxAllowedDeferConditions = maxAllowedDeferConditions;
-        _documentRewriter = new(schema, removeStaticallyExcludedSelections: true);
+        _documentRewriter = new(schema, mergeAcrossDefer: true, removeStaticallyExcludedSelections: true);
+        _keepDeferRewriter = new(schema, mergeAcrossDefer: false, removeStaticallyExcludedSelections: true);
         var nonNullStringType = new NonNullType(_schema.Types.GetType<IScalarTypeDefinition>(SpecScalarNames.String.Name));
         _typeNameField = new TypeNameField(nonNullStringType);
     }
@@ -63,12 +65,24 @@ public sealed class OperationCompiler
         string hash,
         string shortHash,
         OperationDefinitionNode operationDefinition)
+        => Compile(id, hash, shortHash, operationDefinition, mergeAcrossDefer: true);
+
+    /// <summary>
+    /// Compiles the operation. <paramref name="mergeAcrossDefer"/> <c>false</c> keeps every
+    /// <c>@defer</c> fragment whole and at its place instead of merging its selections with outside ones.
+    /// </summary>
+    internal Operation Compile(
+        string id,
+        string hash,
+        string shortHash,
+        OperationDefinitionNode operationDefinition,
+        bool mergeAcrossDefer)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentNullException.ThrowIfNull(operationDefinition);
 
         var document = new DocumentNode(new IDefinitionNode[] { operationDefinition });
-        document = _documentRewriter.RewriteDocument(document);
+        document = (mergeAcrossDefer ? _documentRewriter : _keepDeferRewriter).RewriteDocument(document);
         operationDefinition = (OperationDefinitionNode)document.Definitions[0];
 
         var includeConditions = new IncludeConditionCollection(_maxAllowedIncludeConditions);

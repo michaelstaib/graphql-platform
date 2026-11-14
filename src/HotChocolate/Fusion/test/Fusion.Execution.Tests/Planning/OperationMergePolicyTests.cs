@@ -214,7 +214,7 @@ public class OperationMergePolicyTests : FusionTestBase
 
         var operationDoc = Utf8GraphQLParser.Parse(operationText);
 
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(operationDoc, operationName: null);
         var operation = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
 

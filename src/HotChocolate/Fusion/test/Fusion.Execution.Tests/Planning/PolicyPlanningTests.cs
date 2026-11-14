@@ -1122,7 +1122,7 @@ public class PolicyPlanningTests : FusionTestBase
             cancellationToken: TestContext.Current.CancellationToken);
         var schema = executor.Schema.Services.GetRequiredService<FusionSchemaDefinition>();
         var planner = executor.Schema.Services.GetRequiredService<OperationPlanner>();
-        var operation = new DocumentRewriter(schema)
+        var operation = new DocumentRewriter(schema, mergeAcrossDefer: true)
             .RewriteDocument(Utf8GraphQLParser.Parse("{ field }"), operationName: null)
             .Definitions.OfType<OperationDefinitionNode>()
             .First();

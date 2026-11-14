@@ -114,7 +114,7 @@ public class NullLeafFastPathBenchmark : FusionBenchmarkBase
     public void Setup()
     {
         var schema = CreateFusionSchema();
-        var documentRewriter = new DocumentRewriter(schema);
+        var documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operationDefinition = documentRewriter
             .RewriteDocument(
                 Utf8GraphQLParser.Parse(

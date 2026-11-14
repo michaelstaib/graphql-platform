@@ -42,7 +42,7 @@ public class SelectionSetPartitionerTests
             }
             """);
 
-        var rewriter = new DocumentRewriter(compositeSchema);
+        var rewriter = new DocumentRewriter(compositeSchema, mergeAcrossDefer: true);
         var operation = rewriter.RewriteDocument(doc).Definitions.OfType<OperationDefinitionNode>().Single();
         var index = SelectionSetIndexer.Create(operation);
 
@@ -114,7 +114,7 @@ public class SelectionSetPartitionerTests
             }
             """);
 
-        var rewriter = new DocumentRewriter(compositeSchema);
+        var rewriter = new DocumentRewriter(compositeSchema, mergeAcrossDefer: true);
         var operation = rewriter.RewriteDocument(doc).Definitions.OfType<OperationDefinitionNode>().Single();
         var index = SelectionSetIndexer.Create(operation);
 

@@ -2494,7 +2494,8 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         IPolicyResolver policyResolver)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
-        var rewritten = new DocumentRewriter(schema).RewriteDocument(document, operationName: null);
+        var rewritten = new DocumentRewriter(schema, mergeAcrossDefer: true)
+            .RewriteDocument(document, operationName: null);
         var operation = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
         var compiler = new OperationCompiler(schema, new DefaultObjectPoolProvider().CreateFieldMapPool());
         var planner = new OperationPlanner(schema, compiler, OperationPlannerOptions.Default, policyResolver);

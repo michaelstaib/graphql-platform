@@ -27,7 +27,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -68,7 +68,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -103,7 +103,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -146,7 +146,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -182,7 +182,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -218,7 +218,10 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition, true);
+        var rewriter = new DocumentRewriter(
+            schemaDefinition,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -256,7 +259,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -295,7 +298,10 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition, true);
+        var rewriter = new DocumentRewriter(
+            schemaDefinition,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -330,7 +336,10 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition, true);
+        var rewriter = new DocumentRewriter(
+            schemaDefinition,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -361,7 +370,10 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition, true);
+        var rewriter = new DocumentRewriter(
+            schemaDefinition,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -395,7 +407,10 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition, true);
+        var rewriter = new DocumentRewriter(
+            schemaDefinition,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -435,7 +450,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -485,7 +500,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -530,7 +545,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -565,7 +580,10 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition, true);
+        var rewriter = new DocumentRewriter(
+            schemaDefinition,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -597,7 +615,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -631,7 +649,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -665,7 +683,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -700,7 +718,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -739,7 +757,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -780,7 +798,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -821,7 +839,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -862,7 +880,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -896,7 +914,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -930,7 +948,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -968,7 +986,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1007,7 +1025,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1045,7 +1063,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1084,7 +1102,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1137,7 +1155,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1191,7 +1209,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1246,7 +1264,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1304,7 +1322,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1359,7 +1377,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1413,7 +1431,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1472,7 +1490,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1518,7 +1536,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1571,7 +1589,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1632,7 +1650,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1676,7 +1694,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1717,7 +1735,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1781,7 +1799,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1820,7 +1838,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1887,7 +1905,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1953,7 +1971,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -1998,7 +2016,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2036,7 +2054,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2073,7 +2091,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2115,7 +2133,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2153,7 +2171,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2216,7 +2234,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert - should merge dimension fields appropriately
@@ -2275,7 +2293,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2321,7 +2339,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2361,7 +2379,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2432,7 +2450,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2491,7 +2509,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2540,7 +2558,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2574,7 +2592,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2612,7 +2630,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2651,7 +2669,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2687,7 +2705,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2723,7 +2741,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2764,7 +2782,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2805,7 +2823,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2846,7 +2864,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2887,7 +2905,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2931,7 +2949,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -2974,7 +2992,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3009,7 +3027,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3050,7 +3068,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3090,7 +3108,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3128,7 +3146,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3167,7 +3185,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3218,7 +3236,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3271,7 +3289,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3312,7 +3330,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3347,7 +3365,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3386,7 +3404,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3425,7 +3443,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3465,7 +3483,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3504,7 +3522,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3549,7 +3567,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3606,7 +3624,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         void Action() => rewriter.RewriteDocument(doc);
 
         // assert
@@ -3649,7 +3667,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         void Action() => rewriter.RewriteDocument(doc);
 
         // assert
@@ -3694,7 +3712,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         void Action() => rewriter.RewriteDocument(doc);
 
         // assert
@@ -3735,7 +3753,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         void Action() => rewriter.RewriteDocument(doc);
 
         // assert
@@ -3765,7 +3783,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3802,7 +3820,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3844,7 +3862,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3881,7 +3899,7 @@ public class DocumentRewriterTests : FusionTestBase
             $"mutation({string.Join(", ", variables)}) {{ {string.Join(" ", selections)} }}");
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         void Action() => rewriter.RewriteDocument(doc);
 
         // assert
@@ -3910,7 +3928,7 @@ public class DocumentRewriterTests : FusionTestBase
             $"mutation({string.Join(", ", variables)}) {{ {string.Join(" ", selections)} }}");
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         void Action() => rewriter.RewriteDocument(doc);
 
         // assert
@@ -3942,7 +3960,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -3987,7 +4005,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -4029,7 +4047,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewriter = new DocumentRewriter(schemaDefinition);
+        var rewriter = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(doc);
 
         // assert
@@ -4090,7 +4108,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewritten = new DocumentRewriter(schemaDefinition).RewriteDocument(doc);
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true).RewriteDocument(doc);
 
         // assert
         rewritten.MatchInlineSnapshot(
@@ -4125,7 +4143,7 @@ public class DocumentRewriterTests : FusionTestBase
             """);
 
         // act
-        var rewritten = new DocumentRewriter(schemaDefinition).RewriteDocument(doc);
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true).RewriteDocument(doc);
 
         // assert
         rewritten.MatchInlineSnapshot(
@@ -4161,7 +4179,7 @@ public class DocumentRewriterTests : FusionTestBase
         var doc = Utf8GraphQLParser.Parse(sb.ToString());
 
         // act
-        var rewritten = new DocumentRewriter(schemaDefinition).RewriteDocument(doc);
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true).RewriteDocument(doc);
 
         // assert
         rewritten.MatchInlineSnapshot(
@@ -4173,4 +4191,373 @@ public class DocumentRewriterTests : FusionTestBase
             }
             """);
     }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepOneDeferAtUser_When_DeferredFragmentRepeatsCompositeField()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                user {
+                    profile {
+                        bio
+                    }
+                    ... @defer(label: "L") {
+                        profile {
+                            bio
+                            avatar
+                        }
+                        total
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              user {
+                profile {
+                  bio
+                }
+                ... @defer(label: "L") {
+                  profile {
+                    bio
+                    avatar
+                  }
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepFieldInDeferredFragment_When_FieldIsSelectedAfterTheFragment()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                user {
+                    ... @defer(label: "L") {
+                        profile {
+                            avatar
+                        }
+                        id
+                    }
+                    profile {
+                        bio
+                    }
+                    id
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              user {
+                profile {
+                  bio
+                }
+                id
+                ... @defer(label: "L") {
+                  profile {
+                    avatar
+                  }
+                  id
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepIdInDeferredFragment_When_IdIsSelectedOutside()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                user {
+                    id
+                    ... @defer {
+                        id
+                        name
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              user {
+                id
+                ... @defer {
+                  id
+                  name
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepNameInBothFragments_When_NestedDeferSelectsSameField()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                user {
+                    ... @defer(label: "o") {
+                        name
+                        ... @defer(label: "i") {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              user {
+                ... @defer(label: "o") {
+                  name
+                  ... @defer(label: "i") {
+                    name
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepTypedFragmentInDeferredFragment_When_TypedFragmentIsSelectedOutside()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                node {
+                    ... on User {
+                        name
+                    }
+                    ... @defer(label: "L") {
+                        ... on User {
+                            name
+                            nick
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              node {
+                ... on User {
+                  name
+                }
+                ... on User @defer(label: "L") {
+                  name
+                  nick
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepResultOfSpreadHandling_When_FragmentIsSpreadPlainAndDeferred()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                user {
+                    ...F
+                    ...F @defer
+                }
+            }
+
+            fragment F on User {
+                id
+                name
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              user {
+                id
+                name
+                ... @defer {
+                  id
+                  name
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_MergeConditionalsInsideDeferredFragment_When_MergeAcrossDeferIsFalse()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            query($a: Boolean!) {
+                user {
+                    ... @defer(label: "L") {
+                        profile {
+                            bio
+                        }
+                        ... @include(if: $a) {
+                            profile {
+                                avatar
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            query($a: Boolean!) {
+              user {
+                ... @defer(label: "L") {
+                  profile {
+                    bio
+                    avatar @include(if: $a)
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_ReturnSameDocument_When_OperationHasNoDefer()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            query($a: Boolean!) {
+                user {
+                    profile {
+                        bio
+                    }
+                    ...F
+                    ... @include(if: $a) {
+                        profile {
+                            avatar
+                        }
+                        nick
+                    }
+                }
+            }
+
+            fragment F on User {
+                id
+                profile {
+                    bio
+                    avatar
+                }
+            }
+            """);
+
+        // act
+        var merged = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: true).RewriteDocument(doc);
+        var kept = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        Assert.Equal(merged.ToString(), kept.ToString());
+        kept.MatchInlineSnapshot(
+            """
+            query($a: Boolean!) {
+              user {
+                profile {
+                  bio
+                  avatar
+                }
+                id
+                nick @include(if: $a)
+              }
+            }
+            """);
+    }
+
+    private static FusionSchemaDefinition CreateDeferSchema()
+        => ComposeSchema(
+            """
+            type Query {
+              user: User
+              node: Node
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type User implements Node {
+              id: ID!
+              name: String
+              nick: String
+              total: Int
+              profile: Profile
+            }
+
+            type Profile {
+              bio: String
+              avatar: String
+            }
+            """);
 }

@@ -19,7 +19,10 @@ internal sealed class OperationDocumentNormalizer : IOperationDocumentNormalizer
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(normalizedDocumentCache);
 
-        _documentRewriter = new DocumentRewriter(schema, removeStaticallyExcludedSelections: true);
+        _documentRewriter = new DocumentRewriter(
+            schema,
+            mergeAcrossDefer: true,
+            removeStaticallyExcludedSelections: true);
         _normalizedDocumentCache = normalizedDocumentCache;
     }
 

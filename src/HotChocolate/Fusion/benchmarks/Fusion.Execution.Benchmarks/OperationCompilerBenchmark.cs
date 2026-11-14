@@ -28,7 +28,7 @@ public class OperationCompilerBenchmark : FusionBenchmarkBase
     {
         var schema = CreateFusionSchema();
 
-        var documentRewriter = new DocumentRewriter(schema);
+        var documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
 
         _simpleQueryWithRequirements = documentRewriter.RewriteDocument(CreateSimpleQueryWithRequirementsDocument()).GetOperation(operationName: null);
         _complexQuery = documentRewriter.RewriteDocument(CreateComplexDocument()).GetOperation(operationName: null);

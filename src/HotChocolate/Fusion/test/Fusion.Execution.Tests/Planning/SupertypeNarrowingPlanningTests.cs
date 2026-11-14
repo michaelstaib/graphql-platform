@@ -288,7 +288,7 @@ public sealed class SupertypeNarrowingPlanningTests : FusionTestBase
             }
             """);
 
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operation = rewriter.RewriteDocument(document).Definitions
             .OfType<OperationDefinitionNode>()
             .Single();
@@ -425,7 +425,7 @@ public sealed class SupertypeNarrowingPlanningTests : FusionTestBase
             }
             """);
 
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operation = rewriter.RewriteDocument(document).Definitions
             .OfType<OperationDefinitionNode>()
             .Single();
@@ -1369,7 +1369,7 @@ public sealed class SupertypeNarrowingPlanningTests : FusionTestBase
         string schemaName)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operation = rewriter.RewriteDocument(document).Definitions
             .OfType<OperationDefinitionNode>()
             .Single();

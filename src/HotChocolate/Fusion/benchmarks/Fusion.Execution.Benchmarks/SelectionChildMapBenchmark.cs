@@ -192,7 +192,7 @@ public class SelectionChildMapBenchmark : FusionBenchmarkBase
             throw new InvalidOperationException("Product type not found in the composed schema.");
         }
 
-        var documentRewriter = new DocumentRewriter(schema);
+        var documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operationDefinition = documentRewriter
             .RewriteDocument(Utf8GraphQLParser.Parse(QuerySource))
             .GetOperation(operationName: null);

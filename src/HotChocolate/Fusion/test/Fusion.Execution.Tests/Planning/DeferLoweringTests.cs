@@ -1605,7 +1605,8 @@ public class DeferLoweringTests : FusionTestBase
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
-        var normalized = new DocumentRewriter(s_schema).RewriteDocument(document, operationName: null);
+        var normalized = new DocumentRewriter(s_schema, mergeAcrossDefer: true)
+            .RewriteDocument(document, operationName: null);
         var operation = normalized.Definitions.OfType<OperationDefinitionNode>().First();
         return DeferLowering.Lower(operation, s_schema).ToString(indented: true);
     }
