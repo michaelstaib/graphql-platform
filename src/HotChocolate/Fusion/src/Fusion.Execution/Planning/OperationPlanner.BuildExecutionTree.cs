@@ -469,6 +469,7 @@ public sealed partial class OperationPlanner
     private static SelectionSetNode StripDeferFromSelectionSet(SelectionSetNode selectionSet)
     {
         List<ISelectionNode>? rewritten = null;
+        List<int>? removed = null;
 
         for (var i = 0; i < selectionSet.Selections.Count; i++)
         {
@@ -486,6 +487,14 @@ public sealed partial class OperationPlanner
                     rewritten[i] = inlineFragment
                         .WithDirectives(strippedDirectives)
                         .WithSelectionSet(strippedInner);
+
+                    // A fragment that only held a deferred fragment, which a lookup resolves,
+                    // has nothing left to select.
+                    if (IsPlaceholderOnly(strippedInner))
+                    {
+                        removed ??= [];
+                        removed.Add(i);
+                    }
                 }
             }
             else if (selection is FieldNode { SelectionSet: not null } field)
@@ -500,7 +509,32 @@ public sealed partial class OperationPlanner
             }
         }
 
-        return rewritten is null ? selectionSet : new SelectionSetNode(rewritten);
+        if (rewritten is null)
+        {
+            return selectionSet;
+        }
+
+        if (removed is not null)
+        {
+            for (var i = removed.Count - 1; i >= 0; i--)
+            {
+                rewritten.RemoveAt(removed[i]);
+            }
+        }
+
+        return new SelectionSetNode(rewritten);
+    }
+
+    private static bool IsPlaceholderOnly(SelectionSetNode selectionSet)
+    {
+        if (selectionSet.Selections.Count == 0)
+        {
+            return true;
+        }
+
+        return selectionSet.Selections is [FieldNode { Alias: null } field]
+            && field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal)
+            && field.Directives is [{ Name.Value: "fusion__empty" }];
     }
 
     private static IReadOnlyList<DirectiveNode> StripDeferDirective(IReadOnlyList<DirectiveNode> directives)
