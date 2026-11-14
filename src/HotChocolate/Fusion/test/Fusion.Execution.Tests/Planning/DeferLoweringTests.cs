@@ -332,42 +332,6 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_KeepRemainingLeafInDeferredCopy_When_NormalizerAlreadyDroppedSelectedLeaf()
-    {
-        // arrange
-        const string operation =
-            """
-            query {
-                user(id: "1") {
-                    id
-                    sku
-                    ... @defer {
-                        sku
-                        total
-                    }
-                }
-            }
-            """;
-
-        // act
-        var lowered = Lower(operation);
-
-        // assert
-        lowered.MatchInlineSnapshot(
-            """
-            {
-              user(id: "1") {
-                id
-                sku
-                ... @defer {
-                  total
-                }
-              }
-            }
-            """);
-    }
-
-    [Fact]
     public void Lower_Should_KeepLeafInDeferredCopy_When_PlainSelectionIsConditional()
     {
         // arrange

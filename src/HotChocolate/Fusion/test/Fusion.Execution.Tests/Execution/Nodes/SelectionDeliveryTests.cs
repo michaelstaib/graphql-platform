@@ -853,6 +853,23 @@ public class SelectionDeliveryTests : FusionTestBase
                     }
                     """)),
             (
+                "two unlabelled sibling groups",
+                ["a", "b"],
+                Compile(
+                    """
+                    query($a: Boolean!, $b: Boolean!) {
+                        product(id: "1") {
+                            id
+                            ... @defer(if: $a) {
+                                name
+                            }
+                            ... @defer(if: $b) {
+                                price
+                            }
+                        }
+                    }
+                    """)),
+            (
                 "include on another variable",
                 ["x", "v"],
                 CompileNotNormalized(
@@ -881,6 +898,7 @@ public class SelectionDeliveryTests : FusionTestBase
             "three levels: 8 combinations, 0 violations",
             "switchable defer at the query root: 4 combinations, 0 violations",
             "nested defer in two sibling groups: 16 combinations, 0 violations",
+            "two unlabelled sibling groups: 4 combinations, 0 violations",
             "include on another variable: 4 combinations, 0 violations"
         ]);
     }
