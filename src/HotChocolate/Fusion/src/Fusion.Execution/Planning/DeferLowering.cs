@@ -410,7 +410,7 @@ internal static class DeferLowering
             => new(type, true, false, new Level(items, true, null, null));
 
         public Scope EnterField(ITypeDefinition? type, IReadOnlyList<ISelectionNode> items)
-            => new(type, false, InDeferred, new Level(items, !InDeferred, null, null));
+            => new(type, false, InDeferred, new Level(items, true, null, null));
 
         public Scope EnterFragment(
             ITypeDefinition? type,
@@ -428,7 +428,8 @@ internal static class DeferLowering
 
     /// <summary>
     /// A selection list on one field level. <paramref name="IsEnclosing"/> is <c>true</c> when the list is
-    /// outside of any deferred fragment or is the own content of a fragment with <c>@defer</c> at this level.
+    /// the selection set of the operation or of a field, is the own content of a fragment with <c>@defer</c> at
+    /// this level, or is a fragment without <c>@defer</c> nested in such a list.
     /// </summary>
     private sealed record Level(
         IReadOnlyList<ISelectionNode> Items,

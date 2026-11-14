@@ -1602,6 +1602,81 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_DropLeafFromInnerFragment_When_OuterFragmentSelectsLeafBelowField_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        id
+                        ... @defer(label: "i") {
+                            id
+                            name
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              ... @defer(label: "o") {
+                user(id: "1") {
+                  id
+                  ... @defer(label: "i") {
+                    name
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineInnerFragment_When_OuterFragmentSelectsEveryLeafBelowField_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        id
+                        ... @defer(label: "i") {
+                            id
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              ... @defer(label: "o") {
+                user(id: "1") {
+                  id
+                  ... {
+                    id
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
