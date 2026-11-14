@@ -414,6 +414,12 @@ public sealed partial class OperationPlanner
                 }
             }
 
+            if (singlePlanDefer
+                && !TryValidateDeliveryGroupDependencies(planSteps, deliveryGroups, out fallbackCause))
+            {
+                return null;
+            }
+
             // Use the latest root operation definition after deferred planning.
             var operation = _operationCompiler.Compile(
                 id,
@@ -421,6 +427,12 @@ public sealed partial class OperationPlanner
                 shortHash,
                 internalOperationDefinition,
                 mergeAcrossDefer: !singlePlanDefer);
+
+            if (singlePlanDefer
+                && !TryValidateCompiledDeliveryGroups(operation, deliveryGroups, out fallbackCause))
+            {
+                return null;
+            }
 
             if (deferContextGraph is not null)
             {
@@ -473,6 +485,116 @@ public sealed partial class OperationPlanner
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Verifies that every step that depends on a step of a delivery group belongs to that group or to a
+    /// group nested in it.
+    /// </summary>
+    internal static bool TryValidateDeliveryGroupDependencies(
+        ImmutableList<PlanStep> steps,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        out string? cause)
+    {
+        foreach (var step in steps)
+        {
+            if (step is not OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: false } provider)
+            {
+                continue;
+            }
+
+            foreach (var dependentId in provider.Dependents)
+            {
+                if (steps.ById(dependentId) is OperationPlanStep dependent
+                    && !CoversDeliveryGroups(dependent.DeliveryGroups, provider.DeliveryGroups, deliveryGroups))
+                {
+                    cause = $"Step {dependent.Id} depends on step {provider.Id} of another delivery group.";
+                    return false;
+                }
+            }
+        }
+
+        cause = null;
+        return true;
+
+        static bool CoversDeliveryGroups(
+            ImmutableArray<int> consumerGroups,
+            ImmutableArray<int> providerGroups,
+            ImmutableArray<DeliveryGroup> deliveryGroups)
+        {
+            if (consumerGroups.IsDefaultOrEmpty)
+            {
+                return false;
+            }
+
+            foreach (var providerGroup in providerGroups)
+            {
+                var covered = false;
+
+                foreach (var consumerGroup in consumerGroups)
+                {
+                    for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
+                    {
+                        if (group.Id == providerGroup)
+                        {
+                            covered = true;
+                            break;
+                        }
+                    }
+
+                    if (covered)
+                    {
+                        break;
+                    }
+                }
+
+                if (!covered)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Verifies that the compiled operation has the delivery groups that the steps were planned with.
+    /// </summary>
+    internal bool TryValidateCompiledDeliveryGroups(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        out string? cause)
+    {
+        var compiled = DeferPartitioner.Partition(
+            operation.Definition,
+            new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions)).AllDeliveryGroups;
+
+        if (compiled.Length != deliveryGroups.Length)
+        {
+            cause = $"The compiled operation has {compiled.Length} delivery groups, the planned one has "
+                + $"{deliveryGroups.Length}.";
+            return false;
+        }
+
+        for (var i = 0; i < compiled.Length; i++)
+        {
+            var planned = deliveryGroups[i];
+            var actual = compiled[i];
+
+            if (planned.Id != actual.Id
+                || !Equals(planned.Path, actual.Path)
+                || !string.Equals(planned.Label, actual.Label, StringComparison.Ordinal)
+                || !string.Equals(planned.IfVariable, actual.IfVariable, StringComparison.Ordinal)
+                || planned.Parent?.Id != actual.Parent?.Id)
+            {
+                cause = $"Delivery group {planned.Id} differs between the planned and the compiled operation.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
     }
 
     private OperationDefinitionNode LowerForSinglePlanDefer(OperationDefinitionNode operationDefinition)
