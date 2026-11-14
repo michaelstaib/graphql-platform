@@ -938,7 +938,10 @@ public class SelectionDeliveryTests : FusionTestBase
     private static Operation Compile(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
-        var normalized = new DocumentRewriter(s_schema, mergeAcrossDefer: false)
+        var normalized = new DocumentRewriter(
+                s_schema,
+                mergeAcrossDefer: false,
+                removeStaticallyExcludedSelections: true)
             .RewriteDocument(document, operationName: null);
 
         return Compile(normalized.Definitions.OfType<OperationDefinitionNode>().First());
