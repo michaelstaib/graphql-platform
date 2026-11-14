@@ -708,6 +708,12 @@ public sealed class OperationCompiler
         return false;
     }
 
+    /// <summary>
+    /// Determines whether <paramref name="fieldNode"/> is a requirement or empty marker field added by the planner.
+    /// </summary>
+    internal static bool IsInternalField(FieldNode fieldNode)
+        => IsInternal(fieldNode);
+
     private static bool HasDeferDirective(OperationDefinitionNode operation)
         => DeferDetectionVisitor.Instance.HasDefer(operation);
 
