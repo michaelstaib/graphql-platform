@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
@@ -76,13 +77,20 @@ internal static class DeferLowering
             }
 
             var isDeferrable = DeferCondition.TryCreate(fragment, out var condition);
-            var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true);
             var plainScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false);
-            var deferredContent = isDeferrable ? LowerList(items, deferredScope) : null;
-            var coverage = isDeferrable ? Coverage.Create(scope, fragment.TypeCondition) : Coverage.Empty;
+            List<ISelectionNode>? deferredContent = null;
+            var coverage = Coverage.Empty;
+
+            if (isDeferrable)
+            {
+                // The content is lowered first, so a nested fragment that was inlined is part of it.
+                var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true);
+                coverage = Coverage.Create(scope, fragment.TypeCondition);
+                deferredContent = Prune(LowerList(items, deferredScope), coverage);
+            }
 
             // The fragment is inlined when it cannot be delivered later or adds nothing.
-            // The content is lowered first, so a nested fragment that was inlined is part of it.
+            // The decision reads the content that is left after the pruning of the deferred copy.
             if (deferredContent is null || ShouldInline(deferredContent, fragmentType, coverage, scope))
             {
                 var inlined = new InlineFragmentNode(
@@ -100,7 +108,7 @@ internal static class DeferLowering
             }
 
             // The deferred copy drops the leaf fields that are selected outside of any deferred fragment.
-            result.Add(fragment.WithSelectionSet(new SelectionSetNode(Prune(deferredContent, coverage))));
+            result.Add(fragment.WithSelectionSet(new SelectionSetNode(deferredContent)));
         }
 
         private bool ShouldInline(
@@ -122,30 +130,35 @@ internal static class DeferLowering
             }
 
             // Nothing in the fragment is new.
-            return IsCovered(content, coverage);
+            return !HasOwnField(content, coverage);
         }
 
-        private static bool IsCovered(IReadOnlyList<ISelectionNode> items, Coverage coverage)
+        private static bool HasOwnField(IReadOnlyList<ISelectionNode> items, Coverage coverage)
         {
             foreach (var item in items)
             {
                 switch (item)
                 {
-                    case FieldNode { SelectionSet: null } leaf when !coverage.Fields.ContainsKey(GetResponseName(leaf)):
-                        return false;
+                    case FieldNode { SelectionSet: null }:
+                        return true;
 
-                    case FieldNode { SelectionSet: { } selectionSet } composite
-                        when !IsCovered(
-                            selectionSet.Selections,
-                            coverage.Fields.GetValueOrDefault(GetResponseName(composite)) ?? Coverage.Empty):
-                        return false;
+                    case FieldNode { SelectionSet: { } selectionSet } composite:
+                        if (!coverage.Fields.TryGetValue(GetResponseName(composite), out var childCoverage)
+                            || HasOwnField(selectionSet.Selections, childCoverage))
+                        {
+                            return true;
+                        }
 
-                    case InlineFragmentNode fragment when !IsCovered(fragment.SelectionSet.Selections, coverage):
-                        return false;
+                        break;
+
+                    // A nested fragment that stays deferred announces its own fields.
+                    case InlineFragmentNode fragment when !HasDeferDirective(fragment)
+                        && HasOwnField(fragment.SelectionSet.Selections, coverage):
+                        return true;
                 }
             }
 
-            return true;
+            return false;
         }
 
         private bool HasDirectLookups(IReadOnlyList<ISelectionNode> items, ITypeDefinition? type)
@@ -168,18 +181,28 @@ internal static class DeferLowering
 
         private bool HasDirectLookup(ITypeDefinition? type, FieldNode field)
         {
-            if (field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
-            {
-                return true;
-            }
-
-            if (type is not FusionComplexTypeDefinition complexType
-                || !complexType.Fields.TryGetField(field.Name.Value, out var fieldDefinition))
+            if (type is not FusionComplexTypeDefinition complexType)
             {
                 return false;
             }
 
-            foreach (var toSchema in fieldDefinition.Sources.Schemas)
+            // __typename is served by every source schema of the type.
+            ImmutableArray<string> toSchemas;
+
+            if (field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
+            {
+                toSchemas = complexType.Sources.Schemas;
+            }
+            else if (complexType.Fields.TryGetField(field.Name.Value, out var fieldDefinition))
+            {
+                toSchemas = fieldDefinition.Sources.Schemas;
+            }
+            else
+            {
+                return false;
+            }
+
+            foreach (var toSchema in toSchemas)
             {
                 foreach (var fromSchema in complexType.Sources.Schemas)
                 {

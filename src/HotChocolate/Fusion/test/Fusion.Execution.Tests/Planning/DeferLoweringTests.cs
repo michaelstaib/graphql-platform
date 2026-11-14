@@ -7,10 +7,16 @@ namespace HotChocolate.Fusion.Planning;
 public class DeferLoweringTests : FusionTestBase
 {
     private static readonly FusionSchemaDefinition s_schema = ComposeSchema(
+        options =>
+        {
+            options.Merger.EnableGlobalObjectIdentification = true;
+            options.Satisfiability.IgnoredNonAccessibleFields["Order.sku"] = ["C:Query.orderById<Order>"];
+        },
         """
         # name: a
         type Query {
             user(id: ID!): User @lookup
+            order(id: ID!): Order
         }
 
         type Mutation {
@@ -22,11 +28,17 @@ public class DeferLoweringTests : FusionTestBase
             name: String!
             sku: String!
             profile: Profile!
+            friends: [User!]!
         }
 
         type Profile {
             bio: String!
             avatar: String!
+        }
+
+        type Order @key(fields: "id") {
+            id: ID!
+            sku: String!
         }
         """,
         """
@@ -40,6 +52,17 @@ public class DeferLoweringTests : FusionTestBase
             email: String!
             total: Int!
             nick: String!
+        }
+        """,
+        """
+        # name: c
+        type Query {
+            orderById(id: ID!): Order @lookup
+        }
+
+        type Order @key(fields: "id") {
+            id: ID!
+            total: Int!
         }
         """);
 
@@ -530,41 +553,6 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_KeepBothFragmentsDeferred_When_FragmentHoldsOnlyNestedFragment()
-    {
-        // arrange
-        // act
-        var lowered = Lower(
-            """
-            query {
-                user(id: "1") {
-                    id
-                    ... @defer(label: "outer") {
-                        ... @defer(label: "inner") {
-                            email
-                        }
-                    }
-                }
-            }
-            """);
-
-        // assert
-        lowered.MatchInlineSnapshot(
-            """
-            {
-              user(id: "1") {
-                id
-                ... @defer(label: "outer") {
-                  ... @defer(label: "inner") {
-                    email
-                  }
-                }
-              }
-            }
-            """);
-    }
-
-    [Fact]
     public void Lower_Should_InlineFragment_When_EveryFieldIsAlreadySelected_InputIsNotNormalized()
     {
         // arrange
@@ -698,6 +686,331 @@ public class DeferLoweringTests : FusionTestBase
                 ... @defer {
                   sku
                   total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentDeferred_When_FieldWithoutLookupIsSelectedOutside_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query {
+                order(id: "1") {
+                    id
+                    sku
+                    ... @defer {
+                        sku
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              order(id: "1") {
+                id
+                sku
+                ... @defer {
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragment_When_OuterHoldsOnlyNestedFragment()
+    {
+        // arrange
+        // act
+        var lowered = Lower(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        ... @defer(label: "inner") {
+                            email
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                id
+                ... {
+                  ... @defer(label: "inner") {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragment_When_OuterHoldsOnlyUnconditionalNestedFragment()
+    {
+        // arrange
+        // act
+        var lowered = Lower(
+            """
+            query($a: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(if: $a, label: "outer") {
+                        ... @defer(label: "inner") {
+                            email
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($a: Boolean!) {
+              user(id: "1") {
+                id
+                ... {
+                  ... @defer(label: "inner") {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragment_When_OuterHoldsOnlyCoveredFieldAndNestedFragment_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        id
+                        ... @defer(label: "inner") {
+                            name
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                id
+                ... {
+                  id
+                  ... @defer(label: "inner") {
+                    name
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepOuterFragmentDeferred_When_OuterHoldsOnlySwitchableNestedFragment()
+    {
+        // arrange
+        // act
+        var lowered = Lower(
+            """
+            query($c: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "outer") {
+                        ... @defer(if: $c, label: "inner") {
+                            email
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($c: Boolean!) {
+              user(id: "1") {
+                id
+                ... @defer(label: "outer") {
+                  ... @skip(if: $c) {
+                    email
+                  }
+                  ... @defer(if: $c, label: "inner") {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepOuterFragmentDeferred_When_OuterHoldsCompositeFieldWithNestedFragment()
+    {
+        // arrange
+        // act
+        var lowered = Lower(
+            """
+            query {
+                user(id: "1") {
+                    ... @defer(label: "outer") {
+                        friends {
+                            ... @defer(label: "inner") {
+                                name
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                ... @defer(label: "outer") {
+                  friends {
+                    ... @defer(label: "inner") {
+                      name
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragment_When_CoveredCompositeFieldHoldsOnlyNestedFragment_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "outer") {
+                        friends {
+                            ... @defer(label: "inner") {
+                                name
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                }
+                ... {
+                  friends {
+                    ... @defer(label: "inner") {
+                      name
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentDeferred_When_OnlyTypenameIsSelectedAndAnchorTypeHasLookup()
+    {
+        // arrange
+        // act
+        var lowered = Lower(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "type") {
+                        __typename
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                id
+                ... @defer(label: "type") {
+                  __typename
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_OnlyTypenameIsSelectedAndAnchorTypeHasNoLookup()
+    {
+        // arrange
+        // act
+        var lowered = Lower(
+            """
+            query {
+                user(id: "1") {
+                    profile {
+                        bio
+                        ... @defer(label: "type") {
+                            __typename
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                profile {
+                  bio
+                  ... {
+                    __typename
+                  }
                 }
               }
             }
