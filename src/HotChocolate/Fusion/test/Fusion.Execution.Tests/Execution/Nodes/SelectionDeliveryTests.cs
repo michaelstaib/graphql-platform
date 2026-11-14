@@ -663,7 +663,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupWhenBothAreOn_When_IncludeIsOnOtherVariable()
+    public void ResolveDelivery_Should_ReturnGroupOnlyIfBothAreOn_When_IncludeIsOnOtherVariable()
     {
         // arrange
         var operation = Compile(
@@ -692,7 +692,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupWhenBothAreOn_When_IncludeIsOnOtherVariable_InputIsNotNormalized()
+    public void ResolveDelivery_Should_ReturnGroupOnlyIfBothAreOn_When_IncludeIsOnOtherVariable_InputIsNotNormalized()
     {
         // arrange
         var operation = CompileNotNormalized(
@@ -721,7 +721,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupWhenVariableIsOn_When_IncludeUsesSameVariable_InputIsNotNormalized()
+    public void ResolveDelivery_Should_ReturnGroupOnlyIfVariableIsOn_When_IncludeUsesSameVariable_InputIsNotNormalized()
     {
         // arrange
         var operation = CompileNotNormalized(
@@ -748,10 +748,9 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_NeverReturnTwoGroupsWithOneLabel_When_SwitchableDefersAreNested()
+    public void ResolveDelivery_Should_ReturnOneGroupPerLabel_When_SwitchableDefersAreNested()
     {
         // arrange
-        var report = new List<string>();
         var shapes = new (string Name, string[] Variables, Operation Operation)[]
         {
             (
@@ -863,20 +862,19 @@ public class SelectionDeliveryTests : FusionTestBase
         };
 
         // act
-        foreach (var shape in shapes)
-        {
-            report.AddRange(FindRepeatedLabels(shape.Name, shape.Operation, shape.Variables));
-        }
+        var report = shapes
+            .Select(static t => FindLabelViolations(t.Name, t.Operation, t.Variables))
+            .ToList();
 
         // assert
         report.MatchInlineSnapshots(
         [
-            "inner field only: 4 combinations, 0 repeated labels",
-            "one variable on both levels: 2 combinations, 0 repeated labels",
-            "three levels: 8 combinations, 0 repeated labels",
-            "switchable defer at the query root: 4 combinations, 0 repeated labels",
-            "nested defer in two sibling groups: 16 combinations, 0 repeated labels",
-            "include on another variable: 4 combinations, 0 repeated labels"
+            "inner field only: 4 combinations, 0 violations",
+            "one variable on both levels: 2 combinations, 0 violations",
+            "three levels: 8 combinations, 0 violations",
+            "switchable defer at the query root: 4 combinations, 0 violations",
+            "nested defer in two sibling groups: 16 combinations, 0 violations",
+            "include on another variable: 4 combinations, 0 violations"
         ]);
     }
 
@@ -994,9 +992,9 @@ public class SelectionDeliveryTests : FusionTestBase
         return lines;
     }
 
-    private static List<string> FindRepeatedLabels(string name, Operation operation, string[] variables)
+    private static string FindLabelViolations(string name, Operation operation, string[] variables)
     {
-        var lines = new List<string>();
+        var violations = new List<string>();
         var combinations = CreateCombinations(variables);
 
         foreach (var values in combinations)
@@ -1004,30 +1002,31 @@ public class SelectionDeliveryTests : FusionTestBase
             var variableValues = CreateVariableValues(operation, values);
             var includeFlags = operation.CreateIncludeConditionFlags(variableValues);
             var deferFlags = operation.CreateDeferConditionFlags(variableValues);
+            var groups = new Dictionary<DeliveryGroup, List<string>>(ReferenceEqualityComparer.Instance);
 
-            CollectRepeatedLabels(
-                operation,
-                operation.RootSelectionSet,
-                string.Empty,
-                includeFlags,
-                deferFlags,
-                FormatCombination(variables, values),
-                lines);
+            CollectActiveGroups(operation, operation.RootSelectionSet, string.Empty, includeFlags, deferFlags, groups);
+
+            foreach (var label in groups.GroupBy(static t => t.Key.Label).Where(static g => g.Count() > 1))
+            {
+                var deliveries = label.Select(static t => $"[{string.Join(", ", t.Value)}]");
+                violations.Add(
+                    $"{FormatCombination(variables, values)}: label {label.Key} is on {label.Count()} groups "
+                    + $"delivering {string.Join(" and ", deliveries)}");
+            }
         }
 
-        lines.Insert(0, $"{name}: {combinations.Count} combinations, {lines.Count} repeated labels");
-
-        return lines;
+        return string.Join(
+            Environment.NewLine,
+            violations.Prepend($"{name}: {combinations.Count} combinations, {violations.Count} violations"));
     }
 
-    private static void CollectRepeatedLabels(
+    private static void CollectActiveGroups(
         Operation operation,
         SelectionSet selectionSet,
         string path,
         ConditionFlags includeFlags,
         ConditionFlags deferFlags,
-        string combination,
-        List<string> lines)
+        Dictionary<DeliveryGroup, List<string>> groups)
     {
         foreach (var selection in selectionSet.Selections)
         {
@@ -1039,9 +1038,15 @@ public class SelectionDeliveryTests : FusionTestBase
                 continue;
             }
 
-            foreach (var label in ToLabels(resolution).GroupBy(static t => t).Where(static g => g.Count() > 1))
+            foreach (var group in resolution.Groups)
             {
-                lines.Add($"{combination} {fieldPath}: {label.Key} x{label.Count()}");
+                if (!groups.TryGetValue(group, out var paths))
+                {
+                    paths = [];
+                    groups.Add(group, paths);
+                }
+
+                paths.Add(fieldPath);
             }
 
             if (selection.IsLeaf)
@@ -1051,14 +1056,13 @@ public class SelectionDeliveryTests : FusionTestBase
 
             foreach (var possibleType in operation.GetPossibleTypes(selection))
             {
-                CollectRepeatedLabels(
+                CollectActiveGroups(
                     operation,
                     operation.GetSelectionSet(selection, possibleType),
                     fieldPath + ".",
                     includeFlags,
                     deferFlags,
-                    combination,
-                    lines);
+                    groups);
             }
         }
     }
