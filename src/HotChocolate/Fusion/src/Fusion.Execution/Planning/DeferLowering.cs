@@ -7,8 +7,9 @@ using HotChocolate.Types;
 namespace HotChocolate.Fusion.Planning;
 
 /// <summary>
-/// Rewrites an operation so that every <c>@defer</c> fragment that stays deferred has a plain copy
-/// in front of it, and every <c>@defer</c> fragment that cannot be delivered later is inlined.
+/// Rewrites an operation so that every switchable <c>@defer</c> fragment becomes a plain copy and a deferred
+/// copy of which exactly one is selected per request, and every <c>@defer</c> fragment that cannot be delivered
+/// later is inlined.
 /// </summary>
 internal static class DeferLowering
 {
@@ -108,7 +109,7 @@ internal static class DeferLowering
             }
 
             // The deferred copy drops the leaf fields that are selected outside of any deferred fragment.
-            result.Add(fragment.WithSelectionSet(new SelectionSetNode(deferredContent)));
+            result.Add(CreateDeferredCopy(fragment, condition, deferredContent));
         }
 
         private bool ShouldInline(
@@ -268,9 +269,7 @@ internal static class DeferLowering
             string variableName,
             List<ISelectionNode> content)
         {
-            var skip = new DirectiveNode(
-                DirectiveNames.Skip.Name,
-                new ArgumentNode(DirectiveNames.Skip.Arguments.If, new VariableNode(variableName)));
+            var skip = CreateConditionDirective(DirectiveNames.Skip.Name, variableName);
             var directives = fragment.Directives.Where(static d => !IsDeferDirective(d)).ToList();
             var selectionSet = new SelectionSetNode(content);
 
@@ -288,6 +287,62 @@ internal static class DeferLowering
                 directives,
                 new SelectionSetNode([inner]));
         }
+
+        private static InlineFragmentNode CreateDeferredCopy(
+            InlineFragmentNode fragment,
+            DeferCondition condition,
+            List<ISelectionNode> content)
+        {
+            var selectionSet = new SelectionSetNode(content);
+
+            // An unconditional @defer has no plain copy that the deferred copy must exclude.
+            if (condition.IfVariableName is not { } variableName)
+            {
+                return fragment.WithSelectionSet(selectionSet);
+            }
+
+            var include = CreateConditionDirective(DirectiveNames.Include.Name, variableName);
+            var existing = fragment.Directives.FirstOrDefault(
+                static d => d.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal));
+
+            if (existing is null)
+            {
+                var directives = new List<DirectiveNode>(fragment.Directives.Count + 1);
+
+                foreach (var directive in fragment.Directives)
+                {
+                    if (IsDeferDirective(directive))
+                    {
+                        directives.Add(include);
+                    }
+
+                    directives.Add(directive);
+                }
+
+                return new InlineFragmentNode(null, fragment.TypeCondition, directives, selectionSet);
+            }
+
+            if (IsConditionDirective(existing, variableName))
+            {
+                return fragment.WithSelectionSet(selectionSet);
+            }
+
+            // A fragment has one @include, so the client's directives go onto an enclosing fragment.
+            var defer = fragment.Directives.First(static d => IsDeferDirective(d));
+            var inner = new InlineFragmentNode(null, null, [include, defer], selectionSet);
+            return new InlineFragmentNode(
+                null,
+                fragment.TypeCondition,
+                fragment.Directives.Where(static d => !IsDeferDirective(d)).ToList(),
+                new SelectionSetNode([inner]));
+        }
+
+        private static DirectiveNode CreateConditionDirective(string name, string variableName)
+            => new(name, new ArgumentNode(DirectiveNames.Skip.Arguments.If, new VariableNode(variableName)));
+
+        private static bool IsConditionDirective(DirectiveNode directive, string variableName)
+            => directive.Arguments is [{ Value: VariableNode variable }]
+                && variable.Name.Value.Equals(variableName, StringComparison.Ordinal);
 
         private static ITypeDefinition? GetFieldType(ITypeDefinition? type, FieldNode field)
             => type is IComplexTypeDefinition complexType

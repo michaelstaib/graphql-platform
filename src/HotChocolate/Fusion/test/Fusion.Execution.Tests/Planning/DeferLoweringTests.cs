@@ -70,8 +70,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepDeferWithoutCopy_When_DeferIsUnconditional()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -81,7 +80,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -98,11 +100,10 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_AddSkipCopyInFront_When_DeferIsSwitchable()
+    public void Lower_Should_AddSkipCopyAndIncludeDeferredCopy_When_DeferIsSwitchable()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($d: Boolean!) {
                 user(id: "1") {
@@ -112,7 +113,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -123,7 +127,7 @@ public class DeferLoweringTests : FusionTestBase
                 ... @skip(if: $d) {
                   email
                 }
-                ... @defer(if: $d, label: "mail") {
+                ... @include(if: $d) @defer(if: $d, label: "mail") {
                   email
                 }
               }
@@ -135,8 +139,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_CopyInnerFieldFourTimes_When_SwitchableDeferIsNested()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($a: Boolean!, $b: Boolean!) {
                 user(id: "1") {
@@ -149,7 +152,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -162,16 +168,16 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $b) {
                     email
                   }
-                  ... @defer(if: $b, label: "inner") {
+                  ... @include(if: $b) @defer(if: $b, label: "inner") {
                     email
                   }
                 }
-                ... @defer(if: $a, label: "outer") {
+                ... @include(if: $a) @defer(if: $a, label: "outer") {
                   name
                   ... @skip(if: $b) {
                     email
                   }
-                  ... @defer(if: $b, label: "inner") {
+                  ... @include(if: $b) @defer(if: $b, label: "inner") {
                     email
                   }
                 }
@@ -184,8 +190,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineFragment_When_FragmentIsAtMutationRoot()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             mutation {
                 ... @defer {
@@ -194,7 +199,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -213,8 +221,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineFragment_When_AnchorTypeHasNoLookup()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -226,7 +233,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -248,8 +258,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineOuterFragment_When_InlinedInnerFragmentLeavesNothingNew_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -262,7 +271,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -285,8 +297,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepOuterFragmentDeferred_When_InlinedInnerLeavesOtherFieldsNew_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -300,7 +311,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -321,8 +335,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_DropLeafFromDeferredCopy_When_LeafIsSelectedOutsideDeferredFragment()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -334,7 +347,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -355,8 +371,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepLeafInDeferredCopy_When_PlainSelectionIsConditional()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($x: Boolean!) {
                 user(id: "1") {
@@ -367,7 +382,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -388,8 +406,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_NotRequireLookup_When_SwitchableDeferIsAtQueryRoot()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($d: Boolean!) {
                 ... @defer(if: $d) {
@@ -398,7 +415,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -409,7 +429,7 @@ public class DeferLoweringTests : FusionTestBase
                   id
                 }
               }
-              ... @defer(if: $d) {
+              ... @include(if: $d) @defer(if: $d) {
                 user(id: "1") {
                   id
                 }
@@ -422,8 +442,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_DropDeferDirective_When_IfArgumentIsFalse_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -433,7 +452,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -453,8 +475,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepCopiesInEnclosingFragment_When_NormalizerMovedSkipOffTheDeferredFragment()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($s: Boolean!, $d: Boolean!) {
                 user(id: "1") {
@@ -464,7 +485,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -476,7 +500,7 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $d) {
                     email
                   }
-                  ... @defer(if: $d) {
+                  ... @include(if: $d) @defer(if: $d) {
                     email
                   }
                 }
@@ -489,8 +513,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_NestSkipCopy_When_DeferredFragmentHasSkip_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query($s: Boolean!, $d: Boolean!) {
                 user(id: "1") {
@@ -500,7 +523,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -513,7 +539,7 @@ public class DeferLoweringTests : FusionTestBase
                     email
                   }
                 }
-                ... @skip(if: $s) @defer(if: $d) {
+                ... @skip(if: $s) @include(if: $d) @defer(if: $d) {
                   email
                 }
               }
@@ -525,8 +551,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepOperation_When_OperationHasNoDefer_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -536,7 +561,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -556,8 +584,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineFragment_When_EveryFieldIsAlreadySelected_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -567,7 +594,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -587,8 +617,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_DropLeafFromDeferredCopy_When_LeafIsSelectedOutside_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -600,7 +629,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -621,8 +653,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_DropOnlyOverlappingLeaves_When_CompositeFieldOverlaps_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -638,7 +669,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -663,8 +697,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepLeafInDeferredCopy_When_PlainSelectionIsConditional_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query($x: Boolean!) {
                 user(id: "1") {
@@ -675,7 +708,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -696,8 +732,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepFragmentDeferred_When_FieldWithoutLookupIsSelectedOutside_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 order(id: "1") {
@@ -709,7 +744,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -730,8 +768,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineOuterFragment_When_OuterHoldsOnlyNestedFragment()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -743,7 +780,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -765,8 +805,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineOuterFragment_When_OuterHoldsOnlyUnconditionalNestedFragment()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($a: Boolean!) {
                 user(id: "1") {
@@ -778,7 +817,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -800,8 +842,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineOuterFragment_When_OuterHoldsOnlyCoveredFieldAndNestedFragment_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -814,7 +855,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -837,8 +881,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepOuterFragmentDeferred_When_OuterHoldsOnlySwitchableNestedFragment()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query($c: Boolean!) {
                 user(id: "1") {
@@ -850,7 +893,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -862,7 +908,7 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $c) {
                     email
                   }
-                  ... @defer(if: $c, label: "inner") {
+                  ... @include(if: $c) @defer(if: $c, label: "inner") {
                     email
                   }
                 }
@@ -875,8 +921,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepOuterFragmentDeferred_When_OuterHoldsCompositeFieldWithNestedFragment()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -889,7 +934,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -909,11 +957,10 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_InlineOuterFragment_When_CoveredCompositeFieldHoldsOnlyNestedFragment_InputIsNotNormalized()
+    public void Lower_Should_InlineOuterFragment_When_CoveredFieldHoldsOnlyNestedFragment_InputIsNotNormalized()
     {
         // arrange
-        // act
-        var lowered = LowerNotNormalized(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -929,7 +976,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -955,8 +1005,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepFragmentDeferred_When_OnlyTypenameIsSelectedAndAnchorTypeHasLookup()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -966,7 +1015,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -986,8 +1038,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineFragment_When_OnlyTypenameIsSelectedAndAnchorTypeHasNoLookup()
     {
         // arrange
-        // act
-        var lowered = Lower(
+        const string operation =
             """
             query {
                 user(id: "1") {
@@ -999,7 +1050,10 @@ public class DeferLoweringTests : FusionTestBase
                     }
                 }
             }
-            """);
+            """;
+
+        // act
+        var lowered = Lower(operation);
 
         // assert
         lowered.MatchInlineSnapshot(
@@ -1010,6 +1064,209 @@ public class DeferLoweringTests : FusionTestBase
                   bio
                   ... {
                     __typename
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_ExcludeNestedCopies_When_BothLevelsAreSwitchedByOneVariable()
+    {
+        // arrange
+        const string operation =
+            """
+            query($v: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @defer(if: $v, label: "outer") {
+                        email
+                        ... @defer(if: $v, label: "inner") {
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($v: Boolean!) {
+              user(id: "1") {
+                id
+                ... @skip(if: $v) {
+                  email
+                  ... @skip(if: $v) {
+                    nick
+                  }
+                  ... @include(if: $v) @defer(if: $v, label: "inner") {
+                    nick
+                  }
+                }
+                ... @include(if: $v) @defer(if: $v, label: "outer") {
+                  email
+                  ... @skip(if: $v) {
+                    nick
+                  }
+                  ... @include(if: $v) @defer(if: $v, label: "inner") {
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_ExcludeCopiesInsideEnclosingInclude_When_NormalizerMovedIncludeOffTheDeferredFragment()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!, $v: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @include(if: $x) @defer(if: $v) {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!, $v: Boolean!) {
+              user(id: "1") {
+                id
+                ... @include(if: $x) {
+                  ... @skip(if: $v) {
+                    email
+                  }
+                  ... @include(if: $v) @defer(if: $v) {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_MoveIncludeToEnclosingFragment_When_IncludeIsOnOtherVariable_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!, $v: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @include(if: $x) @defer(if: $v) {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!, $v: Boolean!) {
+              user(id: "1") {
+                id
+                ... @include(if: $x) @skip(if: $v) {
+                  email
+                }
+                ... @include(if: $x) {
+                  ... @include(if: $v) @defer(if: $v) {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_AddNothing_When_DeferredFragmentHasIncludeOnSameVariable_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query($v: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @include(if: $v) @defer(if: $v) {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($v: Boolean!) {
+              user(id: "1") {
+                id
+                ... @include(if: $v) @skip(if: $v) {
+                  email
+                }
+                ... @include(if: $v) @defer(if: $v) {
+                  email
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_MoveDirectivesToEnclosingFragment_When_SkipAndIncludeArePresent_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query($s: Boolean!, $x: Boolean!, $v: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... on User @skip(if: $s) @include(if: $x) @defer(if: $v, label: "mail") {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($s: Boolean!, $x: Boolean!, $v: Boolean!) {
+              user(id: "1") {
+                id
+                ... on User @skip(if: $s) @include(if: $x) {
+                  ... @skip(if: $v) {
+                    email
+                  }
+                }
+                ... on User @skip(if: $s) @include(if: $x) {
+                  ... @include(if: $v) @defer(if: $v, label: "mail") {
+                    email
                   }
                 }
               }

@@ -562,11 +562,341 @@ public class SelectionDeliveryTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public void ResolveDelivery_Should_ReturnOneGroup_When_NestedSwitchableDefersHoldOnlyInnerField()
+    {
+        // arrange
+        var operation = Compile(
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    id
+                    ... @defer(if: $a, label: "outer") {
+                        ... @defer(if: $b, label: "inner") {
+                            price
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var delivery = DescribeCombinations(operation, ["a", "b"], "price");
+
+        // assert
+        delivery.MatchInlineSnapshots(
+        [
+            "a=F b=F: price=Initial",
+            "a=F b=T: price=Groups(inner)",
+            "a=T b=F: price=Groups(outer)",
+            "a=T b=T: price=Groups(inner)"
+        ]);
+    }
+
+    [Fact]
+    public void ResolveDelivery_Should_ReturnOneGroupPerField_When_NestedDefersAreSwitchedByOneVariable()
+    {
+        // arrange
+        var operation = Compile(
+            """
+            query($v: Boolean!) {
+                product(id: "1") {
+                    id
+                    ... @defer(if: $v, label: "outer") {
+                        name
+                        ... @defer(if: $v, label: "inner") {
+                            price
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var delivery = DescribeCombinations(operation, ["v"], "name", "price");
+
+        // assert
+        delivery.MatchInlineSnapshots(
+        [
+            "v=F: name=Initial price=Initial",
+            "v=T: name=Groups(outer) price=Groups(inner)"
+        ]);
+    }
+
+    [Fact]
+    public void ResolveDelivery_Should_ReturnOneGroupPerField_When_ThreeSwitchableDefersAreNested()
+    {
+        // arrange
+        var operation = Compile(
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                product(id: "1") {
+                    id
+                    ... @defer(if: $a, label: "a") {
+                        name
+                        ... @defer(if: $b, label: "b") {
+                            nick
+                            ... @defer(if: $c, label: "c") {
+                                price
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var delivery = DescribeCombinations(operation, ["a", "b", "c"], "name", "nick", "price");
+
+        // assert
+        delivery.MatchInlineSnapshots(
+        [
+            "a=F b=F c=F: name=Initial nick=Initial price=Initial",
+            "a=F b=F c=T: name=Initial nick=Initial price=Groups(c)",
+            "a=F b=T c=F: name=Initial nick=Groups(b) price=Groups(b)",
+            "a=F b=T c=T: name=Initial nick=Groups(b) price=Groups(c)",
+            "a=T b=F c=F: name=Groups(a) nick=Groups(a) price=Groups(a)",
+            "a=T b=F c=T: name=Groups(a) nick=Groups(a) price=Groups(c)",
+            "a=T b=T c=F: name=Groups(a) nick=Groups(b) price=Groups(b)",
+            "a=T b=T c=T: name=Groups(a) nick=Groups(b) price=Groups(c)"
+        ]);
+    }
+
+    [Fact]
+    public void ResolveDelivery_Should_ReturnGroupWhenBothAreOn_When_IncludeIsOnOtherVariable()
+    {
+        // arrange
+        var operation = Compile(
+            """
+            query($x: Boolean!, $v: Boolean!) {
+                product(id: "1") {
+                    id
+                    ... @include(if: $x) @defer(if: $v, label: "L") {
+                        price
+                    }
+                }
+            }
+            """);
+
+        // act
+        var delivery = DescribeCombinations(operation, ["x", "v"], "price");
+
+        // assert
+        delivery.MatchInlineSnapshots(
+        [
+            "x=F v=F: price=Absent",
+            "x=F v=T: price=Absent",
+            "x=T v=F: price=Initial",
+            "x=T v=T: price=Groups(L)"
+        ]);
+    }
+
+    [Fact]
+    public void ResolveDelivery_Should_ReturnGroupWhenBothAreOn_When_IncludeIsOnOtherVariable_InputIsNotNormalized()
+    {
+        // arrange
+        var operation = CompileNotNormalized(
+            """
+            query($x: Boolean!, $v: Boolean!) {
+                product(id: "1") {
+                    id
+                    ... @include(if: $x) @defer(if: $v, label: "L") {
+                        price
+                    }
+                }
+            }
+            """);
+
+        // act
+        var delivery = DescribeCombinations(operation, ["x", "v"], "price");
+
+        // assert
+        delivery.MatchInlineSnapshots(
+        [
+            "x=F v=F: price=Absent",
+            "x=F v=T: price=Absent",
+            "x=T v=F: price=Initial",
+            "x=T v=T: price=Groups(L)"
+        ]);
+    }
+
+    [Fact]
+    public void ResolveDelivery_Should_ReturnGroupWhenVariableIsOn_When_IncludeUsesSameVariable_InputIsNotNormalized()
+    {
+        // arrange
+        var operation = CompileNotNormalized(
+            """
+            query($v: Boolean!) {
+                product(id: "1") {
+                    id
+                    ... @include(if: $v) @defer(if: $v, label: "L") {
+                        price
+                    }
+                }
+            }
+            """);
+
+        // act
+        var delivery = DescribeCombinations(operation, ["v"], "price");
+
+        // assert
+        delivery.MatchInlineSnapshots(
+        [
+            "v=F: price=Absent",
+            "v=T: price=Groups(L)"
+        ]);
+    }
+
+    [Fact]
+    public void ResolveDelivery_Should_NeverReturnTwoGroupsWithOneLabel_When_SwitchableDefersAreNested()
+    {
+        // arrange
+        var report = new List<string>();
+        var shapes = new (string Name, string[] Variables, Operation Operation)[]
+        {
+            (
+                "inner field only",
+                ["a", "b"],
+                Compile(
+                    """
+                    query($a: Boolean!, $b: Boolean!) {
+                        product(id: "1") {
+                            id
+                            ... @defer(if: $a, label: "outer") {
+                                ... @defer(if: $b, label: "inner") {
+                                    price
+                                }
+                            }
+                        }
+                    }
+                    """)),
+            (
+                "one variable on both levels",
+                ["v"],
+                Compile(
+                    """
+                    query($v: Boolean!) {
+                        product(id: "1") {
+                            id
+                            ... @defer(if: $v, label: "outer") {
+                                name
+                                ... @defer(if: $v, label: "inner") {
+                                    price
+                                }
+                            }
+                        }
+                    }
+                    """)),
+            (
+                "three levels",
+                ["a", "b", "c"],
+                Compile(
+                    """
+                    query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                        product(id: "1") {
+                            id
+                            ... @defer(if: $a, label: "a") {
+                                name
+                                ... @defer(if: $b, label: "b") {
+                                    nick
+                                    ... @defer(if: $c, label: "c") {
+                                        price
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    """)),
+            (
+                "switchable defer at the query root",
+                ["a", "b"],
+                Compile(
+                    """
+                    query($a: Boolean!, $b: Boolean!) {
+                        ... @defer(if: $a, label: "root") {
+                            product(id: "1") {
+                                id
+                                ... @defer(if: $b, label: "inner") {
+                                    price
+                                }
+                            }
+                        }
+                    }
+                    """)),
+            (
+                "nested defer in two sibling groups",
+                ["a", "b", "c", "d"],
+                Compile(
+                    """
+                    query($a: Boolean!, $b: Boolean!, $c: Boolean!, $d: Boolean!) {
+                        product(id: "1") {
+                            id
+                            ... @defer(if: $a, label: "first") {
+                                name
+                                ... @defer(if: $b, label: "firstInner") {
+                                    price
+                                }
+                            }
+                            ... @defer(if: $c, label: "second") {
+                                nick
+                                ... @defer(if: $d, label: "secondInner") {
+                                    price
+                                }
+                            }
+                        }
+                    }
+                    """)),
+            (
+                "include on another variable",
+                ["x", "v"],
+                CompileNotNormalized(
+                    """
+                    query($x: Boolean!, $v: Boolean!) {
+                        product(id: "1") {
+                            id
+                            ... @include(if: $x) @defer(if: $v, label: "L") {
+                                price
+                            }
+                        }
+                    }
+                    """))
+        };
+
+        // act
+        foreach (var shape in shapes)
+        {
+            report.AddRange(FindRepeatedLabels(shape.Name, shape.Operation, shape.Variables));
+        }
+
+        // assert
+        report.MatchInlineSnapshots(
+        [
+            "inner field only: 4 combinations, 0 repeated labels",
+            "one variable on both levels: 2 combinations, 0 repeated labels",
+            "three levels: 8 combinations, 0 repeated labels",
+            "switchable defer at the query root: 4 combinations, 0 repeated labels",
+            "nested defer in two sibling groups: 16 combinations, 0 repeated labels",
+            "include on another variable: 4 combinations, 0 repeated labels"
+        ]);
+    }
+
     private static Operation Compile(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
         var normalized = new DocumentRewriter(s_schema).RewriteDocument(document, operationName: null);
-        var operationDefinition = normalized.Definitions.OfType<OperationDefinitionNode>().First();
+
+        return Compile(normalized.Definitions.OfType<OperationDefinitionNode>().First());
+    }
+
+    private static Operation CompileNotNormalized(string operationText)
+    {
+        var document = Utf8GraphQLParser.Parse(operationText);
+
+        return Compile(document.Definitions.OfType<OperationDefinitionNode>().First());
+    }
+
+    private static Operation Compile(OperationDefinitionNode operationDefinition)
+    {
         var lowered = DeferLowering.Lower(operationDefinition, s_schema);
         var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
             new FieldMapPooledObjectPolicy());
@@ -636,6 +966,124 @@ public class SelectionDeliveryTests : FusionTestBase
             ? ToLabels(resolution)
             : [resolution.Kind.ToString()];
     }
+
+    private static List<string> DescribeCombinations(
+        Operation operation,
+        string[] variables,
+        params string[] responseNames)
+    {
+        var selectionSet = operation.RootSelectionSet.Selections[0].GetSelectionSet()!;
+        var lines = new List<string>();
+
+        foreach (var values in CreateCombinations(variables))
+        {
+            var variableValues = CreateVariableValues(operation, values);
+            var includeFlags = operation.CreateIncludeConditionFlags(variableValues);
+            var deferFlags = operation.CreateDeferConditionFlags(variableValues);
+            var fields = new List<string>(responseNames.Length);
+
+            foreach (var responseName in responseNames)
+            {
+                Assert.True(selectionSet.TryGetSelection(responseName, out var selection));
+                fields.Add($"{responseName}={Format(selection.ResolveDelivery(includeFlags, deferFlags))}");
+            }
+
+            lines.Add($"{FormatCombination(variables, values)}: {string.Join(" ", fields)}");
+        }
+
+        return lines;
+    }
+
+    private static List<string> FindRepeatedLabels(string name, Operation operation, string[] variables)
+    {
+        var lines = new List<string>();
+        var combinations = CreateCombinations(variables);
+
+        foreach (var values in combinations)
+        {
+            var variableValues = CreateVariableValues(operation, values);
+            var includeFlags = operation.CreateIncludeConditionFlags(variableValues);
+            var deferFlags = operation.CreateDeferConditionFlags(variableValues);
+
+            CollectRepeatedLabels(
+                operation,
+                operation.RootSelectionSet,
+                string.Empty,
+                includeFlags,
+                deferFlags,
+                FormatCombination(variables, values),
+                lines);
+        }
+
+        lines.Insert(0, $"{name}: {combinations.Count} combinations, {lines.Count} repeated labels");
+
+        return lines;
+    }
+
+    private static void CollectRepeatedLabels(
+        Operation operation,
+        SelectionSet selectionSet,
+        string path,
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        string combination,
+        List<string> lines)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            var resolution = selection.ResolveDelivery(includeFlags, deferFlags);
+            var fieldPath = path + selection.ResponseName;
+
+            if (resolution.Kind is DeliveryKind.Absent)
+            {
+                continue;
+            }
+
+            foreach (var label in ToLabels(resolution).GroupBy(static t => t).Where(static g => g.Count() > 1))
+            {
+                lines.Add($"{combination} {fieldPath}: {label.Key} x{label.Count()}");
+            }
+
+            if (selection.IsLeaf)
+            {
+                continue;
+            }
+
+            foreach (var possibleType in operation.GetPossibleTypes(selection))
+            {
+                CollectRepeatedLabels(
+                    operation,
+                    operation.GetSelectionSet(selection, possibleType),
+                    fieldPath + ".",
+                    includeFlags,
+                    deferFlags,
+                    combination,
+                    lines);
+            }
+        }
+    }
+
+    private static List<Dictionary<string, bool>> CreateCombinations(string[] variables)
+    {
+        var combinations = new List<Dictionary<string, bool>>(1 << variables.Length);
+
+        for (var mask = 0; mask < 1 << variables.Length; mask++)
+        {
+            var values = new Dictionary<string, bool>(variables.Length);
+
+            for (var i = 0; i < variables.Length; i++)
+            {
+                values[variables[i]] = (mask >> (variables.Length - 1 - i) & 1) == 1;
+            }
+
+            combinations.Add(values);
+        }
+
+        return combinations;
+    }
+
+    private static string FormatCombination(string[] variables, Dictionary<string, bool> values)
+        => string.Join(" ", variables.Select(t => $"{t}={(values[t] ? "T" : "F")}"));
 
     private static string Format(DeliveryResolution resolution)
     {
