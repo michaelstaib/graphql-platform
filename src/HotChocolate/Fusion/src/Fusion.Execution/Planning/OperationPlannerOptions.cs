@@ -71,6 +71,20 @@ public sealed class OperationPlannerOptions
     } = true;
 
     /// <summary>
+    /// Gets or sets whether query and mutation operations with <c>@defer</c> are planned in one run,
+    /// with the deferred fragments planned as marked lookup steps.
+    /// </summary>
+    internal bool EnableSinglePlanDefer
+    {
+        get;
+        set
+        {
+            ExpectMutableOptions();
+            field = value;
+        }
+    }
+
+    /// <summary>
     /// When enabled, nested <c>@defer</c> fragments without a label are inlined
     /// into their parent deferred group instead of producing a separate group.
     /// This reduces incremental delivery overhead at the cost of less granular streaming.
