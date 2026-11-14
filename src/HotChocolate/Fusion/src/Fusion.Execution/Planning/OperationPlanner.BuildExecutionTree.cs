@@ -979,7 +979,10 @@ public sealed partial class OperationPlanner
             resultSelectionSet,
             operationStep.Conditions,
             operationStep.ConditionAlternatives,
-            requiresFileUpload);
+            requiresFileUpload)
+        {
+            DeliveryGroups = operationStep.DeliveryGroups
+        };
 
         foreach (var parentDependency in operationStep.ParentDependencies)
         {
@@ -1669,13 +1672,20 @@ public sealed partial class OperationPlanner
             GetDependencyDepth(node.Id, ctx.DependenciesByStepId, depthLookup, recursionStack);
         }
 
-        var batchGroups = new Dictionary<(string schema, int depth, int scope), List<OperationExecutionNode>>();
+        var batchGroups =
+            new Dictionary<
+                (string schema, int depth, int scope, string deliveryGroups),
+                List<OperationExecutionNode>>();
 
         foreach (var node in queryNodes)
         {
             var schemaKey = node.SchemaName ?? DynamicSchemaNameMarker;
             var depth = depthLookup.TryGetValue(node.Id, out var d) ? d : 0;
-            var key = (schemaKey, depth, GetSerialScope(serialScopes, node.Id));
+            var key = (
+                schemaKey,
+                depth,
+                GetSerialScope(serialScopes, node.Id),
+                FormatDeliveryGroups(node.DeliveryGroups));
 
             if (!batchGroups.TryGetValue(key, out var group))
             {
@@ -2030,7 +2040,10 @@ public sealed partial class OperationPlanner
             primary.ResultSelectionSet,
             primary.Conditions.ToArray(),
             primary.ConditionAlternatives.ToArray(),
-            primary.RequiresFileUpload);
+            primary.RequiresFileUpload)
+        {
+            DeliveryGroups = primary.DeliveryGroups
+        };
 
         foreach (var parentDependency in primary.BufferedParentDependencies)
         {
@@ -2054,7 +2067,10 @@ public sealed partial class OperationPlanner
             member.ResultSelectionSet,
             member.Conditions.ToArray(),
             member.ConditionAlternatives.ToArray(),
-            member.RequiresFileUpload);
+            member.RequiresFileUpload)
+        {
+            DeliveryGroups = member.DeliveryGroups
+        };
 
         foreach (var parentDependency in member.BufferedParentDependencies)
         {
@@ -2522,7 +2538,8 @@ public sealed partial class OperationPlanner
             node.OperationDocument,
             node.Requirements,
             node.Conditions,
-            node.ConditionAlternatives);
+            node.ConditionAlternatives,
+            node.DeliveryGroups);
 
     private static string ComputeCanonicalSignature(
         string? schemaName,
@@ -2530,15 +2547,24 @@ public sealed partial class OperationPlanner
         Utf8OperationDocument document,
         ReadOnlySpan<OperationRequirement> requirements,
         ReadOnlySpan<ExecutionNodeCondition> conditions,
-        ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives)
+        ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives,
+        ImmutableArray<int> deliveryGroups)
     {
         var replacements = BuildPrefixReplacements(requirements);
         var bodyText = FormatCanonicalSelectionSet(document, replacements);
         var formattedConditions = FormatCanonicalConditions(conditions);
         var formattedAlternatives = FormatCanonicalConditionAlternatives(conditionAlternatives);
+        var signature = $"{schemaName}|{source}|{formattedConditions}|{formattedAlternatives}|{bodyText}";
 
-        return $"{schemaName}|{source}|{formattedConditions}|{formattedAlternatives}|{bodyText}";
+        return deliveryGroups.IsDefaultOrEmpty
+            ? signature
+            : $"{signature}|{FormatDeliveryGroups(deliveryGroups)}";
     }
+
+    private static string FormatDeliveryGroups(ImmutableArray<int> deliveryGroups)
+        => deliveryGroups.IsDefaultOrEmpty
+            ? string.Empty
+            : string.Join(",", deliveryGroups.OrderBy(static id => id));
 
     /// <summary>
     /// Determines whether <paramref name="dependent"/> runs after <paramref name="dependency"/>
@@ -2781,7 +2807,8 @@ public sealed partial class OperationPlanner
                 operation.Document,
                 operation.Requirements,
                 operation.Conditions,
-                operation.ConditionAlternatives),
+                operation.ConditionAlternatives,
+                operation.DeliveryGroups),
             _ => throw new ArgumentOutOfRangeException(nameof(node))
         };
 
