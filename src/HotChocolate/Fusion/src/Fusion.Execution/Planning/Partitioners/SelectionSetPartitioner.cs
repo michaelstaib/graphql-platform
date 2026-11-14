@@ -15,6 +15,21 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
     // underneath is covered, but the scope itself stays active.
     private static readonly SelectionSetNode s_emptyEntryKeyCoverage = new([]);
 
+    private readonly bool _spillDeferredFragments;
+
+    /// <summary>
+    /// Creates a partitioner that can leave every selection of a <c>@defer</c> fragment unresolved.
+    /// </summary>
+    /// <param name="schema">The composite schema.</param>
+    /// <param name="spillDeferredFragments">
+    /// <c>true</c> leaves all selections of a <c>@defer</c> fragment unresolved.
+    /// </param>
+    public SelectionSetPartitioner(FusionSchemaDefinition schema, bool spillDeferredFragments)
+        : this(schema)
+    {
+        _spillDeferredFragments = spillDeferredFragments;
+    }
+
     public SelectionSetPartitionerResult Partition(
         SelectionSetPartitionerInput input)
     {
@@ -110,10 +125,18 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         providedSelectionSetNode = GetProvidedSelectionSet(type, schema, providedSelectionSetNode);
 
+        var spillAll = ReferenceEquals(context.SpillSelectionSet, selectionSetNode);
+
         context.Nodes.Push(selectionSetNode);
 
         for (var i = 0; i < selectionSetNode.Selections.Count; i++)
         {
+            if (spillAll && !IsRootIntrospectionField(selectionSetNode.Selections[i], type, complexType))
+            {
+                CompleteSelection(selectionSetNode.Selections[i], null, selectionSetNode.Selections[i], i);
+                continue;
+            }
+
             switch (selectionSetNode.Selections[i])
             {
                 case FieldNode fieldNode:
@@ -279,6 +302,17 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             }
 
             resolvableSelections?.Add(resolvable);
+        }
+
+        bool IsRootIntrospectionField(
+            ISelectionNode selection,
+            ITypeDefinition parentType,
+            FusionComplexTypeDefinition? parent)
+        {
+            return selection is FieldNode field
+                && !field.Name.Value.Equals(IntrospectionFieldNames.TypeName)
+                && parentType == schema.QueryType
+                && parent!.Fields.GetField(field.Name.Value, allowInaccessibleFields: true).IsIntrospectionField;
         }
 
         static FieldNode? GetProvidedField(FieldNode fieldNode, SelectionSetNode? providedSelectionSetNode)
@@ -853,6 +887,9 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         }
 
         context.Nodes.Push(inlineFragmentNode);
+        context.SpillSelectionSet = _spillDeferredFragments && HasDeferDirective(inlineFragmentNode)
+            ? inlineFragmentNode.SelectionSet
+            : null;
 
         var (resolvable, unresolvable) =
             RewriteSelectionSet(
@@ -866,6 +903,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 allowedRuntimeTypes,
                 entryKeyCoverage);
 
+        context.SpillSelectionSet = null;
         context.Nodes.Pop();
 
         if (resolvable is null)
@@ -911,6 +949,9 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 branchSelectionSet);
 
             context.Nodes.Push(concreteFragment);
+            context.SpillSelectionSet = _spillDeferredFragments && HasDeferDirective(inlineFragmentNode)
+                ? branchSelectionSet
+                : null;
 
             var unresolvableBefore = context.Unresolvable;
 
@@ -925,6 +966,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                     providerSchemas,
                     entryKeyCoverage: entryKeyCoverage);
 
+            context.SpillSelectionSet = null;
             context.Nodes.Pop();
 
             if (resolvedSelectionSet is { Selections.Count: 0 }
@@ -1306,6 +1348,11 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         public List<ISyntaxNode> Nodes { get; } = [];
 
+        /// <summary>
+        /// The selection set whose selections are all left unresolved, or <c>null</c>.
+        /// </summary>
+        public SelectionSetNode? SpillSelectionSet { get; set; }
+
         private List<ExecutionNodeCondition> ActiveConditions { get; } = [];
 
         public int PushConditions(ExecutionNodeCondition[]? conditions)
@@ -1376,6 +1423,19 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         public SelectionSetNode CloneSelectionSet(SelectionSetNode original)
             => SelectionSetCloner.Clone(original, SelectionSetIndexBuilder);
+    }
+
+    private static bool HasDeferDirective(InlineFragmentNode fragment)
+    {
+        for (var i = 0; i < fragment.Directives.Count; i++)
+        {
+            if (fragment.Directives[i].Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool CanMessageShapeProvideType(

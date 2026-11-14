@@ -27,6 +27,12 @@ public record OperationPlanStep : PlanStep
 
     public ExecutionNodeCondition[][] ConditionAlternatives { get; init; } = [];
 
+    /// <summary>
+    /// Gets the ids of the delivery groups this step belongs to, or an empty array for a step of the
+    /// initial response.
+    /// </summary>
+    public ImmutableArray<int> DeliveryGroups { get; init; } = [];
+
     public ImmutableHashSet<int> Dependents { get; init; } = [];
 
     public ImmutableHashSet<ParentStepRef> ParentDependencies { get; init; } = [];

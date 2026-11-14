@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Converters;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Planning.Partitioners;
 using HotChocolate.Fusion.Policies;
@@ -29,6 +30,7 @@ public sealed partial class OperationPlanner
     private readonly SelectionSetByTypePartitioner _selectionSetByTypePartitioner;
     private readonly NodeFieldSelectionSetPartitioner _nodeFieldSelectionSetPartitioner;
     private readonly SourceSchemaNodeCandidateResolver _sourceSchemaNodeCandidateResolver;
+    private readonly DocumentRewriter? _loweredDocumentRewriter;
     private readonly OperationPlannerOptions _options;
     private readonly IPolicyResolver _policyResolver;
     private readonly FrozenSet<string>? _protectedFieldNames;
@@ -56,12 +58,20 @@ public sealed partial class OperationPlanner
         _schema = schema;
         _operationCompiler = operationCompiler;
         _mergeRewriter = new MergeSelectionSetRewriter(schema);
-        _partitioner = new SelectionSetPartitioner(schema);
+        _partitioner = new SelectionSetPartitioner(schema, options.EnableSinglePlanDefer);
         _selectionSetByTypePartitioner = new SelectionSetByTypePartitioner(schema);
         _nodeFieldSelectionSetPartitioner = new NodeFieldSelectionSetPartitioner(schema);
         _sourceSchemaNodeCandidateResolver = new SourceSchemaNodeCandidateResolver(schema);
         _options = options;
         _policyResolver = policyResolver;
+
+        if (options.EnableSinglePlanDefer)
+        {
+            _loweredDocumentRewriter = new DocumentRewriter(
+                schema,
+                mergeAcrossDefer: false,
+                removeStaticallyExcludedSelections: true);
+        }
 
         if (schema.Features.Get<FusionPolicyUsage>() is { IsUsed: true })
         {
@@ -121,6 +131,59 @@ public sealed partial class OperationPlanner
         // so that if the caller passed in an already canceled token we don't do any unnecessary work.
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (_loweredDocumentRewriter is not null
+            && _options.EnableDefer
+            && operationDefinition.Operation is not OperationType.Subscription
+            && DeferOperationRewriter.HasDeferDirective(operationDefinition))
+        {
+            var singlePlan = TryCreatePlan(
+                id,
+                hash,
+                shortHash,
+                operationDefinition,
+                singlePlanDefer: true,
+                out var fallbackCause,
+                cancellationToken);
+
+            if (singlePlan is not null)
+            {
+                return singlePlan;
+            }
+
+            SinglePlanDeferFallback?.Invoke(id, fallbackCause!);
+            operationDefinition = StripDeferFromOperation(operationDefinition);
+        }
+
+        return TryCreatePlan(
+            id,
+            hash,
+            shortHash,
+            operationDefinition,
+            singlePlanDefer: false,
+            out _,
+            cancellationToken)!;
+    }
+
+    /// <summary>
+    /// Occurs when an operation planned with <see cref="OperationPlannerOptions.EnableSinglePlanDefer"/>
+    /// is planned with every <c>@defer</c> inlined instead. The arguments are the operation id and the cause.
+    /// </summary>
+    internal event Action<string, string>? SinglePlanDeferFallback;
+
+    private static OperationDefinitionNode StripDeferFromOperation(OperationDefinitionNode operation)
+        => operation.WithSelectionSet(StripDeferFromSelectionSet(operation.SelectionSet));
+
+    private OperationPlan? TryCreatePlan(
+        string id,
+        string hash,
+        string shortHash,
+        OperationDefinitionNode operationDefinition,
+        bool singlePlanDefer,
+        out string? fallbackCause,
+        CancellationToken cancellationToken)
+    {
+        fallbackCause = null;
+
         var eventSource = PlannerEventSource.Log;
         var eventSourceEnabled = eventSource.IsEnabled();
         var operationType = operationDefinition.Operation.ToString();
@@ -165,7 +228,15 @@ public sealed partial class OperationPlanner
             DeferPartitioningResult? partitioning = null;
             var mainOperationDefinition = operationDefinition;
 
-            if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
+            if (singlePlanDefer)
+            {
+                mainOperationDefinition = LowerForSinglePlanDefer(operationDefinition);
+                partitioning = DeferPartitioner.Partition(
+                    mainOperationDefinition,
+                    new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions));
+                deliveryGroups = partitioning.AllDeliveryGroups;
+            }
+            else if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
             {
                 // The partitioner walks the original AST once and hands every
                 // @defer fragment a canonical DeliveryGroup instance (with Id,
@@ -198,6 +269,17 @@ public sealed partial class OperationPlanner
                 OperationType.Subscription => CreateSubscriptionPlanBase(mainOperationDefinition, shortHash, index),
                 _ => throw new ArgumentOutOfRangeException()
             };
+
+            if (singlePlanDefer)
+            {
+                if (!DeferredFragmentIndex.TryCreate(index, partitioning!, out var deferredFragments))
+                {
+                    fallbackCause = "Two @defer fragments share one selection set.";
+                    return null;
+                }
+
+                node = node with { Backlog = node.Backlog.WithDeferredFragments(deferredFragments) };
+            }
 
             var internalOperationDefinition = mainOperationDefinition;
             ImmutableList<PlanStep> planSteps = [];
@@ -253,6 +335,12 @@ public sealed partial class OperationPlanner
 
                     if (!plan.HasValue)
                     {
+                        if (singlePlanDefer)
+                        {
+                            fallbackCause = "No possible plan was found.";
+                            return null;
+                        }
+
                         throw new InvalidOperationException("No possible plan was found.");
                     }
 
@@ -327,7 +415,12 @@ public sealed partial class OperationPlanner
             }
 
             // Use the latest root operation definition after deferred planning.
-            var operation = _operationCompiler.Compile(id, hash, shortHash, internalOperationDefinition);
+            var operation = _operationCompiler.Compile(
+                id,
+                hash,
+                shortHash,
+                internalOperationDefinition,
+                mergeAcrossDefer: !singlePlanDefer);
 
             if (deferContextGraph is not null)
             {
@@ -380,6 +473,13 @@ public sealed partial class OperationPlanner
 
             throw;
         }
+    }
+
+    private OperationDefinitionNode LowerForSinglePlanDefer(OperationDefinitionNode operationDefinition)
+    {
+        var lowered = DeferLowering.Lower(operationDefinition, _schema);
+        var document = _loweredDocumentRewriter!.RewriteDocument(new DocumentNode([lowered]));
+        return (OperationDefinitionNode)document.Definitions[0];
     }
 
     /// <summary>
@@ -1139,6 +1239,8 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            index,
+            workItem.DeliveryGroups,
             dependents: workItem.Dependents,
             allowSourceSchemaReentry: isEventStreamRoot,
             sourceSchemaNodePolicy: workItem.SourceSchemaNodePolicy is null
@@ -1218,7 +1320,8 @@ public sealed partial class OperationPlanner
             Conditions = workItem.Conditions,
             Target = workItem.SelectionSet.Path,
             Source = source,
-            Lookup = lookup
+            Lookup = lookup,
+            DeliveryGroups = workItem.DeliveryGroups
         };
 
         var costState = AddOperationStepCostState(current, stepId, stepDepth);
@@ -1412,6 +1515,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, step.Id),
+                        index: null,
+                        deliveryGroups: [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1472,6 +1577,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                        index: null,
+                        deliveryGroups: [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -2283,6 +2390,8 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            index: null,
+            deliveryGroups: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
@@ -2722,6 +2831,8 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            index: null,
+            deliveryGroups: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,

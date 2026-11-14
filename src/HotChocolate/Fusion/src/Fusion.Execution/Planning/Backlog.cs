@@ -8,11 +8,15 @@ namespace HotChocolate.Fusion.Planning;
 /// Every push and pop keeps the cost in sync with the stack,
 /// so branch scoring stays O(1) per transition.
 /// </summary>
-internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cost)
+internal readonly struct Backlog(
+    ImmutableStack<WorkItem> items,
+    BacklogCost cost,
+    DeferredFragmentIndex? deferredFragments)
 {
     private readonly ImmutableStack<WorkItem> _items = items;
+    private readonly DeferredFragmentIndex? _deferredFragments = deferredFragments;
 
-    public static Backlog Empty { get; } = new([], BacklogCost.Empty);
+    public static Backlog Empty { get; } = new([], BacklogCost.Empty, null);
 
     /// <summary>
     /// The cost tracking state for all items in this backlog.
@@ -35,7 +39,7 @@ internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cos
     public Backlog Push(WorkItem workItem)
     {
         var cost = PlannerCostEstimator.AddWorkItemCost(Cost, workItem);
-        return new Backlog(_items.Push(workItem), cost);
+        return new Backlog(_items.Push(workItem), cost, _deferredFragments);
     }
 
     /// <summary>
@@ -45,8 +49,14 @@ internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cos
     {
         var items = _items.Pop(out workItem);
         var cost = PlannerCostEstimator.RemoveWorkItemCost(Cost, workItem);
-        return new Backlog(items, cost);
+        return new Backlog(items, cost, _deferredFragments);
     }
+
+    /// <summary>
+    /// Returns a backlog that marks the work items it spills from <c>@defer</c> fragments.
+    /// </summary>
+    public Backlog WithDeferredFragments(DeferredFragmentIndex deferredFragments)
+        => new(_items, Cost, deferredFragments);
 
     public Backlog BindSourceSchemaNodeCandidate(int candidateGroupId, string schemaName)
     {
@@ -68,17 +78,33 @@ internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cos
             items = items.Push(workItem);
         }
 
-        return new Backlog(items, Cost);
+        return new Backlog(items, Cost, _deferredFragments);
     }
 
     /// <summary>
     /// Pushes work items for unresolvable selection sets that need
     /// their own operation steps on other schemas.
     /// </summary>
+    /// <param name="unresolvable">The unresolvable selection sets.</param>
+    /// <param name="fromSchema">The source schema that could not resolve them.</param>
+    /// <param name="parentDepth">The depth of the step that produced them.</param>
+    /// <param name="index">
+    /// The selection set index to find <c>@defer</c> fragments with, or <c>null</c> when the selection sets
+    /// cannot be the content of a <c>@defer</c> fragment.
+    /// </param>
+    /// <param name="deliveryGroups">
+    /// The delivery groups that every work item carries unless its selection set is the content of a
+    /// <c>@defer</c> fragment of another group.
+    /// </param>
+    /// <param name="dependents">The steps that need the data of the selection sets.</param>
+    /// <param name="allowSourceSchemaReentry">Whether the work items may re-enter the source schema.</param>
+    /// <param name="sourceSchemaNodePolicy">The source schema node planning policy, or null.</param>
     public Backlog PushUnresolvable(
         ImmutableStack<ConditionedSelectionSet> unresolvable,
         string fromSchema,
         int parentDepth,
+        ISelectionSetIndex? index,
+        ImmutableArray<int> deliveryGroups,
         ImmutableHashSet<int>? dependents = null,
         bool allowSourceSchemaReentry = false,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy = null)
@@ -93,6 +119,18 @@ internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cos
         foreach (var entry in unresolvable.Reverse())
         {
             var selectionSet = entry.SelectionSet;
+            var entryDeliveryGroups = deliveryGroups;
+            var entryAllowsReentry = allowSourceSchemaReentry;
+
+            if (index is not null
+                && _deferredFragments is not null
+                && _deferredFragments.TryGetDeliveryGroup(index, selectionSet.Id, out var deliveryGroupId)
+                && !deliveryGroups.Contains(deliveryGroupId))
+            {
+                entryDeliveryGroups = [deliveryGroupId];
+                entryAllowsReentry = true;
+            }
+
             var workItem = new OperationWorkItem(
                 selectionSet.Path.IsRoot
                     ? OperationWorkItemKind.Root
@@ -103,8 +141,9 @@ internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cos
                 ParentDepth = parentDepth,
                 Conditions = entry.Conditions,
                 Dependents = dependents ?? [],
-                AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                SourceSchemaNodePolicy = sourceSchemaNodePolicy
+                AllowSourceSchemaReentry = entryAllowsReentry,
+                SourceSchemaNodePolicy = sourceSchemaNodePolicy,
+                DeliveryGroups = entryDeliveryGroups
             };
             backlog = backlog.Push(workItem);
         }
