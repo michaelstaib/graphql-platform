@@ -21,6 +21,13 @@ public class SelectionDeliveryTests : FusionTestBase
             id: ID!
             name: String!
             nick: String!
+            total: Int!
+            profile: Profile!
+        }
+
+        type Profile {
+            bio: String!
+            avatar: String!
         }
 
         scalar Boolean
@@ -878,10 +885,42 @@ public class SelectionDeliveryTests : FusionTestBase
         ]);
     }
 
+    [Fact]
+    public void ResolveDelivery_Should_ReturnOneGroupAtProduct_When_DeferredFragmentRepeatsCompositeField()
+    {
+        // arrange
+        var operation = Compile(
+            """
+            query {
+                product(id: "1") {
+                    profile {
+                        bio
+                    }
+                    ... @defer(label: "L") {
+                        profile {
+                            bio
+                            avatar
+                        }
+                        total
+                    }
+                }
+            }
+            """);
+
+        // act
+        var groups = DescribeActiveGroups(operation);
+
+        // assert
+        groups.MatchInlineSnapshots(
+        [
+            "L at $.product: product.profile.avatar, product.total"
+        ]);
+    }
+
     private static Operation Compile(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
-        var normalized = new DocumentRewriter(s_schema, mergeAcrossDefer: true)
+        var normalized = new DocumentRewriter(s_schema, mergeAcrossDefer: false)
             .RewriteDocument(document, operationName: null);
 
         return Compile(normalized.Definitions.OfType<OperationDefinitionNode>().First());
@@ -900,7 +939,7 @@ public class SelectionDeliveryTests : FusionTestBase
         var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
             new FieldMapPooledObjectPolicy());
 
-        return new OperationCompiler(s_schema, pool).Compile("1", "1", "1", lowered);
+        return new OperationCompiler(s_schema, pool).Compile("1", "1", "1", lowered, mergeAcrossDefer: false);
     }
 
     private static string CreateSwitchDocument(int count, Func<int, string> selection)
@@ -993,6 +1032,20 @@ public class SelectionDeliveryTests : FusionTestBase
         return lines;
     }
 
+    private static List<string> DescribeActiveGroups(Operation operation)
+    {
+        var variableValues = CreateVariableValues(operation, []);
+        var includeFlags = operation.CreateIncludeConditionFlags(variableValues);
+        var deferFlags = operation.CreateDeferConditionFlags(variableValues);
+        var groups = new Dictionary<DeliveryGroup, List<string>>(ReferenceEqualityComparer.Instance);
+
+        CollectActiveGroups(operation, operation.RootSelectionSet, string.Empty, includeFlags, deferFlags, groups);
+
+        return groups
+            .Select(static t => $"{t.Key.Label} at {t.Key.Path}: {string.Join(", ", t.Value)}")
+            .ToList();
+    }
+
     private static string FindLabelViolations(string name, Operation operation, string[] variables)
     {
         var violations = new List<string>();
@@ -1007,7 +1060,11 @@ public class SelectionDeliveryTests : FusionTestBase
 
             CollectActiveGroups(operation, operation.RootSelectionSet, string.Empty, includeFlags, deferFlags, groups);
 
-            foreach (var label in groups.GroupBy(static t => t.Key.Label).Where(static g => g.Count() > 1))
+            var labelled = groups
+                .GroupBy(static t => t.Key.Label)
+                .Where(static g => g.Key is not null && g.Count() > 1);
+
+            foreach (var label in labelled)
             {
                 var deliveries = label.Select(static t => $"[{string.Join(", ", t.Value)}]");
                 violations.Add(
