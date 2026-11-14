@@ -1,3 +1,4 @@
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 
@@ -186,37 +187,6 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_InlineFragment_When_EveryFieldIsAlreadySelected()
-    {
-        // arrange
-        // act
-        var lowered = Lower(
-            """
-            query {
-                user(id: "1") {
-                    id
-                    ... @defer {
-                        id
-                    }
-                }
-            }
-            """);
-
-        // assert
-        lowered.MatchInlineSnapshot(
-            """
-            {
-              user(id: "1") {
-                id
-                ... {
-                  id
-                }
-              }
-            }
-            """);
-    }
-
-    [Fact]
     public void Lower_Should_InlineFragment_When_AnchorTypeHasNoLookup()
     {
         // arrange
@@ -252,11 +222,11 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_InlineEnclosingFragment_When_InlinedNestedFragmentLeavesNothingNew()
+    public void Lower_Should_InlineOuterFragment_When_InlinedInnerFragmentLeavesNothingNew_InputIsNotNormalized()
     {
         // arrange
         // act
-        var lowered = Lower(
+        var lowered = LowerNotNormalized(
             """
             query {
                 user(id: "1") {
@@ -289,11 +259,11 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_KeepEnclosingFragmentDeferred_When_InlinedNestedFragmentLeavesOtherFieldsNew()
+    public void Lower_Should_KeepOuterFragmentDeferred_When_InlinedInnerLeavesOtherFieldsNew_InputIsNotNormalized()
     {
         // arrange
         // act
-        var lowered = Lower(
+        var lowered = LowerNotNormalized(
             """
             query {
                 user(id: "1") {
@@ -351,48 +321,6 @@ public class DeferLoweringTests : FusionTestBase
                 id
                 sku
                 ... @defer {
-                  total
-                }
-              }
-            }
-            """);
-    }
-
-    [Fact]
-    public void Lower_Should_DropOnlyOverlappingLeaves_When_CompositeFieldOverlaps()
-    {
-        // arrange
-        // act
-        var lowered = Lower(
-            """
-            query {
-                user(id: "1") {
-                    profile {
-                        bio
-                    }
-                    ... @defer {
-                        profile {
-                            bio
-                            avatar
-                        }
-                        total
-                    }
-                }
-            }
-            """);
-
-        // assert
-        lowered.MatchInlineSnapshot(
-            """
-            {
-              user(id: "1") {
-                profile {
-                  bio
-                }
-                ... @defer {
-                  profile {
-                    avatar
-                  }
                   total
                 }
               }
@@ -468,11 +396,11 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_DropDeferDirective_When_IfArgumentIsFalse()
+    public void Lower_Should_DropDeferDirective_When_IfArgumentIsFalse_InputIsNotNormalized()
     {
         // arrange
         // act
-        var lowered = Lower(
+        var lowered = LowerNotNormalized(
             """
             query {
                 user(id: "1") {
@@ -499,11 +427,47 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_NestSkipCopy_When_DeferredFragmentHasSkip()
+    public void Lower_Should_KeepCopiesInEnclosingFragment_When_NormalizerMovedSkipOffTheDeferredFragment()
     {
         // arrange
         // act
         var lowered = Lower(
+            """
+            query($s: Boolean!, $d: Boolean!) {
+                user(id: "1") {
+                    id
+                    ... @skip(if: $s) @defer(if: $d) {
+                        email
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($s: Boolean!, $d: Boolean!) {
+              user(id: "1") {
+                id
+                ... @skip(if: $s) {
+                  ... @skip(if: $d) {
+                    email
+                  }
+                  ... @defer(if: $d) {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_NestSkipCopy_When_DeferredFragmentHasSkip_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
             """
             query($s: Boolean!, $d: Boolean!) {
                 user(id: "1") {
@@ -535,11 +499,11 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_KeepOperation_When_OperationHasNoDefer()
+    public void Lower_Should_KeepOperation_When_OperationHasNoDefer_InputIsNotNormalized()
     {
         // arrange
         // act
-        var lowered = Lower(
+        var lowered = LowerNotNormalized(
             """
             query {
                 user(id: "1") {
@@ -600,7 +564,155 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineFragment_When_EveryFieldIsAlreadySelected_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    ... @defer {
+                        id
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                id
+                ... {
+                  id
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_DropLeafFromDeferredCopy_When_LeafIsSelectedOutside_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query {
+                user(id: "1") {
+                    id
+                    sku
+                    ... @defer {
+                        sku
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                id
+                sku
+                ... @defer {
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_DropOnlyOverlappingLeaves_When_CompositeFieldOverlaps_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query {
+                user(id: "1") {
+                    profile {
+                        bio
+                    }
+                    ... @defer {
+                        profile {
+                            bio
+                            avatar
+                        }
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                profile {
+                  bio
+                }
+                ... @defer {
+                  profile {
+                    avatar
+                  }
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepLeafInDeferredCopy_When_PlainSelectionIsConditional_InputIsNotNormalized()
+    {
+        // arrange
+        // act
+        var lowered = LowerNotNormalized(
+            """
+            query($x: Boolean!) {
+                user(id: "1") {
+                    sku @include(if: $x)
+                    ... @defer {
+                        sku
+                        total
+                    }
+                }
+            }
+            """);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") {
+                sku @include(if: $x)
+                ... @defer {
+                  sku
+                  total
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
+    {
+        var document = Utf8GraphQLParser.Parse(operationText);
+        var normalized = new DocumentRewriter(s_schema).RewriteDocument(document, operationName: null);
+        var operation = normalized.Definitions.OfType<OperationDefinitionNode>().First();
+        return DeferLowering.Lower(operation, s_schema).ToString(indented: true);
+    }
+
+    private static string LowerNotNormalized(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
         var operation = document.Definitions.OfType<OperationDefinitionNode>().First();
