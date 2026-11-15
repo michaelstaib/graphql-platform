@@ -11,6 +11,7 @@ public sealed class SelectionSetIndexBuilder : ISelectionSetIndex, ISelectionSet
     private readonly ImmutableDictionary<uint, SelectionSetNode>.Builder _selectionSetById;
     private ImmutableDictionary<uint, uint> _clonedToOriginalMap;
     private ImmutableDictionary<uint, ConcreteBranchScope> _concreteBranchScopes;
+    private ImmutableDictionary<uint, uint> _mergedIntoMap;
     private uint _nextId;
 
     internal SelectionSetIndexBuilder(
@@ -18,12 +19,14 @@ public sealed class SelectionSetIndexBuilder : ISelectionSetIndex, ISelectionSet
         ImmutableDictionary<uint, SelectionSetNode> selectionSetById,
         ImmutableDictionary<uint, uint> clonedToOriginalMap,
         ImmutableDictionary<uint, ConcreteBranchScope> concreteBranchScopes,
+        ImmutableDictionary<uint, uint> mergedIntoMap,
         uint nextId)
     {
         _selectionSets = selectionSets;
         _selectionSetById = selectionSetById.ToBuilder();
         _clonedToOriginalMap = clonedToOriginalMap;
         _concreteBranchScopes = concreteBranchScopes;
+        _mergedIntoMap = mergedIntoMap;
         _nextId = nextId;
     }
 
@@ -79,6 +82,14 @@ public sealed class SelectionSetIndexBuilder : ISelectionSetIndex, ISelectionSet
 
         _clonedToOriginalMap = _clonedToOriginalMap.SetItem(clonedId, originalId);
     }
+
+    internal void RegisterMerged(uint mergedSelectionSetId, uint intoSelectionSetId)
+    {
+        _mergedIntoMap = _mergedIntoMap.SetItem(mergedSelectionSetId, intoSelectionSetId);
+    }
+
+    internal bool TryGetMergedInto(uint mergedSelectionSetId, out uint intoSelectionSetId)
+        => _mergedIntoMap.TryGetValue(mergedSelectionSetId, out intoSelectionSetId);
 
     internal void RegisterConcreteBranch(
         uint parentSelectionSetId,
@@ -288,6 +299,7 @@ public sealed class SelectionSetIndexBuilder : ISelectionSetIndex, ISelectionSet
             _selectionSetById.ToImmutable(),
             _clonedToOriginalMap,
             _concreteBranchScopes,
+            _mergedIntoMap,
             _nextId);
 
     public SelectionSetIndexBuilder ToBuilder()

@@ -1307,121 +1307,126 @@ public sealed partial class OperationPlanner
             workItemSelectionSet.Id,
             selectionSet);
 
-        foreach (var (step, stepIndex, schemaName) in current.GetCandidateSteps(workItemSelectionSet.Id))
+        void InlineIntoCandidateSteps(uint candidateSelectionSetId)
         {
-            // A step can only carry a requirement that lives within the data it produces.
-            // Match the candidate's response scope so a requirement cannot be inlined into
-            // a step producing the same logical selection at a different path.
-            if (!step.Target.IsParentOfOrSame(workItemSelectionSet.Path))
+            foreach (var (step, stepIndex, schemaName) in current.GetCandidateSteps(candidateSelectionSetId))
             {
-                continue;
-            }
-
-            // The lookup step inherits the dependents of the step that consumes its field, so
-            // a step that already depends on the consumer cannot provide the lookup's key.
-            if (consumerStep is not null && step.DependsOn(consumerStep, steps))
-            {
-                continue;
-            }
-
-            if (!processed.Add(schemaName)
-                || (!allowSourceSchemaReentry
-                    && lookup.SchemaName.Equals(schemaName)
-                    && !CanProvideRequirementLookupKey(step, consumerStep, steps)))
-            {
-                continue;
-            }
-
-            var relativePath = workItemSelectionSet.Path.RelativeTo(step.Target);
-
-            // A lookup key can already be present in this step because an ancestor @provides
-            // scope selected the concrete runtime field. Match the actual operation path to
-            // verify that this response scope already contains the requirement.
-            if (ContainsSelectionsAtPath(
-                step.Definition.SelectionSet,
-                relativePath,
-                selectionSet))
-            {
-                steps = steps.SetItem(
-                    stepIndex,
-                    step with { Dependents = step.Dependents.Add(lookupStepId) });
-                selectionSet = null;
-                break;
-            }
-
-            var input = new SelectionSetPartitionerInput
-            {
-                SchemaName = schemaName,
-                SelectionSet = workItemSelectionSet with { Node = selectionSet },
-                SelectionSetIndex = index,
-                TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null,
-                EntryKeyCoverage =
-                    step.Lookup is not null && workItemSelectionSet.Id == step.RootSelectionSetId
-                        ? step.Lookup.Requirements
-                        : null
-            };
-
-            var (resolvable, unresolvable, fieldsWithRequirements, _) = _partitioner.Partition(input);
-
-            if (resolvable is { Selections.Count: > 0 })
-            {
-                var operation =
-                    InlineSelections(
-                        step.Definition,
-                        index,
-                        workItemSelectionSet.Type,
-                        index.GetId(resolvable),
-                        resolvable);
-
-                var updatedStep = step with
+                // A step can only carry a requirement that lives within the data it produces.
+                // Match the candidate's response scope so a requirement cannot be inlined into
+                // a step producing the same logical selection at a different path.
+                if (!step.Target.IsParentOfOrSame(workItemSelectionSet.Path))
                 {
-                    Definition = operation,
+                    continue;
+                }
 
-                    // we need to update the selection sets that this plan step
-                    // has as the requirement could have introduced new ones.
-                    SelectionSets = SelectionSetIndexer.CreateIdSet(operation.SelectionSet, index),
+                // The lookup step inherits the dependents of the step that consumes its field, so
+                // a step that already depends on the consumer cannot provide the lookup's key.
+                if (consumerStep is not null && step.DependsOn(consumerStep, steps))
+                {
+                    continue;
+                }
 
-                    // we add the new lookup node to the dependents of the current step.
-                    // the new lookup node will be the next index added which is the last index aka Count.
-                    Dependents = step.Dependents.Add(lookupStepId)
+                if (!processed.Add(schemaName)
+                    || (!allowSourceSchemaReentry
+                        && lookup.SchemaName.Equals(schemaName)
+                        && !CanProvideRequirementLookupKey(step, consumerStep, steps)))
+                {
+                    continue;
+                }
+
+                var relativePath = workItemSelectionSet.Path.RelativeTo(step.Target);
+
+                // A lookup key can already be present in this step because an ancestor @provides
+                // scope selected the concrete runtime field. Match the actual operation path to
+                // verify that this response scope already contains the requirement.
+                if (ContainsSelectionsAtPath(
+                    step.Definition.SelectionSet,
+                    relativePath,
+                    selectionSet))
+                {
+                    steps = steps.SetItem(
+                        stepIndex,
+                        step with { Dependents = step.Dependents.Add(lookupStepId) });
+                    selectionSet = null;
+                    break;
+                }
+
+                var input = new SelectionSetPartitionerInput
+                {
+                    SchemaName = schemaName,
+                    SelectionSet = workItemSelectionSet with { Node = selectionSet },
+                    SelectionSetIndex = index,
+                    TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null,
+                    EntryKeyCoverage =
+                        step.Lookup is not null && workItemSelectionSet.Id == step.RootSelectionSetId
+                            ? step.Lookup.Requirements
+                            : null
                 };
 
-                steps = steps.SetItem(stepIndex, updatedStep);
+                var (resolvable, unresolvable, fieldsWithRequirements, _) = _partitioner.Partition(input);
 
-                selectionSet = null;
-
-                // fields of the inlined requirement that carry their own requirements are not
-                // resolvable in the step yet, so they are planned on behalf of the step.
-                backlog = backlog.PushRequirements(
-                    fieldsWithRequirements,
-                    new StepConsumer(step.Id),
-                    [lookupStepId],
-                    GetOperationStepDepth(current, step.Id),
-                    descendantPolicy);
-
-                if (!unresolvable.IsEmpty)
+                if (resolvable is { Selections.Count: > 0 })
                 {
-                    var top = unresolvable.Peek();
-                    if (top.SelectionSet.Id == workItemSelectionSet.Id)
-                    {
-                        unresolvable = unresolvable.Pop(out top);
-                        selectionSet = top.SelectionSet.Node;
-                    }
+                    var operation =
+                        InlineSelections(
+                            step.Definition,
+                            index,
+                            workItemSelectionSet.Type,
+                            index.GetId(resolvable),
+                            resolvable);
 
-                    backlog = backlog.PushUnresolvable(
-                        unresolvable,
-                        current.SchemaName,
+                    var updatedStep = step with
+                    {
+                        Definition = operation,
+
+                        // we need to update the selection sets that this plan step
+                        // has as the requirement could have introduced new ones.
+                        SelectionSets = CreateStepSelectionSets(step, operation, index),
+
+                        // we add the new lookup node to the dependents of the current step.
+                        // the new lookup node will be the next index added which is the last index aka Count.
+                        Dependents = step.Dependents.Add(lookupStepId)
+                    };
+
+                    steps = steps.SetItem(stepIndex, updatedStep);
+
+                    selectionSet = null;
+
+                    // fields of the inlined requirement that carry their own requirements are not
+                    // resolvable in the step yet, so they are planned on behalf of the step.
+                    backlog = backlog.PushRequirements(
+                        fieldsWithRequirements,
+                        new StepConsumer(step.Id),
+                        [lookupStepId],
                         GetOperationStepDepth(current, step.Id),
-                        dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
-                        sourceSchemaNodePolicy: descendantPolicy);
+                        descendantPolicy);
+
+                    if (!unresolvable.IsEmpty)
+                    {
+                        var top = unresolvable.Peek();
+                        if (top.SelectionSet.Id == workItemSelectionSet.Id)
+                        {
+                            unresolvable = unresolvable.Pop(out top);
+                            selectionSet = top.SelectionSet.Node;
+                        }
+
+                        backlog = backlog.PushUnresolvable(
+                            unresolvable,
+                            current.SchemaName,
+                            GetOperationStepDepth(current, step.Id),
+                            dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
+                            sourceSchemaNodePolicy: descendantPolicy);
+                    }
+                }
+
+                if (selectionSet is null)
+                {
+                    break;
                 }
             }
-
-            if (selectionSet is null)
-            {
-                break;
-            }
         }
+
+        InlineIntoCandidateSteps(workItemSelectionSet.Id);
 
         // Fallback: if no candidate step was found via exact selection set ID match,
         // walk the internal operation AST to find the nearest ancestor step and the
@@ -1476,6 +1481,16 @@ public sealed partial class OperationPlanner
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
             }
+        }
+
+        // A selection set that was merged into an enclosing selection set of a step is
+        // addressed through the selection set it was merged into.
+        var mergedIntoSelectionSetId = workItemSelectionSet.Id;
+
+        while (selectionSet is not null
+            && index.TryGetMergedInto(mergedIntoSelectionSetId, out mergedIntoSelectionSetId))
+        {
+            InlineIntoCandidateSteps(mergedIntoSelectionSetId);
         }
 
         unresolvedRequirements = selectionSet;
@@ -2032,7 +2047,7 @@ public sealed partial class OperationPlanner
             var updatedStep = refreshedExistingStep with
             {
                 Definition = operation,
-                SelectionSets = SelectionSetIndexer.CreateIdSet(operation.SelectionSet, indexBuilder),
+                SelectionSets = CreateStepSelectionSets(refreshedExistingStep, operation, indexBuilder),
                 Requirements = requirements,
                 Dependents = refreshedExistingStep.Dependents.Union(workItem.Dependents)
             };
@@ -3612,6 +3627,52 @@ public sealed partial class OperationPlanner
             inlineInternal: true);
     }
 
+    // Keeps the selection sets of a step that were merged into an enclosing selection set
+    // addressable through the selection set they were merged into.
+    private static ImmutableHashSet<uint> CreateStepSelectionSets(
+        OperationPlanStep step,
+        OperationDefinitionNode operation,
+        SelectionSetIndexBuilder index)
+    {
+        var selectionSets = SelectionSetIndexer.CreateIdSet(operation.SelectionSet, index);
+
+        if (step.SelectionSets.IsSubsetOf(selectionSets))
+        {
+            return selectionSets;
+        }
+
+        RegisterMergedSelectionSets(step.Definition.SelectionSet, null);
+        return selectionSets;
+
+        void RegisterMergedSelectionSets(SelectionSetNode selectionSet, uint? enclosingSelectionSetId)
+        {
+            var id = index.GetId(selectionSet);
+
+            if (selectionSets.Contains(id))
+            {
+                enclosingSelectionSetId = id;
+            }
+            else if (enclosingSelectionSetId.HasValue)
+            {
+                index.RegisterMerged(id, enclosingSelectionSetId.Value);
+            }
+
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode { SelectionSet: { } fieldSelectionSet }:
+                        RegisterMergedSelectionSets(fieldSelectionSet, null);
+                        break;
+
+                    case InlineFragmentNode inlineFragment:
+                        RegisterMergedSelectionSets(inlineFragment.SelectionSet, enclosingSelectionSetId);
+                        break;
+                }
+            }
+        }
+    }
+
     private static void RegisterRequirementSelectionSets(
         SelectionSetNode selectionSet,
         SelectionSetIndexBuilder index)
@@ -3726,6 +3787,17 @@ public sealed partial class OperationPlanner
             leave: (_, path) => path.Pop());
 
         var rewrittenOperation = (OperationDefinitionNode)rewriter.Rewrite(operation, [])!;
+
+        if (!didInline && index.TryGetMergedInto(targetSelectionSetId, out var mergedInto))
+        {
+            return InlineSelections(
+                operation,
+                index,
+                selectionSetType,
+                mergedInto,
+                selectionsToInline,
+                inlineInternal);
+        }
 
         if (!didInline)
         {
@@ -4357,7 +4429,7 @@ public sealed partial class OperationPlanner
         var updatedStep = match.Step with
         {
             Definition = operation,
-            SelectionSets = SelectionSetIndexer.CreateIdSet(operation.SelectionSet, index),
+            SelectionSets = CreateStepSelectionSets(match.Step, operation, index),
             Dependents = match.Step.Dependents.Add(dependentStepId)
         };
 
