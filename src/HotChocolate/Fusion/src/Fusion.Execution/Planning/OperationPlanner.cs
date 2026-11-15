@@ -136,14 +136,25 @@ public sealed partial class OperationPlanner
             && operationDefinition.Operation is not OperationType.Subscription
             && DeferOperationRewriter.HasDeferDirective(operationDefinition))
         {
-            var singlePlan = TryCreatePlan(
-                id,
-                hash,
-                shortHash,
-                operationDefinition,
-                singlePlanDefer: true,
-                out var fallbackCause,
-                cancellationToken);
+            OperationPlan? singlePlan;
+            string? fallbackCause;
+
+            try
+            {
+                singlePlan = TryCreatePlan(
+                    id,
+                    hash,
+                    shortHash,
+                    operationDefinition,
+                    singlePlanDefer: true,
+                    out fallbackCause,
+                    cancellationToken);
+            }
+            catch (OperationPlannerGuardrailException ex)
+            {
+                singlePlan = null;
+                fallbackCause = ex.Message;
+            }
 
             if (singlePlan is not null)
             {
@@ -480,7 +491,8 @@ public sealed partial class OperationPlanner
         }
         catch (Exception ex)
         {
-            if (eventSourceEnabled)
+            // A guardrail exception of a single defer plan attempt is not reported as a failed plan.
+            if (eventSourceEnabled && !(singlePlanDefer && ex is OperationPlannerGuardrailException))
             {
                 var elapsed = Stopwatch.GetElapsedTime(startedAt);
                 eventSource.PlanError(
