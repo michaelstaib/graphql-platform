@@ -75,7 +75,7 @@ internal sealed class OperationExecutionMiddleware
             {
                 if (context.VariableValues.Length > 1)
                 {
-                    if (!operationPlan.IncrementalPlans.IsEmpty)
+                    if (operationPlan.HasDeferredDelivery)
                     {
                         var error = ErrorBuilder.New()
                             .SetMessage("Variable batching is not supported with @defer.")
@@ -151,7 +151,7 @@ internal sealed class OperationExecutionMiddleware
         OperationPlan operationPlan,
         IOperationRequest request)
     {
-        if (request.Flags is RequestFlags.AllowAll || operationPlan.IncrementalPlans.IsEmpty)
+        if (request.Flags is RequestFlags.AllowAll || !operationPlan.HasDeferredDelivery)
         {
             return true;
         }
