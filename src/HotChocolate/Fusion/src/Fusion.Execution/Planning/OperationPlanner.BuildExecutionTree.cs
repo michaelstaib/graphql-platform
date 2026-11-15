@@ -62,7 +62,10 @@ public sealed partial class OperationPlanner
             return introspectionPlan;
         }
 
-        var ctx = new ExecutionPlanBuildContext(nextNodeId);
+        var ctx = new ExecutionPlanBuildContext(nextNodeId)
+        {
+            DeliveryGroups = singlePlanDefer ? deliveryGroups : default
+        };
         var marker = policyContext is null
             ? null
             : PolicyMarker.TryCreate(_schema, policyContext, operation);
@@ -1405,8 +1408,14 @@ public sealed partial class OperationPlanner
         }
 
         var candidates = new Dictionary<string, List<OperationExecutionNode>>(StringComparer.Ordinal);
+        var queryNodes = ctx.ExecutionNodes.Values.OfType<OperationExecutionNode>();
 
-        foreach (var node in ctx.ExecutionNodes.Values.OfType<OperationExecutionNode>())
+        if (!ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            queryNodes = OrderByDependencyDepthDescending(ctx, queryNodes);
+        }
+
+        foreach (var node in queryNodes)
         {
             if (node.Operation.Type != OperationType.Query)
             {
@@ -1419,8 +1428,8 @@ public sealed partial class OperationPlanner
             }
 
             var signature = serialScopes is null
-                ? ComputeCanonicalSignature(node)
-                : $"{GetSerialScope(serialScopes, node.Id)}|{ComputeCanonicalSignature(node)}";
+                ? ComputeMergeSignature(ctx, node)
+                : $"{GetSerialScope(serialScopes, node.Id)}|{ComputeMergeSignature(ctx, node)}";
 
             if (!candidates.TryGetValue(signature, out var list))
             {
@@ -1471,11 +1480,171 @@ public sealed partial class OperationPlanner
             foreach (var group in PartitionIntoMergeableGroups(
                 equivalentNodes, ctx.DependenciesByStepId, mergePolicy))
             {
+                if (HaveDifferentDeliveryGroups(ctx, group, mergeResults))
+                {
+                    foreach (var subgroup in SplitByDependentCoverage(ctx, group, mergeResults, null))
+                    {
+                        MergeGroup(ctx, subgroup, mergeResults);
+                    }
+
+                    continue;
+                }
+
                 MergeGroup(ctx, group, mergeResults);
             }
         }
 
         return mergeResults;
+    }
+
+    // Splits the batch groups so that every dependent outside a batch belongs to all groups of the batch it
+    // depends on.
+    private static List<List<OperationExecutionNode>> SplitBatchGroupsByDependentCoverage(
+        ExecutionPlanBuildContext ctx,
+        Dictionary<(string schema, int depth, int scope, string deliveryGroups), List<OperationExecutionNode>> groups,
+        Dictionary<int, MergeResult> mergeResults)
+    {
+        var batched = new HashSet<int>(mergeResults.Keys);
+        var decided = new List<(int Depth, List<OperationExecutionNode> Members)>();
+
+        foreach (var (key, members) in groups
+            .OrderByDescending(t => t.Key.depth)
+            .ThenBy(t => t.Value[0].Id))
+        {
+            var subgroups = members.Count > 1 && HaveDifferentDeliveryGroups(ctx, members, mergeResults)
+                ? SplitByDependentCoverage(ctx, members, mergeResults, batched)
+                : [members];
+
+            foreach (var subgroup in subgroups)
+            {
+                if (subgroup.Count > 1)
+                {
+                    batched.UnionWith(subgroup.Select(static node => node.Id));
+                }
+
+                decided.Add((key.depth, subgroup));
+            }
+        }
+
+        return
+        [
+            .. decided
+                .OrderBy(static t => t.Depth)
+                .ThenBy(static t => t.Members[0].Id)
+                .Select(static t => t.Members)
+        ];
+    }
+
+    // Orders the nodes from the deepest dependency level to the shallowest.
+    private static IEnumerable<OperationExecutionNode> OrderByDependencyDepthDescending(
+        ExecutionPlanBuildContext ctx,
+        IEnumerable<OperationExecutionNode> nodes)
+    {
+        var depthLookup = new Dictionary<int, int>();
+        var recursionStack = new HashSet<int>();
+        var ordered = nodes.ToList();
+
+        foreach (var node in ordered)
+        {
+            GetDependencyDepth(node.Id, ctx.DependenciesByStepId, depthLookup, recursionStack);
+        }
+
+        return ordered.OrderByDescending(node => depthLookup[node.Id]);
+    }
+
+    private static bool HaveDifferentDeliveryGroups(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group,
+        Dictionary<int, MergeResult> mergeResults)
+    {
+        if (ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        var first = GetEffectiveDeliveryGroups(group[0], mergeResults);
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            if (!GetEffectiveDeliveryGroups(group[i], mergeResults).AsSpan().SequenceEqual(first.AsSpan()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ImmutableArray<int> GetEffectiveDeliveryGroups(
+        OperationExecutionNode node,
+        Dictionary<int, MergeResult> mergeResults)
+        => mergeResults.TryGetValue(node.Id, out var merge) ? merge.DeliveryGroups : node.DeliveryGroups;
+
+    // Splits the operations into subgroups so that every dependent outside the exempt set belongs to all groups
+    // of the operations it depends on.
+    private static List<List<OperationExecutionNode>> SplitByDependentCoverage(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group,
+        Dictionary<int, MergeResult> mergeResults,
+        HashSet<int>? exemptDependents)
+    {
+        var subgroups = new List<List<OperationExecutionNode>>();
+
+        foreach (var node in group)
+        {
+            var placed = false;
+
+            foreach (var subgroup in subgroups)
+            {
+                subgroup.Add(node);
+
+                if (DependentsCoverDeliveryGroups(ctx, subgroup, mergeResults, exemptDependents))
+                {
+                    placed = true;
+                    break;
+                }
+
+                subgroup.RemoveAt(subgroup.Count - 1);
+            }
+
+            if (!placed)
+            {
+                subgroups.Add([node]);
+            }
+        }
+
+        return subgroups;
+    }
+
+    private static bool DependentsCoverDeliveryGroups(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group,
+        Dictionary<int, MergeResult> mergeResults,
+        HashSet<int>? exemptDependents)
+    {
+        var memberIds = group.Select(static node => node.Id).ToList();
+        var union = UnionDeliveryGroups(group, mergeResults);
+
+        foreach (var (dependentId, dependencies) in ctx.DependenciesByStepId)
+        {
+            if (!dependencies.Overlaps(memberIds)
+                || (exemptDependents?.Contains(dependentId) ?? false))
+            {
+                continue;
+            }
+
+            var dependentGroups = ctx.ExecutionNodes.TryGetValue(dependentId, out var dependent)
+                && dependent is OperationExecutionNode operation
+                    ? GetEffectiveDeliveryGroups(operation, mergeResults)
+                    : default;
+
+            if (!CoversDeliveryGroups(dependentGroups, union, ctx.DeliveryGroups))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1717,6 +1886,7 @@ public sealed partial class OperationPlanner
 
         var primary = group[0];
         var (canonicalOp, canonicalRequirements) = CanonicalizeOperation(primary);
+        var deliveryGroups = UnionDeliveryGroups(group, mergeResults);
         var targets = new SelectionPath[group.Count];
 
         for (var i = 0; i < group.Count; i++)
@@ -1724,12 +1894,42 @@ public sealed partial class OperationPlanner
             targets[i] = group[i].Target;
         }
 
+        // Merged operations of sibling groups keep each target once.
+        if (deliveryGroups != primary.DeliveryGroups)
+        {
+            targets = [.. targets.Distinct()];
+        }
+
         mergeResults[primary.Id] = new MergeResult(
-            targets, canonicalOp, canonicalRequirements, primary);
+            targets, canonicalOp, canonicalRequirements, primary, deliveryGroups);
 
         AbsorbMergedNodes(ctx, primary.Id, group);
 
         return primary.Id;
+    }
+
+    // Returns the groups of all members, sorted by group id.
+    private static ImmutableArray<int> UnionDeliveryGroups(
+        List<OperationExecutionNode> group,
+        Dictionary<int, MergeResult> mergeResults)
+    {
+        var primaryGroups = GetEffectiveDeliveryGroups(group[0], mergeResults);
+        SortedSet<int>? union = null;
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            var memberGroups = GetEffectiveDeliveryGroups(group[i], mergeResults);
+
+            if (memberGroups.IsDefaultOrEmpty || memberGroups.AsSpan().SequenceEqual(primaryGroups.AsSpan()))
+            {
+                continue;
+            }
+
+            union ??= [.. primaryGroups];
+            union.UnionWith(memberGroups);
+        }
+
+        return union is null ? primaryGroups : [.. union];
     }
 
     private static bool IsReusableLookup(OperationExecutionNode node, FusionSchemaDefinition schema)
@@ -1926,7 +2126,7 @@ public sealed partial class OperationPlanner
                 schemaKey,
                 depth,
                 GetSerialScope(serialScopes, node.Id),
-                FormatDeliveryGroups(node.DeliveryGroups));
+                FormatMergeMark(ctx, node.DeliveryGroups));
 
             if (!batchGroups.TryGetValue(key, out var group))
             {
@@ -1946,9 +2146,17 @@ public sealed partial class OperationPlanner
         // the already-redirected identifiers from earlier merges. Groups at
         // the same depth are ordered by their lowest member identifier so
         // batch node identifier assignment is deterministic.
-        foreach (var (_, groupMembers) in batchGroups
+        var orderedGroups = batchGroups
             .OrderBy(t => t.Key.depth)
-            .ThenBy(t => t.Value[0].Id))
+            .ThenBy(t => t.Value[0].Id)
+            .Select(t => t.Value);
+
+        if (!ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            orderedGroups = SplitBatchGroupsByDependentCoverage(ctx, batchGroups, mergeResults);
+        }
+
+        foreach (var groupMembers in orderedGroups)
         {
             if (groupMembers.Count <= 1)
             {
@@ -2283,7 +2491,7 @@ public sealed partial class OperationPlanner
             primary.ConditionAlternatives.ToArray(),
             primary.RequiresFileUpload)
         {
-            DeliveryGroups = primary.DeliveryGroups
+            DeliveryGroups = merge.DeliveryGroups
         };
 
         foreach (var parentDependency in primary.BufferedParentDependencies)
@@ -2790,6 +2998,34 @@ public sealed partial class OperationPlanner
         ReadOnlySpan<ExecutionNodeCondition> conditions,
         ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives,
         ImmutableArray<int> deliveryGroups)
+        => ComputeCanonicalSignature(
+            schemaName,
+            source,
+            document,
+            requirements,
+            conditions,
+            conditionAlternatives,
+            FormatDeliveryGroups(deliveryGroups));
+
+    // Computes the signature with the marks of unlabelled sibling groups unified.
+    private static string ComputeMergeSignature(ExecutionPlanBuildContext ctx, OperationExecutionNode node)
+        => ComputeCanonicalSignature(
+            node.SchemaName,
+            node.Source,
+            node.OperationDocument,
+            node.Requirements,
+            node.Conditions,
+            node.ConditionAlternatives,
+            FormatMergeMark(ctx, node.DeliveryGroups));
+
+    private static string ComputeCanonicalSignature(
+        string? schemaName,
+        SelectionPath source,
+        Utf8OperationDocument document,
+        ReadOnlySpan<OperationRequirement> requirements,
+        ReadOnlySpan<ExecutionNodeCondition> conditions,
+        ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives,
+        string deliveryGroupMark)
     {
         var replacements = BuildPrefixReplacements(requirements);
         var bodyText = FormatCanonicalSelectionSet(document, replacements);
@@ -2797,15 +3033,41 @@ public sealed partial class OperationPlanner
         var formattedAlternatives = FormatCanonicalConditionAlternatives(conditionAlternatives);
         var signature = $"{schemaName}|{source}|{formattedConditions}|{formattedAlternatives}|{bodyText}";
 
-        return deliveryGroups.IsDefaultOrEmpty
+        return deliveryGroupMark.Length == 0
             ? signature
-            : $"{signature}|{FormatDeliveryGroups(deliveryGroups)}";
+            : $"{signature}|{deliveryGroupMark}";
     }
 
     private static string FormatDeliveryGroups(ImmutableArray<int> deliveryGroups)
         => deliveryGroups.IsDefaultOrEmpty
             ? string.Empty
             : string.Join(",", deliveryGroups.OrderBy(static id => id));
+
+    // Names the groups of a mark. Unlabelled groups with the same parent and path share one name.
+    private static string FormatMergeMark(ExecutionPlanBuildContext ctx, ImmutableArray<int> deliveryGroups)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty || ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            return FormatDeliveryGroups(deliveryGroups);
+        }
+
+        var site = ctx.DeliveryGroups[deliveryGroups[0]];
+
+        foreach (var id in deliveryGroups)
+        {
+            var group = ctx.DeliveryGroups[id];
+
+            if (group.Label is not null
+                || group.Path is null
+                || group.Parent?.Id != site.Parent?.Id
+                || !group.Path.Equals(site.Path))
+            {
+                return FormatDeliveryGroups(deliveryGroups);
+            }
+        }
+
+        return $"unlabelled:{site.Parent?.Id}:{site.Path}";
+    }
 
     /// <summary>
     /// Determines whether <paramref name="dependent"/> runs after <paramref name="dependency"/>
@@ -4316,6 +4578,12 @@ public sealed partial class OperationPlanner
         public Dictionary<int, int> RedirectedStepIds { get; } = [];
 
         /// <summary>
+        /// The delivery groups of a plan with single plan defer, indexed by group id, or the default
+        /// array when the plan does not use them.
+        /// </summary>
+        public ImmutableArray<DeliveryGroup> DeliveryGroups { get; init; }
+
+        /// <summary>
         /// Returns a node identifier that is unique across all execution nodes
         /// and operation definitions of the plan being built.
         /// </summary>
@@ -4326,7 +4594,8 @@ public sealed partial class OperationPlanner
         SelectionPath[] Targets,
         OperationSourceText CanonicalOp,
         OperationRequirement[] CanonicalRequirements,
-        OperationExecutionNode Primary);
+        OperationExecutionNode Primary,
+        ImmutableArray<int> DeliveryGroups);
 
     /// <summary>
     /// Structurally identical Apollo lookups that merge into one lookup. The node with the

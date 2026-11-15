@@ -433,6 +433,174 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_MergeIntoOneMarkedStep_When_UnlabelledSiblingsFetchTheSameField()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { price }
+                    ... @defer { price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanTheFieldsOfBothSiblings_When_UnlabelledSiblingsHaveDifferentBodies()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { price }
+                    ... @defer { price rating }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTwoSteps_When_ALabelledAndAnUnlabelledSiblingFetchTheSameField()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { price }
+                    ... @defer { price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTwoSteps_When_UnlabelledSiblingsHaveDifferentSwitches()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a) { price }
+                    ... @defer(if: $b) { price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTwoSteps_When_UnlabelledFragmentsSitAtDifferentPaths()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    author { ... @defer { bio } }
+                    editor { ... @defer { bio } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MergeTheRequirementStepsOfBothSiblings_When_UnlabelledSiblingsFetchTheSameRequireField()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products {
+                    upc
+                    ... @defer { eur }
+                    ... @defer { eur }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheOuterStepsApart_When_NestedFragmentsOfUnlabelledSiblingsTakeTheKeyFromTheOuterStep()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { author { ... @defer { bio } } }
+                    ... @defer { author { ... @defer { bio } } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_NotBatchAMarkedStepWithAnUnmarkedStep_When_BothTargetOneSchema()
     {
         // arrange

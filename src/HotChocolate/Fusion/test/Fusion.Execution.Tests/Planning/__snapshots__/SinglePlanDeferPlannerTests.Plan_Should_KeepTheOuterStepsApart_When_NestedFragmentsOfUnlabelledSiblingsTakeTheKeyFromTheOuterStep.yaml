@@ -1,0 +1,139 @@
+operation:
+  - document: |
+      {
+        product(id: "1") {
+          name
+          ... @defer {
+            author {
+              ... @defer {
+                bio
+                id @fusion__requirement
+              }
+            }
+            id @fusion__requirement
+          }
+          ... @defer {
+            author {
+              ... @defer {
+                bio
+                id @fusion__requirement
+              }
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          ... {
+            id
+          }
+          ... {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          author {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 2
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        authorById(id: $__fusion_2_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 3
+    dependencies:
+      - id: 2
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        productById(id: $__fusion_3_id) {
+          author {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        authorById(id: $__fusion_4_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 4
+deliveryGroups:
+  - id: 0
+    path: $.product
+  - id: 1
+    path: $.product.author
+    parentId: 0
+  - id: 2
+    path: $.product
+  - id: 3
+    path: $.product.author
+    parentId: 2
