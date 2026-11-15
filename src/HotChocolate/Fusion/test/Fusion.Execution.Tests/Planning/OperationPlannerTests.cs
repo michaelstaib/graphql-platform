@@ -497,6 +497,34 @@ public class OperationPlannerTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Plan_Should_PlanNestedTypeCondition_When_InterfaceFragmentIsOfAnotherSourceSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(PricedSchemaA, PricedSchemaB, PricedSchemaC);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+              item(id: "1") {
+                name
+                ... on Priced {
+                  price
+                  ... on Book {
+                    rating
+                    reviews { body }
+                  }
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
     private const string NodeSchemaA =
         """
         # name: a
@@ -530,6 +558,60 @@ public class OperationPlannerTests : FusionTestBase
         type Product implements Node @key(fields: "id") {
           id: ID!
           price: Float!
+        }
+        """;
+
+    private const string PricedSchemaA =
+        """
+        # name: a
+        type Query {
+          item(id: ID!): Item
+          book(id: ID!): Book @lookup
+        }
+
+        interface Item {
+          id: ID!
+          name: String!
+        }
+
+        type Book implements Item @key(fields: "id") {
+          id: ID!
+          name: String!
+        }
+        """;
+
+    private const string PricedSchemaB =
+        """
+        # name: b
+        type Query {
+          bookById(id: ID!): Book @lookup
+        }
+
+        interface Priced {
+          price: Float!
+        }
+
+        type Book implements Priced @key(fields: "id") {
+          id: ID!
+          price: Float!
+          rating: Int!
+        }
+        """;
+
+    private const string PricedSchemaC =
+        """
+        # name: c
+        type Query {
+          bookByIdC(id: ID!): Book @lookup
+        }
+
+        type Book @key(fields: "id") {
+          id: ID!
+          reviews: [Review!]!
+        }
+
+        type Review {
+          body: String!
         }
         """;
 }

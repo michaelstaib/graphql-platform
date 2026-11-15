@@ -4,6 +4,7 @@ using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Types.Metadata;
+using HotChocolate.Fusion.Types.Rewriters;
 using HotChocolate.Language;
 using HotChocolate.Types;
 
@@ -14,6 +15,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
     // An active entry-key scope whose coverage node carries no sub-selection: nothing
     // underneath is covered, but the scope itself stays active.
     private static readonly SelectionSetNode s_emptyEntryKeyCoverage = new([]);
+
+    private readonly MergeSelectionSetRewriter _mergeRewriter = new(schema);
 
     public SelectionSetPartitionerResult Partition(
         SelectionSetPartitionerInput input)
@@ -902,7 +905,10 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         foreach (var possibleType in possibleTypes)
         {
-            var branchSelectionSet = context.CloneSelectionSet(inlineFragmentNode.SelectionSet);
+            var branchSelectionSet = MergeFragmentsOfType(
+                context,
+                possibleType,
+                context.CloneSelectionSet(inlineFragmentNode.SelectionSet));
 
             var concreteFragment = new InlineFragmentNode(
                 inlineFragmentNode.Location,
@@ -955,6 +961,30 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             WrapExpandedFragments(context, inlineFragmentNode, resolvable),
             WrapExpandedFragments(context, inlineFragmentNode, unresolvable)
         );
+    }
+
+    // Merges inline fragments on the branch type into the selection set of the branch.
+    private SelectionSetNode MergeFragmentsOfType(
+        Context context,
+        FusionObjectTypeDefinition type,
+        SelectionSetNode selectionSet)
+    {
+        for (var i = 0; i < selectionSet.Selections.Count; i++)
+        {
+            if (selectionSet.Selections[i] is InlineFragmentNode
+                {
+                    TypeCondition: { } typeCondition,
+                    Directives.Count: 0
+                }
+                && typeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal))
+            {
+                var merged = _mergeRewriter.Merge([selectionSet], type, context.SelectionSetIndexBuilder);
+                context.Register(selectionSet, merged);
+                return merged;
+            }
+        }
+
+        return selectionSet;
     }
 
     private static InlineFragmentNode? WrapExpandedFragments(
