@@ -262,6 +262,36 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_DeliverBothNestedFragments_When_UnlabelledSiblingsShareTheOuterStep()
+    {
+        // arrange
+        // the response of the shared outer lookup reaches the gateway first, then each nested lookup answers.
+        var gateway = await CreateGatewayAsync(
+            ["B:2>", "C:3", "C:5"],
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { author { ... @defer { bio } } }
+                    ... @defer { author { ... @defer { bio } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.True(run.Deferred.Requests.Values.Sum() <= 4, run.Deferred.RequestSummary);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -1735,6 +1765,19 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Query { productByIdForReviews(id: ID!): Product @lookup }
         type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
         type Review { body: String! stars: Int! }
+        """;
+
+    private const string AuthorKeySource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! author: Author! }
+        type Author @key(fields: "id") { id: ID! }
+        """;
+
+    private const string AuthorBioSource =
+        """
+        type Query { authorById(id: ID!): Author @lookup }
+        type Author @key(fields: "id") { id: ID! bio: String! }
         """;
 
     private const string WeightSource =
