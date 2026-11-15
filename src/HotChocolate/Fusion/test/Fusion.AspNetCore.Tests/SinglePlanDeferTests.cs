@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -872,6 +873,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 ? PriceValue().Replace(text, "\"price\":777")
                 : text,
             failingSchema: null,
+            configure: null,
             ("A", ProductListSource),
             ("B", PriceSource));
 
@@ -1025,6 +1027,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             [],
             rewrite: null,
             failingSchema: "B",
+            configure: null,
             ("A", ProductListSource),
             ("B", PriceSource));
 
@@ -1064,6 +1067,39 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_CompleteEveryAnnouncedId_When_TheLoopFaults()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "C:2"],
+            rewrite: null,
+            failingSchema: "C",
+            configure: builder => builder.AddErrorFilter(error => error.Path?.ToString().Contains("reviews") is true
+                ? throw new InvalidOperationException("The error filter faulted.")
+                : error),
+            ("A", ProductSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { price }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_NotReportAnErrorForADeliveredField_When_TheMarkedStepFailsInTransport()
     {
         // arrange
@@ -1071,6 +1107,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             [],
             rewrite: null,
             failingSchema: "B",
+            configure: null,
             ("A", """
                 type Query { product(id: ID!): Product @lookup }
                 type Product @key(fields: "id") { id: ID! name: String! @shareable }
@@ -1299,7 +1336,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         => CreateGatewayAsync([], sources);
 
     private Task<Gateway> CreateGatewayAsync(string[] releaseOrder, params (string Name, string Sdl)[] sources)
-        => CreateGatewayAsync(releaseOrder, rewrite: null, failingSchema: null, sources);
+        => CreateGatewayAsync(releaseOrder, rewrite: null, failingSchema: null, configure: null, sources);
 
     // The responses of the steps in releaseOrder ("schema:stepId") reach the gateway in that order. The rewrite
     // changes the response text of a source schema, and every request to the failing schema fails in transport.
@@ -1307,6 +1344,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         string[] releaseOrder,
         Func<string, string, string, string>? rewrite,
         string? failingSchema,
+        Action<IFusionGatewayBuilder>? configure,
         params (string Name, string Sdl)[] sources)
     {
         var gate = _gate = new ResponseGate(releaseOrder);
@@ -1357,9 +1395,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 app.UseRouting();
                 app.UseEndpoints(endpoint => endpoint.MapGraphQL());
             },
-            configureGatewayBuilder: builder => builder
-                .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true)
-                .AddDiagnosticEventListener(_ => new StepDoneListener(gate)));
+            configureGatewayBuilder: builder =>
+            {
+                builder
+                    .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true)
+                    .AddDiagnosticEventListener(_ => new StepDoneListener(gate));
+                configure?.Invoke(builder);
+            });
     }
 
     private ResponseGate? _gate;

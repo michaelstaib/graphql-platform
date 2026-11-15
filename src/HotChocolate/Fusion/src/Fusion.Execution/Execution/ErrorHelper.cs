@@ -36,6 +36,12 @@ internal static class ErrorHelper
         return result;
     }
 
+    public static IError UnexpectedExecutionError(Exception exception)
+        => ErrorBuilder.New()
+            .SetMessage(FusionExecutionResources.ErrorHelper_UnexpectedExecutionError)
+            .SetException(exception)
+            .Build();
+
     public static OperationResult OperationKindNotAllowed(RequestFlags requiredFlag)
     {
         var result = OperationResult.FromError(

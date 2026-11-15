@@ -486,12 +486,24 @@ internal static partial class OperationPlanExecutor
             }
 
             var hasNext = true;
+            IError? fault = null;
 
             while (!cancellationToken.IsCancellationRequested)
             {
-                PumpSinglePlan(context, plan, state, cancellationToken);
+                OperationResult? payload;
 
-                var payload = CreateSinglePlanPayload(context, plan, state, out hasNext);
+                try
+                {
+                    PumpSinglePlan(context, plan, state, cancellationToken);
+                    payload = CreateSinglePlanPayload(context, plan, state, out hasNext);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    fault = ErrorHelper.UnexpectedExecutionError(ex);
+                    hasNext = true;
+                    await executionCts.CancelAsync();
+                    break;
+                }
 
                 if (payload is not null)
                 {
@@ -513,7 +525,6 @@ internal static partial class OperationPlanExecutor
                 if (!executionState.HasActiveNodes())
                 {
                     // No step runs any more, so the remaining groups can never be delivered.
-                    yield return CreateSinglePlanFinalPayload();
                     break;
                 }
 
@@ -523,7 +534,7 @@ internal static partial class OperationPlanExecutor
             if (hasNext && !requestCancellationToken.IsCancellationRequested)
             {
                 await DrainActiveNodesAsync(plan, executionState);
-                yield return CreateSinglePlanHaltedPayload(context, plan, state);
+                yield return CreateSinglePlanHaltedPayload(context, plan, state, fault);
             }
 
             await DrainActiveNodesAsync(plan, executionState);
@@ -544,10 +555,16 @@ internal static partial class OperationPlanExecutor
     private static OperationResult CreateSinglePlanHaltedPayload(
         OperationPlanContext context,
         OperationPlan plan,
-        SinglePlanDeliveryState state)
+        SinglePlanDeliveryState state,
+        IError? fault)
     {
         var completed = ImmutableList.CreateBuilder<CompletedResult>();
         var errors = context.GetErrorsAfter(state.PublishedErrorCount);
+
+        if (fault is not null)
+        {
+            errors = errors.Add(fault);
+        }
 
         foreach (var group in plan.DeliveryGroups)
         {
@@ -561,22 +578,21 @@ internal static partial class OperationPlanExecutor
 
         state.PublishedErrorCount = context.ErrorCount;
 
-        var payload = OperationResult.FromError(ErrorBuilder.New().SetMessage("placeholder").Build());
-        payload.Completed = completed.ToImmutable();
-        payload.Data = null;
-        payload.Errors = [];
-        payload.HasNext = false;
-        return payload;
+        return CreateSinglePlanPayloadResult([], [], completed.ToImmutable(), hasNext: false);
     }
 
-    private static OperationResult CreateSinglePlanFinalPayload()
-    {
-        var payload = OperationResult.FromError(ErrorBuilder.New().SetMessage("placeholder").Build());
-        payload.Data = null;
-        payload.Errors = [];
-        payload.HasNext = false;
-        return payload;
-    }
+    private static OperationResult CreateSinglePlanPayloadResult(
+        ImmutableList<PendingResult> pending,
+        ImmutableList<IIncrementalResult> incremental,
+        ImmutableList<CompletedResult> completed,
+        bool hasNext)
+        => new(new IncrementalDataFeature
+        {
+            Pending = pending,
+            Incremental = incremental,
+            Completed = completed,
+            HasNext = hasNext
+        });
 
     private static OperationResult? CreateSinglePlanPayload(
         OperationPlanContext context,
@@ -592,79 +608,98 @@ internal static partial class OperationPlanExecutor
         var errors = context.GetErrorsAfter(state.PublishedErrorCount);
         var progressed = true;
 
-        while (progressed)
+        try
         {
-            progressed = false;
-
-            foreach (var group in plan.DeliveryGroups)
+            while (progressed)
             {
-                var id = group.Id;
+                progressed = false;
 
-                if (!state.Announced[id] || state.Completed[id] || !state.IsSettled(id, executionState))
+                foreach (var group in plan.DeliveryGroups)
                 {
-                    continue;
-                }
+                    var id = group.Id;
 
-                state.Completed[id] = true;
-                progressed = true;
-
-                var failed = false;
-
-                foreach (var node in state.NodesByGroup[id])
-                {
-                    failed |= state.Failed[node.Id];
-                }
-
-                if (failed)
-                {
-                    completed.Add(new CompletedResult(id, errors.Count > 0 ? errors : null));
-                    errors = [];
-                }
-                else
-                {
-                    var before = incremental.Count;
-                    var data = document.Data;
-
-                    CollectIncrementalResults(
-                        document,
-                        data,
-                        group.Path ?? SelectionPath.Root,
-                        segmentIndex: 0,
-                        fieldIndex: 0,
-                        plan.GetDeliveryPath(id).PendingFieldCount,
-                        Path.Root,
-                        id,
-                        errors: null,
-                        incremental,
-                        claimRows: true);
-
-                    if (errors.Count > 0 && incremental.Count > before)
+                    if (!state.Announced[id] || state.Completed[id] || !state.IsSettled(id, executionState))
                     {
-                        var first = (IncrementalObjectResult)incremental[before];
-                        incremental[before] = new IncrementalObjectResult(
-                            first.Id,
-                            errors,
-                            first.SubPath,
-                            first.Data);
+                        continue;
+                    }
+
+                    progressed = true;
+
+                    var failed = false;
+
+                    foreach (var node in state.NodesByGroup[id])
+                    {
+                        failed |= state.Failed[node.Id];
+                    }
+
+                    if (failed)
+                    {
+                        completed.Add(new CompletedResult(id, errors.Count > 0 ? errors : null));
+                        errors = [];
+                    }
+                    else
+                    {
+                        var before = incremental.Count;
+                        var data = document.Data;
+
+                        CollectIncrementalResults(
+                            document,
+                            data,
+                            group.Path ?? SelectionPath.Root,
+                            segmentIndex: 0,
+                            fieldIndex: 0,
+                            plan.GetDeliveryPath(id).PendingFieldCount,
+                            Path.Root,
+                            id,
+                            errors: null,
+                            incremental,
+                            claimRows: true);
+
+                        if (errors.Count > 0 && incremental.Count > before)
+                        {
+                            var first = (IncrementalObjectResult)incremental[before];
+                            incremental[before] = new IncrementalObjectResult(
+                                first.Id,
+                                errors,
+                                first.SubPath,
+                                first.Data);
+                            errors = [];
+                        }
+
+                        completed.Add(new CompletedResult(id, errors.Count > 0 ? errors : null));
                         errors = [];
                     }
 
-                    completed.Add(new CompletedResult(id, errors.Count > 0 ? errors : null));
-                    errors = [];
-                }
+                    state.Completed[id] = true;
 
-                foreach (var child in plan.DeliveryGroups)
-                {
-                    if (state.Honored[child.Id]
-                        && !state.Announced[child.Id]
-                        && state.GetHonoredParent(child) is { } parent
-                        && parent.Id == id)
+                    foreach (var child in plan.DeliveryGroups)
                     {
-                        state.Announced[child.Id] = true;
-                        pending.Add(CreatePendingResult(plan, child));
+                        if (state.Honored[child.Id]
+                            && !state.Announced[child.Id]
+                            && state.GetHonoredParent(child) is { } parent
+                            && parent.Id == id)
+                        {
+                            pending.Add(CreatePendingResult(plan, child));
+                            state.Announced[child.Id] = true;
+                        }
                     }
                 }
             }
+        }
+        catch (Exception)
+        {
+            // The payload is never sent, so its groups are neither announced nor completed.
+            foreach (var result in completed)
+            {
+                state.Completed[result.Id] = false;
+            }
+
+            foreach (var result in pending)
+            {
+                state.Announced[result.Id] = false;
+            }
+
+            throw;
         }
 
         hasNext = false;
@@ -681,14 +716,11 @@ internal static partial class OperationPlanExecutor
 
         state.PublishedErrorCount = context.ErrorCount;
 
-        var payload = OperationResult.FromError(ErrorBuilder.New().SetMessage("placeholder").Build());
-        payload.Pending = pending.ToImmutable();
-        payload.Incremental = incremental.ToImmutable();
-        payload.Completed = completed.ToImmutable();
-        payload.Data = null;
-        payload.Errors = [];
-        payload.HasNext = hasNext;
-        return payload;
+        return CreateSinglePlanPayloadResult(
+            pending.ToImmutable(),
+            incremental.ToImmutable(),
+            completed.ToImmutable(),
+            hasNext);
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(

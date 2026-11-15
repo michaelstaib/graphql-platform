@@ -315,6 +315,12 @@ namespace HotChocolate.Fusion.Properties {
             }
         }
 
+        internal static string ErrorHelper_UnexpectedExecutionError {
+            get {
+                return ResourceManager.GetString("ErrorHelper_UnexpectedExecutionError", resourceCulture);
+            }
+        }
+
         internal static string PolicyEvaluationContext_EntryNotPartOfContext {
             get {
                 return ResourceManager.GetString("PolicyEvaluationContext_EntryNotPartOfContext", resourceCulture);
