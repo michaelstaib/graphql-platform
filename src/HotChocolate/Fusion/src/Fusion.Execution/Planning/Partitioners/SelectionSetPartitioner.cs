@@ -1484,7 +1484,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return SpillPlacement.InPlace;
         }
 
-        return fragment.TypeCondition is null && HoldsDeferredFragment(context, fragment, type)
+        return HoldsDeferredFragment(context, fragment, type)
             ? SpillPlacement.Split
             : SpillPlacement.Body;
     }
