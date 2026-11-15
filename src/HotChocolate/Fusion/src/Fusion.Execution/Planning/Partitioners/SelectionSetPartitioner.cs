@@ -113,12 +113,15 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         var spillAll = ReferenceEquals(context.SpillSelectionSet, selectionSetNode);
         var spillDeliveryGroup = spillAll ? context.SpillDeliveryGroup : null;
+        var returnSpilled = spillAll && context.ReturnSpilledSelections;
 
         context.Nodes.Push(selectionSetNode);
 
         for (var i = 0; i < selectionSetNode.Selections.Count; i++)
         {
-            if (spillAll && !IsRootIntrospectionField(selectionSetNode.Selections[i], type, complexType))
+            if (spillAll
+                && !IsRootIntrospectionField(selectionSetNode.Selections[i], type, complexType)
+                && !HoldsDeferredFragment(context, selectionSetNode.Selections[i], type))
             {
                 CompleteSelection(selectionSetNode.Selections[i], null, selectionSetNode.Selections[i], i);
                 continue;
@@ -181,6 +184,11 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                     var fragmentConditions = ExtractDirectiveConditions(inlineFragmentNode.Directives);
                     var savedCount = context.PushConditions(fragmentConditions);
 
+                    if (spillAll && !HoldsOnlyDeferredFragments(context, inlineFragmentNode, type))
+                    {
+                        context.SpillWrapper = inlineFragmentNode;
+                    }
+
                     {
                         var (resolvable, unresolvable) =
                             RewriteFragmentNode(
@@ -212,7 +220,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return (selectionSetNode, null);
         }
 
-        if (unresolvableSelections is not null)
+        if (unresolvableSelections is not null && !returnSpilled)
         {
             // When we have unresolvable selections on an abstract type, check if inner
             // recursive calls already pushed type-specific entries (from inline fragments)
@@ -874,11 +882,15 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return (null, null);
         }
 
+        var isSpillWrapper = ReferenceEquals(context.SpillWrapper, inlineFragmentNode);
+        context.SpillWrapper = null;
+
         context.Nodes.Push(inlineFragmentNode);
         context.SpillDeliveryGroup = GetDeliveryGroup(context, inlineFragmentNode);
-        context.SpillSelectionSet = context.SpillDeliveryGroup is null
+        context.SpillSelectionSet = context.SpillDeliveryGroup is null && !isSpillWrapper
             ? null
             : inlineFragmentNode.SelectionSet;
+        context.ReturnSpilledSelections = isSpillWrapper;
 
         var (resolvable, unresolvable) =
             RewriteSelectionSet(
@@ -894,6 +906,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         context.SpillSelectionSet = null;
         context.SpillDeliveryGroup = null;
+        context.ReturnSpilledSelections = false;
         context.Nodes.Pop();
 
         if (resolvable is null)
@@ -1351,6 +1364,18 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         public int? SpillDeliveryGroup { get; set; }
 
         /// <summary>
+        /// The fragment inside a spilled selection set that holds both own selections and a <c>@defer</c>
+        /// fragment, or <c>null</c>.
+        /// </summary>
+        public InlineFragmentNode? SpillWrapper { get; set; }
+
+        /// <summary>
+        /// Whether the unresolved selections of <see cref="SpillSelectionSet"/> are returned to the caller
+        /// instead of becoming an unresolved selection set of their own.
+        /// </summary>
+        public bool ReturnSpilledSelections { get; set; }
+
+        /// <summary>
         /// Maps the <c>@defer</c> directive of a fragment to the id of its delivery group.
         /// </summary>
         public IReadOnlyDictionary<DirectiveNode, int>? DeferredFragments { get; init; }
@@ -1443,6 +1468,72 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         }
 
         return null;
+    }
+
+    // A fragment without a type condition, or with the type of the selection set, that is a @defer fragment
+    // or holds one at its top. Such a fragment is anchored at the same object as the selection set.
+    private static bool HoldsDeferredFragment(Context context, ISelectionNode selection, ITypeDefinition type)
+    {
+        if (!IsFragmentOfSameAnchor(selection, type, out var fragment))
+        {
+            return false;
+        }
+
+        if (GetDeliveryGroup(context, fragment) is not null)
+        {
+            return true;
+        }
+
+        foreach (var child in fragment.SelectionSet.Selections)
+        {
+            if (HoldsDeferredFragment(context, child, type))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Like HoldsDeferredFragment, but every selection of the fragment is a @defer fragment or such a fragment.
+    private static bool HoldsOnlyDeferredFragments(Context context, ISelectionNode selection, ITypeDefinition type)
+    {
+        if (!IsFragmentOfSameAnchor(selection, type, out var fragment))
+        {
+            return false;
+        }
+
+        if (GetDeliveryGroup(context, fragment) is not null)
+        {
+            return true;
+        }
+
+        if (fragment.SelectionSet.Selections.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var child in fragment.SelectionSet.Selections)
+        {
+            if (!HoldsOnlyDeferredFragments(context, child, type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsFragmentOfSameAnchor(
+        ISelectionNode selection,
+        ITypeDefinition type,
+        [NotNullWhen(true)] out InlineFragmentNode? fragment)
+    {
+        fragment = selection as InlineFragmentNode;
+
+        return fragment is not null
+            && (fragment.TypeCondition is null
+                || fragment.TypeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal));
     }
 
     private bool CanMessageShapeProvideType(
