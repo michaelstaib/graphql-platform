@@ -456,6 +456,7 @@ public sealed partial class OperationPlanner
                 expandedNodes,
                 planSteps.NextId(),
                 policyContext,
+                singlePlanDefer,
                 cancellationToken);
 
             if (eventSourceEnabled)

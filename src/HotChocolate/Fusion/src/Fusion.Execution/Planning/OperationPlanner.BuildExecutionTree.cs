@@ -34,6 +34,7 @@ public sealed partial class OperationPlanner
         int expandedNodes,
         int nextNodeId,
         PolicyPlanContext? policyContext,
+        bool singlePlanDefer,
         CancellationToken cancellationToken)
     {
         if (operation.IsIntrospectionOnly())
@@ -85,6 +86,12 @@ public sealed partial class OperationPlanner
         var serialScopes = operationDefinition.Operation is OperationType.Mutation
             ? CreateSerialScopes(planSteps, ctx)
             : null;
+
+        if (singlePlanDefer)
+        {
+            MergeOperationsThatDifferInConditions(ctx, _options.MergePolicy, serialScopes);
+        }
+
         MergeAndBatchOperations(
             ctx,
             _options.EnableRequestGrouping,
@@ -1122,6 +1129,145 @@ public sealed partial class OperationPlanner
 
     private static int GetSerialScope(Dictionary<int, int>? serialScopes, int nodeId)
         => serialScopes is not null && serialScopes.TryGetValue(nodeId, out var scope) ? scope : 0;
+
+    /// <summary>
+    /// Replaces query operations that fetch the same selections for the same target under different
+    /// conditions by one operation that runs when the conditions of at least one of them pass.
+    /// </summary>
+    private static void MergeOperationsThatDifferInConditions(
+        ExecutionPlanBuildContext ctx,
+        OperationMergePolicy mergePolicy,
+        Dictionary<int, int>? serialScopes)
+    {
+        if (mergePolicy is OperationMergePolicy.None)
+        {
+            return;
+        }
+
+        var nodeFieldBoundCache = new Dictionary<int, bool>();
+        var candidates = new Dictionary<string, List<OperationExecutionNode>>(StringComparer.Ordinal);
+
+        foreach (var node in ctx.ExecutionNodes.Values.OfType<OperationExecutionNode>())
+        {
+            if (node.Operation.Type != OperationType.Query
+                || IsNodeFieldBound(node.Id, ctx, nodeFieldBoundCache))
+            {
+                continue;
+            }
+
+            var signature = ComputeCanonicalSignature(
+                node.SchemaName,
+                node.Source,
+                node.OperationDocument,
+                node.Requirements,
+                [],
+                [],
+                node.DeliveryGroups);
+            var key = $"{GetSerialScope(serialScopes, node.Id)}|{node.Target}|{signature}";
+
+            if (!candidates.TryGetValue(key, out var list))
+            {
+                list = [];
+                candidates[key] = list;
+            }
+
+            list.Add(node);
+        }
+
+        foreach (var (_, equivalentNodes) in candidates)
+        {
+            if (equivalentNodes.Count <= 1)
+            {
+                continue;
+            }
+
+            foreach (var group in PartitionIntoMergeableGroups(
+                equivalentNodes, ctx.DependenciesByStepId, mergePolicy))
+            {
+                if (group.Count > 1 && !HaveEqualConditions(group))
+                {
+                    MergeIntoOperationWithConditionAlternatives(ctx, group);
+                }
+            }
+        }
+    }
+
+    private static bool HaveEqualConditions(List<OperationExecutionNode> group)
+    {
+        var signature = ComputeCanonicalSignature(group[0]);
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            if (!ComputeCanonicalSignature(group[i]).Equals(signature, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Each member contributes one term per condition alternative, or one term when it has none. The
+    // merged operation passes when one term passes, which is exactly when one member would run.
+    private static void MergeIntoOperationWithConditionAlternatives(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group)
+    {
+        group.Sort((a, b) => a.Id.CompareTo(b.Id));
+
+        var terms = new List<HashSet<ExecutionNodeCondition>>();
+
+        foreach (var member in group)
+        {
+            if (member.ConditionAlternatives.Length == 0)
+            {
+                terms.Add([.. member.Conditions]);
+                continue;
+            }
+
+            foreach (var alternative in member.ConditionAlternatives)
+            {
+                terms.Add([.. member.Conditions, .. alternative]);
+            }
+        }
+
+        var common = new HashSet<ExecutionNodeCondition>(terms[0]);
+
+        foreach (var term in terms)
+        {
+            common.IntersectWith(term);
+        }
+
+        var primary = group[0];
+        var merged = new OperationExecutionNode(
+            primary.Id,
+            primary.Operation,
+            primary.LookupTypeName,
+            primary.SchemaName,
+            primary.Target,
+            primary.Source,
+            primary.Requirements.ToArray(),
+            primary.ForwardedVariables.ToArray(),
+            primary.ResultSelectionSet,
+            SortConditions(common),
+            BuildConditionAlternatives(terms, common),
+            primary.RequiresFileUpload)
+        {
+            DeliveryGroups = primary.DeliveryGroups
+        };
+
+        foreach (var member in group)
+        {
+            foreach (var parentDependency in member.BufferedParentDependencies)
+            {
+                merged.AddParentDependency(parentDependency);
+            }
+        }
+
+        ctx.ExecutionNodes[primary.Id] = merged;
+        group[0] = merged;
+        AbsorbMergedNodes(ctx, primary.Id, group);
+    }
 
     private static void MergeAndBatchOperations(
         ExecutionPlanBuildContext ctx,
