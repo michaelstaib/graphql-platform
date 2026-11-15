@@ -599,7 +599,8 @@ internal sealed class FusionRequestExecutorManager
         services.AddSingleton<IOperationDocumentNormalizer>(
             static sp => new OperationDocumentNormalizer(
                 sp.GetRequiredService<FusionSchemaDefinition>(),
-                sp.GetRequiredService<NormalizedDocumentCache>()));
+                sp.GetRequiredService<NormalizedDocumentCache>(),
+                sp.GetRequiredService<OperationPlannerOptions>().EnableSinglePlanDefer));
 
         services.AddSingleton(
             static sp =>
