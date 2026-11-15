@@ -1,0 +1,222 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        product(id: "1") {
+          name
+          ... @skip(if: $a) {
+            reviews {
+              body
+            }
+            price
+            id @fusion__requirement
+          }
+          ... @include(if: $a) {
+            ... @defer(if: $a, label: "x") {
+              reviews {
+                body
+              }
+              price
+              id @fusion__requirement
+            }
+          }
+          ... @skip(if: $b) {
+            reviews {
+              body
+            }
+            price
+            id @fusion__requirement
+          }
+          ... @include(if: $b) {
+            ... @defer(if: $b, label: "y") {
+              reviews {
+                body
+              }
+              price
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!, $b: Boolean!) {
+        product(id: "1") {
+          name
+          ... @skip(if: $a) {
+            id
+          }
+          ... @include(if: $a) {
+            ... {
+              id
+            }
+          }
+          ... @skip(if: $b) {
+            id
+          }
+          ... @include(if: $b) {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    forwardedVariables:
+      - a
+      - b
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productByIdForReviews(id: $__fusion_1_id) {
+          reviews {
+            body
+          }
+        }
+      }
+    source: $.productByIdForReviews
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        productById(id: $__fusion_2_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        productByIdForReviews(id: $__fusion_3_id) {
+          reviews {
+            body
+          }
+        }
+      }
+    source: $.productByIdForReviews
+    target: $.product
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditionAlternatives:
+      -
+        - variable: $a
+          passingValue: false
+      -
+        - variable: $b
+          passingValue: false
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        productById(id: $__fusion_4_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    conditionAlternatives:
+      -
+        - variable: $a
+          passingValue: false
+      -
+        - variable: $b
+          passingValue: false
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: ID!) {
+        productByIdForReviews(id: $__fusion_5_id) {
+          reviews {
+            body
+          }
+        }
+      }
+    source: $.productByIdForReviews
+    target: $.product
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 7
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_7($__fusion_6_id: ID!) {
+        productById(id: $__fusion_6_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_6_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: x
+    ifVariable: $a
+  - id: 1
+    path: $.product
+    label: y
+    ifVariable: $b

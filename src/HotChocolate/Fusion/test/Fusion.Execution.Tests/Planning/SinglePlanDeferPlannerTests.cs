@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Diagnostics.Tracing;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
@@ -550,6 +552,773 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_MarkRequirementSteps_When_DeferredFieldRequiresThirdSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            ShippingCostSchema,
+            WeightSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "s") { shippingCost }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MarkRequirementSteps_When_RequirementHasArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                products {
+                    upc
+                    ... @defer(if: $v) { eur }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MarkRequirementStep_When_PlainCopyOfTheRequirementExists()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            UserSchema,
+            UserSkuSchema,
+            UserTotalSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                user(id: 1) {
+                    id
+                    sku
+                    ... @defer { sku total }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MarkRequirementSteps_When_DeferIsBelowAMutation()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            UserSchema,
+            UserSkuSchema,
+            UserTotalSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            mutation {
+                createUser(id: 1) {
+                    soft
+                    ... @defer { id sku total }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MarkNestedLookup_When_DeferIsInsideARequireField()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            CarrierSchema,
+            WeightSchema,
+            RatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    carrier {
+                        name
+                        ... @defer(label: "r") { rating }
+                    }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_NotFallBack_When_RequirementsAreNested()
+    {
+        // arrange
+        (string Name, FusionSchemaDefinition Schema, string Operation)[] shapes =
+        [
+            (
+                "nested requirements of @require",
+                ComposeSchema(ProductSchema, ShippingCostSchema, WeightSchema),
+                """
+                query($a: Boolean!, $b: Boolean!) {
+                    product(id: "1") {
+                        name
+                        ... @defer(if: $a, label: "o") {
+                            name
+                            ... @defer(if: $b, label: "i") { shippingCost }
+                        }
+                    }
+                }
+
+                """),
+            (
+                "nested argument requirements",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                {
+                    products {
+                        price
+                        ... @defer { eur ... @defer { usd } }
+                    }
+                }
+
+                """)
+        ];
+        var formatter = new YamlOperationPlanFormatter();
+        var snapshot = Snapshot.Create();
+        var fallbacks = new List<string>();
+
+        // act
+        foreach (var (shapeName, schema, operation) in shapes)
+        {
+            var result = Plan(schema, operation);
+            fallbacks.AddRange(result.Fallbacks);
+            snapshot.Add(formatter.Format(result.Plan), shapeName, MarkdownLanguages.Yaml);
+        }
+
+        // assert
+        Assert.Empty(fallbacks);
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public void Plan_Should_SkipKeyHopOfThePlainCopy_When_SwitchIsOn()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            ProductBySkuSchema,
+            ProductKeysSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "p") { price }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepOneStep_When_SiblingSwitchesShareALookup()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            PriceSchema,
+            ReviewsSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "x") { reviews { body } price }
+                    ... @defer(if: $b, label: "y") { reviews { body } price }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_TakeTheKeyFromTheParentStep_When_DeferredFragmentsAreNested()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            PriceSchema,
+            ReviewsSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        price
+                        ... @defer(label: "i") { reviews { body } }
+                    }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanASiblingLookup_When_TheWrapperOfADeferredFragmentHasFieldsOfItsOwn()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            PriceSchema,
+            ReviewsSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($c: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        price
+                        ... @include(if: $c) {
+                            rating
+                            ... @defer(label: "i") { reviews { body } }
+                        }
+                    }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanSiblingLookups_When_ThreeSwitchesAreNested()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            PriceSchema,
+            ReviewsSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "o") {
+                        price
+                        ... @defer(if: $b, label: "m") {
+                            rating
+                            ... @defer(if: $c, label: "i") { reviews { body } }
+                        }
+                    }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MarkRequirementSteps_When_DeferredGroupReadsRequirementOfSchemaTwo()
+    {
+        // arrange
+        (string Name, FusionSchemaDefinition Schema, string Operation)[] shapes =
+        [
+            (
+                "requirement inside the fragment",
+                ComposeSchema(UserSchema, UserSkuSchema, UserTotalSchema),
+                """
+                { user(id: 1) { soft ... @defer { id sku total } } }
+                """),
+            (
+                "alias inside the fragment",
+                ComposeSchema(UserSchema, UserSkuSchema, UserTotalSchema),
+                """
+                { user(id: 1) { id sku ... @defer { s: sku total } } }
+                """),
+            (
+                "alias outside the fragment",
+                ComposeSchema(UserSchema, UserSkuSchema, UserTotalSchema),
+                """
+                { user(id: 1) { id k: sku ... @defer { sku total } } }
+                """),
+            (
+                "condition on the plain copy",
+                ComposeSchema(UserSchema, UserSkuSchema, UserTotalSchema),
+                """
+                query($c: Boolean!) { user(id: 1) { id soft sku @include(if: $c) ... @defer { sku total } } }
+                """),
+            (
+                "switch",
+                ComposeSchema(UserSchema, UserSkuSchema, UserTotalSchema),
+                """
+                query($v: Boolean!) { user(id: 1) { soft ... @defer(if: $v) { total } } }
+                """),
+            (
+                "only the requiring field",
+                ComposeSchema(UserSchema, UserSkuSchema, UserTotalSchema),
+                """
+                { user(id: 1) { soft ... @defer { total } } }
+                """)
+        ];
+        var formatter = new YamlOperationPlanFormatter();
+        var snapshot = Snapshot.Create();
+        var fallbacks = new List<string>();
+
+        // act
+        foreach (var (shapeName, schema, operation) in shapes)
+        {
+            var result = Plan(schema, operation);
+            fallbacks.AddRange(result.Fallbacks);
+            snapshot.Add(formatter.Format(result.Plan), shapeName, MarkdownLanguages.Yaml);
+        }
+
+        // assert
+        Assert.Empty(fallbacks);
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public void Plan_Should_MarkRequirementSteps_When_ArgumentRequirementsAreDeferred()
+    {
+        // arrange
+        (string Name, FusionSchemaDefinition Schema, string Operation)[] shapes =
+        [
+            (
+                "d07",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { eur usd ... @defer { both } } }
+                """),
+            (
+                "d09",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { usd ... @defer { eur } } }
+                """),
+            (
+                "d13",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { usd } } }
+                """),
+            (
+                "d14",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { eur } ... @defer { usd } } }
+                """),
+            (
+                "d15",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { eur price } } }
+                """),
+            (
+                "d18",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { eur price usd } } }
+                """),
+            (
+                "v16c",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { price ... @defer { eur } } }
+                """),
+            (
+                "w01",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { product { upc ... @defer { eur } } }
+                """),
+            (
+                "y01",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { product { upc ... @defer { eurC } } }
+                """),
+            (
+                "y05",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { eurC eur } } }
+                """),
+            (
+                "n1",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { netWeight } } }
+                """),
+            (
+                "n2",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { weightC } } }
+                """),
+            (
+                "n3",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                { products { upc ... @defer { chained } } }
+                """),
+            (
+                "n4",
+                ComposeSchema(CatalogSchema, PriceListSchema, ForeignRequirementSchema),
+                """
+                query($v: Boolean!) { products { upc ... @defer(if: $v) { eurC } } }
+                """)
+        ];
+        var formatter = new YamlOperationPlanFormatter();
+        var snapshot = Snapshot.Create();
+        var fallbacks = new List<string>();
+
+        // act
+        foreach (var (shapeName, schema, operation) in shapes)
+        {
+            var result = Plan(schema, operation);
+            fallbacks.AddRange(result.Fallbacks);
+            snapshot.Add(formatter.Format(result.Plan), shapeName, MarkdownLanguages.Yaml);
+        }
+
+        // assert
+        Assert.Empty(fallbacks);
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    [Fact]
+    public void Plan_Should_MergeSiblingSwitchesIntoOneStep_When_EightSwitchesSelectTheSameField()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query(
+                $s1: Boolean!, $s2: Boolean!, $s3: Boolean!, $s4: Boolean!,
+                $s5: Boolean!, $s6: Boolean!, $s7: Boolean!, $s8: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $s1, label: "l1") { price }
+                    ... @defer(if: $s2, label: "l2") { price }
+                    ... @defer(if: $s3, label: "l3") { price }
+                    ... @defer(if: $s4, label: "l4") { price }
+                    ... @defer(if: $s5, label: "l5") { price }
+                    ... @defer(if: $s6, label: "l6") { price }
+                    ... @defer(if: $s7, label: "l7") { price }
+                    ... @defer(if: $s8, label: "l8") { price }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MergeSiblingSwitchesWithAnExactGate_When_TheirLookupsHaveOwnConditions()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProductSchema,
+            PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $p: Boolean!, $q: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "x") { price @include(if: $p) rating @include(if: $q) }
+                    ... @defer(if: $b, label: "y") { price @include(if: $p) rating @include(if: $q) }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_FallBack_When_BudgetIsExceeded()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, ProductBySkuSchema, ProductKeysSchema);
+        var options = new OperationPlannerOptions { EnableSinglePlanDefer = true, MaxExpandedNodes = 7 };
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "p") { price }
+                }
+            }
+            """,
+            options,
+            "123456789101112");
+
+        // assert
+        Assert.Equal(
+            [
+                "Planner guardrail exceeded for operation '123456789101112': "
+                + "MaxExpandedNodesExceeded (Limit=7, Observed=8)."
+            ],
+            result.Fallbacks);
+        Assert.Empty(result.Plan.DeliveryGroups);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_RaiseNoPlanError_When_BudgetIsExceeded()
+    {
+        // arrange
+        const string operationId = "single-plan-guardrail";
+        var schema = ComposeSchema(ProductSchema, ProductBySkuSchema, ProductKeysSchema);
+        var options = new OperationPlannerOptions { EnableSinglePlanDefer = true, MaxExpandedNodes = 7 };
+        using var listener = new PlannerEventListener(operationId);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "p") { price }
+                }
+            }
+            """,
+            options,
+            operationId);
+
+        // assert
+        Assert.Single(result.Fallbacks);
+        Assert.Equal(
+            [
+                PlannerEventSource.PlanStartEventId,
+                PlannerEventSource.PlanGuardrailExceededEventId,
+                PlannerEventSource.PlanStartEventId,
+                PlannerEventSource.PlanStopEventId
+            ],
+            listener.EventIds);
+    }
+
+    [Fact]
+    public void ValidateDeliveryGroupNodes_Should_Succeed_When_TheNodesAgreeWithTheGroups()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema, ReviewsSchema);
+        const string operationText =
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "price") { price }
+                    ... @defer(if: $b, label: "reviews") { reviews { body } }
+                }
+            }
+            """;
+        var plan = Plan(schema, operationText).Plan;
+        var partitioning = Partition(schema, operationText);
+
+        // act
+        var valid = OperationPlanner.TryValidateDeliveryGroupNodes(
+            plan,
+            partitioning.AllDeliveryGroups,
+            partitioning,
+            out var cause);
+
+        // assert
+        Assert.True(valid);
+        Assert.Null(cause);
+    }
+
+    [Fact]
+    public void ValidateDeliveryGroupNodes_Should_Fail_When_ANodeDependsOnANodeOfAnotherGroup()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                friends: [User!]!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """);
+        const string operationText =
+            """
+            query($x: Boolean!) {
+                user(id: "1") {
+                    friends @include(if: $x) { id }
+                    ... @defer { friends { ... @defer { name } } }
+                }
+            }
+            """;
+        var plan = Plan(schema, operationText).Plan;
+        var partitioning = Partition(schema, operationText);
+        var groups = partitioning.AllDeliveryGroups;
+        ImmutableArray<DeliveryGroup> unrelatedGroups = [groups[0], groups[1] with { Parent = null }];
+
+        // act
+        var valid = OperationPlanner.TryValidateDeliveryGroupNodes(plan, unrelatedGroups, partitioning, out var cause);
+
+        // assert
+        Assert.False(valid);
+        Assert.Equal("Node 3 depends on node 2 of another delivery group.", cause);
+    }
+
+    [Fact]
+    public void ValidateDeliveryGroupNodes_Should_Fail_When_ADeliveryGroupHasNoNode()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+        var plan = Plan(schema, """{ product(id: "1") { name price } }""").Plan;
+        var partitioning = Partition(
+            schema,
+            """{ product(id: "1") { name ... @defer(label: "price") { price } } }""");
+
+        // act
+        var valid = OperationPlanner.TryValidateDeliveryGroupNodes(
+            plan,
+            partitioning.AllDeliveryGroups,
+            partitioning,
+            out var cause);
+
+        // assert
+        Assert.False(valid);
+        Assert.Equal("Delivery group 0 has no step.", cause);
+    }
+
+    [Fact]
+    public void ValidateDeliveryGroupNodes_Should_Succeed_When_TheRootGroupHoldsOnlyIntrospectionFields()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+        const string operationText =
+            """
+            {
+                product(id: "1") { name }
+                ... @defer(label: "types") { __type(name: "Product") { name } }
+            }
+            """;
+        var plan = Plan(schema, operationText).Plan;
+        var partitioning = Partition(schema, operationText);
+
+        // act
+        var valid = OperationPlanner.TryValidateDeliveryGroupNodes(
+            plan,
+            partitioning.AllDeliveryGroups,
+            partitioning,
+            out var cause);
+
+        // assert
+        Assert.True(valid);
+        Assert.Null(cause);
+    }
+
+    [Fact]
     public void ValidateDeliveryGroupDependencies_Should_Fail_When_AnUnmarkedStepDependsOnAMarkedStep()
     {
         // arrange
@@ -709,25 +1478,226 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
         }
         """;
 
-    private static PlanResult Plan(FusionSchemaDefinition schema, string operationText)
-    {
-        var planner = CreatePlanner(schema, out var fallbacks);
-        var operation = Normalize(schema, operationText);
+    private const string ProductBySkuSchema =
+        """
+        # name: b
+        type Query {
+            productBySku(sku: String!): Product @lookup
+        }
 
-        const string id = "123456789101112";
+        type Product @key(fields: "sku") {
+            sku: String!
+            price: Float!
+        }
+        """;
+
+    private const string ProductKeysSchema =
+        """
+        # name: c
+        type Query {
+            productByIdForSku(id: ID!): Product @lookup
+            productBySkuForId(sku: String!): Product @lookup
+        }
+
+        type Product @key(fields: "id") @key(fields: "sku") {
+            id: ID!
+            sku: String!
+        }
+        """;
+
+    private const string CarrierSchema =
+        """
+        # name: b
+        type Query {
+            productById(id: ID!): Product @lookup
+            carrierById(id: ID!): Carrier @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            carrier(weight: Int @require(field: "weight")): Carrier
+        }
+
+        type Carrier @key(fields: "id") {
+            id: ID!
+            name: String!
+        }
+        """;
+
+    private const string RatingSchema =
+        """
+        # name: d
+        type Query {
+            carrierByIdD(id: ID!): Carrier @lookup
+        }
+
+        type Carrier @key(fields: "id") {
+            id: ID!
+            rating: Int!
+        }
+        """;
+
+    private const string UserSchema =
+        """
+        # name: a
+        type Query {
+            user(id: Int!): User
+            userById(id: Int!): User @lookup @internal
+        }
+
+        type Mutation {
+            createUser(id: Int!): User
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            email: String! @shareable
+        }
+        """;
+
+    private const string UserSkuSchema =
+        """
+        # name: b
+        type Query {
+            userByIdB(id: Int!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            sku: String
+            soft: String
+        }
+        """;
+
+    private const string UserTotalSchema =
+        """
+        # name: c
+        type Query {
+            userByEmail(email: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "email") {
+            email: String! @shareable
+            total(sku: String @require(field: "sku")): String
+        }
+        """;
+
+    private const string CatalogSchema =
+        """
+        # name: a
+        type Query {
+            products: [Product!]!
+            product: Product
+            productByUpc(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            name: String!
+            eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            usd(price: Int @require(field: "price(cur: \"USD\")")): Int
+            both(price: Int @require(field: "price(cur: \"EUR\", tax: true)")): Int
+            netWeight(weight: Int @require(field: "weight")): Int
+        }
+        """;
+
+    private const string PriceListSchema =
+        """
+        # name: b
+        type Query {
+            productByUpcB(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            price(cur: String, tax: Boolean): Int
+            weight: Int
+        }
+        """;
+
+    private const string ForeignRequirementSchema =
+        """
+        # name: c
+        type Query {
+            productByUpcC(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            eurC(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            weightC(weight: Int @require(field: "weight")): Int
+            chained(eur: Int @require(field: "eur")): Int
+        }
+        """;
+
+    private const string ShippingCostSchema =
+        """
+        # name: b
+        type Query {
+            productById(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            shippingCost(weight: Int @require(field: "weight")): Int!
+        }
+        """;
+
+    private const string WeightSchema =
+        """
+        # name: c
+        type Query {
+            productByIdForWeight(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            weight: Int!
+        }
+        """;
+
+    private static PlanResult Plan(FusionSchemaDefinition schema, string operationText)
+        => Plan(
+            schema,
+            operationText,
+            new OperationPlannerOptions { EnableSinglePlanDefer = true },
+            "123456789101112");
+
+    private static PlanResult Plan(
+        FusionSchemaDefinition schema,
+        string operationText,
+        OperationPlannerOptions options,
+        string id)
+    {
+        var planner = CreatePlanner(schema, options, out var fallbacks);
+        var operation = Normalize(schema, operationText);
         var plan = planner.CreatePlan(id, id, id, operation);
 
         return new PlanResult(plan, [.. fallbacks]);
     }
 
     private static OperationPlanner CreatePlanner(FusionSchemaDefinition schema, out List<string> fallbacks)
+        => CreatePlanner(schema, new OperationPlannerOptions { EnableSinglePlanDefer = true }, out fallbacks);
+
+    private static OperationPlanner CreatePlanner(
+        FusionSchemaDefinition schema,
+        OperationPlannerOptions options,
+        out List<string> fallbacks)
     {
-        var options = new OperationPlannerOptions { EnableSinglePlanDefer = true };
         var planner = new OperationPlanner(schema, CreateCompiler(schema), options, TestPolicyResolver.Create());
         var causes = new List<string>();
         planner.SinglePlanDeferFallback += (_, cause) => causes.Add(cause);
         fallbacks = causes;
         return planner;
+    }
+
+    private static DeferPartitioningResult Partition(FusionSchemaDefinition schema, string operationText)
+    {
+        var lowered = DeferLowering.Lower(Normalize(schema, operationText), schema);
+
+        return DeferPartitioner.Partition(
+            lowered,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
     }
 
     private static OperationCompiler CreateCompiler(FusionSchemaDefinition schema)
@@ -796,6 +1766,31 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
         }
 
         return [.. groups];
+    }
+
+    private sealed class PlannerEventListener(string operationId) : EventListener
+    {
+        private readonly ConcurrentQueue<int> _eventIds = [];
+
+        public IReadOnlyList<int> EventIds => [.. _eventIds];
+
+        protected override void OnEventSourceCreated(EventSource eventSource)
+        {
+            if (eventSource.Name.Equals(PlannerEventSource.EventSourceName, StringComparison.Ordinal))
+            {
+                EnableEvents(eventSource, EventLevel.Informational, EventKeywords.All);
+            }
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+        {
+            if (eventData.EventSource.Name.Equals(PlannerEventSource.EventSourceName, StringComparison.Ordinal)
+                && eventData.Payload is [string id, ..]
+                && id.Equals(operationId, StringComparison.Ordinal))
+            {
+                _eventIds.Enqueue(eventData.EventId);
+            }
+        }
     }
 
     private sealed record PlanResult(OperationPlan Plan, ImmutableArray<string> Fallbacks);

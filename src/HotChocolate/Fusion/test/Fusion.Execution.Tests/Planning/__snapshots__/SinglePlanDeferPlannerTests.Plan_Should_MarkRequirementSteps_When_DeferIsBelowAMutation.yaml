@@ -1,0 +1,95 @@
+operation:
+  - document: |
+      mutation {
+        createUser(id: 1) {
+          soft
+          id @fusion__requirement
+          ... @defer {
+            id
+            id @fusion__requirement
+            sku
+            sku @fusion__requirement
+            total
+            email @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      mutation Op_123456789101112_1 {
+        createUser(id: 1) {
+          ... {
+            email
+          }
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: Int!) {
+        userByIdB(id: $__fusion_1_id) {
+          soft
+        }
+      }
+    source: $.userByIdB
+    target: $.createUser
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: Int!) {
+        userByIdB(id: $__fusion_2_id) {
+          id
+          sku
+        }
+      }
+    source: $.userByIdB
+    target: $.createUser
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_email: String!, $__fusion_4_sku: String) {
+        userByEmail(email: $__fusion_3_email) {
+          total(sku: $__fusion_4_sku)
+        }
+      }
+    source: $.userByEmail
+    target: $.createUser
+    requirements:
+      - name: __fusion_3_email
+        selectionMap: >-
+          email
+      - name: __fusion_4_sku
+        selectionMap: >-
+          sku
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 3
+deliveryGroups:
+  - id: 0
+    path: $.createUser

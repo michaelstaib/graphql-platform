@@ -1,0 +1,128 @@
+operation:
+  - document: |
+      query($v: Boolean!) {
+        product(id: "1") {
+          name
+          id @fusion__requirement
+          weight @fusion__requirement
+          shippingCost @skip(if: $v)
+          ... @include(if: $v) {
+            ... @defer(if: $v, label: "s") {
+              shippingCost
+              id @fusion__requirement
+              weight @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 10
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          id
+        }
+      }
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_weight: Int, $__fusion_3_id: ID!) {
+        productById(id: $__fusion_3_id) {
+          shippingCost(weight: $__fusion_2_weight)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_2_weight
+        selectionMap: >-
+          weight
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $v
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_4_id: ID!) {
+        productByIdForWeight(id: $__fusion_4_id) {
+          weight
+        }
+      }
+    source: $.productByIdForWeight
+    target: $.product
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $v
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_6($__fusion_6_weight: Int, $__fusion_7_id: ID!) {
+        productById(id: $__fusion_7_id) {
+          shippingCost(weight: $__fusion_6_weight)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_6_weight
+        selectionMap: >-
+          weight
+      - name: __fusion_7_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $v
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 7
+  - id: 7
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_7($__fusion_8_id: ID!) {
+        productByIdForWeight(id: $__fusion_8_id) {
+          weight
+        }
+      }
+    source: $.productByIdForWeight
+    target: $.product
+    requirements:
+      - name: __fusion_8_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $v
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: s
+    ifVariable: $v

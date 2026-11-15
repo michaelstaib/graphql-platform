@@ -1,0 +1,364 @@
+operation:
+  - document: |
+      query(
+        $s1: Boolean!
+        $s2: Boolean!
+        $s3: Boolean!
+        $s4: Boolean!
+        $s5: Boolean!
+        $s6: Boolean!
+        $s7: Boolean!
+        $s8: Boolean!
+      ) {
+        product(id: "1") {
+          name
+          id @fusion__requirement
+          price @skip(if: $s1)
+          ... @include(if: $s1) {
+            ... @defer(if: $s1, label: "l1") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s2)
+          ... @include(if: $s2) {
+            ... @defer(if: $s2, label: "l2") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s3)
+          ... @include(if: $s3) {
+            ... @defer(if: $s3, label: "l3") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s4)
+          ... @include(if: $s4) {
+            ... @defer(if: $s4, label: "l4") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s5)
+          ... @include(if: $s5) {
+            ... @defer(if: $s5, label: "l5") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s6)
+          ... @include(if: $s6) {
+            ... @defer(if: $s6, label: "l6") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s7)
+          ... @include(if: $s7) {
+            ... @defer(if: $s7, label: "l7") {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $s8)
+          ... @include(if: $s8) {
+            ... @defer(if: $s8, label: "l8") {
+              price
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2(
+        $s1: Boolean!
+        $s2: Boolean!
+        $s3: Boolean!
+        $s4: Boolean!
+        $s5: Boolean!
+        $s6: Boolean!
+        $s7: Boolean!
+        $s8: Boolean!
+        $__fusion_1_id: ID!
+      ) {
+        productById(id: $__fusion_1_id) {
+          price @skip(if: $s1)
+          price @skip(if: $s2)
+          price @skip(if: $s3)
+          price @skip(if: $s4)
+          price @skip(if: $s5)
+          price @skip(if: $s6)
+          price @skip(if: $s7)
+          price @skip(if: $s8)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditionAlternatives:
+      -
+        - variable: $s1
+          passingValue: false
+      -
+        - variable: $s2
+          passingValue: false
+      -
+        - variable: $s3
+          passingValue: false
+      -
+        - variable: $s4
+          passingValue: false
+      -
+        - variable: $s5
+          passingValue: false
+      -
+        - variable: $s6
+          passingValue: false
+      -
+        - variable: $s7
+          passingValue: false
+      -
+        - variable: $s8
+          passingValue: false
+    forwardedVariables:
+      - s1
+      - s2
+      - s3
+      - s4
+      - s5
+      - s6
+      - s7
+      - s8
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        productById(id: $__fusion_2_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s8
+        passingValue: true
+    deliveryGroups:
+      - 7
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        productById(id: $__fusion_3_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s7
+        passingValue: true
+    deliveryGroups:
+      - 6
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        productById(id: $__fusion_4_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s6
+        passingValue: true
+    deliveryGroups:
+      - 5
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: ID!) {
+        productById(id: $__fusion_5_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s5
+        passingValue: true
+    deliveryGroups:
+      - 4
+    dependencies:
+      - id: 1
+  - id: 7
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_7($__fusion_6_id: ID!) {
+        productById(id: $__fusion_6_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_6_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s4
+        passingValue: true
+    deliveryGroups:
+      - 3
+    dependencies:
+      - id: 1
+  - id: 8
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_8($__fusion_7_id: ID!) {
+        productById(id: $__fusion_7_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_7_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s3
+        passingValue: true
+    deliveryGroups:
+      - 2
+    dependencies:
+      - id: 1
+  - id: 9
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_9($__fusion_8_id: ID!) {
+        productById(id: $__fusion_8_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_8_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s2
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 10
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_10($__fusion_9_id: ID!) {
+        productById(id: $__fusion_9_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_9_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $s1
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: l1
+    ifVariable: $s1
+  - id: 1
+    path: $.product
+    label: l2
+    ifVariable: $s2
+  - id: 2
+    path: $.product
+    label: l3
+    ifVariable: $s3
+  - id: 3
+    path: $.product
+    label: l4
+    ifVariable: $s4
+  - id: 4
+    path: $.product
+    label: l5
+    ifVariable: $s5
+  - id: 5
+    path: $.product
+    label: l6
+    ifVariable: $s6
+  - id: 6
+    path: $.product
+    label: l7
+    ifVariable: $s7
+  - id: 7
+    path: $.product
+    label: l8
+    ifVariable: $s8

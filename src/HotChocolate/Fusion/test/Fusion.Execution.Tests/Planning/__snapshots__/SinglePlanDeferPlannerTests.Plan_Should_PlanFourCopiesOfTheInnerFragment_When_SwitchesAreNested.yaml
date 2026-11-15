@@ -58,6 +58,11 @@ nodes:
           }
           ... @include(if: $a) {
             ... {
+              ... @include(if: $b) {
+                ... {
+                  id
+                }
+              }
               id
             }
           }
@@ -70,15 +75,10 @@ nodes:
     type: Operation
     schema: c
     operation: |
-      query Op_123456789101112_2($b: Boolean!, $__fusion_1_id: ID!) {
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
         productByIdForReviews(id: $__fusion_1_id) {
-          reviews @skip(if: $b) {
+          reviews {
             body
-          }
-          ... @include(if: $b) {
-            ... {
-              id
-            }
           }
         }
       }
@@ -91,10 +91,10 @@ nodes:
     conditions:
       - variable: $a
         passingValue: true
+      - variable: $b
+        passingValue: false
     deliveryGroups:
       - 1
-    forwardedVariables:
-      - b
     dependencies:
       - id: 1
   - id: 3
@@ -112,6 +112,9 @@ nodes:
       - name: __fusion_2_id
         selectionMap: >-
           id
+    conditions:
+      - variable: $a
+        passingValue: true
     deliveryGroups:
       - 1
     dependencies:
@@ -134,12 +137,14 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
       - 2
     dependencies:
-      - id: 2
+      - id: 1
   - id: 5
     type: Operation
     schema: c
@@ -179,6 +184,9 @@ nodes:
       - name: __fusion_5_id
         selectionMap: >-
           id
+    conditions:
+      - variable: $a
+        passingValue: false
     dependencies:
       - id: 1
   - id: 7

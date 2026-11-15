@@ -79,6 +79,9 @@ nodes:
       - name: __fusion_2_id
         selectionMap: >-
           id
+    conditions:
+      - variable: $d
+        passingValue: true
     deliveryGroups:
       - 0
     dependencies:
