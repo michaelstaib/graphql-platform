@@ -177,7 +177,9 @@ internal readonly struct Backlog(
                 ParentDepth = parentDepth,
                 Conditions = _deferredFragments is null
                     ? entry.Conditions
-                    : InheritConditions(conditions, entry.Conditions),
+                    : InheritConditions(
+                        InheritConditions(conditions, entry.Conditions),
+                        GetSharedSelectionConditions(selectionSet.Node)),
                 Dependents = dependents ?? [],
                 AllowSourceSchemaReentry = entryAllowsReentry,
                 SourceSchemaNodePolicy = sourceSchemaNodePolicy,
@@ -187,6 +189,34 @@ internal readonly struct Backlog(
         }
 
         return backlog;
+    }
+
+    // Returns the conditions that every top-level selection of the selection set carries.
+    private static ExecutionNodeCondition[] GetSharedSelectionConditions(SelectionSetNode selectionSet)
+    {
+        ExecutionNodeCondition[]? shared = null;
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            var directives = selection switch
+            {
+                FieldNode field => field.Directives,
+                InlineFragmentNode fragment => fragment.Directives,
+                _ => []
+            };
+            var conditions = SelectionSetPartitioner.ExtractDirectiveConditions(directives) ?? [];
+
+            shared = shared is null
+                ? conditions
+                : [.. shared.Where(condition => conditions.Contains(condition))];
+
+            if (shared.Length == 0)
+            {
+                return [];
+            }
+        }
+
+        return shared ?? [];
     }
 
     /// <summary>
