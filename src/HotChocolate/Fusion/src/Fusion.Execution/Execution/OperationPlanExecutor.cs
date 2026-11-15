@@ -23,8 +23,8 @@ internal static partial class OperationPlanExecutor
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
-        if (!operationPlan.DeliveryGroups.IsEmpty
-            && operationPlan.IncrementalPlans.IsEmpty
+        if (!operationPlan.DeliveryGroups.IsDefaultOrEmpty
+            && operationPlan.IncrementalPlans.IsDefaultOrEmpty
             && variableIndex < 0
             && operationPlan.Operation.Definition.Operation is OperationType.Query)
         {
@@ -321,7 +321,14 @@ internal static partial class OperationPlanExecutor
 
             var requestArena = context.Memory;
             var stream = new ResponseStream(
-                () => CreateSinglePlanStream(context, operationPlan, state, initialResult, requestArena, token),
+                () => CreateSinglePlanStream(
+                    context,
+                    operationPlan,
+                    state,
+                    initialResult,
+                    requestArena,
+                    executionCts,
+                    token),
                 ExecutionResultKind.DeferredResult);
 
             stream.RegisterForCleanup(context);
@@ -414,66 +421,82 @@ internal static partial class OperationPlanExecutor
         SinglePlanDeliveryState state,
         OperationResult initialResult,
         MemoryArena requestArena,
+        CancellationTokenSource executionCts,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        yield return initialResult;
+        var completed = false;
 
-        // The consumer asked for the next payload, so the initial payload is written out.
-        var executionState = context.ExecutionState;
-
-        await using var registration = cancellationToken.Register(
-            static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
-            executionState.Signal);
-
-        foreach (var node in state.MarkedNodes)
+        try
         {
-            if (state.Needed[node.Id])
+            yield return initialResult;
+
+            // The consumer asked for the next payload, so the initial payload is written out.
+            var executionState = context.ExecutionState;
+
+            await using var registration = cancellationToken.Register(
+                static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
+                executionState.Signal);
+
+            foreach (var node in state.MarkedNodes)
             {
-                executionState.ReleaseNode(node);
+                if (state.Needed[node.Id])
+                {
+                    executionState.ReleaseNode(node);
+                }
+                else
+                {
+                    executionState.SkipNode(plan, node);
+                }
             }
-            else
+
+            var hasNext = true;
+
+            while (!cancellationToken.IsCancellationRequested)
             {
-                executionState.SkipNode(plan, node);
-            }
-        }
+                PumpSinglePlan(context, plan, state, cancellationToken);
 
-        var hasNext = true;
+                var payload = CreateSinglePlanPayload(context, plan, state, out hasNext);
 
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            PumpSinglePlan(context, plan, state, cancellationToken);
+                if (payload is not null)
+                {
+                    yield return payload;
 
-            var payload = CreateSinglePlanPayload(context, plan, state, out hasNext);
+                    if (!hasNext)
+                    {
+                        break;
+                    }
 
-            if (payload is not null)
-            {
-                yield return payload;
+                    continue;
+                }
 
                 if (!hasNext)
                 {
                     break;
                 }
 
-                continue;
+                if (!executionState.HasActiveNodes())
+                {
+                    // No step runs any more, so the remaining groups can never be delivered.
+                    yield return CreateSinglePlanFinalPayload();
+                    break;
+                }
+
+                await executionState.Signal;
             }
 
-            if (!hasNext)
-            {
-                break;
-            }
-
-            if (!executionState.HasActiveNodes())
-            {
-                // No step runs any more, so the remaining groups can never be delivered.
-                yield return CreateSinglePlanFinalPayload();
-                break;
-            }
-
-            await executionState.Signal;
+            await DrainActiveNodesAsync(plan, executionState);
+            requestArena.Seal();
+            completed = true;
         }
-
-        await DrainActiveNodesAsync(plan, executionState);
-        requestArena.Seal();
+        finally
+        {
+            if (!completed)
+            {
+                // The consumer stopped reading, so the steps that still run are cancelled.
+                await executionCts.CancelAsync();
+                await DrainActiveNodesAsync(plan, context.ExecutionState);
+            }
+        }
     }
 
     private static OperationResult CreateSinglePlanFinalPayload()

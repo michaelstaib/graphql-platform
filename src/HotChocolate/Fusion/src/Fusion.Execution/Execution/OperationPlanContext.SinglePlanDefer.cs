@@ -346,7 +346,11 @@ internal sealed class SinglePlanDeliveryState
                     switch (definition)
                     {
                         case SingleOperationDefinition single:
-                            CollectHonored(single.Target, single.ResultSelectionSet, definition.DeliveryGroups, honored);
+                            CollectHonored(
+                                single.Target,
+                                single.ResultSelectionSet,
+                                definition.DeliveryGroups,
+                                honored);
                             break;
 
                         case BatchOperationDefinition many:

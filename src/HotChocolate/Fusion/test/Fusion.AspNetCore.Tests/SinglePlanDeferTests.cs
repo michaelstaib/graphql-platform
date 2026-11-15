@@ -797,7 +797,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         public int IndexOfPending(string label)
             => Payloads.FindIndex(
-                t => JsonNode.Parse(t)!["pending"]?.AsArray().Any(p => p!["label"]?.GetValue<string>() == label) is true);
+                t => JsonNode.Parse(t)!["pending"]?.AsArray()
+                    .Any(p => p!["label"]?.GetValue<string>() == label) is true);
 
         public int IndexOfCompleted(string label)
         {
@@ -837,8 +838,21 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         public void AssertMatchesTwin(bool compareValues)
         {
-            var twinData = compareValues ? Twin.Data : ToShape(Twin.Data);
-            var deferredData = compareValues ? Deferred.Data : ToShape(Deferred.Data);
+            JsonNode twinData;
+            JsonNode deferredData;
+
+            try
+            {
+                twinData = compareValues ? Twin.Data : ToShape(Twin.Data);
+                deferredData = compareValues ? Deferred.Data : ToShape(Deferred.Data);
+            }
+            catch (NullReferenceException ex)
+            {
+                throw new InvalidOperationException(
+                    "Twin: " + string.Join(Environment.NewLine, Twin.Payloads) + Environment.NewLine
+                    + "Deferred: " + string.Join(Environment.NewLine, Deferred.Payloads),
+                    ex);
+            }
 
             Assert.True(
                 Canonical(twinData) == Canonical(deferredData),
@@ -870,7 +884,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private static JsonNode ToShape(JsonNode node)
         => node switch
         {
-            JsonObject obj => new JsonObject(obj.Select(t => KeyValuePair.Create<string, JsonNode?>(t.Key, ToShape(t.Value!)))),
+            JsonObject obj => new JsonObject(
+                obj.Select(t => KeyValuePair.Create<string, JsonNode?>(t.Key, ToShape(t.Value!)))),
             JsonArray array => new JsonArray(array.Select(t => ToShape(t!)).ToArray()),
             JsonValue value when value.GetValueKind() is JsonValueKind.String => JsonValue.Create("s")!,
             JsonValue value when value.GetValueKind() is JsonValueKind.Number => JsonValue.Create(0)!,
@@ -912,7 +927,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         }
 
         var initial = lines.Where(t => t.StartsWith("initial", StringComparison.Ordinal));
-        var rest = lines.Where(t => !t.StartsWith("initial", StringComparison.Ordinal)).OrderBy(t => t, StringComparer.Ordinal);
+        var rest = lines
+            .Where(t => !t.StartsWith("initial", StringComparison.Ordinal))
+            .OrderBy(t => t, StringComparer.Ordinal);
         return string.Join(Environment.NewLine, initial.Concat(rest));
     }
 
