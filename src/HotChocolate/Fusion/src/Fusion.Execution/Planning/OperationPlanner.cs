@@ -238,6 +238,7 @@ public sealed partial class OperationPlanner
             DeferSplitResult? deferSplit = null;
             DeferPartitioningResult? partitioning = null;
             var mainOperationDefinition = operationDefinition;
+            var singlePlanRules = false;
 
             if (singlePlanDefer)
             {
@@ -246,6 +247,9 @@ public sealed partial class OperationPlanner
                     mainOperationDefinition,
                     new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions));
                 deliveryGroups = partitioning.AllDeliveryGroups;
+
+                // The rules apply only to a lowered operation that still has a delivery group.
+                singlePlanRules = !deliveryGroups.IsEmpty;
             }
             else if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
             {
@@ -281,7 +285,7 @@ public sealed partial class OperationPlanner
                 _ => throw new ArgumentOutOfRangeException()
             };
 
-            if (singlePlanDefer)
+            if (singlePlanRules)
             {
                 if (!TryCreateDeferredFragmentLookup(partitioning!, out var deferredFragments))
                 {
@@ -467,7 +471,7 @@ public sealed partial class OperationPlanner
                 expandedNodes,
                 planSteps.NextId(),
                 policyContext,
-                singlePlanDefer,
+                singlePlanRules,
                 cancellationToken);
 
             if (singlePlanDefer
