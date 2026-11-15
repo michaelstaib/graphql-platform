@@ -1,0 +1,295 @@
+title: Interface_Fragment_Should_Resolve_Nested_Type_Condition_When_Interface_Is_On_Other_Schema
+request:
+  document: |
+    {
+      item(id: "1") {
+        name
+        ... on Priced {
+          price
+          ... on Book {
+            rating
+            reviews {
+              body
+            }
+          }
+        }
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "item": {
+          "name": "Book: Qm9vazoxOTg5OTQxMzA1",
+          "price": 123.456,
+          "rating": 123,
+          "reviews": [
+            {
+              "body": "Review: UmV2aWV3OjM1MDczODAxMDI="
+            },
+            {
+              "body": "Review: UmV2aWV3OjI4MTg4NzkwMjU="
+            },
+            {
+              "body": "Review: UmV2aWV3OjQ3NDM0NjYyOQ=="
+            }
+          ]
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        item(id: ID!): Item @returns(types: ["Book"])
+        bookById(id: ID!): Book @lookup @shareable
+      }
+
+      type Book implements Item @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+
+      interface Item {
+        id: ID!
+        name: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_ec4d8356_1 {
+              item(id: "1") {
+                __typename
+                name
+                ... on Book {
+                  id
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "item": {
+                    "__typename": "Book",
+                    "name": "Book: Qm9vazoxOTg5OTQxMzA1",
+                    "id": "Qm9vazoxOTg5OTQxMzA1"
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        bookById(id: ID!): Book @lookup @shareable
+      }
+
+      type Book implements Priced @key(fields: "id") {
+        id: ID!
+        price: Float!
+        rating: Int!
+      }
+
+      interface Priced {
+        price: Float!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_ec4d8356_2($__fusion_1_id: ID!) {
+              bookById(id: $__fusion_1_id) {
+                price
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "Qm9vazoxOTg5OTQxMzA1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "price": 123.456
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_ec4d8356_4($__fusion_3_id: ID!) {
+              bookById(id: $__fusion_3_id) {
+                rating
+              }
+            }
+          variables: |
+            {
+              "__fusion_3_id": "Qm9vazoxOTg5OTQxMzA1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "rating": 123
+                  }
+                }
+              }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        bookById(id: ID!): Book @lookup @shareable
+      }
+
+      type Book @key(fields: "id") {
+        id: ID!
+        reviews: [Review!]!
+      }
+
+      type Review {
+        body: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_ec4d8356_3($__fusion_2_id: ID!) {
+              bookById(id: $__fusion_2_id) {
+                reviews {
+                  body
+                }
+                id
+              }
+            }
+          variables: |
+            {
+              "__fusion_2_id": "Qm9vazoxOTg5OTQxMzA1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "reviews": [
+                      {
+                        "body": "Review: UmV2aWV3OjM1MDczODAxMDI="
+                      },
+                      {
+                        "body": "Review: UmV2aWV3OjI4MTg4NzkwMjU="
+                      },
+                      {
+                        "body": "Review: UmV2aWV3OjQ3NDM0NjYyOQ=="
+                      }
+                    ],
+                    "id": "Qm9vazoxOTg5OTQxMzA1"
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        {
+          item(id: "1") {
+            __typename @fusion__requirement
+            name
+            ... on Priced {
+              price
+              id @fusion__requirement
+              ... on Book {
+                rating
+                reviews {
+                  body
+                }
+                id @fusion__requirement
+              }
+            }
+          }
+        }
+      hash: dfeb1b6cd0d6952b82408fb5451b5f20
+      searchSpace: 1
+      expandedNodes: 2
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_ec4d8356_1 {
+          item(id: "1") {
+            __typename
+            name
+            ... on Book {
+              id
+            }
+          }
+        }
+    - id: 2
+      type: Operation
+      schema: B
+      operation: |
+        query Op_ec4d8356_2($__fusion_1_id: ID!) {
+          bookById(id: $__fusion_1_id) {
+            price
+          }
+        }
+      source: $.bookById
+      target: $.item<Priced><Book>
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: C
+      operation: |
+        query Op_ec4d8356_3($__fusion_2_id: ID!) {
+          bookById(id: $__fusion_2_id) {
+            reviews {
+              body
+            }
+            id
+          }
+        }
+      source: $.bookById
+      target: $.item<Priced><Book><Book>
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 4
+      type: Operation
+      schema: B
+      operation: |
+        query Op_ec4d8356_4($__fusion_3_id: ID!) {
+          bookById(id: $__fusion_3_id) {
+            rating
+          }
+        }
+      source: $.bookById
+      target: $.item<Priced><Book><Book>
+      requirements:
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 3
