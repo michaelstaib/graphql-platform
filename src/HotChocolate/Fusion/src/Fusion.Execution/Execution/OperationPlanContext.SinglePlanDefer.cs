@@ -96,6 +96,7 @@ internal sealed class SinglePlanDeliveryState
     private readonly Dictionary<ResultSelectionSet, ImmutableArray<int>> _groupsByResultSelectionSet
         = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentQueue<DeliveryError> _errors = new();
+    private volatile bool _queuesErrors;
 
     public SinglePlanDeliveryState(
         OperationPlan plan,
@@ -150,10 +151,13 @@ internal sealed class SinglePlanDeliveryState
     public OperationPlan Plan { get; }
 
     /// <summary>
-    /// Gets or sets a value that indicates whether the errors of failed steps are queued for the executor
-    /// instead of being written by the thread of the step.
+    /// Gets or sets a value that indicates whether the errors of failed steps are queued for the executor.
     /// </summary>
-    public volatile bool QueuesErrors;
+    public bool QueuesErrors
+    {
+        get => _queuesErrors;
+        set => _queuesErrors = value;
+    }
 
     public ConditionFlags IncludeFlags { get; }
 

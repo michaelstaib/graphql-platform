@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 using HotChocolate.Buffers;
@@ -16,7 +17,6 @@ namespace HotChocolate.Fusion.Execution.Nodes;
 public sealed partial record OperationPlan : IOperationPlan
 {
     private static readonly JsonOperationPlanFormatter s_formatter = new();
-    private static readonly HashSet<int> s_noSelectionIds = [];
     private readonly ExecutionNode?[] _nodesById = [];
     private readonly Dictionary<Operation, int>? _incrementalPlanIndexes;
 
@@ -51,8 +51,12 @@ public sealed partial record OperationPlan : IOperationPlan
         _incrementalPlanIndexes = CreateIncrementalPlanIndexes(incrementalPlans);
         HasDeferredDelivery = !incrementalPlans.IsDefaultOrEmpty || !deliveryGroups.IsDefaultOrEmpty;
         KeyAndRequirementSelectionIds = incrementalPlans.IsDefaultOrEmpty && !deliveryGroups.IsDefaultOrEmpty
-            ? SinglePlanDeliveryState.CollectKeyAndRequirementSelectionIds(operation, allNodes)
-            : s_noSelectionIds;
+            ? SinglePlanDeliveryState.CollectKeyAndRequirementSelectionIds(operation, allNodes).ToFrozenSet()
+#if NET9_0_OR_GREATER
+            : [];
+#else
+            : FrozenSet<int>.Empty;
+#endif
 
         if (EntityReuseCandidateMap.Create(this) is { } entityReuseCandidateMap)
         {
@@ -119,15 +123,15 @@ public sealed partial record OperationPlan : IOperationPlan
     public ImmutableArray<IncrementalPlan> IncrementalPlans { get; }
 
     /// <summary>
-    /// Gets a value that indicates whether the plan delivers parts of its result after the initial result.
+    /// Gets a value that indicates whether the plan has incremental plans or delivery groups.
     /// </summary>
-    public bool HasDeferredDelivery { get; }
+    internal bool HasDeferredDelivery { get; }
 
     /// <summary>
     /// Gets the ids of the selections that a step of a plan with delivery groups can read as a key or a
     /// requirement.
     /// </summary>
-    internal HashSet<int> KeyAndRequirementSelectionIds { get; }
+    internal FrozenSet<int> KeyAndRequirementSelectionIds { get; }
 
     /// <summary>
     /// Gets the highest plan node identifier that can be resolved by this plan.
