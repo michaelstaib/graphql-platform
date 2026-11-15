@@ -1239,6 +1239,276 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.StartsWith("400", onResponse);
     }
 
+    [Fact]
+    public async Task Defer_Should_SendTheKey_When_TheGroupSelectsTheKeyOfItsLookup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { id price } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheKeyOfEveryItem_When_TheGroupSelectsTheKeyOfItsLookup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "d") { id price } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheKey_When_AnotherGroupFetchesThroughIt(bool keyStepFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            keyStepFirst ? ["A:3", "B:2"] : ["B:2", "A:3"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "d") { id }
+                    ... @defer(label: "e") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"keyStepFirst={keyStepFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequirement_When_AStepWithoutAGroupFetchesIt()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["C:2"],
+            ("A", ProductWeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "a") { weight } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheRequirement_When_ASiblingGroupDependsOnIt(bool dependentFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            dependentFirst ? ["C:2", "A:3"] : ["A:3", "C:2"],
+            ("A", ProductWeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { weight }
+                    ... @defer(label: "b") { shipping }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"dependentFirst={dependentFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTypename_When_TheGroupSelectsItNextToAField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { __typename price } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTypename_When_AMarkedStepCreatesTheObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "C:3"],
+            ("A", ProductListSource),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        reviews { ... @defer(label: "i") { __typename id rating } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheKey_When_TheGroupHasASwitch(bool d)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            d ? ["B:2"] : [],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($d: Boolean!) {
+                product(id: "1") { name ... @defer(if: $d, label: "d") { id price } }
+            }
+            """,
+            new Dictionary<string, object?> { ["d"] = d });
+
+        // assert
+        MatchRun(run, $"d={d}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendEveryItem_When_OneSourceObjectHasSeveralTargets()
+    {
+        // arrange
+        // source A answers every product with the same id, so the objects of the group share one source object.
+        var gateway = await CreateGatewayAsync(
+            ["B:2"],
+            (name, _, text) => name == "A"
+                ? EntityId().Replace(text, "\"id\":\"UHJvZHVjdDox\"")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { name price } again: products { name ... @defer(label: "d") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheKey_When_TheGroupIsNested(bool innerFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            innerFirst ? ["B:3", "B:2"] : ["B:2", "B:3"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        price
+                        ... @defer(label: "i") { id rating }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"innerFirst={innerFirst}");
+    }
+
+    [GeneratedRegex("\"id\":\"[^\"]*\"")]
+    private static partial Regex EntityId();
+
+    private const string ProductWeightSource =
+        """
+        type Query { product(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! name: String! weight: Float! }
+        """;
+
     private const string MutationSource =
         """
         type Query { product(id: ID!): Product @lookup }

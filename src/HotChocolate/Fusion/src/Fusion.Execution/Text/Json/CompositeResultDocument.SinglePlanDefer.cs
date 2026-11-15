@@ -107,8 +107,8 @@ public sealed partial class CompositeResultDocument
 
     /// <summary>
     /// Claims the rows at and below <paramref name="anchor"/> that resolve to
-    /// <paramref name="deliveryGroupId"/>, were written by a step and are not delivered yet, and lists the
-    /// objects that hold a claimed row with their path below the anchor.
+    /// <paramref name="deliveryGroupId"/>, are not delivered yet and hold a value or the result of a marked
+    /// step, and lists the objects that hold a claimed row with their path below the anchor.
     /// </summary>
     /// <returns><c>true</c> when at least one row was claimed.</returns>
     internal bool ClaimDeliveryRows(
@@ -205,7 +205,7 @@ public sealed partial class CompositeResultDocument
                     // Another payload sent the row. The rows below it can still be this group's.
                     SearchClaims(valueCursor, valueRow, groupId, path.Append(selection.ResponseName), roots);
                 }
-                else if (TryClaim(propertyCursor, selection, groupId))
+                else if (TryClaim(propertyCursor, marks, valueRow, selection, groupId))
                 {
                     any = true;
                     ClaimBelow(valueCursor, valueRow, groupId);
@@ -226,9 +226,9 @@ public sealed partial class CompositeResultDocument
         }
     }
 
-    private bool TryClaim(Cursor propertyCursor, Selection selection, int groupId)
+    private bool TryClaim(Cursor propertyCursor, int marks, DbRow valueRow, Selection selection, int groupId)
     {
-        if ((_metaDb.Get(propertyCursor).DeliveryMarks & PropertyMarks.Written) == 0
+        if (((marks & PropertyMarks.Written) == 0 && valueRow.TokenType is ElementTokenType.None)
             || !SinglePlanDeliveryState.Contains(_delivery!.Resolve(selection), groupId))
         {
             return false;
@@ -279,6 +279,8 @@ public sealed partial class CompositeResultDocument
                 if ((marks & PropertyMarks.Delivered) == 0
                     && TryClaim(
                         propertyCursor,
+                        marks,
+                        valueRow,
                         _operation.GetSelectionById(property.OperationReferenceId),
                         groupId))
                 {
