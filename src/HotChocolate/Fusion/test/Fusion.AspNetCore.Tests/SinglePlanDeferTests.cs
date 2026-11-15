@@ -474,6 +474,92 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendTheSharedNestedFieldWithTheTopGroup_When_TheTopGroupComesBeforeTheOuterGroup()
+    {
+        // arrange
+        var gateway = await CreateProductReviewGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "top") { products { reviews { rating } } }
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews { id ... @defer(label: "inner") { rating } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, mergedOnly: true, compareValues: false);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheSharedNestedFieldWithTheOuterGroup_When_TheTopGroupComesAfterTheOuterGroup()
+    {
+        // arrange
+        var gateway = await CreateProductReviewGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews { id ... @defer(label: "inner") { rating } }
+                    }
+                }
+                ... @defer(label: "top") { products { reviews { rating } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, mergedOnly: true, compareValues: false);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheRequiredFieldOfAThirdSchema_When_TheSwitchIsOn(bool s)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! weight: Float! }
+                """),
+            ("C", """
+                type Query { productByIdForShipping(id: ID!): Product @lookup }
+                type Product @key(fields: "id") {
+                    id: ID!
+                    shipping(weight: Float! @require(field: "weight")): Float!
+                }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($s: Boolean!) {
+                product(id: "1") { name ... @defer(if: $s, label: "shipping") { shipping } }
+            }
+            """,
+            new Dictionary<string, object?> { ["s"] = s });
+
+        // assert
+        MatchRun(run, $"s={s}");
+    }
+
+    [Fact]
     public async Task Defer_Should_ReturnTheBytesOfThePlainPath_When_TheOperationHasNoDefer()
     {
         // arrange
@@ -512,6 +598,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
         type Review { body: String! }
         """;
+
+    private Task<Gateway> CreateProductReviewGatewayAsync()
+        => CreateGatewayAsync(
+            ("A", """
+                type Query { products: [Product!]! }
+                type Product @key(fields: "id") { id: ID! @shareable }
+                """),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
+                type Review @key(fields: "id") { id: ID! @shareable }
+                """),
+            ("C", """
+                type Query { reviewById(id: ID!): Review @lookup }
+                type Review @key(fields: "id") { id: ID! rating: Int! }
+                """));
 
     private Task<Gateway> CreateProductGatewayAsync()
         => CreateGatewayAsync(("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));
