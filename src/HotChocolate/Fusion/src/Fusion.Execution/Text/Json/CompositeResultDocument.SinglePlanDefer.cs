@@ -17,11 +17,10 @@ public sealed partial class CompositeResultDocument
     {
         _delivery = delivery;
 
-        var template = _operation.RootSelectionSet.ObjectTemplate;
         var selections = _operation.RootSelectionSet.Selections;
         var root = Cursor.CreateZero();
 
-        foreach (var index in template.ConditionalSelections)
+        for (var index = 0; index < selections.Length; index++)
         {
             var propertyCursor = root.AddRows((index * 2) + 1);
             var flags = _metaDb.GetFlags(propertyCursor);
@@ -47,38 +46,12 @@ public sealed partial class CompositeResultDocument
         ObjectTemplate template,
         ReadOnlySpan<Selection> selections)
     {
-        var conditionalSelections = template.ConditionalSelections;
-        var excluded = conditionalSelections.Length <= 128
-            ? stackalloc int[conditionalSelections.Length]
-            : new int[conditionalSelections.Length];
-        var held = conditionalSelections.Length <= 128
-            ? stackalloc int[conditionalSelections.Length]
-            : new int[conditionalSelections.Length];
-        var excludedCount = 0;
-        var heldCount = 0;
+        var block = _delivery!.GetBlock(selections);
+        var start = _metaDb.AppendObjectBlock(template.Rows, parent.Value, block.ExcludedRowOffsets);
 
-        foreach (var index in conditionalSelections)
+        foreach (var offset in block.HeldRowOffsets)
         {
-            var resolution = _delivery!.Resolve(selections[index]);
-
-            if (resolution.Kind is DeliveryKind.Initial)
-            {
-                continue;
-            }
-
-            excluded[excludedCount++] = (index * 2) + 1;
-
-            if (resolution.Kind is DeliveryKind.Groups)
-            {
-                held[heldCount++] = (index * 2) + 1;
-            }
-        }
-
-        var start = _metaDb.AppendObjectBlock(template.Rows, parent.Value, excluded[..excludedCount]);
-
-        for (var i = 0; i < heldCount; i++)
-        {
-            _metaDb.OrDeliveryMarks(start.AddRows(held[i]), PropertyMarks.Held);
+            _metaDb.OrDeliveryMarks(start.AddRows(offset), PropertyMarks.Held);
         }
 
         return start;

@@ -73,6 +73,7 @@ public sealed partial class OperationPlanContext
 internal sealed class SinglePlanDeliveryState
 {
     private readonly Dictionary<int, DeliveryResolution> _resolutions = [];
+    private readonly Dictionary<int, DeliveryBlock> _blocks = [];
     private readonly object _sync = new();
     private readonly List<ExecutionNode> _markedNodes = [];
     private readonly Dictionary<SelectionPath, SelectionSet[]> _targetSets = [];
@@ -185,6 +186,52 @@ internal sealed class SinglePlanDeliveryState
             default:
                 return default;
         }
+    }
+
+    /// <summary>
+    /// Gets the row offsets of an object block of <paramref name="selections"/> that are not part of the
+    /// initial payload.
+    /// </summary>
+    public DeliveryBlock GetBlock(ReadOnlySpan<Selection> selections)
+    {
+        var selectionSetId = selections[0].DeclaringSelectionSet.Id;
+
+        lock (_sync)
+        {
+            if (_blocks.TryGetValue(selectionSetId, out var block))
+            {
+                return block;
+            }
+        }
+
+        var excluded = new List<int>();
+        var held = new List<int>();
+
+        for (var i = 0; i < selections.Length; i++)
+        {
+            var resolution = Resolve(selections[i]);
+
+            if (resolution.Kind is DeliveryKind.Initial)
+            {
+                continue;
+            }
+
+            excluded.Add((i * 2) + 1);
+
+            if (resolution.Kind is DeliveryKind.Groups)
+            {
+                held.Add((i * 2) + 1);
+            }
+        }
+
+        var created = new DeliveryBlock(excluded.ToArray(), held.ToArray());
+
+        lock (_sync)
+        {
+            _blocks[selectionSetId] = created;
+        }
+
+        return created;
     }
 
     /// <summary>
@@ -485,4 +532,14 @@ internal sealed class DeliveryPayloadDataFormatter(
 {
     public void WriteDataTo(JsonWriter jsonWriter)
         => document.WriteDeliveryRows(jsonWriter, anchor, deliveryGroupId);
+}
+
+/// <summary>
+/// The property row offsets of an object block that a request holds back from the initial payload.
+/// </summary>
+internal sealed class DeliveryBlock(int[] excludedRowOffsets, int[] heldRowOffsets)
+{
+    public int[] ExcludedRowOffsets { get; } = excludedRowOffsets;
+
+    public int[] HeldRowOffsets { get; } = heldRowOffsets;
 }

@@ -485,7 +485,7 @@ public sealed partial class CompositeResultDocument : IDisposable
 
         var selections = selectionSet.Selections;
 
-        var startObjectCursor = template.ConditionalSelections.IsEmpty
+        var startObjectCursor = template.ConditionalSelections.IsEmpty && _delivery is null
             ? _metaDb.AppendObjectBlock(template.Rows, parent.Value, excludedRowOffsets: [])
             : AppendConditionalObjectBlock(parent, template, selections);
 
