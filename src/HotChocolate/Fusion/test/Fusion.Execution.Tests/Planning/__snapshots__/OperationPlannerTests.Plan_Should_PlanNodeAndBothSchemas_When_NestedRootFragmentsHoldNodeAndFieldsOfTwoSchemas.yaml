@@ -1,0 +1,69 @@
+operation:
+  - document: |
+      query($c: Boolean!, $d: Boolean!) {
+        ... @include(if: $c) {
+          productById(id: "3") {
+            price
+          }
+          ... @skip(if: $d) {
+            node(id: "1") {
+              __typename @fusion__requirement
+              id
+            }
+            product(id: "2") {
+              name
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Node
+    idValue: "1"
+    responseName: node
+    fallback: 2
+    conditions:
+      - variable: $d
+        passingValue: false
+      - variable: $c
+        passingValue: true
+  - id: 2
+    type: Operation
+    operation: |
+      query Op_123456789101112_2 {
+        node(id: "1") {
+          __typename
+          id
+        }
+      }
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_3 {
+        product(id: "2") {
+          name
+        }
+      }
+    conditions:
+      - variable: $c
+        passingValue: true
+      - variable: $d
+        passingValue: false
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4 {
+        productById(id: "3") {
+          price
+        }
+      }
+    conditions:
+      - variable: $c
+        passingValue: true

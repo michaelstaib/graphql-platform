@@ -426,4 +426,110 @@ public class OperationPlannerTests : FusionTestBase
         // assert
         MatchSnapshot(plan);
     }
+
+    [Fact]
+    public void Plan_Should_PlanNodeAndBothSchemas_When_IncludedRootFragmentHoldsNodeAndFieldsOfTwoSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(NodeSchemaA, NodeSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($c: Boolean!) {
+              ... @include(if: $c) {
+                node(id: "1") { id }
+                product(id: "2") { name }
+                productById(id: "3") { price }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanNodeAndBothSchemas_When_NestedRootFragmentsHoldNodeAndFieldsOfTwoSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(NodeSchemaA, NodeSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($c: Boolean!, $d: Boolean!) {
+              ... @include(if: $c) {
+                ... @skip(if: $d) {
+                  node(id: "1") { id }
+                  product(id: "2") { name }
+                }
+                productById(id: "3") { price }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanNodeAndSchema_When_IncludedRootFragmentHoldsNodeAndFieldsOfOneSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(NodeSchemaA, NodeSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($c: Boolean!) {
+              ... @include(if: $c) {
+                node(id: "1") { id }
+                product(id: "2") { name }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    private const string NodeSchemaA =
+        """
+        # name: a
+        type Query {
+          node(id: ID!): Node @lookup @shareable
+          product(id: ID!): Product @lookup
+        }
+
+        interface Node {
+          id: ID!
+        }
+
+        type Product implements Node @key(fields: "id") {
+          id: ID!
+          name: String!
+        }
+        """;
+
+    private const string NodeSchemaB =
+        """
+        # name: b
+        type Query {
+          node(id: ID!): Node @lookup @shareable
+          productById(id: ID!): Product @lookup
+        }
+
+        interface Node {
+          id: ID!
+        }
+
+        type Product implements Node @key(fields: "id") {
+          id: ID!
+          price: Float!
+        }
+        """;
 }
