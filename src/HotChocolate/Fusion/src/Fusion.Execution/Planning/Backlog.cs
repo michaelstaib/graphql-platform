@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using HotChocolate.Fusion.Planning.Partitioners;
+using HotChocolate.Language;
 
 namespace HotChocolate.Fusion.Planning;
 
@@ -11,10 +12,10 @@ namespace HotChocolate.Fusion.Planning;
 internal readonly struct Backlog(
     ImmutableStack<WorkItem> items,
     BacklogCost cost,
-    DeferredFragmentIndex? deferredFragments)
+    IReadOnlyDictionary<DirectiveNode, int>? deferredFragments)
 {
     private readonly ImmutableStack<WorkItem> _items = items;
-    private readonly DeferredFragmentIndex? _deferredFragments = deferredFragments;
+    private readonly IReadOnlyDictionary<DirectiveNode, int>? _deferredFragments = deferredFragments;
 
     public static Backlog Empty { get; } = new([], BacklogCost.Empty, null);
 
@@ -53,9 +54,16 @@ internal readonly struct Backlog(
     }
 
     /// <summary>
-    /// Returns a backlog that marks the work items it spills from <c>@defer</c> fragments.
+    /// Maps the <c>@defer</c> directive of a fragment to the id of its delivery group, or <c>null</c> when
+    /// the operation is not planned with marked steps.
     /// </summary>
-    public Backlog WithDeferredFragments(DeferredFragmentIndex deferredFragments)
+    public IReadOnlyDictionary<DirectiveNode, int>? DeferredFragments => _deferredFragments;
+
+    /// <summary>
+    /// Returns a backlog that marks the work items it spills from <c>@defer</c> fragments with the delivery
+    /// group of the fragment.
+    /// </summary>
+    public Backlog WithDeferredFragments(IReadOnlyDictionary<DirectiveNode, int> deferredFragments)
         => new(_items, Cost, deferredFragments);
 
     public Backlog BindSourceSchemaNodeCandidate(int candidateGroupId, string schemaName)
@@ -88,13 +96,9 @@ internal readonly struct Backlog(
     /// <param name="unresolvable">The unresolvable selection sets.</param>
     /// <param name="fromSchema">The source schema that could not resolve them.</param>
     /// <param name="parentDepth">The depth of the step that produced them.</param>
-    /// <param name="index">
-    /// The selection set index to find <c>@defer</c> fragments with, or <c>null</c> when the selection sets
-    /// cannot be the content of a <c>@defer</c> fragment.
-    /// </param>
     /// <param name="deliveryGroups">
     /// The delivery groups that every work item carries unless its selection set is the content of a
-    /// <c>@defer</c> fragment of another group.
+    /// <c>@defer</c> fragment.
     /// </param>
     /// <param name="dependents">The steps that need the data of the selection sets.</param>
     /// <param name="allowSourceSchemaReentry">Whether the work items may re-enter the source schema.</param>
@@ -103,7 +107,6 @@ internal readonly struct Backlog(
         ImmutableStack<ConditionedSelectionSet> unresolvable,
         string fromSchema,
         int parentDepth,
-        ISelectionSetIndex? index,
         ImmutableArray<int> deliveryGroups,
         ImmutableHashSet<int>? dependents = null,
         bool allowSourceSchemaReentry = false,
@@ -122,10 +125,7 @@ internal readonly struct Backlog(
             var entryDeliveryGroups = deliveryGroups;
             var entryAllowsReentry = allowSourceSchemaReentry;
 
-            if (index is not null
-                && _deferredFragments is not null
-                && _deferredFragments.TryGetDeliveryGroup(index, selectionSet.Id, out var deliveryGroupId)
-                && !deliveryGroups.Contains(deliveryGroupId))
+            if (entry.DeliveryGroup is { } deliveryGroupId)
             {
                 entryDeliveryGroups = [deliveryGroupId];
                 entryAllowsReentry = true;

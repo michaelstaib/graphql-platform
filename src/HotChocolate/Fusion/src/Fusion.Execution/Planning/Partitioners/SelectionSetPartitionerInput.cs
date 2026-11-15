@@ -16,4 +16,10 @@ internal readonly ref struct SelectionSetPartitionerInput
     /// included in the entering lookup key. Set to <c>null</c> to disable this constraint.
     /// </summary>
     public SelectionSetNode? EntryKeyCoverage { get; init; }
+
+    /// <summary>
+    /// Maps the <c>@defer</c> directive of a fragment to the id of its delivery group. Every selection of
+    /// such a fragment is left unresolved. <c>null</c> plans a <c>@defer</c> fragment like any other fragment.
+    /// </summary>
+    public IReadOnlyDictionary<DirectiveNode, int>? DeferredFragments { get; init; }
 }

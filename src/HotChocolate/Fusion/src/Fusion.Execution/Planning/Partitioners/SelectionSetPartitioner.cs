@@ -15,21 +15,6 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
     // underneath is covered, but the scope itself stays active.
     private static readonly SelectionSetNode s_emptyEntryKeyCoverage = new([]);
 
-    private readonly bool _spillDeferredFragments;
-
-    /// <summary>
-    /// Creates a partitioner that can leave every selection of a <c>@defer</c> fragment unresolved.
-    /// </summary>
-    /// <param name="schema">The composite schema.</param>
-    /// <param name="spillDeferredFragments">
-    /// <c>true</c> leaves all selections of a <c>@defer</c> fragment unresolved.
-    /// </param>
-    public SelectionSetPartitioner(FusionSchemaDefinition schema, bool spillDeferredFragments)
-        : this(schema)
-    {
-        _spillDeferredFragments = spillDeferredFragments;
-    }
-
     public SelectionSetPartitionerResult Partition(
         SelectionSetPartitionerInput input)
     {
@@ -39,7 +24,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             RootPath = input.SelectionSet.Path,
             SelectionSetIndex = input.SelectionSetIndex,
             PruneUnprovidedAbstractBranches = input.PruneUnprovidedAbstractBranches,
-            TreatSourceExternalAsUnresolvable = input.TreatSourceExternalAsUnresolvable
+            TreatSourceExternalAsUnresolvable = input.TreatSourceExternalAsUnresolvable,
+            DeferredFragments = input.DeferredFragments
         };
 
         var (resolvable, _) =
@@ -126,6 +112,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         providedSelectionSetNode = GetProvidedSelectionSet(type, schema, providedSelectionSetNode);
 
         var spillAll = ReferenceEquals(context.SpillSelectionSet, selectionSetNode);
+        var spillDeliveryGroup = spillAll ? context.SpillDeliveryGroup : null;
 
         context.Nodes.Push(selectionSetNode);
 
@@ -247,7 +234,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 type,
                 context.BuildPath());
             context.Unresolvable = context.Unresolvable.Push(
-                new ConditionedSelectionSet(selectionSet, context.SnapshotConditions()));
+                new ConditionedSelectionSet(selectionSet, context.SnapshotConditions(), spillDeliveryGroup));
             unresolvableSelections = null;
         }
 
@@ -435,7 +422,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             // start with the parent's conditions (prefix check), because the Unresolvable
             // stack is shared across sibling fragments and may contain entries from
             // unconditional siblings that must not inherit the parent's conditions.
-            if (entryPath.Length == currentPath.Length + 1
+            if (entry.DeliveryGroup is null
+                && entryPath.Length == currentPath.Length + 1
                 && entryPath[entryPath.Length - 1].Kind == SelectionPathSegmentKind.InlineFragment
                 && currentPath.IsParentOfOrSame(entryPath)
                 && IsConditionPrefix(currentConditions, entry.Conditions))
@@ -887,9 +875,10 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         }
 
         context.Nodes.Push(inlineFragmentNode);
-        context.SpillSelectionSet = _spillDeferredFragments && HasDeferDirective(inlineFragmentNode)
-            ? inlineFragmentNode.SelectionSet
-            : null;
+        context.SpillDeliveryGroup = GetDeliveryGroup(context, inlineFragmentNode);
+        context.SpillSelectionSet = context.SpillDeliveryGroup is null
+            ? null
+            : inlineFragmentNode.SelectionSet;
 
         var (resolvable, unresolvable) =
             RewriteSelectionSet(
@@ -904,6 +893,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 entryKeyCoverage);
 
         context.SpillSelectionSet = null;
+        context.SpillDeliveryGroup = null;
         context.Nodes.Pop();
 
         if (resolvable is null)
@@ -949,9 +939,10 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 branchSelectionSet);
 
             context.Nodes.Push(concreteFragment);
-            context.SpillSelectionSet = _spillDeferredFragments && HasDeferDirective(inlineFragmentNode)
-                ? branchSelectionSet
-                : null;
+            context.SpillDeliveryGroup = GetDeliveryGroup(context, inlineFragmentNode);
+            context.SpillSelectionSet = context.SpillDeliveryGroup is null
+                ? null
+                : branchSelectionSet;
 
             var unresolvableBefore = context.Unresolvable;
 
@@ -967,6 +958,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                     entryKeyCoverage: entryKeyCoverage);
 
             context.SpillSelectionSet = null;
+            context.SpillDeliveryGroup = null;
             context.Nodes.Pop();
 
             if (resolvedSelectionSet is { Selections.Count: 0 }
@@ -1353,6 +1345,16 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         /// </summary>
         public SelectionSetNode? SpillSelectionSet { get; set; }
 
+        /// <summary>
+        /// The delivery group of the fragment that <see cref="SpillSelectionSet"/> is the content of.
+        /// </summary>
+        public int? SpillDeliveryGroup { get; set; }
+
+        /// <summary>
+        /// Maps the <c>@defer</c> directive of a fragment to the id of its delivery group.
+        /// </summary>
+        public IReadOnlyDictionary<DirectiveNode, int>? DeferredFragments { get; init; }
+
         private List<ExecutionNodeCondition> ActiveConditions { get; } = [];
 
         public int PushConditions(ExecutionNodeCondition[]? conditions)
@@ -1425,17 +1427,22 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             => SelectionSetCloner.Clone(original, SelectionSetIndexBuilder);
     }
 
-    private static bool HasDeferDirective(InlineFragmentNode fragment)
+    private static int? GetDeliveryGroup(Context context, InlineFragmentNode fragment)
     {
+        if (context.DeferredFragments is null)
+        {
+            return null;
+        }
+
         for (var i = 0; i < fragment.Directives.Count; i++)
         {
-            if (fragment.Directives[i].Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+            if (context.DeferredFragments.TryGetValue(fragment.Directives[i], out var deliveryGroup))
             {
-                return true;
+                return deliveryGroup;
             }
         }
 
-        return false;
+        return null;
     }
 
     private bool CanMessageShapeProvideType(

@@ -58,7 +58,7 @@ public sealed partial class OperationPlanner
         _schema = schema;
         _operationCompiler = operationCompiler;
         _mergeRewriter = new MergeSelectionSetRewriter(schema);
-        _partitioner = new SelectionSetPartitioner(schema, options.EnableSinglePlanDefer);
+        _partitioner = new SelectionSetPartitioner(schema);
         _selectionSetByTypePartitioner = new SelectionSetByTypePartitioner(schema);
         _nodeFieldSelectionSetPartitioner = new NodeFieldSelectionSetPartitioner(schema);
         _sourceSchemaNodeCandidateResolver = new SourceSchemaNodeCandidateResolver(schema);
@@ -272,9 +272,9 @@ public sealed partial class OperationPlanner
 
             if (singlePlanDefer)
             {
-                if (!DeferredFragmentIndex.TryCreate(index, partitioning!, out var deferredFragments))
+                if (!TryCreateDeferredFragmentLookup(partitioning!, out var deferredFragments))
                 {
-                    fallbackCause = "Two @defer fragments share one selection set.";
+                    fallbackCause = "Two @defer fragments share one directive.";
                     return null;
                 }
 
@@ -594,6 +594,28 @@ public sealed partial class OperationPlanner
         }
 
         cause = null;
+        return true;
+    }
+
+    private static bool TryCreateDeferredFragmentLookup(
+        DeferPartitioningResult partitioning,
+        [NotNullWhen(true)] out Dictionary<DirectiveNode, int>? deferredFragments)
+    {
+        deferredFragments = new Dictionary<DirectiveNode, int>(ReferenceEqualityComparer.Instance);
+
+        foreach (var (fragment, deliveryGroup) in partitioning.ByFragment)
+        {
+            foreach (var directive in fragment.Directives)
+            {
+                if (directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal)
+                    && !deferredFragments.TryAdd(directive, deliveryGroup.Id))
+                {
+                    deferredFragments = null;
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 
@@ -1331,7 +1353,8 @@ public sealed partial class OperationPlanner
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
             // At a lookup entry root a sourceExternal field can only echo the key the lookup
             // was entered with; root work items keep today's permissive behavior.
-            EntryKeyCoverage = lookup?.Requirements
+            EntryKeyCoverage = lookup?.Requirements,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
@@ -1361,7 +1384,6 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
-            index,
             workItem.DeliveryGroups,
             dependents: workItem.Dependents,
             allowSourceSchemaReentry: isEventStreamRoot,
@@ -1637,7 +1659,6 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, step.Id),
-                        index: null,
                         deliveryGroups: [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
@@ -1699,7 +1720,6 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, ancestorMatch.Step.Id),
-                        index: null,
                         deliveryGroups: [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
@@ -2474,7 +2494,8 @@ public sealed partial class OperationPlanner
             SelectionSet = workItem.SelectionSet,
             SelectionSetIndex = index,
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
-            EntryKeyCoverage = lookup.Requirements
+            EntryKeyCoverage = lookup.Requirements,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
@@ -2512,7 +2533,6 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
-            index: null,
             deliveryGroups: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
@@ -2953,7 +2973,6 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
-            index: null,
             deliveryGroups: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
@@ -3434,7 +3453,8 @@ public sealed partial class OperationPlanner
                             collidingSelectionSet,
                             selectionSetType,
                             path),
-                        conditions));
+                        conditions,
+                        DeliveryGroup: null));
 
                 if (selectionsToInline is not { Count: > 0 })
                 {
