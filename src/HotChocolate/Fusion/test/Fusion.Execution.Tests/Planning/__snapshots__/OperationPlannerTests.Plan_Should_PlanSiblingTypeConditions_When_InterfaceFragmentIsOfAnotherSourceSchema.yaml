@@ -1,0 +1,77 @@
+operation:
+  - document: |
+      {
+        item(id: "1") {
+          __typename @fusion__requirement
+          name
+          ... on Priced {
+            ... on Rated {
+              rating
+              id @fusion__requirement
+            }
+            ... on Book {
+              title
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        item(id: "1") {
+          __typename
+          name
+          ... on Book {
+            ... on Book {
+              __typename
+              id
+            }
+            ... on Book {
+              id
+            }
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        bookById(id: $__fusion_1_id) {
+          title
+        }
+      }
+    source: $.bookById
+    target: $.item<Priced><Book><Book>
+    batchingGroupId: 4
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        bookById(id: $__fusion_2_id) {
+          rating
+        }
+      }
+    source: $.bookById
+    target: $.item<Priced><Book><Rated><Book>
+    batchingGroupId: 4
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1

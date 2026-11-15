@@ -9,6 +9,7 @@ public sealed class SelectionSetIndex : ISelectionSetIndex
     private readonly ImmutableDictionary<uint, SelectionSetNode> _selectionSetById;
     private readonly ImmutableDictionary<uint, uint> _clonedToOriginalMap;
     private readonly ImmutableDictionary<uint, ConcreteBranchScope> _concreteBranchScopes;
+    private readonly ImmutableDictionary<uint, uint> _mergedIntoMap;
     private readonly uint _nextId;
 
     internal SelectionSetIndex(
@@ -16,12 +17,14 @@ public sealed class SelectionSetIndex : ISelectionSetIndex
         ImmutableDictionary<uint, SelectionSetNode> selectionSetById,
         ImmutableDictionary<uint, uint> clonedToOriginalMap,
         ImmutableDictionary<uint, ConcreteBranchScope> concreteBranchScopes,
+        ImmutableDictionary<uint, uint> mergedIntoMap,
         uint nextId)
     {
         _selectionSets = selectionSets;
         _selectionSetById = selectionSetById;
         _clonedToOriginalMap = clonedToOriginalMap;
         _concreteBranchScopes = concreteBranchScopes;
+        _mergedIntoMap = mergedIntoMap;
         _nextId = nextId;
     }
 
@@ -43,6 +46,7 @@ public sealed class SelectionSetIndex : ISelectionSetIndex
             _selectionSetById,
             _clonedToOriginalMap,
             _concreteBranchScopes,
+            _mergedIntoMap,
             _nextId);
 }
 

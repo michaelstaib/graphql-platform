@@ -1434,6 +1434,207 @@ public class AbstractTypeTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result);
     }
 
+    [Fact]
+    public async Task Interface_Fragment_Should_Resolve_Nested_Type_Condition_When_Interface_Is_On_Other_Schema()
+    {
+        // arrange
+        using var serverA = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+              item(id: ID!): Item @returns(types: ["Book"])
+              bookById(id: ID!): Book @lookup @shareable
+            }
+
+            interface Item {
+              id: ID!
+              name: String!
+            }
+
+            type Book implements Item @key(fields: "id") {
+              id: ID!
+              name: String!
+            }
+            """);
+
+        using var serverB = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+              bookById(id: ID!): Book @lookup @shareable
+            }
+
+            interface Priced {
+              price: Float!
+            }
+
+            type Book implements Priced @key(fields: "id") {
+              id: ID!
+              price: Float!
+              rating: Int!
+            }
+            """);
+
+        using var serverC = CreateSourceSchema(
+            "C",
+            """
+            type Query {
+              bookById(id: ID!): Book @lookup @shareable
+            }
+
+            type Book @key(fields: "id") {
+              id: ID!
+              reviews: [Review!]!
+            }
+
+            type Review {
+              body: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", serverA),
+            ("B", serverB),
+            ("C", serverC)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+              item(id: "1") {
+                name
+                ... on Priced {
+                  price
+                  ... on Book {
+                    rating
+                    reviews {
+                      body
+                    }
+                  }
+                }
+              }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await AssertAndMatchSnapshotAsync(
+            gateway,
+            request,
+            result,
+            results =>
+            {
+                var response = Assert.Single(results);
+                Assert.Equal(JsonValueKind.Undefined, response.Errors.ValueKind);
+            });
+    }
+
+    [Fact]
+    public async Task Interface_Fragment_Should_Resolve_Nested_Interface_Fragment_When_Interfaces_Are_On_Other_Schema()
+    {
+        // arrange
+        using var serverA = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+              items: [Item!]! @returns(types: ["Book", "Toy"])
+              bookById(id: ID!): Book @lookup @shareable
+              toyById(id: ID!): Toy @lookup @shareable
+            }
+
+            interface Item {
+              id: ID!
+              name: String!
+            }
+
+            type Book implements Item @key(fields: "id") {
+              id: ID!
+              name: String!
+            }
+
+            type Toy implements Item @key(fields: "id") {
+              id: ID!
+              name: String!
+            }
+            """);
+
+        using var serverB = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+              bookById(id: ID!): Book @lookup @shareable
+              toyById(id: ID!): Toy @lookup @shareable
+            }
+
+            interface Priced {
+              price: Float!
+            }
+
+            interface Rated {
+              rating: Int!
+            }
+
+            type Book implements Priced & Rated @key(fields: "id") {
+              id: ID!
+              price: Float!
+              rating: Int!
+            }
+
+            type Toy implements Priced @key(fields: "id") {
+              id: ID!
+              price: Float!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", serverA),
+            ("B", serverB)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            {
+              items {
+                name
+                ... on Priced {
+                  price
+                  ... on Rated {
+                    rating
+                  }
+                }
+              }
+            }
+            """);
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await AssertAndMatchSnapshotAsync(
+            gateway,
+            request,
+            result,
+            results =>
+            {
+                var response = Assert.Single(results);
+                Assert.Equal(JsonValueKind.Undefined, response.Errors.ValueKind);
+            });
+    }
+
     public static class SourceSchema1
     {
         public class Query

@@ -21,9 +21,11 @@ public sealed class SelectionSetIndexer : SyntaxWalker
 #if NET10_0_OR_GREATER
             [],
             [],
+            [],
 #else
             ImmutableDictionary<uint, uint>.Empty,
             ImmutableDictionary<uint, ConcreteBranchScope>.Empty,
+            ImmutableDictionary<uint, uint>.Empty,
 #endif
             indexer._nextId);
     }

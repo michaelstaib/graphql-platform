@@ -1,0 +1,319 @@
+title: Interface_Fragment_Should_Resolve_Nested_Interface_Fragment_When_Interfaces_Are_On_Other_Schema
+request:
+  document: |
+    {
+      items {
+        name
+        ... on Priced {
+          price
+          ... on Rated {
+            rating
+          }
+        }
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "items": [
+          {
+            "name": "Book: Qm9vazo5OTkwNzE4OTY=",
+            "price": 123.456,
+            "rating": 123
+          },
+          {
+            "name": "Toy: VG95OjI2NjE0MDEzNjQ=",
+            "price": 123.456
+          },
+          {
+            "name": "Book: Qm9vazo1NTcyOTAwNDE=",
+            "price": 123.456,
+            "rating": 123
+          }
+        ]
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        items: [Item!]! @returns(types: ["Book", "Toy"])
+        bookById(id: ID!): Book @lookup @shareable
+        toyById(id: ID!): Toy @lookup @shareable
+      }
+
+      type Book implements Item @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+
+      type Toy implements Item @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+
+      interface Item {
+        id: ID!
+        name: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_6e998d3c_1 {
+              items {
+                __typename
+                name
+                ... {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                  ... on Toy {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "items": [
+                    {
+                      "__typename": "Book",
+                      "name": "Book: Qm9vazo5OTkwNzE4OTY=",
+                      "id": "Qm9vazo5OTkwNzE4OTY="
+                    },
+                    {
+                      "__typename": "Toy",
+                      "name": "Toy: VG95OjI2NjE0MDEzNjQ=",
+                      "id": "VG95OjI2NjE0MDEzNjQ="
+                    },
+                    {
+                      "__typename": "Book",
+                      "name": "Book: Qm9vazo1NTcyOTAwNDE=",
+                      "id": "Qm9vazo1NTcyOTAwNDE="
+                    }
+                  ]
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        bookById(id: ID!): Book @lookup @shareable
+        toyById(id: ID!): Toy @lookup @shareable
+      }
+
+      type Book implements Priced & Rated @key(fields: "id") {
+        id: ID!
+        price: Float!
+        rating: Int!
+      }
+
+      type Toy implements Priced @key(fields: "id") {
+        id: ID!
+        price: Float!
+      }
+
+      interface Priced {
+        price: Float!
+      }
+
+      interface Rated {
+        rating: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          kind: OperationBatch
+          items:
+            - document: |
+                query Op_6e998d3c_2($__fusion_1_id: ID!) {
+                  toyById(id: $__fusion_1_id) {
+                    price
+                  }
+                }
+              variables: |
+                {
+                  "__fusion_1_id": "VG95OjI2NjE0MDEzNjQ="
+                }
+            - document: |
+                query Op_6e998d3c_3($__fusion_2_id: ID!) {
+                  bookById(id: $__fusion_2_id) {
+                    price
+                  }
+                }
+              variables: |
+                [
+                  {
+                    "__fusion_2_id": "Qm9vazo5OTkwNzE4OTY="
+                  },
+                  {
+                    "__fusion_2_id": "Qm9vazo1NTcyOTAwNDE="
+                  }
+                ]
+            - document: |
+                query Op_6e998d3c_4($__fusion_3_id: ID!) {
+                  bookById(id: $__fusion_3_id) {
+                    rating
+                  }
+                }
+              variables: |
+                [
+                  {
+                    "__fusion_3_id": "Qm9vazo5OTkwNzE4OTY="
+                  },
+                  {
+                    "__fusion_3_id": "Qm9vazo1NTcyOTAwNDE="
+                  }
+                ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "price": 123.456
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "rating": 123
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "rating": 123
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "toyById": {
+                    "price": 123.456
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "bookById": {
+                    "price": 123.456
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        {
+          items {
+            __typename @fusion__requirement
+            name
+            ... on Priced {
+              price
+              id @fusion__requirement
+              ... on Rated {
+                rating
+                id @fusion__requirement
+              }
+            }
+          }
+        }
+      hash: 21a1a2690473c4c701a6a5743ce8259c
+      searchSpace: 1
+      expandedNodes: 2
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query Op_6e998d3c_1 {
+          items {
+            __typename
+            name
+            ... {
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Toy {
+                __typename
+                id
+              }
+            }
+          }
+        }
+    - id: 2
+      type: Operation
+      schema: B
+      operation: |
+        query Op_6e998d3c_2($__fusion_1_id: ID!) {
+          toyById(id: $__fusion_1_id) {
+            price
+          }
+        }
+      source: $.toyById
+      target: $.items<Priced><Toy>
+      batchingGroupId: 5
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query Op_6e998d3c_3($__fusion_2_id: ID!) {
+          bookById(id: $__fusion_2_id) {
+            price
+          }
+        }
+      source: $.bookById
+      target: $.items<Priced><Book>
+      batchingGroupId: 5
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 4
+      type: Operation
+      schema: B
+      operation: |
+        query Op_6e998d3c_4($__fusion_3_id: ID!) {
+          bookById(id: $__fusion_3_id) {
+            rating
+          }
+        }
+      source: $.bookById
+      target: $.items<Priced><Book><Rated><Book>
+      batchingGroupId: 5
+      requirements:
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
