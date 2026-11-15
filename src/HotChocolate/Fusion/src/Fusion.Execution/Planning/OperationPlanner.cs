@@ -9,7 +9,6 @@ using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Planning.Partitioners;
 using HotChocolate.Fusion.Policies;
-using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Types.Directives;
 using HotChocolate.Fusion.Types.Metadata;
@@ -520,12 +519,9 @@ public sealed partial class OperationPlanner
         ImmutableArray<DeliveryGroup> deliveryGroups,
         out string? cause)
     {
-        const int maxDeliveryGroups = CompositeResultDocument.PropertyMarks.ClaimantMask;
-
-        if (!deliveryGroups.IsDefaultOrEmpty
-            && (deliveryGroups.Length > maxDeliveryGroups || deliveryGroups[^1].Id > maxDeliveryGroups))
+        if (!deliveryGroups.IsDefaultOrEmpty && deliveryGroups.Length > DeliveryGroup.MaxCount)
         {
-            cause = $"The operation has more than {maxDeliveryGroups} delivery groups.";
+            cause = $"The operation has more than {DeliveryGroup.MaxCount} delivery groups.";
             return false;
         }
 

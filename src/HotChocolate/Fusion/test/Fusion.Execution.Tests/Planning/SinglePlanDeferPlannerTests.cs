@@ -7,6 +7,7 @@ using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
 using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Policies;
+using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using Microsoft.Extensions.ObjectPool;
@@ -1747,6 +1748,16 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         // assert
         Assert.True(valid);
         Assert.Null(cause);
+    }
+
+    [Fact]
+    public void DeliveryGroupMaxCount_Should_EqualTheClaimantMaskOfTheResultDocument()
+    {
+        // arrange
+        const int claimantMask = CompositeResultDocument.PropertyMarks.ClaimantMask;
+
+        // assert
+        Assert.Equal(claimantMask, DeliveryGroup.MaxCount);
     }
 
     [Fact]
