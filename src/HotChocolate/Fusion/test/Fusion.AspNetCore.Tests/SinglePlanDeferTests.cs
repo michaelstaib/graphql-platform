@@ -467,7 +467,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateProductReviewGatewayAsync(
-            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6>", "B:3>", "C:4"]);
+            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6", "B:3@2", "C:4@3"]);
 
         // act
         var run = await RunWithTwinAsync(
@@ -497,7 +497,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateProductReviewGatewayAsync(
-            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6>", "B:3>", "C:4"]);
+            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6", "B:3@2", "C:4@3"]);
 
         // act
         var run = await RunWithTwinAsync(
@@ -1873,12 +1873,14 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     // Holds the responses of the listed steps back. Each one after the first is released when the step
     // before it has handed its result to the executor and, when that step is listed with a trailing ">",
-    // the gateway has written the next payload.
+    // the gateway has written the next payload. A step listed as "schema:id@n" is also held until the gateway
+    // has written n payloads in total.
     private sealed class ResponseGate
     {
         private static readonly TimeSpan s_guard = TimeSpan.FromSeconds(20);
         private readonly string[] _order;
         private readonly bool[] _waitForPayload;
+        private readonly int[] _minPayloads;
         private readonly TaskCompletionSource[] _done;
         private readonly int[] _payloadsAtRelease;
         private readonly object _sync = new();
@@ -1888,8 +1890,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         public ResponseGate(string[] order)
         {
-            _order = [.. order.Select(t => t.TrimEnd('>'))];
+            _order = [.. order.Select(t => t.TrimEnd('>').Split('@')[0])];
             _waitForPayload = [.. order.Select(t => t.EndsWith('>'))];
+            _minPayloads = [.. order.Select(t => t.TrimEnd('>').Split('@') is [_, var count] ? int.Parse(count) : 0)];
             _done =
             [
                 .. order.Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
@@ -1940,6 +1943,11 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 {
                     await PayloadAfterAsync(_payloadsAtRelease[index - 1]).WaitAsync(s_guard);
                 }
+            }
+
+            if (_minPayloads[index] > 0)
+            {
+                await PayloadAfterAsync(_minPayloads[index] - 1).WaitAsync(s_guard);
             }
 
             lock (_sync)
