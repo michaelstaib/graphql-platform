@@ -121,7 +121,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         {
             if (spillAll
                 && !IsRootIntrospectionField(selectionSetNode.Selections[i], type, complexType)
-                && !HoldsDeferredFragment(context, selectionSetNode.Selections[i], type))
+                && GetSpillPlacement(context, selectionSetNode.Selections[i], type) is SpillPlacement.Body)
             {
                 CompleteSelection(selectionSetNode.Selections[i], null, selectionSetNode.Selections[i], i);
                 continue;
@@ -184,7 +184,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                     var fragmentConditions = ExtractDirectiveConditions(inlineFragmentNode.Directives);
                     var savedCount = context.PushConditions(fragmentConditions);
 
-                    if (spillAll && !HoldsOnlyDeferredFragments(context, inlineFragmentNode, type))
+                    if (spillAll && GetSpillPlacement(context, inlineFragmentNode, type) is SpillPlacement.Split)
                     {
                         context.SpillWrapper = inlineFragmentNode;
                     }
@@ -205,6 +205,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                         CompleteSelection(inlineFragmentNode, resolvable, unresolvable, i);
                     }
 
+                    context.SpillWrapper = null;
                     context.PopConditions(savedCount);
                     break;
                 }
@@ -883,7 +884,6 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         }
 
         var isSpillWrapper = ReferenceEquals(context.SpillWrapper, inlineFragmentNode);
-        context.SpillWrapper = null;
 
         context.Nodes.Push(inlineFragmentNode);
         context.SpillDeliveryGroup = GetDeliveryGroup(context, inlineFragmentNode);
@@ -1470,15 +1470,27 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         return null;
     }
 
-    // A fragment without a type condition, or with the type of the selection set, that is a @defer fragment
-    // or holds one at its top. Such a fragment is anchored at the same object as the selection set.
-    private static bool HoldsDeferredFragment(Context context, ISelectionNode selection, ITypeDefinition type)
+    // A @defer fragment, or a fragment of the same anchor that holds one at its top, is anchored at the object
+    // of the selection set and is planned in place. Other selections of a spilled selection set stay in its body.
+    private static SpillPlacement GetSpillPlacement(Context context, ISelectionNode selection, ITypeDefinition type)
     {
         if (!IsFragmentOfSameAnchor(selection, type, out var fragment))
         {
-            return false;
+            return SpillPlacement.Body;
         }
 
+        if (HoldsOnlyDeferredFragments(context, fragment, type))
+        {
+            return SpillPlacement.InPlace;
+        }
+
+        return fragment.TypeCondition is null && HoldsDeferredFragment(context, fragment, type)
+            ? SpillPlacement.Split
+            : SpillPlacement.Body;
+    }
+
+    private static bool HoldsDeferredFragment(Context context, InlineFragmentNode fragment, ITypeDefinition type)
+    {
         if (GetDeliveryGroup(context, fragment) is not null)
         {
             return true;
@@ -1486,7 +1498,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         foreach (var child in fragment.SelectionSet.Selections)
         {
-            if (HoldsDeferredFragment(context, child, type))
+            if (IsFragmentOfSameAnchor(child, type, out var childFragment)
+                && HoldsDeferredFragment(context, childFragment, type))
             {
                 return true;
             }
@@ -1495,14 +1508,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         return false;
     }
 
-    // Like HoldsDeferredFragment, but every selection of the fragment is a @defer fragment or such a fragment.
-    private static bool HoldsOnlyDeferredFragments(Context context, ISelectionNode selection, ITypeDefinition type)
+    private static bool HoldsOnlyDeferredFragments(Context context, InlineFragmentNode fragment, ITypeDefinition type)
     {
-        if (!IsFragmentOfSameAnchor(selection, type, out var fragment))
-        {
-            return false;
-        }
-
         if (GetDeliveryGroup(context, fragment) is not null)
         {
             return true;
@@ -1515,7 +1522,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         foreach (var child in fragment.SelectionSet.Selections)
         {
-            if (!HoldsOnlyDeferredFragments(context, child, type))
+            if (!IsFragmentOfSameAnchor(child, type, out var childFragment)
+                || !HoldsOnlyDeferredFragments(context, childFragment, type))
             {
                 return false;
             }
@@ -1534,6 +1542,18 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
         return fragment is not null
             && (fragment.TypeCondition is null
                 || fragment.TypeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal));
+    }
+
+    private enum SpillPlacement
+    {
+        /// <summary>The selection stays in the body of the spilled selection set.</summary>
+        Body,
+
+        /// <summary>The selection is planned in place and its @defer fragments become own entries.</summary>
+        InPlace,
+
+        /// <summary>The own selections stay in the body and the @defer fragments are planned in place.</summary>
+        Split
     }
 
     private bool CanMessageShapeProvideType(
