@@ -572,15 +572,54 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(offBody, onBody);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Defer_Should_KeepTheFirstResult_When_TwoSourcesAnswerTheSameFieldWithAValueAndAnError(
-        bool errorFirst)
+    [Fact]
+    public async Task Defer_Should_KeepTheFirstResult_When_TheSecondStepReturnsAValueAfterAnError()
     {
         // arrange
-        var gateway = await CreateGatewayAsync(
-            errorFirst ? ["C:2>", "B:3"] : ["B:3>", "C:2"],
+        var gateway = await CreateValueAndErrorGatewayAsync("C:2", "B:3");
+
+        // act
+        var run = await RunDeferredAsync(gateway, ValueAndErrorQuery, []);
+
+        // assert
+        Assert.Empty(run.Problems);
+        Canonical(run.Data).MatchInlineSnapshot(
+            """{"product":{"name":"Product: UHJvZHVjdDo3NzM3NjQwMDE=","price":null,"rating":123,"weight":123}}""");
+        run.Errors.MatchInlineSnapshot(
+            """{"message":"Unexpected Execution Error","path":["product","price"]}""");
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepTheFirstResult_When_TheSecondStepReturnsAnErrorAfterAValue()
+    {
+        // arrange
+        var gateway = await CreateValueAndErrorGatewayAsync("B:3", "C:2");
+
+        // act
+        var run = await RunDeferredAsync(gateway, ValueAndErrorQuery, []);
+
+        // assert
+        Assert.Empty(run.Problems);
+        Canonical(run.Data).MatchInlineSnapshot(
+            """{"product":{"name":"Product: UHJvZHVjdDo3NzM3NjQwMDE=","price":123.456,"rating":123,"weight":123}}""");
+        Assert.Empty(run.Errors);
+    }
+
+    private const string ValueAndErrorQuery =
+        """
+        {
+            product(id: "1") {
+                name
+                ... @defer(label: "a") { price rating }
+                ... @defer(label: "b") { price weight }
+            }
+        }
+        """;
+
+    // The price comes from two sources, one answers with a value and the other with an error.
+    private Task<Gateway> CreateValueAndErrorGatewayAsync(string first, string second)
+        => CreateGatewayAsync(
+            [first, second],
             ("A", ProductListSource),
             ("B", """
                 type Query { productById(id: ID!): Product @lookup }
@@ -590,24 +629,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 type Query { productByIdForWeight(id: ID!): Product @lookup }
                 type Product @key(fields: "id") { id: ID! price: Float @shareable @error weight: Int! }
                 """));
-
-        // act
-        var run = await RunDeferredAsync(
-            gateway,
-            """
-            {
-                product(id: "1") {
-                    name
-                    ... @defer(label: "a") { price rating }
-                    ... @defer(label: "b") { price weight }
-                }
-            }
-            """,
-            []);
-
-        // assert
-        MatchPayloads(run, $"errorFirst={errorFirst}");
-    }
 
     [Theory]
     [InlineData(true)]
@@ -968,21 +989,21 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_ReportTheError_When_TheMarkedStepFailsAndTheGroupHasNoData()
+    public async Task Defer_Should_ReportTheError_When_TheErrorNullsEveryRowOfTheGroup()
     {
         // arrange
         var gateway = await CreateGatewayAsync(
-            [],
-            rewrite: null,
-            failingSchema: "B",
             ("A", ProductListSource),
-            ("B", PriceSource));
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float! @error rating: Int! }
+                """));
 
         // act
         var run = await RunDeferredAsync(
             gateway,
             """
-            { product(id: "1") { name ... @defer(label: "p") { price } } }
+            { products { name ... @defer(label: "p") { price } } }
             """,
             []);
 
