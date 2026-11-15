@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics.Tracing;
+using System.Text.RegularExpressions;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
@@ -12,7 +13,7 @@ using Microsoft.Extensions.ObjectPool;
 
 namespace HotChocolate.Fusion.Planning;
 
-public class SinglePlanDeferPlannerTests : FusionTestBase
+public partial class SinglePlanDeferPlannerTests : FusionTestBase
 {
     [Fact]
     public void Plan_Should_MarkTheLookupOfEachGroup_When_TwoSwitchesSelectFieldsOfOtherSchemas()
@@ -491,10 +492,7 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
                 weight: Int!
             }
             """);
-
-        // act
-        var result = Plan(
-            schema,
+        const string operationText =
             """
             {
                 product(id: "1") {
@@ -502,11 +500,15 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
                     ... @defer(label: "details") { details { size weight } }
                 }
             }
-            """);
+            """;
+
+        // act
+        var result = Plan(schema, operationText);
 
         // assert
         Assert.Equal(["No possible plan was found."], result.Fallbacks);
         Assert.Empty(result.Plan.DeliveryGroups);
+        Assert.Equal(FormatPlanWithoutDefer(schema, operationText), Format(result.Plan));
         MatchSnapshot(result.Plan);
     }
 
@@ -1129,10 +1131,7 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
         // arrange
         var schema = ComposeSchema(ProductSchema, ProductBySkuSchema, ProductKeysSchema);
         var options = new OperationPlannerOptions { EnableSinglePlanDefer = true, MaxExpandedNodes = 7 };
-
-        // act
-        var result = Plan(
-            schema,
+        const string operationText =
             """
             query($v: Boolean!) {
                 product(id: "1") {
@@ -1140,9 +1139,10 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
                     ... @defer(if: $v, label: "p") { price }
                 }
             }
-            """,
-            options,
-            "123456789101112");
+            """;
+
+        // act
+        var result = Plan(schema, operationText, options, "123456789101112");
 
         // assert
         Assert.Equal(
@@ -1152,6 +1152,9 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
             ],
             result.Fallbacks);
         Assert.Empty(result.Plan.DeliveryGroups);
+        Assert.Equal(
+            FormatPlanWithoutDefer(schema, operationText, options, "123456789101112"),
+            Format(result.Plan));
         MatchSnapshot(result.Plan);
     }
 
@@ -1162,11 +1165,7 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
         const string operationId = "single-plan-guardrail";
         var schema = ComposeSchema(ProductSchema, ProductBySkuSchema, ProductKeysSchema);
         var options = new OperationPlannerOptions { EnableSinglePlanDefer = true, MaxExpandedNodes = 7 };
-        using var listener = new PlannerEventListener(operationId);
-
-        // act
-        var result = Plan(
-            schema,
+        const string operationText =
             """
             query($v: Boolean!) {
                 product(id: "1") {
@@ -1174,9 +1173,11 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
                     ... @defer(if: $v, label: "p") { price }
                 }
             }
-            """,
-            options,
-            operationId);
+            """;
+        using var listener = new PlannerEventListener(operationId);
+
+        // act
+        var result = Plan(schema, operationText, options, operationId);
 
         // assert
         Assert.Single(result.Fallbacks);
@@ -1188,6 +1189,180 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
                 PlannerEventSource.PlanStopEventId
             ],
             listener.EventIds);
+        Assert.Equal(FormatPlanWithoutDefer(schema, operationText, options, operationId), Format(result.Plan));
+    }
+
+    [Fact]
+    public void Plan_Should_KeepLookupsApart_When_SiblingSwitchesTakeTheKeyFromDifferentSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceAuthorSchema, AuthorBioSchema, StockAuthorSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "x") { price author { bio } }
+                    ... @defer(if: $b, label: "y") { stock author { bio } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepLookupsApart_When_SiblingSwitchesTakeTheKeyFromDifferentSteps()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "x") { price author { bio } editor { nick } }
+                    ... @defer(if: $b, label: "y") { author { bio } editor { nick } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_MergeEightLookupsIntoOne_When_EightSwitchesSelectFieldsOfTwoSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema, ReviewsSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query(
+                $s1: Boolean!, $s2: Boolean!, $s3: Boolean!, $s4: Boolean!,
+                $s5: Boolean!, $s6: Boolean!, $s7: Boolean!, $s8: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $s1, label: "l1") { reviews { body } price }
+                    ... @defer(if: $s2, label: "l2") { reviews { body } price }
+                    ... @defer(if: $s3, label: "l3") { reviews { body } price }
+                    ... @defer(if: $s4, label: "l4") { reviews { body } price }
+                    ... @defer(if: $s5, label: "l5") { reviews { body } price }
+                    ... @defer(if: $s6, label: "l6") { reviews { body } price }
+                    ... @defer(if: $s7, label: "l7") { reviews { body } price }
+                    ... @defer(if: $s8, label: "l8") { reviews { body } price }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_EqualThePlanWithoutDefer_When_LoweringRemovesEveryDeferredFragment()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema, ReviewsSchema);
+        const string operationText =
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @skip(if: $a) { reviews { body } price }
+                    ... @skip(if: $b) { reviews { body } price }
+                    ... @defer(label: "n") { name }
+                }
+            }
+            """;
+        const string operationTextWithoutDefer =
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @skip(if: $a) { reviews { body } price }
+                    ... @skip(if: $b) { reviews { body } price }
+                }
+            }
+            """;
+
+        // act
+        var result = Plan(schema, operationText);
+        var planWithoutDefer = Plan(schema, operationTextWithoutDefer);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        Assert.Equal(Format(planWithoutDefer.Plan), Format(result.Plan));
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheWrapperFieldsInTheGroupStep_When_TheWrapperIsTypedWithTheLookupType()
+    {
+        // arrange
+        var schema = ComposeSchema(ItemSchema, PricedBookSchema, BookReviewsSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($c: Boolean!) {
+                item(id: "1") {
+                    name
+                    ... on Priced @defer(label: "o") {
+                        ... on Book @include(if: $c) {
+                            rating
+                            ... @defer(label: "i") { reviews { body } }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_FallBackWithTheException_When_ARootFragmentSelectsANodeFieldAndAnotherField()
+    {
+        // arrange
+        var schema = ComposeSchema(NodeProductSchema, NodePriceSchema);
+        const string operationText =
+            """
+            {
+                product(id: "1") { name }
+                ... @defer(label: "n") {
+                    productById(id: "2") { price }
+                    node(id: "1") { id }
+                }
+            }
+            """;
+
+        // act
+        var result = Plan(schema, operationText);
+
+        // assert
+        Assert.Equal(
+            [
+                "The given key '{\n  productById(id: \"2\") {\n    price\n  }\n}' was not present in the dictionary."
+            ],
+            result.Fallbacks);
+        Assert.Equal(FormatPlanWithoutDefer(schema, operationText), Format(result.Plan));
     }
 
     [Fact]
@@ -1656,6 +1831,178 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
         }
         """;
 
+    private const string PriceAuthorSchema =
+        """
+        # name: b
+        type Query {
+            productById(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            price: Float!
+            author: Author! @shareable
+        }
+
+        type Author @key(fields: "id") {
+            id: ID!
+        }
+        """;
+
+    private const string StockAuthorSchema =
+        """
+        # name: d
+        type Query {
+            productByIdForStock(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            stock: Int!
+            author: Author! @shareable
+        }
+
+        type Author @key(fields: "id") {
+            id: ID!
+        }
+        """;
+
+    private const string AuthorBioSchema =
+        """
+        # name: c
+        type Query {
+            authorById(id: ID!): Author @lookup
+        }
+
+        type Author @key(fields: "id") {
+            id: ID!
+            bio: String!
+        }
+        """;
+
+    private const string AuthorAndEditorSchema =
+        """
+        # name: b
+        type Query {
+            productById(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            price: Float!
+            author: Author!
+            editor: Author!
+        }
+
+        type Author @key(fields: "id") {
+            id: ID!
+        }
+        """;
+
+    private const string AuthorBioAndNickSchema =
+        """
+        # name: c
+        type Query {
+            authorById(id: ID!): Author @lookup
+        }
+
+        type Author @key(fields: "id") {
+            id: ID!
+            bio: String!
+            nick: String!
+        }
+        """;
+
+    private const string ItemSchema =
+        """
+        # name: a
+        type Query {
+            item(id: ID!): Item
+            book(id: ID!): Book @lookup
+        }
+
+        interface Item {
+            id: ID!
+            name: String!
+        }
+
+        type Book implements Item @key(fields: "id") {
+            id: ID!
+            name: String!
+        }
+        """;
+
+    private const string PricedBookSchema =
+        """
+        # name: b
+        type Query {
+            bookById(id: ID!): Book @lookup
+        }
+
+        interface Priced {
+            price: Float!
+        }
+
+        type Book implements Priced @key(fields: "id") {
+            id: ID!
+            price: Float!
+            rating: Int!
+        }
+        """;
+
+    private const string BookReviewsSchema =
+        """
+        # name: c
+        type Query {
+            bookByIdForReviews(id: ID!): Book @lookup
+        }
+
+        type Book @key(fields: "id") {
+            id: ID!
+            reviews: [Review!]!
+        }
+
+        type Review {
+            body: String!
+        }
+        """;
+
+    private const string NodeProductSchema =
+        """
+        # name: a
+        type Query {
+            node(id: ID!): Node @lookup @shareable
+            product(id: ID!): Product @lookup
+        }
+
+        interface Node {
+            id: ID!
+        }
+
+        type Product implements Node @key(fields: "id") {
+            id: ID!
+            name: String!
+        }
+        """;
+
+    private const string NodePriceSchema =
+        """
+        # name: b
+        type Query {
+            node(id: ID!): Node @lookup @shareable
+            productById(id: ID!): Product @lookup
+        }
+
+        interface Node {
+            id: ID!
+        }
+
+        type Product implements Node @key(fields: "id") {
+            id: ID!
+            price: Float!
+        }
+        """;
+
     private static PlanResult Plan(FusionSchemaDefinition schema, string operationText)
         => Plan(
             schema,
@@ -1675,6 +2022,26 @@ public class SinglePlanDeferPlannerTests : FusionTestBase
 
         return new PlanResult(plan, [.. fallbacks]);
     }
+
+    private static string FormatPlanWithoutDefer(FusionSchemaDefinition schema, string operationText)
+        => FormatPlanWithoutDefer(
+            schema,
+            operationText,
+            new OperationPlannerOptions { EnableSinglePlanDefer = true },
+            "123456789101112");
+
+    private static string FormatPlanWithoutDefer(
+        FusionSchemaDefinition schema,
+        string operationText,
+        OperationPlannerOptions options,
+        string id)
+        => Format(Plan(schema, DeferDirective().Replace(operationText, string.Empty), options, id).Plan);
+
+    private static string Format(OperationPlan plan)
+        => new YamlOperationPlanFormatter().Format(plan);
+
+    [GeneratedRegex(@"@defer(\([^)]*\))?")]
+    private static partial Regex DeferDirective();
 
     private static OperationPlanner CreatePlanner(FusionSchemaDefinition schema, out List<string> fallbacks)
         => CreatePlanner(schema, new OperationPlannerOptions { EnableSinglePlanDefer = true }, out fallbacks);

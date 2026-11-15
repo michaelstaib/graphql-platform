@@ -1,0 +1,382 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        product(id: "1") {
+          name
+          ... @skip(if: $a) {
+            price
+            author {
+              bio
+              id @fusion__requirement
+            }
+            editor {
+              nick
+              id @fusion__requirement
+            }
+            id @fusion__requirement
+          }
+          ... @include(if: $a) {
+            ... @defer(if: $a, label: "x") {
+              price
+              author {
+                bio
+                id @fusion__requirement
+              }
+              editor {
+                nick
+                id @fusion__requirement
+              }
+              id @fusion__requirement
+            }
+          }
+          ... @skip(if: $b) {
+            author {
+              bio
+              id @fusion__requirement
+            }
+            editor {
+              nick
+              id @fusion__requirement
+            }
+            id @fusion__requirement
+          }
+          ... @include(if: $b) {
+            ... @defer(if: $b, label: "y") {
+              author {
+                bio
+                id @fusion__requirement
+              }
+              editor {
+                nick
+                id @fusion__requirement
+              }
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!, $b: Boolean!) {
+        product(id: "1") {
+          name
+          ... @skip(if: $a) {
+            id
+          }
+          ... @include(if: $a) {
+            ... {
+              id
+            }
+          }
+          ... @skip(if: $b) {
+            id
+          }
+          ... @include(if: $b) {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    forwardedVariables:
+      - a
+      - b
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          author {
+            id
+          }
+          editor {
+            id
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 8
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_8($__fusion_7_id: ID!) {
+        productById(id: $__fusion_7_id) {
+          price
+          author {
+            id
+          }
+          editor {
+            id
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_7_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        productById(id: $__fusion_4_id) {
+          author {
+            id
+          }
+          editor {
+            id
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    batchingGroupId: 14
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 11
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_11($__fusion_10_id: ID!) {
+        productById(id: $__fusion_10_id) {
+          price
+          author {
+            id
+          }
+          editor {
+            id
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    batchingGroupId: 14
+    requirements:
+      - name: __fusion_10_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        authorById(id: $__fusion_2_id) {
+          nick
+        }
+      }
+    source: $.authorById
+    target: $.product.editor
+    batchingGroupId: 15
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        authorById(id: $__fusion_3_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    batchingGroupId: 15
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: ID!) {
+        authorById(id: $__fusion_5_id) {
+          nick
+        }
+      }
+    source: $.authorById
+    target: $.product.editor
+    batchingGroupId: 16
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: false
+    dependencies:
+      - id: 5
+  - id: 7
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_7($__fusion_6_id: ID!) {
+        authorById(id: $__fusion_6_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    batchingGroupId: 16
+    requirements:
+      - name: __fusion_6_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: false
+    dependencies:
+      - id: 5
+  - id: 12
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_12($__fusion_11_id: ID!) {
+        authorById(id: $__fusion_11_id) {
+          nick
+        }
+      }
+    source: $.authorById
+    target: $.product.editor
+    batchingGroupId: 16
+    requirements:
+      - name: __fusion_11_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 11
+  - id: 13
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_13($__fusion_12_id: ID!) {
+        authorById(id: $__fusion_12_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    batchingGroupId: 16
+    requirements:
+      - name: __fusion_12_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 11
+  - id: 9
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_9($__fusion_8_id: ID!) {
+        authorById(id: $__fusion_8_id) {
+          nick
+        }
+      }
+    source: $.authorById
+    target: $.product.editor
+    batchingGroupId: 17
+    requirements:
+      - name: __fusion_8_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 8
+  - id: 10
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_10($__fusion_9_id: ID!) {
+        authorById(id: $__fusion_9_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    batchingGroupId: 17
+    requirements:
+      - name: __fusion_9_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 8
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: x
+    ifVariable: $a
+  - id: 1
+    path: $.product
+    label: y
+    ifVariable: $b
