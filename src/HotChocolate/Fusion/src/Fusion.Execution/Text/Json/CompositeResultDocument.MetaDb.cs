@@ -857,6 +857,20 @@ public sealed partial class CompositeResultDocument
             MemoryMarshal.Write(fieldSpan, newValue);
         }
 
+        /// <summary>
+        /// Sets delivery marks on a property row. Property rows are written once and never replaced,
+        /// so the free bits of their fifth int survive.
+        /// </summary>
+        internal readonly void OrDeliveryMarks(Cursor cursor, int marks)
+        {
+            AssertValidCursor(cursor);
+            ref var field = ref Unsafe.Add(ref RowRef(cursor), DbRow.SourceAndTypeOffset);
+            var current = Unsafe.ReadUnaligned<int>(ref field);
+            Unsafe.WriteUnaligned(
+                ref field,
+                current | ((marks & PropertyMarks.Mask) << PropertyMarks.Shift));
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal readonly int GetSizeOrLength(Cursor cursor)
         {

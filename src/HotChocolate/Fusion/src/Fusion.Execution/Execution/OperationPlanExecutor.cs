@@ -23,6 +23,19 @@ internal static partial class OperationPlanExecutor
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
+        if (!operationPlan.DeliveryGroups.IsEmpty
+            && operationPlan.IncrementalPlans.IsEmpty
+            && variableIndex < 0
+            && operationPlan.Operation.Definition.Operation is OperationType.Query)
+        {
+            return await ExecuteWithSinglePlanDeferAsync(
+                requestContext,
+                variables,
+                policyResult,
+                operationPlan,
+                cancellationToken);
+        }
+
         await using var context = requestContext.Schema.Services.GetRequiredService<OperationPlanContextPool>().Rent();
 
         // We reuse a pooled CancellationTokenSource that can halt the execution engine without
@@ -207,6 +220,381 @@ internal static partial class OperationPlanExecutor
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Runs a plan whose steps carry delivery groups on one context and one result document. The steps
+    /// without groups run first and form the initial payload, the marked steps run after it.
+    /// </summary>
+    private static async Task<IExecutionResult> ExecuteWithSinglePlanDeferAsync(
+        RequestContext requestContext,
+        IVariableValueCollection variables,
+        PolicyEvaluationResult policyResult,
+        OperationPlan operationPlan,
+        CancellationToken cancellationToken)
+    {
+        EnsureDeferIfVariablesAreNotNull(variables, operationPlan);
+
+        var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        OperationPlanContext? context = null;
+
+        try
+        {
+            context = requestContext.Schema.Services.GetRequiredService<OperationPlanContextPool>().Rent();
+            context.Initialize(
+                requestContext,
+                variables,
+                variableIndex: -1,
+                policyResult,
+                operationPlan,
+                executionCts);
+
+            context.Begin();
+
+            var state = context.EnableSinglePlanDelivery(operationPlan);
+            var executionState = context.ExecutionState;
+            var token = executionCts.Token;
+
+            await using (var registration = token.Register(
+                static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
+                executionState.Signal))
+            {
+                executionState.FillBacklog(operationPlan);
+
+                foreach (var node in state.MarkedNodes)
+                {
+                    executionState.HoldNode(node);
+                }
+
+                foreach (var root in operationPlan.RootNodes)
+                {
+                    if (SinglePlanDeliveryState.GetDeliveryGroups(root).IsDefaultOrEmpty)
+                    {
+                        executionState.StartNode(context, root, token);
+                    }
+                }
+
+                while (!token.IsCancellationRequested && executionState.HasActiveNodes())
+                {
+                    PumpSinglePlan(context, operationPlan, state, token);
+
+                    if (token.IsCancellationRequested || !executionState.HasActiveNodes())
+                    {
+                        break;
+                    }
+
+                    await executionState.Signal;
+                }
+
+                await DrainActiveNodesAsync(operationPlan, executionState);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var initialResult = context.Complete(retainMemoryForDefer: true);
+
+            context.ActivateIncrementalPlans(operationPlan, variables);
+            state.ComputeNeeded();
+
+            var pendingResults = ImmutableList.CreateBuilder<PendingResult>();
+
+            foreach (var deliveryGroup in operationPlan.DeliveryGroups)
+            {
+                if (state.Honored[deliveryGroup.Id] && state.GetHonoredParent(deliveryGroup) is null)
+                {
+                    state.Announced[deliveryGroup.Id] = true;
+                    pendingResults.Add(CreatePendingResult(operationPlan, deliveryGroup));
+                }
+            }
+
+            initialResult.HasNext = pendingResults.Count > 0;
+            initialResult.Pending = pendingResults.ToImmutable();
+            state.PublishedErrorCount = context.ErrorCount;
+
+            if (pendingResults.Count == 0)
+            {
+                context.TransferRetainedMemoryTo(initialResult);
+                executionCts.Dispose();
+                await context.DisposeAsync();
+                return initialResult;
+            }
+
+            var requestArena = context.Memory;
+            var stream = new ResponseStream(
+                () => CreateSinglePlanStream(context, operationPlan, state, initialResult, requestArena, token),
+                ExecutionResultKind.DeferredResult);
+
+            stream.RegisterForCleanup(context);
+            stream.RegisterForCleanup(executionCts);
+            return stream;
+        }
+        catch (Exception)
+        {
+            executionCts.Dispose();
+
+            if (context is not null)
+            {
+                await context.DisposeAsync();
+            }
+
+            throw;
+        }
+    }
+
+    private static PendingResult CreatePendingResult(OperationPlan operationPlan, DeliveryGroup deliveryGroup)
+        => new(
+            deliveryGroup.Id,
+            operationPlan.GetDeliveryPath(deliveryGroup.Id).PendingPath,
+            deliveryGroup.Label);
+
+    /// <summary>
+    /// Applies the merges and the completed steps that are waiting and starts the steps that became ready.
+    /// </summary>
+    private static void PumpSinglePlan(
+        OperationPlanContext context,
+        OperationPlan plan,
+        SinglePlanDeliveryState state,
+        CancellationToken cancellationToken)
+    {
+        var executionState = context.ExecutionState;
+
+        while (executionState.TryDequeuePendingMerge(out var merge))
+        {
+            ApplySinglePlanMerge(context, executionState, merge);
+        }
+
+        while (executionState.TryDequeueCompletedResult(out var result))
+        {
+            while (executionState.TryDequeuePendingMerge(out var merge))
+            {
+                ApplySinglePlanMerge(context, executionState, merge);
+            }
+
+            result = executionState.ApplyPendingMergeFailure(result);
+            var node = plan.GetNodeById(result.Id);
+            executionState.CompleteNode(plan, node, result);
+            state.Finished[result.Id] = true;
+            state.Failed[result.Id] = result.Status is ExecutionStatus.Failed;
+        }
+
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            executionState.EnqueueNextNodes(context, cancellationToken);
+        }
+    }
+
+    private static void ApplySinglePlanMerge(
+        OperationPlanContext context,
+        ExecutionState executionState,
+        PendingMerge merge)
+    {
+        var groups = SinglePlanDeliveryState.GetDeliveryGroups(merge.Node);
+
+        if (groups.IsDefaultOrEmpty)
+        {
+            executionState.ApplyMerge(context, merge);
+            return;
+        }
+
+        context.SetWriteFilter(groups);
+
+        try
+        {
+            executionState.ApplyMerge(context, merge);
+        }
+        finally
+        {
+            context.ClearWriteFilter();
+        }
+    }
+
+    private static async IAsyncEnumerable<OperationResult> CreateSinglePlanStream(
+        OperationPlanContext context,
+        OperationPlan plan,
+        SinglePlanDeliveryState state,
+        OperationResult initialResult,
+        MemoryArena requestArena,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        yield return initialResult;
+
+        // The consumer asked for the next payload, so the initial payload is written out.
+        var executionState = context.ExecutionState;
+
+        await using var registration = cancellationToken.Register(
+            static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
+            executionState.Signal);
+
+        foreach (var node in state.MarkedNodes)
+        {
+            if (state.Needed[node.Id])
+            {
+                executionState.ReleaseNode(node);
+            }
+            else
+            {
+                executionState.SkipNode(plan, node);
+            }
+        }
+
+        var hasNext = true;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            PumpSinglePlan(context, plan, state, cancellationToken);
+
+            var payload = CreateSinglePlanPayload(context, plan, state, out hasNext);
+
+            if (payload is not null)
+            {
+                yield return payload;
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (!hasNext)
+            {
+                break;
+            }
+
+            if (!executionState.HasActiveNodes())
+            {
+                // No step runs any more, so the remaining groups can never be delivered.
+                yield return CreateSinglePlanFinalPayload();
+                break;
+            }
+
+            await executionState.Signal;
+        }
+
+        await DrainActiveNodesAsync(plan, executionState);
+        requestArena.Seal();
+    }
+
+    private static OperationResult CreateSinglePlanFinalPayload()
+    {
+        var payload = OperationResult.FromError(ErrorBuilder.New().SetMessage("placeholder").Build());
+        payload.Data = null;
+        payload.Errors = [];
+        payload.HasNext = false;
+        return payload;
+    }
+
+    private static OperationResult? CreateSinglePlanPayload(
+        OperationPlanContext context,
+        OperationPlan plan,
+        SinglePlanDeliveryState state,
+        out bool hasNext)
+    {
+        var executionState = context.ExecutionState;
+        var pending = ImmutableList.CreateBuilder<PendingResult>();
+        var incremental = ImmutableList.CreateBuilder<IIncrementalResult>();
+        var completed = ImmutableList.CreateBuilder<CompletedResult>();
+        var document = context.ResultDocument;
+        var errors = context.GetErrorsAfter(state.PublishedErrorCount);
+        var progressed = true;
+
+        while (progressed)
+        {
+            progressed = false;
+
+            foreach (var group in plan.DeliveryGroups)
+            {
+                var id = group.Id;
+
+                if (!state.Announced[id] || state.Completed[id] || !state.IsSettled(id, executionState))
+                {
+                    continue;
+                }
+
+                state.Completed[id] = true;
+                progressed = true;
+
+                var failed = false;
+
+                foreach (var node in state.NodesByGroup[id])
+                {
+                    failed |= state.Failed[node.Id];
+                }
+
+                if (failed)
+                {
+                    completed.Add(new CompletedResult(id, errors.Count > 0 ? errors : null));
+                    errors = [];
+                }
+                else
+                {
+                    var before = incremental.Count;
+                    var data = document.Data;
+
+                    CollectIncrementalResults(
+                        document,
+                        data,
+                        group.Path ?? SelectionPath.Root,
+                        segmentIndex: 0,
+                        fieldIndex: 0,
+                        plan.GetDeliveryPath(id).PendingFieldCount,
+                        Path.Root,
+                        id,
+                        errors: null,
+                        incremental,
+                        claimRows: true);
+
+                    if (errors.Count > 0 && incremental.Count > before)
+                    {
+                        var first = (IncrementalObjectResult)incremental[before];
+                        incremental[before] = new IncrementalObjectResult(
+                            first.Id,
+                            errors,
+                            first.SubPath,
+                            first.Data);
+                        errors = [];
+                    }
+
+                    completed.Add(new CompletedResult(id));
+                }
+
+                foreach (var child in plan.DeliveryGroups)
+                {
+                    if (state.Honored[child.Id]
+                        && !state.Announced[child.Id]
+                        && state.GetHonoredParent(child) is { } parent
+                        && parent.Id == id)
+                    {
+                        state.Announced[child.Id] = true;
+                        pending.Add(CreatePendingResult(plan, child));
+                    }
+                }
+            }
+        }
+
+        hasNext = false;
+
+        foreach (var group in plan.DeliveryGroups)
+        {
+            hasNext |= state.Honored[group.Id] && !state.Completed[group.Id];
+        }
+
+        if (pending.Count == 0 && incremental.Count == 0 && completed.Count == 0)
+        {
+            return null;
+        }
+
+        state.PublishedErrorCount = context.ErrorCount;
+
+        var payload = OperationResult.FromError(ErrorBuilder.New().SetMessage("placeholder").Build());
+        payload.Pending = pending.ToImmutable();
+        payload.Incremental = incremental.ToImmutable();
+        payload.Completed = completed.ToImmutable();
+        payload.Data = null;
+        payload.Errors = [];
+        payload.HasNext = hasNext;
+        return payload;
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(
@@ -1084,7 +1472,8 @@ internal static partial class OperationPlanExecutor
             Path.Root,
             bestDeliveryGroup.Id,
             errors,
-            builder);
+            builder,
+            claimRows: false);
 
         incrementalResults = builder.ToImmutable();
         return incrementalResults.Count > 0;
@@ -1100,7 +1489,8 @@ internal static partial class OperationPlanExecutor
         Path subPath,
         int deliveryGroupId,
         ImmutableList<IError>? errors,
-        ImmutableList<IIncrementalResult>.Builder results)
+        ImmutableList<IIncrementalResult>.Builder results,
+        bool claimRows)
     {
         if (element.IsNullMarker)
         {
@@ -1130,7 +1520,8 @@ internal static partial class OperationPlanExecutor
                     subPath.Append(i),
                     deliveryGroupId,
                     errors,
-                    results);
+                    results,
+                    claimRows);
             }
 
             return;
@@ -1138,12 +1529,19 @@ internal static partial class OperationPlanExecutor
 
         if (segmentIndex == selectionPath.Length)
         {
+            if (claimRows && !document.ClaimDeliveryRows(element.Cursor, deliveryGroupId))
+            {
+                return;
+            }
+
             results.Add(
                 new IncrementalObjectResult(
                     deliveryGroupId,
                     errors,
                     subPath.IsRoot ? null : subPath,
-                    CreateIncrementalData(document, element)));
+                    claimRows
+                        ? CreateDeliveryData(document, element, deliveryGroupId)
+                        : CreateIncrementalData(document, element)));
             return;
         }
 
@@ -1161,7 +1559,8 @@ internal static partial class OperationPlanExecutor
                 subPath,
                 deliveryGroupId,
                 errors,
-                results);
+                results,
+                claimRows);
             return;
         }
 
@@ -1181,7 +1580,8 @@ internal static partial class OperationPlanExecutor
             fieldIndex < pendingFieldCount ? subPath : subPath.Append(segment.Name),
             deliveryGroupId,
             errors,
-            results);
+            results,
+            claimRows);
     }
 
     private static bool HasRemainingFieldSegments(SelectionPath selectionPath, int segmentIndex)
@@ -1207,6 +1607,16 @@ internal static partial class OperationPlanExecutor
             document,
             isValueNull: element.IsNullMarker,
             new DeferredPayloadDataFormatter(element),
+            memoryHolder: null);
+
+    private static OperationResultData CreateDeliveryData(
+        CompositeResultDocument document,
+        CompositeResultElement element,
+        int deliveryGroupId)
+        => new(
+            document,
+            isValueNull: element.IsNullMarker,
+            new DeliveryPayloadDataFormatter(document, element.Cursor, deliveryGroupId),
             memoryHolder: null);
 
     public static async Task<IExecutionResult> SubscribeAsync(

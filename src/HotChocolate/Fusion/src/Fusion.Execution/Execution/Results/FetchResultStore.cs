@@ -108,6 +108,12 @@ internal sealed partial class FetchResultStore : IDisposable
 
     public CompositeResultDocument Result => _result;
 
+    internal void SetWriteFilter(ImmutableArray<int> deliveryGroups)
+        => _valueCompletion.SetWriteFilter(_result, deliveryGroups);
+
+    internal void ClearWriteFilter()
+        => _valueCompletion.ClearWriteFilter();
+
     /// <summary>
     /// Gets the operation whose selections this store's result is built for.
     /// </summary>

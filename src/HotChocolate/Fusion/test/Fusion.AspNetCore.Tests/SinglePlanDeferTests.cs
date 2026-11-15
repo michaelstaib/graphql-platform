@@ -214,11 +214,28 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         public void AssertMatchesTwin()
         {
-            Assert.Equal(Twin.Data.ToJsonString(), Deferred.Data.ToJsonString());
+            Assert.True(
+                Canonical(Twin.Data) == Canonical(Deferred.Data),
+                "Expected " + Twin.Data.ToJsonString() + Environment.NewLine
+                + "Actual   " + string.Join(Environment.NewLine, Deferred.Payloads));
             Assert.Equal(Twin.Errors, Deferred.Errors);
             Assert.Equal(Deferred.Positions.Distinct().Count(), Deferred.Positions.Count);
         }
     }
+
+    // The order of the properties of a merged result depends on the order of the payloads.
+    private static string Canonical(JsonNode node)
+        => node switch
+        {
+            JsonObject obj => "{"
+                + string.Join(
+                    ",",
+                    obj.OrderBy(t => t.Key, StringComparer.Ordinal)
+                        .Select(t => "\"" + t.Key + "\":" + Canonical(t.Value!)))
+                + "}",
+            JsonArray array => "[" + string.Join(",", array.Select(t => Canonical(t!))) + "]",
+            _ => node.ToJsonString()
+        };
 
     private static IEnumerable<string> CollectErrors(List<string> payloads)
     {

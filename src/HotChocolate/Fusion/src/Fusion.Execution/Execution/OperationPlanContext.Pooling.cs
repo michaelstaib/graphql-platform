@@ -212,6 +212,7 @@ public sealed partial class OperationPlanContext
         DeferConditionFlags = default;
         _activeDeliveryGroups = default;
         _runningIncrementalPlans = default;
+        _singlePlanDelivery = null;
         // if a custom scope is used we cannot reuse it and have to null it.
         if (_clientScope is not DefaultSourceSchemaClientScope)
         {

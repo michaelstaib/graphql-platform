@@ -25,6 +25,8 @@ internal sealed class ValueCompletion
     private IErrorHandler _errorHandler = default!;
     private ErrorHandlingMode _errorHandlingMode;
     private bool _propagateNullValues;
+    private CompositeResultDocument? _writeFilterDocument;
+    private ImmutableArray<int> _writeFilterGroups;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
@@ -56,6 +58,24 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
+    /// Restricts the rows that completions write to the rows that resolve to one of the delivery groups.
+    /// </summary>
+    internal void SetWriteFilter(CompositeResultDocument document, ImmutableArray<int> deliveryGroups)
+    {
+        _writeFilterGroups = deliveryGroups;
+        _writeFilterDocument = document;
+    }
+
+    internal void ClearWriteFilter()
+    {
+        _writeFilterDocument = null;
+        _writeFilterGroups = default;
+    }
+
+    private bool IsWriteDenied(CompositeResultElement field, Selection selection, bool isTargetField)
+        => !_writeFilterDocument!.AllowsMarkedWrite(field, selection, _writeFilterGroups, isTargetField);
+
+    /// <summary>
     /// Releases the request state so that the value completion can be initialized again.
     /// </summary>
     public void Clean()
@@ -64,6 +84,8 @@ internal sealed class ValueCompletion
         _errorHandler = default!;
         _errorHandlingMode = default;
         _propagateNullValues = false;
+        _writeFilterDocument = null;
+        _writeFilterGroups = default;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -148,6 +170,11 @@ internal sealed class ValueCompletion
                     sourceResponseName = selection.ResponseName;
                 }
 
+                if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, isTargetField: true))
+                {
+                    continue;
+                }
+
                 var propertyValueSnapshot = property.Value.CreateSnapshot();
                 var propertyValueKind = propertyValueSnapshot.ValueKind;
 
@@ -196,6 +223,11 @@ internal sealed class ValueCompletion
             while (properties.MoveNext())
             {
                 if (!objectContext.TryGetProperty(properties.Name, out var resultField, out var selection))
+                {
+                    continue;
+                }
+
+                if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, isTargetField: true))
                 {
                     continue;
                 }
@@ -1534,6 +1566,11 @@ TryCompleteList_MoveNext:
                 continue;
             }
 
+            if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, isTargetField: false))
+            {
+                continue;
+            }
+
             var propertyValueSnapshot = properties.Value;
             var propertyValueKind = propertyValueSnapshot.ValueKind;
 
@@ -1668,6 +1705,11 @@ TryCompleteList_MoveNext:
                 }
 
                 sourceResponseName = selection.ResponseName;
+            }
+
+            if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, isTargetField: false))
+            {
+                continue;
             }
 
             var propertyValueSnapshot = property.Value.CreateSnapshot();

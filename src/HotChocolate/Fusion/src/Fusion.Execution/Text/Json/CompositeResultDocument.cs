@@ -508,6 +508,11 @@ public sealed partial class CompositeResultDocument : IDisposable
         // its own skip/include and defer state and hands the block-relative property row offsets
         // of the selections it excludes to the block append, which stamps the flag alongside the
         // parent pointers.
+        if (_delivery is not null)
+        {
+            return AppendDeliveryObjectBlock(parent, template, selections);
+        }
+
         var conditionalSelections = template.ConditionalSelections;
         var excludedRowOffsets = conditionalSelections.Length <= 256
             ? stackalloc int[conditionalSelections.Length]
