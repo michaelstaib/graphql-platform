@@ -1144,6 +1144,18 @@ public sealed partial class OperationPlanner
             return;
         }
 
+        // The pass repeats until no operations merge.
+        while (TryMergeOperationsThatDifferInConditions(ctx, mergePolicy, serialScopes))
+        {
+        }
+    }
+
+    private static bool TryMergeOperationsThatDifferInConditions(
+        ExecutionPlanBuildContext ctx,
+        OperationMergePolicy mergePolicy,
+        Dictionary<int, int>? serialScopes)
+    {
+        var merged = false;
         var nodeFieldBoundCache = new Dictionary<int, bool>();
         var candidates = new Dictionary<string, List<OperationExecutionNode>>(StringComparer.Ordinal);
 
@@ -1181,15 +1193,64 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
-            foreach (var group in PartitionIntoMergeableGroups(
+            foreach (var mergeableNodes in PartitionIntoMergeableGroups(
                 equivalentNodes, ctx.DependenciesByStepId, mergePolicy))
             {
-                if (group.Count > 1 && !HaveEqualConditions(group))
+                foreach (var group in PartitionByDependencies(mergeableNodes, ctx.DependenciesByStepId))
                 {
-                    MergeIntoOperationWithConditionAlternatives(ctx, group);
+                    if (group.Count > 1 && !HaveEqualConditions(group))
+                    {
+                        MergeIntoOperationWithConditionAlternatives(ctx, group);
+                        merged = true;
+                    }
                 }
             }
         }
+
+        return merged;
+    }
+
+    // Splits the nodes into groups with equal dependency sets. A node without an entry has an empty set.
+    private static List<List<OperationExecutionNode>> PartitionByDependencies(
+        List<OperationExecutionNode> nodes,
+        Dictionary<int, HashSet<int>> dependenciesByStepId)
+    {
+        var groups = new List<List<OperationExecutionNode>>();
+
+        foreach (var node in nodes)
+        {
+            dependenciesByStepId.TryGetValue(node.Id, out var dependencies);
+            var placed = false;
+
+            foreach (var group in groups)
+            {
+                dependenciesByStepId.TryGetValue(group[0].Id, out var groupDependencies);
+
+                if (HaveEqualDependencies(dependencies, groupDependencies))
+                {
+                    group.Add(node);
+                    placed = true;
+                    break;
+                }
+            }
+
+            if (!placed)
+            {
+                groups.Add([node]);
+            }
+        }
+
+        return groups;
+    }
+
+    private static bool HaveEqualDependencies(HashSet<int>? left, HashSet<int>? right)
+    {
+        if (left is null || left.Count == 0)
+        {
+            return right is null || right.Count == 0;
+        }
+
+        return right is not null && left.SetEquals(right);
     }
 
     private static bool HaveEqualConditions(List<OperationExecutionNode> group)
