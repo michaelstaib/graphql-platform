@@ -393,7 +393,7 @@ internal sealed class SinglePlanDeliveryState
 
             foreach (var selectionSet in GetTargetSelectionSets(operation, requirement.Path))
             {
-                CollectKeyAndRequirementSelectionIds(operation, selectionSet, names, ids, depth: 0);
+                CollectKeyAndRequirementSelectionIds(operation, selectionSet, names, ids);
             }
         }
     }
@@ -402,8 +402,7 @@ internal sealed class SinglePlanDeliveryState
         Operation operation,
         SelectionSet selectionSet,
         HashSet<string> names,
-        HashSet<int> ids,
-        int depth)
+        HashSet<int> ids)
     {
         foreach (var name in names)
         {
@@ -414,7 +413,7 @@ internal sealed class SinglePlanDeliveryState
 
             ids.Add(selection.Id);
 
-            if (selection.IsLeaf || depth > 8)
+            if (selection.IsLeaf)
             {
                 continue;
             }
@@ -425,8 +424,7 @@ internal sealed class SinglePlanDeliveryState
                     operation,
                     operation.GetSelectionSet(selection, type),
                     names,
-                    ids,
-                    depth + 1);
+                    ids);
             }
         }
     }
@@ -587,7 +585,7 @@ internal sealed class SinglePlanDeliveryState
 
             if (!field.IsLeaf)
             {
-                CollectHonoredBelow(field, groups, honored, depth: 0);
+                CollectHonoredBelow(field, groups, honored);
             }
         }
 
@@ -597,13 +595,8 @@ internal sealed class SinglePlanDeliveryState
         }
     }
 
-    private void CollectHonoredBelow(Selection field, ImmutableArray<int> groups, List<int> honored, int depth)
+    private void CollectHonoredBelow(Selection field, ImmutableArray<int> groups, List<int> honored)
     {
-        if (depth > 32)
-        {
-            return;
-        }
-
         foreach (var type in Plan.Operation.GetPossibleTypes(field))
         {
             foreach (var child in Plan.Operation.GetSelectionSet(field, type).Selections)
@@ -618,7 +611,7 @@ internal sealed class SinglePlanDeliveryState
 
                 if (!child.IsLeaf)
                 {
-                    CollectHonoredBelow(child, groups, honored, depth + 1);
+                    CollectHonoredBelow(child, groups, honored);
                 }
             }
         }

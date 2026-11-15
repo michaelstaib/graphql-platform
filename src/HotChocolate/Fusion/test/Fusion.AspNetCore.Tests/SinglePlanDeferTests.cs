@@ -755,6 +755,58 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task Defer_Should_RunTheDependentStep_When_TheRequirementPathIsDeeperThanEightLevels(
+        bool requirementStepFirst)
+    {
+        // arrange
+        const int depth = 12;
+        var requirementPath = string.Concat(Enumerable.Repeat("n.", depth)) + "w";
+        var chain = string.Concat(Enumerable.Repeat("n { ", depth))
+            + "w"
+            + string.Concat(Enumerable.Repeat(" }", depth));
+        var types = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, depth).Select(i => i == depth
+                ? $"type N{i} {{ w: Float! }}"
+                : $"type N{i} {{ n: N{i + 1}! }}"));
+        var gateway = await CreateGatewayAsync(
+            requirementStepFirst ? ["B:4", "C:3", "B:5"] : ["B:5", "B:4", "C:3"],
+            ("A", ProductListSource),
+            ("B", $$"""
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! n: N1! }
+                {{types}}
+                """),
+            ("C", $$"""
+                type Query { productByIdForShipping(id: ID!): Product @lookup }
+                type Product @key(fields: "id") {
+                    id: ID!
+                    shipping(weight: Float! @require(field: "{{requirementPath}}")): Float!
+                }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            $$"""
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { {{chain}} }
+                    ... @defer(label: "b") { shipping }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(1, run.Deferred.Requests["C"]);
+        MatchRun(run, $"requirementStepFirst={requirementStepFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task Defer_Should_FetchTheRequiredField_When_TheRequirementIsSelectedPlainUnderACondition(bool x)
     {
         // arrange
