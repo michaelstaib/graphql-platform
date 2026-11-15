@@ -142,14 +142,12 @@ internal static class DeferLowering
             {
                 switch (item)
                 {
-                    // __typename is not an own field of a deferred fragment.
-                    case FieldNode { SelectionSet: null } leaf:
-                        if (!leaf.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
-                        {
-                            return true;
-                        }
-
+                    // An introspection field is not an own field of a deferred fragment, nor is anything below it.
+                    case FieldNode field when field.Name.Value.StartsWith("__", StringComparison.Ordinal):
                         break;
+
+                    case FieldNode { SelectionSet: null }:
+                        return true;
 
                     case FieldNode { SelectionSet: { } selectionSet } composite:
                         if (!coverage.Fields.TryGetValue(GetResponseName(composite), out var childCoverage)

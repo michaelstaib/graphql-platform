@@ -1509,6 +1509,200 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Product @key(fields: "id") { id: ID! name: String! weight: Float! }
         """;
 
+    [Fact]
+    public async Task Defer_Should_SendIntrospectionWithTheInitialPayload_When_ARootGroupSelectsOnlyIntrospection()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource), ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") { name }
+                ... @defer(label: "i") { __type(name: "Product") { name } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(0, run.Deferred.PendingCount);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendIntrospectionWithTheGroup_When_ARootGroupAlsoSelectsALookupField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["A:2", "B:3"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") { name }
+                ... @defer(label: "i") {
+                    __type(name: "Product") { name }
+                    product(id: "1") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(1, run.Deferred.PendingCount);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheRootTypenameWithTheGroup_When_ARootGroupSelectsItNextToALookupField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["A:2", "B:3"],
+            ("A", ProductListSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") { name }
+                ... @defer(label: "t") {
+                    __typename
+                    product(id: "1") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(1, run.Deferred.PendingCount);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendIntrospection_When_TheOperationSelectsNothingElse()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource), ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { ... @defer(label: "i") { __type(name: "Product") { name } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(0, run.Deferred.PendingCount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendIntrospection_When_TheRootGroupHasASwitch(bool d)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource), ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($d: Boolean!) {
+                product(id: "1") { name }
+                ... @defer(if: $d, label: "i") { __type(name: "Product") { name } }
+            }
+            """,
+            new Dictionary<string, object?> { ["d"] = d });
+
+        // assert
+        MatchRun(run, $"d={d}");
+        Assert.Equal(0, run.Deferred.PendingCount);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MergeIntrospectionSelections_When_PlainAndDeferredSelectTheSameField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource), ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") { name }
+                __type(name: "Product") { name }
+                ... @defer(label: "i") { __type(name: "Product") { kind } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(0, run.Deferred.PendingCount);
+    }
+
+    [Fact]
+    public async Task Defer_Should_AnnounceTheNestedGroupWithTheFirstPayload_When_TheOuterGroupIsOnlyIntrospection()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource), ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "o") {
+                    __type(name: "Product") { name }
+                    ... @defer(label: "i") { product(id: "1") { name } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(0, run.Deferred.IndexOfPending("i"));
+        Assert.Equal(-1, run.Deferred.IndexOfPending("o"));
+        Assert.Contains("\"__type\"", run.Deferred.Payloads[0]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendIntrospectionOnce_When_TheSameFieldIsSelectedOutsideAndInsideTheGroup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource), ("C", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                __type(name: "Product") { name }
+                ... @defer(label: "i") { __type(name: "Product") { name } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(0, run.Deferred.PendingCount);
+    }
+
     private const string MutationSource =
         """
         type Query { product(id: ID!): Product @lookup }

@@ -1853,6 +1853,217 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineFragment_When_OnlyIntrospectionIsSelectedAtTheRoot()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                }
+                ... @defer(label: "i") {
+                    __type(name: "User") {
+                        name
+                    }
+                    __schema {
+                        queryType {
+                            name
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+              }
+              ... {
+                __type(name: "User") {
+                  name
+                }
+                __schema {
+                  queryType {
+                    name
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentDeferredWithItsIntrospection_When_IntrospectionIsSelectedNextToALookupField()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                }
+                ... @defer(label: "i") {
+                    __type(name: "User") {
+                        name
+                    }
+                    user(id: "1") {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+              }
+              ... @defer(label: "i") {
+                __type(name: "User") {
+                  name
+                }
+                user(id: "1") {
+                  email
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_PlainAndDeferredSelectTheSameIntrospectionField()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                }
+                __type(name: "User") {
+                    name
+                }
+                ... @defer(label: "i") {
+                    __type(name: "User") {
+                        kind
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+              }
+              __type(name: "User") {
+                name
+              }
+              ... {
+                __type(name: "User") {
+                  kind
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragmentAndKeepInnerFragment_When_OuterSelectsOnlyIntrospection()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                ... @defer(label: "o") {
+                    __type(name: "User") {
+                        name
+                    }
+                    ... @defer(label: "i") {
+                        user(id: "1") {
+                            name
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              ... {
+                __type(name: "User") {
+                  name
+                }
+                ... @defer(label: "i") {
+                  user(id: "1") {
+                    name
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_TheSameIntrospectionFieldIsSelectedOutsideAndInsideTheFragment()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                __type(name: "User") {
+                    name
+                }
+                ... @defer(label: "i") {
+                    __type(name: "User") {
+                        name
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              __type(name: "User") {
+                name
+              }
+              ... {
+                __type(name: "User") {
+                  name
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);

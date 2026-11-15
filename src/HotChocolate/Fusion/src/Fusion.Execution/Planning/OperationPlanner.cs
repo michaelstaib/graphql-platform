@@ -591,9 +591,9 @@ public sealed partial class OperationPlanner
             }
         }
 
-        foreach (var (fragment, deliveryGroup) in partitioning.ByFragment)
+        foreach (var (_, deliveryGroup) in partitioning.ByFragment)
         {
-            if (!groupsWithNodes.Contains(deliveryGroup.Id) && SelectsFieldOfSourceSchema(fragment, deliveryGroup))
+            if (!groupsWithNodes.Contains(deliveryGroup.Id))
             {
                 cause = $"Delivery group {deliveryGroup.Id} has no step.";
                 return false;
@@ -658,26 +658,6 @@ public sealed partial class OperationPlanner
             default:
                 return [];
         }
-    }
-
-    // Introspection fields at the query root are resolved by the gateway and need no step.
-    private static bool SelectsFieldOfSourceSchema(InlineFragmentNode fragment, DeliveryGroup deliveryGroup)
-    {
-        if (deliveryGroup.Path is not { IsRoot: true })
-        {
-            return true;
-        }
-
-        foreach (var selection in fragment.SelectionSet.Selections)
-        {
-            if (selection is not FieldNode field
-                || !field.Name.Value.StartsWith("__", StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static bool CoversDeliveryGroups(
