@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Planning.Partitioners;
 using HotChocolate.Language;
 
@@ -66,6 +67,39 @@ internal readonly struct Backlog(
     public Backlog WithDeferredFragments(IReadOnlyDictionary<DirectiveNode, int> deferredFragments)
         => new(_items, Cost, deferredFragments);
 
+    /// <summary>
+    /// Returns the conditions of a work item that is created while planning a work item with
+    /// <paramref name="parentConditions"/>, or <paramref name="conditions"/> unchanged when the operation is not
+    /// planned with marked steps.
+    /// </summary>
+    public ExecutionNodeCondition[] InheritConditions(
+        ExecutionNodeCondition[] parentConditions,
+        ExecutionNodeCondition[] conditions)
+    {
+        if (_deferredFragments is null || parentConditions.Length == 0)
+        {
+            return conditions;
+        }
+
+        if (conditions.Length == 0)
+        {
+            return parentConditions;
+        }
+
+        var combined = new List<ExecutionNodeCondition>(parentConditions.Length + conditions.Length);
+        combined.AddRange(parentConditions);
+
+        foreach (var condition in conditions)
+        {
+            if (!combined.Contains(condition))
+            {
+                combined.Add(condition);
+            }
+        }
+
+        return combined.Count == parentConditions.Length ? parentConditions : [.. combined];
+    }
+
     public Backlog BindSourceSchemaNodeCandidate(int candidateGroupId, string schemaName)
     {
         var workItems = _items.ToArray();
@@ -100,6 +134,7 @@ internal readonly struct Backlog(
     /// The delivery groups that every work item carries unless its selection set is the content of a
     /// <c>@defer</c> fragment.
     /// </param>
+    /// <param name="conditions">The conditions of the work item the selection sets were found in.</param>
     /// <param name="dependents">The steps that need the data of the selection sets.</param>
     /// <param name="allowSourceSchemaReentry">Whether the work items may re-enter the source schema.</param>
     /// <param name="sourceSchemaNodePolicy">The source schema node planning policy, or null.</param>
@@ -108,6 +143,7 @@ internal readonly struct Backlog(
         string fromSchema,
         int parentDepth,
         ImmutableArray<int> deliveryGroups,
+        ExecutionNodeCondition[] conditions,
         ImmutableHashSet<int>? dependents = null,
         bool allowSourceSchemaReentry = false,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy = null)
@@ -139,7 +175,9 @@ internal readonly struct Backlog(
                 FromSchema: fromSchema)
             {
                 ParentDepth = parentDepth,
-                Conditions = entry.Conditions,
+                Conditions = _deferredFragments is null
+                    ? entry.Conditions
+                    : InheritConditions(conditions, entry.Conditions),
                 Dependents = dependents ?? [],
                 AllowSourceSchemaReentry = entryAllowsReentry,
                 SourceSchemaNodePolicy = sourceSchemaNodePolicy,
@@ -159,12 +197,16 @@ internal readonly struct Backlog(
     /// <param name="consumer">The owner of the fields.</param>
     /// <param name="dependents">The steps that need the data of the fields.</param>
     /// <param name="parentDepth">The depth of the step that produced the fields.</param>
+    /// <param name="deliveryGroups">The delivery groups of the work item the fields were found in.</param>
+    /// <param name="conditions">The conditions of the work item the fields were found in.</param>
     /// <param name="sourceSchemaNodePolicy">The source schema node planning policy, or null.</param>
     public Backlog PushRequirements(
         ImmutableStack<ConditionedFieldSelection> fieldsWithRequirements,
         RequirementConsumer consumer,
         ImmutableHashSet<int> dependents,
         int parentDepth,
+        ImmutableArray<int> deliveryGroups,
+        ExecutionNodeCondition[] conditions,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy = null)
     {
         if (fieldsWithRequirements.IsEmpty)
@@ -180,7 +222,8 @@ internal readonly struct Backlog(
             {
                 Dependents = dependents,
                 ParentDepth = parentDepth,
-                Conditions = entry.Conditions,
+                Conditions = InheritConditions(conditions, entry.Conditions),
+                DeliveryGroups = deliveryGroups,
                 SourceSchemaNodePolicy = sourceSchemaNodePolicy
             };
             backlog = backlog.Push(workItem);

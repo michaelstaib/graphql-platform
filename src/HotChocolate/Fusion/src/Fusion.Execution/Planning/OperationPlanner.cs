@@ -1297,6 +1297,7 @@ public sealed partial class OperationPlanner
             workItem.EstimatedDepth,
             backlog,
             workItem.Conditions,
+            workItem.DeliveryGroups,
             workItem.AllowSourceSchemaReentry,
             workItem.SourceSchemaNodePolicy,
             consumerStep: null,
@@ -1385,6 +1386,7 @@ public sealed partial class OperationPlanner
             current.SchemaName,
             stepDepth,
             workItem.DeliveryGroups,
+            workItem.Conditions,
             dependents: workItem.Dependents,
             allowSourceSchemaReentry: isEventStreamRoot,
             sourceSchemaNodePolicy: workItem.SourceSchemaNodePolicy is null
@@ -1395,6 +1397,8 @@ public sealed partial class OperationPlanner
             new StepConsumer(stepId),
             workItem.Dependents,
             stepDepth,
+            workItem.DeliveryGroups,
+            workItem.Conditions,
             workItem.SourceSchemaNodePolicy is null
                 ? null
                 : SourceSchemaNodePlanningPolicy.Descendant);
@@ -1509,6 +1513,7 @@ public sealed partial class OperationPlanner
         int lookupStepDepth,
         Backlog backlog,
         ExecutionNodeCondition[]? conditions,
+        ImmutableArray<int> deliveryGroups,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy,
         OperationPlanStep? consumerStep,
@@ -1644,6 +1649,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(step.Id),
                     [lookupStepId],
                     GetOperationStepDepth(current, step.Id),
+                    deliveryGroups,
+                    conditions ?? [],
                     descendantPolicy);
 
                 if (!unresolvable.IsEmpty)
@@ -1659,7 +1666,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, step.Id),
-                        deliveryGroups: [],
+                        deliveryGroups,
+                        conditions ?? [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1705,6 +1713,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(ancestorMatch.Step.Id),
                     [lookupStepId],
                     GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                    deliveryGroups,
+                    conditions ?? [],
                     descendantPolicy);
 
                 if (!unresolvable.IsEmpty)
@@ -1720,7 +1730,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, ancestorMatch.Step.Id),
-                        deliveryGroups: [],
+                        deliveryGroups,
+                        conditions ?? [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1745,6 +1756,7 @@ public sealed partial class OperationPlanner
                 ImmutableHashSet<int>.Empty.Add(lookupStepId),
                 lookupStepDepth,
                 conditions ?? [],
+                deliveryGroups,
                 allowSourceSchemaReentry,
                 sourceSchemaNodePolicy);
         }
@@ -1996,6 +2008,8 @@ public sealed partial class OperationPlanner
                 workItem.EstimatedDepth,
                 workItem.Selection,
                 workItem.Dependents,
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 current,
                 index,
                 ref backlog,
@@ -2109,6 +2123,7 @@ public sealed partial class OperationPlanner
                 workItem.EstimatedDepth,
                 backlog,
                 workItem.Conditions,
+                workItem.DeliveryGroups,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy,
                 currentStep,
@@ -2174,6 +2189,7 @@ public sealed partial class OperationPlanner
                 ImmutableHashSet<int>.Empty.Add(stepId),
                 stepDepth,
                 workItem.Conditions,
+                workItem.DeliveryGroups,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy);
         }
@@ -2230,6 +2246,8 @@ public sealed partial class OperationPlanner
                 stepDepth,
                 workItem.Selection,
                 workItem.Dependents,
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 current,
                 indexBuilder,
                 ref backlog,
@@ -2367,7 +2385,8 @@ public sealed partial class OperationPlanner
             Conditions = workItem.Conditions,
             Target = workItem.Selection.Path,
             Source = source,
-            Lookup = lookup
+            Lookup = lookup,
+            DeliveryGroups = workItem.DeliveryGroups
         };
 
         var costState = AddOperationStepCostState(current, stepId, stepDepth);
@@ -2422,6 +2441,7 @@ public sealed partial class OperationPlanner
                     workItem.Selection.Field.DeclaringType.Name,
                     StringComparison.Ordinal)
                 && ConditionsEqual(candidate.Conditions, workItem.Conditions)
+                && candidate.DeliveryGroups.SequenceEqual(workItem.DeliveryGroups)
                 && !IsOrDependsOnAny(candidate, workItem.Dependents, current.Steps))
             {
                 step = candidate;
@@ -2534,12 +2554,15 @@ public sealed partial class OperationPlanner
             current.SchemaName,
             stepDepth,
             deliveryGroups: [],
+            conditions: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
             new StepConsumer(stepId),
             workItem.Dependents,
             stepDepth,
+            deliveryGroups: [],
+            conditions: [],
             descendantPolicy);
 
         var resolvableSelections = resolvable.Selections;
@@ -2932,6 +2955,8 @@ public sealed partial class OperationPlanner
         int stepDepth,
         FieldSelection selection,
         ImmutableHashSet<int> dependents,
+        ImmutableArray<int> deliveryGroups,
+        ExecutionNodeCondition[] conditions,
         PlanNode current,
         SelectionSetIndexBuilder index,
         ref Backlog backlog,
@@ -2962,7 +2987,8 @@ public sealed partial class OperationPlanner
             SchemaName = current.SchemaName,
             SelectionSet = selectionSet,
             SelectionSetIndex = index,
-            TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null
+            TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         var (resolvable, unresolvable, fieldsWithRequirements, _) = _partitioner.Partition(input);
@@ -2973,13 +2999,16 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
-            deliveryGroups: [],
+            deliveryGroups,
+            conditions,
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
             new StepConsumer(stepId),
             dependents,
             stepDepth,
+            deliveryGroups,
+            conditions,
             descendantPolicy);
         return resolvable;
     }
@@ -3002,6 +3031,7 @@ public sealed partial class OperationPlanner
         ImmutableHashSet<int> dependents,
         int parentDepth,
         ExecutionNodeCondition[] conditions,
+        ImmutableArray<int> deliveryGroups,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy)
     {
@@ -3049,7 +3079,8 @@ public sealed partial class OperationPlanner
                         ParentDepth = parentDepth,
                         Conditions = conditions,
                         AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                        SourceSchemaNodePolicy = descendantPolicy
+                        SourceSchemaNodePolicy = descendantPolicy,
+                        DeliveryGroups = deliveryGroups
                     });
                 continue;
             }
@@ -3075,7 +3106,8 @@ public sealed partial class OperationPlanner
                     ParentDepth = parentDepth,
                     Conditions = conditions,
                     AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                    SourceSchemaNodePolicy = descendantPolicy
+                    SourceSchemaNodePolicy = descendantPolicy,
+                    DeliveryGroups = deliveryGroups
                 });
         }
 
@@ -3216,6 +3248,8 @@ public sealed partial class OperationPlanner
                 new StepConsumer(step.Id),
                 [dependentStepId],
                 GetOperationStepDepth(current, step.Id),
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 workItem.SourceSchemaNodePolicy is null
                     ? null
                     : SourceSchemaNodePlanningPolicy.Descendant);
@@ -3245,7 +3279,8 @@ public sealed partial class OperationPlanner
                             // resolve the parts this step could not inline.
                             Dependents = ImmutableHashSet<int>.Empty.Add(dependentStepId),
                             ParentDepth = GetOperationStepDepth(current, step.Id),
-                            Conditions = entry.Conditions,
+                            Conditions = backlog.InheritConditions(workItem.Conditions, entry.Conditions),
+                            DeliveryGroups = workItem.DeliveryGroups,
                             SourceSchemaNodePolicy = workItem.SourceSchemaNodePolicy is null
                                 ? null
                                 : SourceSchemaNodePlanningPolicy.Descendant
@@ -3301,6 +3336,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(ancestorMatch.Step.Id),
                     [dependentStepId],
                     GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                    workItem.DeliveryGroups,
+                    workItem.Conditions,
                     workItem.SourceSchemaNodePolicy is null
                         ? null
                         : SourceSchemaNodePlanningPolicy.Descendant);
@@ -3324,7 +3361,8 @@ public sealed partial class OperationPlanner
                             {
                                 Dependents = ImmutableHashSet<int>.Empty.Add(dependentStepId),
                                 ParentDepth = GetOperationStepDepth(current, ancestorMatch.Step.Id),
-                                Conditions = entry.Conditions,
+                                Conditions = backlog.InheritConditions(workItem.Conditions, entry.Conditions),
+                                DeliveryGroups = workItem.DeliveryGroups,
                                 SourceSchemaNodePolicy = workItem.SourceSchemaNodePolicy is null
                                     ? null
                                     : SourceSchemaNodePlanningPolicy.Descendant
