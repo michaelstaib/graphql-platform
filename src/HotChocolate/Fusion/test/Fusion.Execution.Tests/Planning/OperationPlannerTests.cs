@@ -525,6 +525,111 @@ public class OperationPlannerTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Plan_Should_PlanNestedTypeCondition_When_NestedFieldIsOfTheSameSourceSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(PricedSchemaA, PricedSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+              item(id: "1") {
+                name
+                ... on Priced {
+                  price
+                  ... on Book { rating }
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanNestedInterfaceFragment_When_BothInterfacesAreOfAnotherSourceSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(ItemSchemaA, ItemSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+              item(id: "1") {
+                name
+                ... on Priced {
+                  price
+                  ... on Rated { rating }
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanSiblingTypeConditions_When_InterfaceFragmentIsOfAnotherSourceSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(ItemSchemaA, ItemSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+              item(id: "1") {
+                name
+                ... on Priced {
+                  ... on Rated { rating }
+                  ... on Book { title }
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanNestedInterfaceFragment_When_KeyIsInlinedIntoAnEnclosingField()
+    {
+        // arrange
+        var schema = ComposeSchema(ItemSchemaA, ItemSchemaB);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            {
+              item(id: "1") {
+                name
+                ... on Book {
+                  title
+                  similar {
+                    name
+                    ... on Priced {
+                      ... on Rated { rating }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
     private const string NodeSchemaA =
         """
         # name: a
@@ -612,6 +717,61 @@ public class OperationPlannerTests : FusionTestBase
 
         type Review {
           body: String!
+        }
+        """;
+
+    private const string ItemSchemaA =
+        """
+        # name: a
+        type Query {
+          item(id: ID!): Item
+          book(id: ID!): Book @lookup
+          toy(id: ID!): Toy @lookup
+        }
+
+        interface Item {
+          id: ID!
+          name: String!
+        }
+
+        type Book implements Item @key(fields: "id") {
+          id: ID!
+          name: String!
+          similar: Item
+        }
+
+        type Toy implements Item @key(fields: "id") {
+          id: ID!
+          name: String!
+        }
+        """;
+
+    private const string ItemSchemaB =
+        """
+        # name: b
+        type Query {
+          bookById(id: ID!): Book @lookup
+          toyById(id: ID!): Toy @lookup
+        }
+
+        interface Priced {
+          price: Float!
+        }
+
+        interface Rated {
+          rating: Int!
+        }
+
+        type Book implements Priced & Rated @key(fields: "id") {
+          id: ID!
+          price: Float!
+          rating: Int!
+          title: String!
+        }
+
+        type Toy implements Priced @key(fields: "id") {
+          id: ID!
+          price: Float!
         }
         """;
 }
