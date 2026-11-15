@@ -150,7 +150,7 @@ public sealed partial class OperationPlanner
                     out fallbackCause,
                     cancellationToken);
             }
-            catch (OperationPlannerGuardrailException ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 singlePlan = null;
                 fallbackCause = ex.Message;
@@ -162,7 +162,7 @@ public sealed partial class OperationPlanner
             }
 
             SinglePlanDeferFallback?.Invoke(id, fallbackCause!);
-            operationDefinition = StripDeferFromOperation(operationDefinition);
+            operationDefinition = LowerWithEveryFragmentInlined(operationDefinition);
         }
 
         return TryCreatePlan(
@@ -181,8 +181,8 @@ public sealed partial class OperationPlanner
     /// </summary>
     internal event Action<string, string>? SinglePlanDeferFallback;
 
-    private static OperationDefinitionNode StripDeferFromOperation(OperationDefinitionNode operation)
-        => operation.WithSelectionSet(StripDeferFromSelectionSet(operation.SelectionSet));
+    private OperationDefinitionNode LowerWithEveryFragmentInlined(OperationDefinitionNode operation)
+        => NormalizeLowered(operation.WithSelectionSet(StripDeferFromSelectionSet(operation.SelectionSet)));
 
     private OperationPlan? TryCreatePlan(
         string id,
@@ -495,8 +495,8 @@ public sealed partial class OperationPlanner
         }
         catch (Exception ex)
         {
-            // A guardrail exception of a single defer plan attempt is not reported as a failed plan.
-            if (eventSourceEnabled && !(singlePlanDefer && ex is OperationPlannerGuardrailException))
+            // A failed single defer plan attempt falls back and is not reported as a failed plan.
+            if (eventSourceEnabled && !(singlePlanDefer && ex is not OperationCanceledException))
             {
                 var elapsed = Stopwatch.GetElapsedTime(startedAt);
                 eventSource.PlanError(
@@ -777,8 +777,10 @@ public sealed partial class OperationPlanner
     }
 
     private OperationDefinitionNode LowerForSinglePlanDefer(OperationDefinitionNode operationDefinition)
+        => NormalizeLowered(DeferLowering.Lower(operationDefinition, _schema));
+
+    private OperationDefinitionNode NormalizeLowered(OperationDefinitionNode lowered)
     {
-        var lowered = DeferLowering.Lower(operationDefinition, _schema);
         var document = _loweredDocumentRewriter!.RewriteDocument(new DocumentNode([lowered]));
         return (OperationDefinitionNode)document.Definitions[0];
     }

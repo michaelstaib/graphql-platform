@@ -19,9 +19,7 @@ nodes:
       query Op_123456789101112_1 {
         product(id: "1") {
           name
-          ... {
-            id
-          }
+          id
         }
       }
   - id: 2

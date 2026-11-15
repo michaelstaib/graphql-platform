@@ -49,10 +49,8 @@ nodes:
     operation: |
       query Op_123456789101112_3($__fusion_2_id: ID!) {
         productByIdForDetails(id: $__fusion_2_id) {
-          ... {
-            details {
-              weight
-            }
+          details {
+            weight
           }
         }
       }
