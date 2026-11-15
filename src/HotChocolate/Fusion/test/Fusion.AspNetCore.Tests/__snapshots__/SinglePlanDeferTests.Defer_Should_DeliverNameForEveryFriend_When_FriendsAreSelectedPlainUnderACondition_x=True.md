@@ -1,14 +1,15 @@
 # Defer_Should_DeliverNameForEveryFriend_When_FriendsAreSelectedPlainUnderACondition
 
-## Delivery
+## Payload 1
 
-```text
-initial {"user":{"friends":[{"id":"s"},{"id":"s"},{"id":"s"}]}}
-completed c
-incremental c subPath [0] {"name":"s"}
-incremental c subPath [1] {"name":"s"}
-incremental c subPath [2] {"name":"s"}
-pending c at ["user","friends"]
+```json
+{"data":{"user":{"friends":[{"id":"s"},{"id":"s"},{"id":"s"}]}},"pending":[{"id":"1","path":["user","friends"],"label":"c"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"1","subPath":[0],"data":{"name":"s"}},{"id":"1","subPath":[1],"data":{"name":"s"}},{"id":"1","subPath":[2],"data":{"name":"s"}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

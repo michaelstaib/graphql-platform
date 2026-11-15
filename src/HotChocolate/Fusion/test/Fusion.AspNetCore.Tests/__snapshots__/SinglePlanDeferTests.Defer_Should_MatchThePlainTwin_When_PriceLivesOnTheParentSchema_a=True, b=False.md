@@ -1,12 +1,15 @@
 # Defer_Should_MatchThePlainTwin_When_PriceLivesOnTheParentSchema
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s","reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}
-completed price
-incremental price subPath [] {"price":0}
-pending price at ["product"]
+```json
+{"data":{"product":{"name":"s","reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}},"pending":[{"id":"0","path":["product"],"label":"price"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","data":{"price":0}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests

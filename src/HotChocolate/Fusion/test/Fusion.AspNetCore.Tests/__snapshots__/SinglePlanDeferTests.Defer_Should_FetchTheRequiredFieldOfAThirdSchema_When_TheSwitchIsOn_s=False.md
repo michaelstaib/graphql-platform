@@ -1,9 +1,9 @@
 # Defer_Should_FetchTheRequiredFieldOfAThirdSchema_When_TheSwitchIsOn
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s","shipping":0}}
+```json
+{"data":{"product":{"name":"s","shipping":0}},"hasNext":false}
 ```
 
 ## Requests

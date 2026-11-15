@@ -1,12 +1,15 @@
 # Defer_Should_MatchThePlainTwin_When_TwoSwitchesSelectFieldsOfOtherSchemas
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s","price":0}}
-completed reviews
-incremental reviews subPath [] {"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}
-pending reviews at ["product"]
+```json
+{"data":{"product":{"name":"s","price":0}},"pending":[{"id":"1","path":["product"],"label":"reviews"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"1","data":{"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

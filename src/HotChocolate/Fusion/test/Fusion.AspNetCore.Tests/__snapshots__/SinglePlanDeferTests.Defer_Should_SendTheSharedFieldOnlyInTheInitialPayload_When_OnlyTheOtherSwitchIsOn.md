@@ -1,12 +1,15 @@
 # Defer_Should_SendTheSharedFieldOnlyInTheInitialPayload_When_OnlyTheOtherSwitchIsOn
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"price":0}}
-completed a
-incremental a subPath [] {"rating":0}
-pending a at ["product"]
+```json
+{"data":{"product":{"price":0}},"pending":[{"id":"0","path":["product"],"label":"a"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","data":{"rating":0}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests

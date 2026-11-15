@@ -1,14 +1,15 @@
 # Defer_Should_SendTheFieldOnceWithTwoPendingIds_When_UnlabelledSiblingsSelectTheSameField
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s"}}
-completed <unlabelled 0>
-completed <unlabelled 1>
-incremental <unlabelled 0> subPath [] {"price":0}
-pending <unlabelled 0> at ["product"]
-pending <unlabelled 1> at ["product"]
+```json
+{"data":{"product":{"name":"s"}},"pending":[{"id":"0","path":["product"]},{"id":"1","path":["product"]}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","data":{"price":0}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

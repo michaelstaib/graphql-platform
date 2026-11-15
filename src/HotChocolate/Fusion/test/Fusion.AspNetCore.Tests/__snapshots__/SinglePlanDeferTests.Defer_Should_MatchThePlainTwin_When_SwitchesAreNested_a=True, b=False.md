@@ -1,12 +1,15 @@
 # Defer_Should_MatchThePlainTwin_When_SwitchesAreNested
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s"}}
-completed outer
-incremental outer subPath [] {"price":0,"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}
-pending outer at ["product"]
+```json
+{"data":{"product":{"name":"s"}},"pending":[{"id":"1","path":["product"],"label":"outer"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"1","data":{"price":0,"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

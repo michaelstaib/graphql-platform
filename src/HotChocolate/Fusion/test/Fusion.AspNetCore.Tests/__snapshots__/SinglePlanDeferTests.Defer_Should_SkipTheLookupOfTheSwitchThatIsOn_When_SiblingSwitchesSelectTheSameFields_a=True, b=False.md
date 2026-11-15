@@ -1,9 +1,9 @@
 # Defer_Should_SkipTheLookupOfTheSwitchThatIsOn_When_SiblingSwitchesSelectTheSameFields
 
-## Merged
+## Payload 1
 
 ```json
-{"product":{"name":"s","price":0}}
+{"data":{"product":{"name":"s","price":0}},"hasNext":false}
 ```
 
 ## Requests

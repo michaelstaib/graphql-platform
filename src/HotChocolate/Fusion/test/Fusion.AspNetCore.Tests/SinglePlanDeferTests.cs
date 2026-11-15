@@ -1,7 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using HotChocolate.Fusion.Diagnostics;
+using HotChocolate.Fusion.Execution;
+using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Transport.Http;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using OperationRequest = HotChocolate.Transport.OperationRequest;
@@ -18,7 +22,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_MatchThePlainTwin_When_TwoSwitchesSelectFieldsOfOtherSchemas(bool a, bool b)
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateProductGatewayAsync(a && b ? ["B:5>", "C:4"] : []);
 
         // act
         var run = await RunWithTwinAsync(
@@ -47,6 +51,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            a && b ? ["A:4>", "C:3"] : [],
             ("A", """
                 type Query { product(id: ID!): Product @lookup }
                 type Product @key(fields: "id") { id: ID! name: String! price: Float! }
@@ -114,7 +119,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_MatchThePlainTwin_When_SwitchesAreNested(bool a, bool b)
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateProductGatewayAsync(a && b ? ["B:3>", "C:4"] : []);
 
         // act
         var run = await RunWithTwinAsync(
@@ -163,7 +168,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_MatchThePlainTwin_When_DefersAreNestedWithoutASwitch()
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateProductGatewayAsync("B:2>", "C:3");
 
         // act
         var run = await RunWithTwinAsync(
@@ -189,7 +194,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendASharedFieldOnce_When_SiblingGroupsSelectIt()
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateProductGatewayAsync("B:3>", "B:2");
 
         // act
         var run = await RunWithTwinAsync(
@@ -205,7 +210,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run, mergedOnly: true);
+        MatchRun(run);
     }
 
     [Fact]
@@ -236,7 +241,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendTheFieldOnce_When_ALabelledAndAnUnlabelledSiblingSelectTheSameField()
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateProductGatewayAsync("B:2>", "B:3");
 
         // act
         var run = await RunWithTwinAsync(
@@ -253,13 +258,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run, mergedOnly: true);
+        MatchRun(run);
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Defer_Should_AnnounceOnlyTheOuterGroup_When_TheInnerSwitchIsConditional(bool c)
+    public async Task Defer_Should_AnnounceTheGroupThatHoldsTheField_When_TheInnerSwitchIsConditional(bool c)
     {
         // arrange
         var gateway = await CreateProductGatewayAsync();
@@ -289,6 +294,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            x ? [] : ["A:2>", "E:3"],
             ("A", """
                 type Query { user(id: ID!): User @lookup }
                 type User @key(fields: "id") { id: ID! friends: [User!]! }
@@ -325,7 +331,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         bool b)
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateProductGatewayAsync(a && b ? ["B:3>", "B:4"] : []);
 
         // act
         var run = await RunWithTwinAsync(
@@ -342,7 +348,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
 
         // assert
-        MatchRun(run, $"a={a}, b={b}", mergedOnly: true);
+        MatchRun(run, $"a={a}, b={b}");
     }
 
     [Fact]
@@ -372,39 +378,18 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_StartTheNestedLookupBeforeTheOuterLookupAnswers_When_TheKeyIsKnown()
     {
         // arrange
-        var ratingReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        HttpMessageInvoker? priceInvoker = null;
-        HttpMessageInvoker? ratingInvoker = null;
-        var servers = new List<(string, TestServer)>
-        {
-            ("A", CreateSourceSchema("A", ProductSource)),
-            ("B", CreateSourceSchema(
-                "B",
-                """
+        // the response for the price is held back until the step that fetches the rating is done.
+        var gateway = await CreateGatewayAsync(
+            ["C:3", "B:2"],
+            ("A", ProductSource),
+            ("B", """
                 type Query { productById(id: ID!): Product @lookup }
                 type Product @key(fields: "id") { id: ID! price: Float! }
-                """,
-                mockHttpResponse: async request =>
-                {
-                    // the response for the price is held back until the request for the rating is received.
-                    await ratingReceived.Task.WaitAsync(TimeSpan.FromSeconds(20));
-                    return await priceInvoker!.SendAsync(request, CancellationToken.None);
-                })),
-            ("C", CreateSourceSchema(
-                "C",
-                """
+                """),
+            ("C", """
                 type Query { productByIdForRating(id: ID!): Product @lookup }
                 type Product @key(fields: "id") { id: ID! rating: Int! }
-                """,
-                mockHttpResponse: request =>
-                {
-                    ratingReceived.TrySetResult();
-                    return ratingInvoker!.SendAsync(request, CancellationToken.None);
-                }))
-        };
-        priceInvoker = new HttpMessageInvoker(servers[1].Item2.CreateHandler());
-        ratingInvoker = new HttpMessageInvoker(servers[2].Item2.CreateHandler());
-        var gateway = await CreateGatewayAsync(servers);
+                """));
 
         // act
         var run = await RunWithTwinAsync(
@@ -424,7 +409,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchRun(run);
-        Assert.True(ratingReceived.Task.IsCompletedSuccessfully);
         Assert.True(run.Deferred.IndexOfPending("i") >= run.Deferred.IndexOfCompleted("o"));
     }
 
@@ -473,11 +457,15 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
-    [Fact]
-    public async Task Defer_Should_SendTheSharedNestedFieldWithTheTopGroup_When_TheTopGroupComesBeforeTheOuterGroup()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheSharedNestedFieldWithTheTopGroup_When_TheTopGroupComesBeforeTheOuterGroup(
+        bool topStepFirst)
     {
         // arrange
-        var gateway = await CreateProductReviewGatewayAsync();
+        var gateway = await CreateProductReviewGatewayAsync(
+            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6>", "B:3>", "C:4"]);
 
         // act
         var run = await RunWithTwinAsync(
@@ -496,14 +484,18 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run, mergedOnly: true, compareValues: false);
+        MatchRun(run, $"topStepFirst={topStepFirst}", compareValues: false);
     }
 
-    [Fact]
-    public async Task Defer_Should_SendTheSharedNestedFieldWithTheOuterGroup_When_TheTopGroupComesAfterTheOuterGroup()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheSharedNestedFieldWithTheOuterGroup_When_TheTopGroupComesAfterTheOuterGroup(
+        bool topStepFirst)
     {
         // arrange
-        var gateway = await CreateProductReviewGatewayAsync();
+        var gateway = await CreateProductReviewGatewayAsync(
+            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6>", "B:3>", "C:4"]);
 
         // act
         var run = await RunWithTwinAsync(
@@ -522,7 +514,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run, mergedOnly: true, compareValues: false);
+        MatchRun(run, $"topStepFirst={topStepFirst}", compareValues: false);
     }
 
     [Theory]
@@ -580,6 +572,617 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(offBody, onBody);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_KeepTheFirstResult_When_TwoSourcesAnswerTheSameFieldWithAValueAndAnError(
+        bool errorFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            errorFirst ? ["C:2>", "B:3"] : ["B:3>", "C:2"],
+            ("A", ProductListSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float @shareable rating: Int! }
+                """),
+            ("C", """
+                type Query { productByIdForWeight(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float @shareable @error weight: Int! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { price rating }
+                    ... @defer(label: "b") { price weight }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"errorFirst={errorFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheLeavesOfBothGroups_When_SiblingGroupsSelectDifferentLeavesOfTheSameList(
+        bool idGroupFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            idGroupFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            ("A", ProductListSource),
+            ("B", ReviewBodySource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { reviews { id } }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"idGroupFirst={idGroupFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheDependentField_When_TheKeyListIsSelectedByASiblingGroup(bool keyGroupFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            keyGroupFirst ? ["B:4>", "B:2", "C:3"] : ["B:2", "C:3>", "B:4"],
+            ("A", ProductListSource),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { reviews { id } }
+                    ... @defer(label: "b") { reviews { rating } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"keyGroupFirst={keyGroupFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheDependentField_When_TheKeyObjectIsSelectedByASiblingGroup(
+        bool keyGroupFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            keyGroupFirst ? ["B:4>", "B:2", "C:3"] : ["B:2", "C:3>", "B:4"],
+            ("A", ProductListSource),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { topReview { id } }
+                    ... @defer(label: "b") { topReview { rating } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"keyGroupFirst={keyGroupFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheRequiredField_When_TheRequirementIsSelectedByASiblingGroup(
+        bool requirementGroupFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            requirementGroupFirst ? ["B:5>", "B:4", "C:3"] : ["B:4", "C:3>", "B:5"],
+            ("A", ProductListSource),
+            ("B", WeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { weight }
+                    ... @defer(label: "b") { shipping }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"requirementGroupFirst={requirementGroupFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheRequiredField_When_TheRequirementIsSelectedPlainUnderACondition(bool x)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", WeightSource), ("C", ShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                product(id: "1") {
+                    name
+                    weight @include(if: $x)
+                    ... @defer(label: "b") { shipping }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        MatchRun(run, $"x={x}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheDependentField_When_TheKeyIsSelectedPlainUnderACondition(bool x)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "b") { reviews { id @include(if: $x) rating } }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        MatchRun(run, $"x={x}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheValueOfItsOwnStep_When_TheChildStepFetchesTheSameFieldFirst(
+        bool childFirst)
+    {
+        // arrange
+        // the step of the inner group answers the price with 777, the step of the outer group does not.
+        var gateway = await CreateGatewayAsync(
+            childFirst ? ["B:3", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) => schema == "B" && body.Contains("rating")
+                ? PriceValue().Replace(text, "\"price\":777")
+                : text,
+            failingSchema: null,
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            query($f: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        price @include(if: $f)
+                        ... @defer(label: "i") { price rating }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["f"] = true });
+
+        // assert
+        MatchPayloads(run, $"childFirst={childFirst}");
+    }
+
+    [GeneratedRegex("\"price\":[^,}]*")]
+    private static partial Regex PriceValue();
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheDeferredLeaf_When_ItsListIsAlsoSelectedPlain()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("C", ReviewStarsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { body }
+                    ... @defer(label: "d") { reviews { stars } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheDeferredLeaf_When_ItsObjectsAreAlsoSelectedPlain()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", ReviewBodySource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "d") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverPriceForEveryItem_When_ARootGroupSelectsAListOfTheInitialPayload()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                products { name }
+                ... @defer(label: "top") { products { price } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotSendTheListAgain_When_TheGroupAddsFieldsToAListOfTheInitialPayload()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "b") { reviews { rating } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResult_When_TheRootIsNulledInTheInitialPhase()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { products: [Product!]! @error product(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! name: String! }
+                """),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteThePendingId_When_TheMarkedStepFailsInTransport()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheError_When_TheMarkedStepFailsAndTheGroupHasNoData()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotReportAnErrorForADeliveredField_When_TheMarkedStepFailsInTransport()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            ("A", """
+                type Query { product(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! name: String! @shareable }
+                """),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! name: String! @shareable price: Float! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            query($x: Boolean!, $d: Boolean!) {
+                product(id: "1") {
+                    name @include(if: $x)
+                    ... @defer(if: $d, label: "L") { name price }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = true, ["d"] = true });
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheDeferredField_When_TheOperationIsAMutation()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", MutationSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            mutation { createProduct { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_RunTheRootFieldsOneAfterTheOther_When_TheMutationHasTwoRootFields()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", MutationSource), ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            mutation {
+                first: createProduct { name ... @defer(label: "p") { price } }
+                second: createProduct { name }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloadShapes(run);
+        Assert.Equal(
+            ["enter A:1", "done A:1", "enter A:3", "done A:3"],
+            _gate!.Events.Where(t => t.Contains(" A:")).ToArray());
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResult_When_TheOperationHasMoreDeliveryGroupsThanTheDocumentCanMark()
+    {
+        // arrange
+        var gateway = await CreateProductGatewayAsync();
+        var fragments = string.Concat(Enumerable.Repeat("... @defer { price } ", 1024));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ product(id: \"1\") { name " + fragments + "} }",
+            []);
+
+        // assert
+        MatchPayloadShapes(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_RefuseBeforeAnySourceRequest_When_TheClientAcceptsNoStreamFormat()
+    {
+        // arrange
+        var sources = new[] { ("A", ProductSource), ("B", PriceSource) };
+        var withOption = await CreateGatewayAsync(sources);
+        var withoutOption = await CreateCompositeSchemaAsync(
+            [.. sources.Select(t => (t.Item1, CreateSourceSchema(t.Item1, t.Item2)))]);
+        const string body = """{"query":"{ product(id: \"1\") { name ... @defer(label: \"p\") { price } } }"}""";
+
+        // act
+        var onResponse = await PostAsync(withOption, body, "application/graphql-response+json");
+        var offResponse = await PostAsync(withoutOption, body, "application/graphql-response+json");
+
+        // assert
+        Assert.Equal(offResponse, onResponse);
+        Assert.Equal(0, CountRequests(withOption).Values.Sum());
+    }
+
+    [Fact]
+    public async Task Defer_Should_RejectTheRequest_When_VariablesAreBatched()
+    {
+        // arrange
+        var sources = new[] { ("A", ProductSource), ("B", PriceSource) };
+        var withOption = await CreateGatewayAsync(sources);
+        var withoutOption = await CreateCompositeSchemaAsync(
+            [.. sources.Select(t => (t.Item1, CreateSourceSchema(t.Item1, t.Item2)))]);
+        const string body =
+            """
+            {
+                "query": "query($a: Boolean!) { product(id: \"1\") { ... @defer(if: $a, label: \"p\") { price } } }",
+                "variables": [{ "a": true }, { "a": false }]
+            }
+            """;
+
+        // act
+        var onResponse = await PostAsync(withOption, body, "application/graphql-response+json, application/jsonl");
+        var offResponse = await PostAsync(withoutOption, body, "application/graphql-response+json, application/jsonl");
+
+        // assert
+        Assert.Equal(offResponse, onResponse);
+        Assert.Equal(0, CountRequests(withOption).Values.Sum());
+        Assert.StartsWith("400", onResponse);
+    }
+
+    private const string MutationSource =
+        """
+        type Query { product(id: ID!): Product @lookup }
+        type Mutation { createProduct: Product }
+        type Product @key(fields: "id") { id: ID! name: String! }
+        """;
+
+    private const string ReviewBodySource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
+        type Review { id: ID! body: String! }
+        """;
+
+    private const string ReviewKeySource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! reviews: [Review!]! topReview: Review }
+        type Review @key(fields: "id") { id: ID! @shareable }
+        """;
+
+    private const string ReviewRatingSource =
+        """
+        type Query { reviewById(id: ID!): Review @lookup }
+        type Review @key(fields: "id") { id: ID! rating: Int! }
+        """;
+
+    private const string ReviewStarsSource =
+        """
+        type Query { productByIdForReviews(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
+        type Review { body: String! stars: Int! }
+        """;
+
+    private const string WeightSource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! weight: Float! }
+        """;
+
+    private const string ShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(weight: Float! @require(field: "weight")): Float!
+        }
+        """;
+
+    private const string ProductListSource =
+        """
+        type Query { product(id: ID!): Product @lookup products: [Product!]! }
+        type Product @key(fields: "id") { id: ID! name: String! }
+        """;
+
     private const string ProductSource =
         """
         type Query { product(id: ID!): Product @lookup }
@@ -599,8 +1202,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Review { body: String! }
         """;
 
-    private Task<Gateway> CreateProductReviewGatewayAsync()
+    private Task<Gateway> CreateProductReviewGatewayAsync(params string[] releaseOrder)
         => CreateGatewayAsync(
+            releaseOrder,
             ("A", """
                 type Query { products: [Product!]! }
                 type Product @key(fields: "id") { id: ID! @shareable }
@@ -615,18 +1219,319 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 type Review @key(fields: "id") { id: ID! rating: Int! }
                 """));
 
-    private Task<Gateway> CreateProductGatewayAsync()
-        => CreateGatewayAsync(("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));
+    private Task<Gateway> CreateProductGatewayAsync(params string[] releaseOrder)
+        => CreateGatewayAsync(releaseOrder, ("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));
 
     private Task<Gateway> CreateGatewayAsync(params (string Name, string Sdl)[] sources)
-        => CreateGatewayAsync(
-            sources.Select(t => (t.Name, CreateSourceSchema(t.Name, t.Sdl))).ToList());
+        => CreateGatewayAsync([], sources);
 
-    private Task<Gateway> CreateGatewayAsync(IEnumerable<(string Name, TestServer Server)> servers)
-        => CreateCompositeSchemaAsync(
+    private Task<Gateway> CreateGatewayAsync(string[] releaseOrder, params (string Name, string Sdl)[] sources)
+        => CreateGatewayAsync(releaseOrder, rewrite: null, failingSchema: null, sources);
+
+    // The responses of the steps in releaseOrder ("schema:stepId") reach the gateway in that order. The rewrite
+    // changes the response text of a source schema, and every request to the failing schema fails in transport.
+    private Task<Gateway> CreateGatewayAsync(
+        string[] releaseOrder,
+        Func<string, string, string, string>? rewrite,
+        string? failingSchema,
+        params (string Name, string Sdl)[] sources)
+    {
+        var gate = _gate = new ResponseGate(releaseOrder);
+        var servers = new List<(string, TestServer)>();
+
+        foreach (var (name, sdl) in sources)
+        {
+            HttpMessageInvoker? invoker = null;
+            var server = CreateSourceSchema(
+                name,
+                sdl,
+                mockHttpResponse: async request =>
+                {
+                    await request.Content!.LoadIntoBufferAsync();
+                    var body = await request.Content.ReadAsStringAsync();
+                    await gate.EnterAsync(name, body);
+
+                    if (name == failingSchema)
+                    {
+                        return new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError);
+                    }
+
+                    var response = await invoker!.SendAsync(request, CancellationToken.None);
+
+                    if (rewrite is not null)
+                    {
+                        var text = rewrite(name, body, await response.Content.ReadAsStringAsync());
+                        var contentType = response.Content.Headers.ContentType;
+                        response.Content = new StringContent(text, System.Text.Encoding.UTF8);
+                        response.Content.Headers.ContentType = contentType;
+                    }
+
+                    return response;
+                });
+            invoker = new HttpMessageInvoker(server.CreateHandler());
+            servers.Add((name, server));
+        }
+
+        return CreateCompositeSchemaAsync(
             [.. servers],
-            configureGatewayBuilder: builder => builder.ModifyPlannerOptions(
-                options => options.EnableSinglePlanDefer = true));
+            configureApplication: app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Response.Body = new PayloadCountingStream(context.Response.Body, gate);
+                    await next(context);
+                });
+                app.UseRouting();
+                app.UseEndpoints(endpoint => endpoint.MapGraphQL());
+            },
+            configureGatewayBuilder: builder => builder
+                .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true)
+                .AddDiagnosticEventListener(_ => new StepDoneListener(gate)));
+    }
+
+    private ResponseGate? _gate;
+
+    // Holds the responses of the listed steps back. Each one after the first is released when the step
+    // before it has handed its result to the executor and, when that step is listed with a trailing ">",
+    // the gateway has written the next payload.
+    private sealed class ResponseGate
+    {
+        private static readonly TimeSpan s_guard = TimeSpan.FromSeconds(20);
+        private readonly string[] _order;
+        private readonly bool[] _waitForPayload;
+        private readonly TaskCompletionSource[] _done;
+        private readonly int[] _payloadsAtRelease;
+        private readonly object _sync = new();
+        private readonly List<(int Count, TaskCompletionSource Signal)> _payloadWaiters = [];
+        private readonly List<string> _events = [];
+        private int _payloads;
+
+        public ResponseGate(string[] order)
+        {
+            _order = [.. order.Select(t => t.TrimEnd('>'))];
+            _waitForPayload = [.. order.Select(t => t.EndsWith('>'))];
+            _done =
+            [
+                .. order.Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            ];
+            _payloadsAtRelease = new int[order.Length];
+        }
+
+        public volatile bool Enabled = true;
+
+        // The arrival of a request and the completion of a step in the order they happened.
+        public IReadOnlyList<string> Events
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return [.. _events];
+                }
+            }
+        }
+
+        public async Task EnterAsync(string schema, string body)
+        {
+            lock (_sync)
+            {
+                foreach (var id in StepId().Matches(body).Select(m => m.Groups[1].Value))
+                {
+                    _events.Add($"enter {schema}:{id}");
+                }
+            }
+
+            var key = StepId().Matches(body)
+                .Select(m => schema + ":" + m.Groups[1].Value)
+                .FirstOrDefault(_order.Contains);
+
+            if (!Enabled || key is null)
+            {
+                return;
+            }
+
+            var index = Array.IndexOf(_order, key);
+
+            if (index > 0)
+            {
+                await _done[index - 1].Task.WaitAsync(s_guard);
+
+                if (_waitForPayload[index - 1])
+                {
+                    await PayloadAfterAsync(_payloadsAtRelease[index - 1]).WaitAsync(s_guard);
+                }
+            }
+
+            lock (_sync)
+            {
+                _payloadsAtRelease[index] = _payloads;
+            }
+        }
+
+        public void AssertEveryStepRan()
+        {
+            for (var i = 0; i < _order.Length; i++)
+            {
+                if (!_done[i].Task.IsCompleted)
+                {
+                    throw new InvalidOperationException($"The step {_order[i]} of the release order never ran.");
+                }
+            }
+        }
+
+        public void StepDone(string schema, int id)
+        {
+            lock (_sync)
+            {
+                _events.Add($"done {schema}:{id}");
+            }
+
+            var index = Array.IndexOf(_order, schema + ":" + id);
+
+            if (index >= 0)
+            {
+                _done[index].TrySetResult();
+            }
+        }
+
+        public void PayloadWritten()
+        {
+            lock (_sync)
+            {
+                _payloads++;
+
+                foreach (var (count, signal) in _payloadWaiters)
+                {
+                    if (_payloads > count)
+                    {
+                        signal.TrySetResult();
+                    }
+                }
+            }
+        }
+
+        private Task PayloadAfterAsync(int count)
+        {
+            lock (_sync)
+            {
+                if (_payloads > count)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _payloadWaiters.Add((count, signal));
+                return signal.Task;
+            }
+        }
+    }
+
+    [GeneratedRegex(@"Op_[0-9a-f]+_(\d+)")]
+    private static partial Regex StepId();
+
+    private sealed class StepDoneListener(ResponseGate gate) : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+            => new Scope(() => gate.StepDone(schemaName, node.Id));
+
+        public override IDisposable ExecuteOperationBatchNode(
+            OperationPlanContext context,
+            OperationBatchExecutionNode node,
+            string schemaName)
+            => new Scope(() =>
+            {
+                gate.StepDone(schemaName, node.Id);
+
+                foreach (var operation in node.Operations)
+                {
+                    gate.StepDone(schemaName, operation.Id);
+                }
+            });
+
+        private sealed class Scope(Action action) : IDisposable
+        {
+            public void Dispose() => action();
+        }
+    }
+
+    // Counts the payloads the gateway writes to the client. Every payload of a stream has one hasNext.
+    private sealed class PayloadCountingStream(Stream inner, ResponseGate gate) : Stream
+    {
+        public override bool CanRead => false;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => true;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            inner.Write(buffer, offset, count);
+            Count(buffer.AsSpan(offset, count));
+        }
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            await inner.WriteAsync(buffer, cancellationToken);
+            Count(buffer.Span);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        private void Count(ReadOnlySpan<byte> written)
+        {
+            var marker = "\"hasNext\""u8;
+
+            while (written.IndexOf(marker) is var index and >= 0)
+            {
+                gate.PayloadWritten();
+                written = written[(index + marker.Length)..];
+            }
+        }
+    }
+
+    private static async Task<string> PostAsync(Gateway gateway, string body, string accept)
+    {
+        using var client = gateway.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:5000/graphql");
+        request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        request.Headers.TryAddWithoutValidation("Accept", accept);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(DropExtensions);
+        return $"{(int)response.StatusCode} {response.Content.Headers.ContentType}"
+            + Environment.NewLine + string.Join(Environment.NewLine, lines);
+    }
+
+    private static string DropExtensions(string line)
+    {
+        var node = JsonNode.Parse(line)!.AsObject();
+        node.Remove("extensions");
+        return node.ToJsonString();
+    }
 
     private static async Task<string> ReadBodyAsync(Gateway gateway, string query)
     {
@@ -642,31 +1547,45 @@ public partial class SinglePlanDeferTests : FusionTestBase
         return await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
     }
 
-    private static void MatchRun(
-        TwinRun run,
-        string? postFix = null,
-        bool withPayloads = false,
-        bool mergedOnly = false,
-        bool compareValues = true)
+    private static void MatchPayloads(Run run, string? postFix = null)
+    {
+        Assert.Empty(run.Problems);
+
+        var snapshot = Snapshot.Create(postFix);
+
+        for (var i = 0; i < run.Payloads.Count; i++)
+        {
+            snapshot.Add(run.Payloads[i], $"Payload {i + 1}", "json");
+        }
+
+        snapshot.Add(run.RequestSummary, "Requests", "text");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    private static void MatchPayloadShapes(Run run)
+    {
+        Assert.Empty(run.Problems);
+
+        var snapshot = Snapshot.Create();
+
+        for (var i = 0; i < run.Payloads.Count; i++)
+        {
+            snapshot.Add(ToShape(run.Payloads[i]), $"Payload {i + 1}", "json");
+        }
+
+        snapshot.Add(run.RequestSummary, "Requests", "text");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    private static void MatchRun(TwinRun run, string? postFix = null, bool compareValues = true)
     {
         run.AssertMatchesTwin(compareValues);
 
         var snapshot = Snapshot.Create(postFix);
 
-        if (withPayloads)
+        for (var i = 0; i < run.Deferred.Payloads.Count; i++)
         {
-            for (var i = 0; i < run.Deferred.Payloads.Count; i++)
-            {
-                snapshot.Add(ToShape(run.Deferred.Payloads[i]), $"Payload {i + 1}", "json");
-            }
-        }
-        else if (mergedOnly)
-        {
-            snapshot.Add(ToShape(run.Deferred.Data).ToJsonString(), "Merged", "json");
-        }
-        else
-        {
-            snapshot.Add(ToDelivery(run.Deferred), "Delivery", "text");
+            snapshot.Add(ToShape(run.Deferred.Payloads[i]), $"Payload {i + 1}", "json");
         }
 
         snapshot.Add(
@@ -677,18 +1596,31 @@ public partial class SinglePlanDeferTests : FusionTestBase
         snapshot.MatchMarkdownSnapshot();
     }
 
-    private static async Task<TwinRun> RunWithTwinAsync(
+    private async Task<TwinRun> RunWithTwinAsync(
         Gateway gateway,
         string query,
         Dictionary<string, object?> variables)
     {
-        var deferred = await RunAsync(gateway, query, variables);
+        var deferred = await RunDeferredAsync(gateway, query, variables);
+
+        _gate?.Enabled = false;
+
         var twinQuery = ToPlainTwin(query);
         var twinVariables = variables
             .Where(t => twinQuery.Contains("$" + t.Key, StringComparison.Ordinal))
             .ToDictionary(t => t.Key, t => t.Value);
         var twin = await RunAsync(gateway, twinQuery, twinVariables);
         return new TwinRun(deferred, twin);
+    }
+
+    private async Task<Run> RunDeferredAsync(
+        Gateway gateway,
+        string query,
+        Dictionary<string, object?> variables)
+    {
+        var run = await RunAsync(gateway, query, variables);
+        _gate?.AssertEveryStepRan();
+        return run;
     }
 
     private static async Task<Run> RunAsync(
@@ -831,6 +1763,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         public IReadOnlyList<string> Positions => CollectDeliveredPositions(Payloads);
 
+        public IReadOnlyList<string> Problems => ReadDelivery(Payloads);
+
         public string RequestSummary => string.Join(", ", Requests.Select(t => $"{t.Key}={t.Value}"));
     }
 
@@ -838,8 +1772,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         public void AssertMatchesTwin(bool compareValues)
         {
-            JsonNode twinData;
-            JsonNode deferredData;
+            JsonNode? twinData;
+            JsonNode? deferredData;
 
             try
             {
@@ -859,7 +1793,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 "Expected " + Twin.Data.ToJsonString() + Environment.NewLine
                 + "Actual   " + string.Join(Environment.NewLine, Deferred.Payloads));
             Assert.Equal(Twin.Errors, Deferred.Errors);
-            Assert.Equal(Deferred.Positions.Distinct().Count(), Deferred.Positions.Count);
+            Assert.Empty(Deferred.Problems);
         }
     }
 
@@ -875,77 +1809,171 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         foreach (var incremental in node["incremental"]?.AsArray() ?? [])
         {
-            incremental!["data"] = ToShape(incremental["data"]!);
+            incremental!["data"] = ToShape(incremental["data"]);
         }
 
         return node.ToJsonString();
     }
 
-    private static JsonNode ToShape(JsonNode node)
+    private static JsonNode? ToShape(JsonNode? node)
         => node switch
         {
+            null => null,
             JsonObject obj => new JsonObject(
-                obj.Select(t => KeyValuePair.Create<string, JsonNode?>(t.Key, ToShape(t.Value!)))),
-            JsonArray array => new JsonArray(array.Select(t => ToShape(t!)).ToArray()),
-            JsonValue value when value.GetValueKind() is JsonValueKind.String => JsonValue.Create("s")!,
-            JsonValue value when value.GetValueKind() is JsonValueKind.Number => JsonValue.Create(0)!,
+                obj.Select(t => KeyValuePair.Create(t.Key, ToShape(t.Value)))),
+            JsonArray array => new JsonArray(array.Select(ToShape).ToArray()),
+            JsonValue value when value.GetValueKind() is JsonValueKind.String => JsonValue.Create("s"),
+            JsonValue value when value.GetValueKind() is JsonValueKind.Number => JsonValue.Create(0),
             _ => node.DeepClone()
         };
 
-    // The delivery of a run without the split into payloads, which depends on the order in which
-    // the source schemas answer.
-    private static string ToDelivery(Run run)
-    {
-        var lines = new List<string>();
-        var groups = new Dictionary<string, string>();
-
-        foreach (var payload in run.Payloads.Select(t => JsonNode.Parse(t)!.AsObject()))
-        {
-            if (payload["data"] is { } data)
-            {
-                lines.Add("initial " + ToShape(data).ToJsonString());
-            }
-
-            foreach (var pending in payload["pending"]?.AsArray() ?? [])
-            {
-                var label = pending!["label"]?.GetValue<string>() ?? "<unlabelled " + pending["id"] + ">";
-                groups[pending["id"]!.GetValue<string>()] = label;
-                lines.Add($"pending {label} at {pending["path"]!.ToJsonString()}");
-            }
-
-            foreach (var incremental in payload["incremental"]?.AsArray() ?? [])
-            {
-                var label = groups[incremental!["id"]!.GetValue<string>()];
-                var subPath = incremental!["subPath"]?.ToJsonString() ?? "[]";
-                lines.Add($"incremental {label} subPath {subPath} {ToShape(incremental["data"]!).ToJsonString()}");
-            }
-
-            foreach (var completed in payload["completed"]?.AsArray() ?? [])
-            {
-                lines.Add("completed " + groups[completed!["id"]!.GetValue<string>()]);
-            }
-        }
-
-        var initial = lines.Where(t => t.StartsWith("initial", StringComparison.Ordinal));
-        var rest = lines
-            .Where(t => !t.StartsWith("initial", StringComparison.Ordinal))
-            .OrderBy(t => t, StringComparer.Ordinal);
-        return string.Join(Environment.NewLine, initial.Concat(rest));
-    }
-
     // The order of the properties of a merged result depends on the order of the payloads.
-    private static string Canonical(JsonNode node)
+    private static string Canonical(JsonNode? node)
         => node switch
         {
+            null => "null",
             JsonObject obj => "{"
                 + string.Join(
                     ",",
                     obj.OrderBy(t => t.Key, StringComparer.Ordinal)
-                        .Select(t => "\"" + t.Key + "\":" + Canonical(t.Value!)))
+                        .Select(t => "\"" + t.Key + "\":" + Canonical(t.Value)))
                 + "}",
-            JsonArray array => "[" + string.Join(",", array.Select(t => Canonical(t!))) + "]",
+            JsonArray array => "[" + string.Join(",", array.Select(Canonical)) + "]",
             _ => node.ToJsonString()
         };
+
+    // Reads the payloads in the order they were sent and lists every break of the delivery rules:
+    // each pending id is completed exactly once, hasNext is false only on the last payload, an
+    // incremental entry targets an object that exists and never carries a field the object already has.
+    private static List<string> ReadDelivery(List<string> payloads)
+    {
+        var problems = new List<string>();
+        var pending = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
+        var completed = new HashSet<string>(StringComparer.Ordinal);
+        JsonNode? data = null;
+
+        for (var i = 0; i < payloads.Count; i++)
+        {
+            var payload = JsonNode.Parse(payloads[i])!.AsObject();
+            var number = i + 1;
+            var isLast = i == payloads.Count - 1;
+            var hasNext = payload["hasNext"]?.GetValue<bool>() is true;
+            var incremental = payload["incremental"]?.AsArray() ?? [];
+            var announced = payload["pending"]?.AsArray();
+            var done = payload["completed"]?.AsArray() ?? [];
+
+            if (i == 0)
+            {
+                data = payload["data"]?.DeepClone();
+            }
+            else if (payload.ContainsKey("data"))
+            {
+                problems.Add($"payload {number} carries data");
+            }
+
+            if (hasNext == isLast)
+            {
+                problems.Add($"payload {number} of {payloads.Count} has hasNext {hasNext}");
+            }
+
+            if (announced is { Count: 0 })
+            {
+                problems.Add($"payload {number} has an empty pending list");
+            }
+
+            if (i > 0 && hasNext && incremental.Count == 0 && done.Count == 0 && announced is null)
+            {
+                problems.Add($"payload {number} carries only hasNext");
+            }
+
+            foreach (var entry in announced ?? [])
+            {
+                if (!pending.TryAdd(entry!["id"]!.GetValue<string>(), entry["path"]!.AsArray()))
+                {
+                    problems.Add($"payload {number} announces id {entry["id"]} again");
+                }
+            }
+
+            foreach (var entry in incremental)
+            {
+                var id = entry!["id"]!.GetValue<string>();
+
+                if (!pending.TryGetValue(id, out var path) || completed.Contains(id))
+                {
+                    problems.Add($"payload {number} has data for id {id}, which is not pending");
+                    continue;
+                }
+
+                var target = data;
+                var position = string.Empty;
+
+                foreach (var segment in path.Concat(entry["subPath"]?.AsArray() ?? []))
+                {
+                    var value = segment!.GetValue<JsonElement>();
+                    position += "/" + value;
+                    target = value.ValueKind is JsonValueKind.Number
+                        ? (target as JsonArray)?[value.GetInt32()]
+                        : (target as JsonObject)?[value.GetString()!];
+                }
+
+                if (target is not JsonObject targetObject || entry["data"] is not JsonObject source)
+                {
+                    problems.Add($"payload {number} has data for {position}, which is not an object");
+                    continue;
+                }
+
+                MergeStrict(targetObject, source, position, number, problems);
+            }
+
+            foreach (var entry in done)
+            {
+                var id = entry!["id"]!.GetValue<string>();
+
+                if (!pending.ContainsKey(id) || !completed.Add(id))
+                {
+                    problems.Add($"payload {number} completes id {id}, which is not pending");
+                }
+            }
+        }
+
+        foreach (var id in pending.Keys.Where(id => !completed.Contains(id)))
+        {
+            problems.Add($"id {id} is never completed");
+        }
+
+        return problems;
+    }
+
+    private static void MergeStrict(
+        JsonObject target,
+        JsonObject source,
+        string position,
+        int number,
+        List<string> problems)
+    {
+        foreach (var (name, value) in source)
+        {
+            if (!target.ContainsKey(name))
+            {
+                target[name] = value?.DeepClone();
+                continue;
+            }
+
+            problems.Add($"payload {number} sends {position}/{name} again");
+
+            // The values are still merged the lenient way so that later entries find their target.
+            if (value is JsonObject sourceObject && target[name] is JsonObject targetObject)
+            {
+                MergeInto(targetObject, sourceObject);
+            }
+            else if (value is JsonArray sourceArray && target[name] is JsonArray targetArray)
+            {
+                MergeInto(
+                    new JsonObject { [name] = targetArray.DeepClone() },
+                    new JsonObject { [name] = sourceArray.DeepClone() });
+            }
+        }
+    }
 
     private static IEnumerable<string> CollectErrors(List<string> payloads)
     {

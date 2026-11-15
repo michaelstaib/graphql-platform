@@ -1,15 +1,15 @@
 # Defer_Should_StartTheNestedLookupBeforeTheOuterLookupAnswers_When_TheKeyIsKnown
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s"}}
-completed i
-completed o
-incremental i subPath [] {"rating":0}
-incremental o subPath [] {"price":0}
-pending i at ["product"]
-pending o at ["product"]
+```json
+{"data":{"product":{"name":"s"}},"pending":[{"id":"0","path":["product"],"label":"o"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"pending":[{"id":"1","path":["product"],"label":"i"}],"incremental":[{"id":"0","data":{"price":0}},{"id":"1","data":{"rating":0}}],"completed":[{"id":"0"},{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

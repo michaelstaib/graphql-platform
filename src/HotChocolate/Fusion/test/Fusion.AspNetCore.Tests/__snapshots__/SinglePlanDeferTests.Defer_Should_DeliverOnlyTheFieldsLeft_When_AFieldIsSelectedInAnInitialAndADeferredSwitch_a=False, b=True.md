@@ -1,9 +1,9 @@
 # Defer_Should_DeliverOnlyTheFieldsLeft_When_AFieldIsSelectedInAnInitialAndADeferredSwitch
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"price":0,"rating":0}}
+```json
+{"data":{"product":{"price":0,"rating":0}},"hasNext":false}
 ```
 
 ## Requests

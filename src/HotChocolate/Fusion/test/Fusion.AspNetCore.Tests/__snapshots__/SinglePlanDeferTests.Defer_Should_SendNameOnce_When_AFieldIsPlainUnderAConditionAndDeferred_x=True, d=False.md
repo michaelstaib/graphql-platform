@@ -1,9 +1,9 @@
 # Defer_Should_SendNameOnce_When_AFieldIsPlainUnderAConditionAndDeferred
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s","price":0}}
+```json
+{"data":{"product":{"name":"s","price":0}},"hasNext":false}
 ```
 
 ## Requests

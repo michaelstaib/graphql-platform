@@ -1,9 +1,21 @@
 # Defer_Should_SendTheFieldOnce_When_ALabelledAndAnUnlabelledSiblingSelectTheSameField
 
-## Merged
+## Payload 1
 
 ```json
-{"product":{"name":"s","price":0}}
+{"data":{"product":{"name":"s"}},"pending":[{"id":"0","path":["product"]},{"id":"1","path":["product"],"label":"labelled"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"1","data":{"price":0}}],"completed":[{"id":"1"}],"hasNext":true}
+```
+
+## Payload 3
+
+```json
+{"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests

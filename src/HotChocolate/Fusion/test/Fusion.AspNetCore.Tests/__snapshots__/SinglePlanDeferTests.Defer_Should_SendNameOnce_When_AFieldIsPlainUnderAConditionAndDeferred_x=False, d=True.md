@@ -1,12 +1,15 @@
 # Defer_Should_SendNameOnce_When_AFieldIsPlainUnderAConditionAndDeferred
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{}}
-completed L
-incremental L subPath [] {"name":"s","price":0}
-pending L at ["product"]
+```json
+{"data":{"product":{}},"pending":[{"id":"0","path":["product"],"label":"L"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","data":{"name":"s","price":0}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests

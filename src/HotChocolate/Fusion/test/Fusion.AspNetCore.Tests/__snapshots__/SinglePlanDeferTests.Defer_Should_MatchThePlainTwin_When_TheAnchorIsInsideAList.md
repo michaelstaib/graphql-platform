@@ -1,14 +1,15 @@
 # Defer_Should_MatchThePlainTwin_When_TheAnchorIsInsideAList
 
-## Delivery
+## Payload 1
 
-```text
-initial {"products":[{"name":"s"},{"name":"s"},{"name":"s"}]}
-completed price
-incremental price subPath [0] {"price":0}
-incremental price subPath [1] {"price":0}
-incremental price subPath [2] {"price":0}
-pending price at ["products"]
+```json
+{"data":{"products":[{"name":"s"},{"name":"s"},{"name":"s"}]},"pending":[{"id":"0","path":["products"],"label":"price"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","subPath":[0],"data":{"price":0}},{"id":"0","subPath":[1],"data":{"price":0}},{"id":"0","subPath":[2],"data":{"price":0}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests

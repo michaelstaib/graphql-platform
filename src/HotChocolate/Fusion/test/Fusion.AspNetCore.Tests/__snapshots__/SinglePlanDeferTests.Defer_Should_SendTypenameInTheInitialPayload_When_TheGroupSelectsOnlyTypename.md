@@ -1,9 +1,9 @@
 # Defer_Should_SendTypenameInTheInitialPayload_When_TheGroupSelectsOnlyTypename
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s","__typename":"s"}}
+```json
+{"data":{"product":{"name":"s","__typename":"s"}}}
 ```
 
 ## Requests

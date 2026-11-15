@@ -1,9 +1,9 @@
 # Defer_Should_MatchThePlainTwin_When_SwitchesAreNested
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s","price":0,"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}
+```json
+{"data":{"product":{"name":"s","price":0,"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}},"hasNext":false}
 ```
 
 ## Requests

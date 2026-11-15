@@ -1,15 +1,21 @@
 # Defer_Should_MatchThePlainTwin_When_DefersAreNestedWithoutASwitch
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s"}}
-completed inner
-completed outer
-incremental inner subPath [] {"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}
-incremental outer subPath [] {"price":0}
-pending inner at ["product"]
-pending outer at ["product"]
+```json
+{"data":{"product":{"name":"s"}},"pending":[{"id":"0","path":["product"],"label":"outer"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"pending":[{"id":"1","path":["product"],"label":"inner"}],"incremental":[{"id":"0","data":{"price":0}}],"completed":[{"id":"0"}],"hasNext":true}
+```
+
+## Payload 3
+
+```json
+{"incremental":[{"id":"1","data":{"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

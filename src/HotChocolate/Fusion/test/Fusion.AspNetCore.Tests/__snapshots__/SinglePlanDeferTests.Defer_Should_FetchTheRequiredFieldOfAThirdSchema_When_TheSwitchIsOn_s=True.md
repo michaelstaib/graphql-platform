@@ -1,12 +1,15 @@
 # Defer_Should_FetchTheRequiredFieldOfAThirdSchema_When_TheSwitchIsOn
 
-## Delivery
+## Payload 1
 
-```text
-initial {"product":{"name":"s"}}
-completed shipping
-incremental shipping subPath [] {"shipping":0}
-pending shipping at ["product"]
+```json
+{"data":{"product":{"name":"s"}},"pending":[{"id":"0","path":["product"],"label":"shipping"}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","data":{"shipping":0}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests
