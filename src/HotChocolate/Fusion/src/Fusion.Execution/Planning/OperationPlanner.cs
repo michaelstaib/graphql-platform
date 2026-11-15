@@ -656,6 +656,8 @@ public sealed partial class OperationPlanner
         }
     }
 
+    // A provider without groups covers every consumer. A provider with groups covers a consumer when one of
+    // its groups is a group of the consumer or an ancestor of one.
     private static bool CoversDeliveryGroups(
         ImmutableArray<int> consumerGroups,
         ImmutableArray<int> providerGroups,
@@ -671,34 +673,18 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        foreach (var providerGroup in providerGroups)
+        foreach (var consumerGroup in consumerGroups)
         {
-            var covered = false;
-
-            foreach (var consumerGroup in consumerGroups)
+            for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
             {
-                for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
+                if (providerGroups.Contains(group.Id))
                 {
-                    if (group.Id == providerGroup)
-                    {
-                        covered = true;
-                        break;
-                    }
+                    return true;
                 }
-
-                if (covered)
-                {
-                    break;
-                }
-            }
-
-            if (!covered)
-            {
-                return false;
             }
         }
 
-        return true;
+        return false;
     }
 
     /// <summary>

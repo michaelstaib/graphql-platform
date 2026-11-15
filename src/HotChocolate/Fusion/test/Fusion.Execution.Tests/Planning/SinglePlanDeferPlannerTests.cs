@@ -578,7 +578,7 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_KeepTheOuterStepsApart_When_NestedFragmentsOfUnlabelledSiblingsTakeTheKeyFromTheOuterStep()
+    public void Plan_Should_MergeTheOuterSteps_When_UnlabelledSiblingsHoldTheSameNestedFragment()
     {
         // arrange
         var schema = ComposeSchema(ProductSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);

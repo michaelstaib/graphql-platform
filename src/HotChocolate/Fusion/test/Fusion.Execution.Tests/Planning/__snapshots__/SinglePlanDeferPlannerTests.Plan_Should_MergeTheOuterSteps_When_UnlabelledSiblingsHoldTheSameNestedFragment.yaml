@@ -42,29 +42,6 @@ nodes:
           }
         }
       }
-  - id: 2
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_2($__fusion_1_id: ID!) {
-        productById(id: $__fusion_1_id) {
-          author {
-            ... {
-              id
-            }
-          }
-        }
-      }
-    source: $.productById
-    target: $.product
-    requirements:
-      - name: __fusion_1_id
-        selectionMap: >-
-          id
-    deliveryGroups:
-      - 2
-    dependencies:
-      - id: 1
   - id: 3
     type: Operation
     schema: c
@@ -83,30 +60,7 @@ nodes:
     deliveryGroups:
       - 3
     dependencies:
-      - id: 2
-  - id: 4
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_4($__fusion_3_id: ID!) {
-        productById(id: $__fusion_3_id) {
-          author {
-            ... {
-              id
-            }
-          }
-        }
-      }
-    source: $.productById
-    target: $.product
-    requirements:
-      - name: __fusion_3_id
-        selectionMap: >-
-          id
-    deliveryGroups:
-      - 0
-    dependencies:
-      - id: 1
+      - id: 6
   - id: 5
     type: Operation
     schema: c
@@ -125,7 +79,33 @@ nodes:
     deliveryGroups:
       - 1
     dependencies:
-      - id: 4
+      - id: 6
+  - id: 2
+    type: OperationBatch
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          author {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.productById
+    targets:
+      - $.product
+    batchingGroupId: 6
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+      - 2
+    dependencies:
+      - id: 1
 deliveryGroups:
   - id: 0
     path: $.product

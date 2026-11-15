@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using HotChocolate.Buffers;
@@ -1480,59 +1481,11 @@ public sealed partial class OperationPlanner
             foreach (var group in PartitionIntoMergeableGroups(
                 equivalentNodes, ctx.DependenciesByStepId, mergePolicy))
             {
-                if (HaveDifferentDeliveryGroups(ctx, group, mergeResults))
-                {
-                    foreach (var subgroup in SplitByDependentCoverage(ctx, group, mergeResults, null))
-                    {
-                        MergeGroup(ctx, subgroup, mergeResults);
-                    }
-
-                    continue;
-                }
-
                 MergeGroup(ctx, group, mergeResults);
             }
         }
 
         return mergeResults;
-    }
-
-    // Splits the batch groups so that every dependent outside a batch belongs to all groups of the batch it
-    // depends on.
-    private static List<List<OperationExecutionNode>> SplitBatchGroupsByDependentCoverage(
-        ExecutionPlanBuildContext ctx,
-        Dictionary<(string schema, int depth, int scope, string deliveryGroups), List<OperationExecutionNode>> groups,
-        Dictionary<int, MergeResult> mergeResults)
-    {
-        var batched = new HashSet<int>(mergeResults.Keys);
-        var decided = new List<(int Depth, List<OperationExecutionNode> Members)>();
-
-        foreach (var (key, members) in groups
-            .OrderByDescending(t => t.Key.depth)
-            .ThenBy(t => t.Value[0].Id))
-        {
-            var subgroups = members.Count > 1 && HaveDifferentDeliveryGroups(ctx, members, mergeResults)
-                ? SplitByDependentCoverage(ctx, members, mergeResults, batched)
-                : [members];
-
-            foreach (var subgroup in subgroups)
-            {
-                if (subgroup.Count > 1)
-                {
-                    batched.UnionWith(subgroup.Select(static node => node.Id));
-                }
-
-                decided.Add((key.depth, subgroup));
-            }
-        }
-
-        return
-        [
-            .. decided
-                .OrderBy(static t => t.Depth)
-                .ThenBy(static t => t.Members[0].Id)
-                .Select(static t => t.Members)
-        ];
     }
 
     // Orders the nodes from the deepest dependency level to the shallowest.
@@ -1552,100 +1505,10 @@ public sealed partial class OperationPlanner
         return ordered.OrderByDescending(node => depthLookup[node.Id]);
     }
 
-    private static bool HaveDifferentDeliveryGroups(
-        ExecutionPlanBuildContext ctx,
-        List<OperationExecutionNode> group,
-        Dictionary<int, MergeResult> mergeResults)
-    {
-        if (ctx.DeliveryGroups.IsDefaultOrEmpty)
-        {
-            return false;
-        }
-
-        var first = GetEffectiveDeliveryGroups(group[0], mergeResults);
-
-        for (var i = 1; i < group.Count; i++)
-        {
-            if (!GetEffectiveDeliveryGroups(group[i], mergeResults).AsSpan().SequenceEqual(first.AsSpan()))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static ImmutableArray<int> GetEffectiveDeliveryGroups(
         OperationExecutionNode node,
         Dictionary<int, MergeResult> mergeResults)
         => mergeResults.TryGetValue(node.Id, out var merge) ? merge.DeliveryGroups : node.DeliveryGroups;
-
-    // Splits the operations into subgroups so that every dependent outside the exempt set belongs to all groups
-    // of the operations it depends on.
-    private static List<List<OperationExecutionNode>> SplitByDependentCoverage(
-        ExecutionPlanBuildContext ctx,
-        List<OperationExecutionNode> group,
-        Dictionary<int, MergeResult> mergeResults,
-        HashSet<int>? exemptDependents)
-    {
-        var subgroups = new List<List<OperationExecutionNode>>();
-
-        foreach (var node in group)
-        {
-            var placed = false;
-
-            foreach (var subgroup in subgroups)
-            {
-                subgroup.Add(node);
-
-                if (DependentsCoverDeliveryGroups(ctx, subgroup, mergeResults, exemptDependents))
-                {
-                    placed = true;
-                    break;
-                }
-
-                subgroup.RemoveAt(subgroup.Count - 1);
-            }
-
-            if (!placed)
-            {
-                subgroups.Add([node]);
-            }
-        }
-
-        return subgroups;
-    }
-
-    private static bool DependentsCoverDeliveryGroups(
-        ExecutionPlanBuildContext ctx,
-        List<OperationExecutionNode> group,
-        Dictionary<int, MergeResult> mergeResults,
-        HashSet<int>? exemptDependents)
-    {
-        var memberIds = group.Select(static node => node.Id).ToList();
-        var union = UnionDeliveryGroups(group, mergeResults);
-
-        foreach (var (dependentId, dependencies) in ctx.DependenciesByStepId)
-        {
-            if (!dependencies.Overlaps(memberIds)
-                || (exemptDependents?.Contains(dependentId) ?? false))
-            {
-                continue;
-            }
-
-            var dependentGroups = ctx.ExecutionNodes.TryGetValue(dependentId, out var dependent)
-                && dependent is OperationExecutionNode operation
-                    ? GetEffectiveDeliveryGroups(operation, mergeResults)
-                    : default;
-
-            if (!CoversDeliveryGroups(dependentGroups, union, ctx.DeliveryGroups))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
 
     /// <summary>
     /// Merges Apollo Federation entity lookups that are structurally identical and share
@@ -1887,6 +1750,11 @@ public sealed partial class OperationPlanner
         var primary = group[0];
         var (canonicalOp, canonicalRequirements) = CanonicalizeOperation(primary);
         var deliveryGroups = UnionDeliveryGroups(group, mergeResults);
+
+        Debug.Assert(
+            deliveryGroups.Length < 2 || AreUnlabelledSiblingsWithEqualConditions(ctx, group, deliveryGroups),
+            "A step of several delivery groups must merge unlabelled sibling groups with equal conditions.");
+
         var targets = new SelectionPath[group.Count];
 
         for (var i = 0; i < group.Count; i++)
@@ -1906,6 +1774,42 @@ public sealed partial class OperationPlanner
         AbsorbMergedNodes(ctx, primary.Id, group);
 
         return primary.Id;
+    }
+
+    // Checks that the groups share one parent and path without a label and that the members hold equal conditions.
+    private static bool AreUnlabelledSiblingsWithEqualConditions(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group,
+        ImmutableArray<int> deliveryGroups)
+    {
+        var site = ctx.DeliveryGroups[deliveryGroups[0]];
+
+        foreach (var id in deliveryGroups)
+        {
+            var sibling = ctx.DeliveryGroups[id];
+
+            if (sibling.Label is not null
+                || sibling.Path is null
+                || sibling.Parent?.Id != site.Parent?.Id
+                || !sibling.Path.Equals(site.Path))
+            {
+                return false;
+            }
+        }
+
+        var conditions = FormatCanonicalConditions(group[0].Conditions);
+        var alternatives = FormatCanonicalConditionAlternatives(group[0].ConditionAlternatives);
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            if (FormatCanonicalConditions(group[i].Conditions) != conditions
+                || FormatCanonicalConditionAlternatives(group[i].ConditionAlternatives) != alternatives)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // Returns the groups of all members, sorted by group id.
@@ -2146,17 +2050,9 @@ public sealed partial class OperationPlanner
         // the already-redirected identifiers from earlier merges. Groups at
         // the same depth are ordered by their lowest member identifier so
         // batch node identifier assignment is deterministic.
-        var orderedGroups = batchGroups
+        foreach (var (_, groupMembers) in batchGroups
             .OrderBy(t => t.Key.depth)
-            .ThenBy(t => t.Value[0].Id)
-            .Select(t => t.Value);
-
-        if (!ctx.DeliveryGroups.IsDefaultOrEmpty)
-        {
-            orderedGroups = SplitBatchGroupsByDependentCoverage(ctx, batchGroups, mergeResults);
-        }
-
-        foreach (var groupMembers in orderedGroups)
+            .ThenBy(t => t.Value[0].Id))
         {
             if (groupMembers.Count <= 1)
             {
