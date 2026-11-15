@@ -459,6 +459,12 @@ public sealed partial class OperationPlanner
                 singlePlanDefer,
                 cancellationToken);
 
+            if (singlePlanDefer
+                && !TryValidateDeliveryGroupNodes(operationPlan, deliveryGroups, partitioning!, out fallbackCause))
+            {
+                return null;
+            }
+
             if (eventSourceEnabled)
             {
                 var elapsed = Stopwatch.GetElapsedTime(startedAt);
@@ -517,46 +523,180 @@ public sealed partial class OperationPlanner
 
         cause = null;
         return true;
+    }
 
-        static bool CoversDeliveryGroups(
-            ImmutableArray<int> consumerGroups,
-            ImmutableArray<int> providerGroups,
-            ImmutableArray<DeliveryGroup> deliveryGroups)
+    /// <summary>
+    /// Verifies on the nodes of <paramref name="plan"/> that no node depends on a node of a delivery group
+    /// it does not belong to, and that every delivery group whose fragment selects a field has a node.
+    /// </summary>
+    internal static bool TryValidateDeliveryGroupNodes(
+        OperationPlan plan,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        DeferPartitioningResult partitioning,
+        out string? cause)
+    {
+        var groupsWithNodes = new HashSet<int>();
+
+        foreach (var node in plan.AllNodes)
         {
-            if (consumerGroups.IsDefaultOrEmpty)
+            if (node is OperationBatchExecutionNode batch)
+            {
+                foreach (var operation in batch.Operations)
+                {
+                    if (!TryValidateDeliveryGroupNode(
+                        operation,
+                        operation.DeliveryGroups,
+                        deliveryGroups,
+                        groupsWithNodes,
+                        out cause))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!TryValidateDeliveryGroupNode(
+                node,
+                GetDeliveryGroups(node),
+                deliveryGroups,
+                groupsWithNodes,
+                out cause))
             {
                 return false;
             }
+        }
 
-            foreach (var providerGroup in providerGroups)
+        foreach (var (fragment, deliveryGroup) in partitioning.ByFragment)
+        {
+            if (!groupsWithNodes.Contains(deliveryGroup.Id) && SelectsFieldOfSourceSchema(fragment, deliveryGroup))
             {
-                var covered = false;
+                cause = $"Delivery group {deliveryGroup.Id} has no step.";
+                return false;
+            }
+        }
 
-                foreach (var consumerGroup in consumerGroups)
+        cause = null;
+        return true;
+    }
+
+    private static bool TryValidateDeliveryGroupNode(
+        IOperationPlanNode node,
+        ImmutableArray<int> nodeGroups,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        HashSet<int> groupsWithNodes,
+        out string? cause)
+    {
+        groupsWithNodes.UnionWith(nodeGroups);
+
+        foreach (var dependency in node.Dependencies)
+        {
+            if (!CoversDeliveryGroups(nodeGroups, GetDeliveryGroups(dependency), deliveryGroups))
+            {
+                cause = $"Node {node.Id} depends on node {dependency.Id} of another delivery group.";
+                return false;
+            }
+        }
+
+        foreach (var dependency in node.OptionalDependencies)
+        {
+            if (!CoversDeliveryGroups(nodeGroups, GetDeliveryGroups(dependency), deliveryGroups))
+            {
+                cause = $"Node {node.Id} depends on node {dependency.Id} of another delivery group.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static ImmutableArray<int> GetDeliveryGroups(IOperationPlanNode node)
+    {
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                return operation.DeliveryGroups;
+
+            case OperationDefinition definition:
+                return definition.DeliveryGroups;
+
+            case OperationBatchExecutionNode batch:
+                var groups = new HashSet<int>();
+
+                foreach (var operation in batch.Operations)
                 {
-                    for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
-                    {
-                        if (group.Id == providerGroup)
-                        {
-                            covered = true;
-                            break;
-                        }
-                    }
+                    groups.UnionWith(operation.DeliveryGroups);
+                }
 
-                    if (covered)
+                return [.. groups.Order()];
+
+            default:
+                return [];
+        }
+    }
+
+    // Introspection fields at the query root are resolved by the gateway and need no step.
+    private static bool SelectsFieldOfSourceSchema(InlineFragmentNode fragment, DeliveryGroup deliveryGroup)
+    {
+        if (deliveryGroup.Path is not { IsRoot: true })
+        {
+            return true;
+        }
+
+        foreach (var selection in fragment.SelectionSet.Selections)
+        {
+            if (selection is not FieldNode field
+                || !field.Name.Value.StartsWith("__", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool CoversDeliveryGroups(
+        ImmutableArray<int> consumerGroups,
+        ImmutableArray<int> providerGroups,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (providerGroups.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        if (consumerGroups.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        foreach (var providerGroup in providerGroups)
+        {
+            var covered = false;
+
+            foreach (var consumerGroup in consumerGroups)
+            {
+                for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
+                {
+                    if (group.Id == providerGroup)
                     {
+                        covered = true;
                         break;
                     }
                 }
 
-                if (!covered)
+                if (covered)
                 {
-                    return false;
+                    break;
                 }
             }
 
-            return true;
+            if (!covered)
+            {
+                return false;
+            }
         }
+
+        return true;
     }
 
     /// <summary>
