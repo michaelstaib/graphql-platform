@@ -71,6 +71,8 @@ public sealed partial class CompositeResultDocument
         ImmutableArray<int> deliveryGroups,
         bool sourceIsContainer)
     {
+        _delivery!.AssertOnLoop();
+
         if (selection.IsInternal)
         {
             return true;
@@ -117,6 +119,8 @@ public sealed partial class CompositeResultDocument
         Path path,
         List<(Cursor Cursor, Path Path)> roots)
     {
+        _delivery!.AssertOnLoop();
+
         var before = roots.Count;
         SearchClaims(anchor, _metaDb.Get(anchor), deliveryGroupId, path, roots);
 
@@ -129,6 +133,8 @@ public sealed partial class CompositeResultDocument
     /// </summary>
     internal void WriteDeliveryRows(JsonWriter writer, Cursor root, int deliveryGroupId)
     {
+        _delivery!.AssertLoopNotRunningElsewhere();
+
         var row = _metaDb.Get(root);
 
         if (row.TokenType is ElementTokenType.Reference)

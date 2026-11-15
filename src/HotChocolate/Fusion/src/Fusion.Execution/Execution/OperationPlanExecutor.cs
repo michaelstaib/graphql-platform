@@ -394,6 +394,8 @@ internal static partial class OperationPlanExecutor
     {
         var executionState = context.ExecutionState;
 
+        state.EnterLoop();
+
         while (executionState.TryDequeuePendingMerge(out var merge))
         {
             ApplySinglePlanMerge(context, executionState, merge);
@@ -421,6 +423,8 @@ internal static partial class OperationPlanExecutor
         {
             executionState.EnqueueNextNodes(context, cancellationToken);
         }
+
+        state.ExitLoop();
     }
 
     private static void ApplySinglePlanMerge(
@@ -428,6 +432,8 @@ internal static partial class OperationPlanExecutor
         ExecutionState executionState,
         PendingMerge merge)
     {
+        context.SinglePlanDelivery!.AssertOnLoop();
+
         var groups = SinglePlanDeliveryState.GetDeliveryGroups(merge.Node);
 
         if (groups.IsDefaultOrEmpty)
@@ -495,10 +501,13 @@ internal static partial class OperationPlanExecutor
                 try
                 {
                     PumpSinglePlan(context, plan, state, cancellationToken);
+                    state.EnterLoop();
                     payload = CreateSinglePlanPayload(context, plan, state, out hasNext);
+                    state.ExitLoop();
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    state.ExitLoop();
                     fault = ErrorHelper.UnexpectedExecutionError(ex);
                     hasNext = true;
                     await executionCts.CancelAsync();

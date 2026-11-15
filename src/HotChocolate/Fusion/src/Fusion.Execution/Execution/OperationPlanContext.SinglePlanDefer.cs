@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
@@ -97,6 +98,9 @@ internal sealed class SinglePlanDeliveryState
         = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentQueue<DeliveryError> _errors = new();
     private volatile bool _queuesErrors;
+#if DEBUG
+    private int _loopThreadId;
+#endif
 
     public SinglePlanDeliveryState(
         OperationPlan plan,
@@ -149,6 +153,56 @@ internal sealed class SinglePlanDeliveryState
     }
 
     public OperationPlan Plan { get; }
+
+    /// <summary>
+    /// Marks the start of a section in which the calling thread applies results and creates payloads.
+    /// </summary>
+    [Conditional("DEBUG")]
+    public void EnterLoop()
+    {
+#if DEBUG
+        _loopThreadId = Environment.CurrentManagedThreadId;
+#endif
+    }
+
+    /// <summary>
+    /// Marks the end of the section that <see cref="EnterLoop"/> started.
+    /// </summary>
+    [Conditional("DEBUG")]
+    public void ExitLoop()
+    {
+#if DEBUG
+        _loopThreadId = 0;
+#endif
+    }
+
+    /// <summary>
+    /// Asserts that the calling thread is inside a section that <see cref="EnterLoop"/> started.
+    /// </summary>
+    [Conditional("DEBUG")]
+    public void AssertOnLoop()
+    {
+#if DEBUG
+        Debug.Assert(
+            _loopThreadId == Environment.CurrentManagedThreadId,
+            "The result document is written outside of the loop of the single plan delivery.");
+#endif
+    }
+
+    /// <summary>
+    /// Asserts that no other thread is inside a section that <see cref="EnterLoop"/> started.
+    /// </summary>
+    [Conditional("DEBUG")]
+    public void AssertLoopNotRunningElsewhere()
+    {
+#if DEBUG
+        var owner = _loopThreadId;
+
+        Debug.Assert(
+            owner == 0 || owner == Environment.CurrentManagedThreadId,
+            "The result document is read while another thread runs the loop of the single plan delivery.");
+#endif
+    }
 
     /// <summary>
     /// Gets or sets a value that indicates whether the errors of failed steps are queued for the executor.
