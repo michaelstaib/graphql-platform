@@ -31,7 +31,7 @@ public record OperationPlanStep : PlanStep
     /// Gets the ids of the delivery groups this step belongs to, or an empty array for a step of the
     /// initial response.
     /// </summary>
-    public ImmutableArray<int> DeliveryGroups { get; init; } = [];
+    internal ImmutableArray<int> DeliveryGroups { get; init; } = [];
 
     public ImmutableHashSet<int> Dependents { get; init; } = [];
 
