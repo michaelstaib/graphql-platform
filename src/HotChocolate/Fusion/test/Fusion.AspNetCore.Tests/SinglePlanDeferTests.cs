@@ -319,6 +319,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             new Dictionary<string, object?> { ["x"] = x });
 
         // assert
+        // the deferred plan fetches the friends again and the mock answers that request with other ids
         MatchRun(run, $"x={x}", compareValues: false);
     }
 
@@ -485,7 +486,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run, $"topStepFirst={topStepFirst}", compareValues: false);
+        MatchRun(run, $"topStepFirst={topStepFirst}");
     }
 
     [Theory]
@@ -515,7 +516,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run, $"topStepFirst={topStepFirst}", compareValues: false);
+        MatchRun(run, $"topStepFirst={topStepFirst}");
     }
 
     [Theory]
