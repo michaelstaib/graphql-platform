@@ -26,7 +26,7 @@ internal static partial class OperationPlanExecutor
         if (!operationPlan.DeliveryGroups.IsDefaultOrEmpty
             && operationPlan.IncrementalPlans.IsDefaultOrEmpty
             && variableIndex < 0
-            && operationPlan.Operation.Definition.Operation is OperationType.Query)
+            && operationPlan.Operation.Definition.Operation is OperationType.Query or OperationType.Mutation)
         {
             return await ExecuteWithSinglePlanDeferAsync(
                 requestContext,
@@ -266,35 +266,42 @@ internal static partial class OperationPlanExecutor
                     executionState.HoldNode(node);
                 }
 
+                var serial = operationPlan.Operation.Definition.Operation is OperationType.Mutation;
+
                 foreach (var root in operationPlan.RootNodes)
                 {
                     if (SinglePlanDeliveryState.GetDeliveryGroups(root).IsDefaultOrEmpty)
                     {
                         executionState.StartNode(context, root, token);
+
+                        if (serial)
+                        {
+                            await RunSinglePlanInitialPhaseAsync(context, operationPlan, state, token);
+
+                            if (token.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                        }
                     }
                 }
 
-                while (!token.IsCancellationRequested && executionState.HasActiveNodes())
-                {
-                    PumpSinglePlan(context, operationPlan, state, token);
-
-                    if (token.IsCancellationRequested || !executionState.HasActiveNodes())
-                    {
-                        break;
-                    }
-
-                    await executionState.Signal;
-                }
+                await RunSinglePlanInitialPhaseAsync(context, operationPlan, state, token);
 
                 await DrainActiveNodesAsync(operationPlan, executionState);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
 
+            var halted = executionCts.IsCancellationRequested;
             var initialResult = context.Complete(retainMemoryForDefer: true);
 
             context.ActivateIncrementalPlans(operationPlan, variables);
-            state.ComputeNeeded();
+
+            if (!halted)
+            {
+                state.ComputeNeeded();
+            }
 
             var pendingResults = ImmutableList.CreateBuilder<PendingResult>();
 
@@ -328,6 +335,7 @@ internal static partial class OperationPlanExecutor
                     initialResult,
                     requestArena,
                     executionCts,
+                    cancellationToken,
                     token),
                 ExecutionResultKind.DeferredResult);
 
@@ -345,6 +353,27 @@ internal static partial class OperationPlanExecutor
             }
 
             throw;
+        }
+    }
+
+    private static async Task RunSinglePlanInitialPhaseAsync(
+        OperationPlanContext context,
+        OperationPlan operationPlan,
+        SinglePlanDeliveryState state,
+        CancellationToken token)
+    {
+        var executionState = context.ExecutionState;
+
+        while (!token.IsCancellationRequested && executionState.HasActiveNodes())
+        {
+            PumpSinglePlan(context, operationPlan, state, token);
+
+            if (token.IsCancellationRequested || !executionState.HasActiveNodes())
+            {
+                break;
+            }
+
+            await executionState.Signal;
         }
     }
 
@@ -370,12 +399,16 @@ internal static partial class OperationPlanExecutor
             ApplySinglePlanMerge(context, executionState, merge);
         }
 
+        context.ApplyDeliveryErrors(state);
+
         while (executionState.TryDequeueCompletedResult(out var result))
         {
             while (executionState.TryDequeuePendingMerge(out var merge))
             {
                 ApplySinglePlanMerge(context, executionState, merge);
             }
+
+            context.ApplyDeliveryErrors(state);
 
             result = executionState.ApplyPendingMergeFailure(result);
             var node = plan.GetNodeById(result.Id);
@@ -422,6 +455,7 @@ internal static partial class OperationPlanExecutor
         OperationResult initialResult,
         MemoryArena requestArena,
         CancellationTokenSource executionCts,
+        CancellationToken requestCancellationToken,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var completed = false;
@@ -436,6 +470,8 @@ internal static partial class OperationPlanExecutor
             await using var registration = cancellationToken.Register(
                 static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
                 executionState.Signal);
+
+            state.QueuesErrors = true;
 
             foreach (var node in state.MarkedNodes)
             {
@@ -484,6 +520,12 @@ internal static partial class OperationPlanExecutor
                 await executionState.Signal;
             }
 
+            if (hasNext && !requestCancellationToken.IsCancellationRequested)
+            {
+                await DrainActiveNodesAsync(plan, executionState);
+                yield return CreateSinglePlanHaltedPayload(context, plan, state);
+            }
+
             await DrainActiveNodesAsync(plan, executionState);
             requestArena.Seal();
             completed = true;
@@ -497,6 +539,34 @@ internal static partial class OperationPlanExecutor
                 await DrainActiveNodesAsync(plan, context.ExecutionState);
             }
         }
+    }
+
+    private static OperationResult CreateSinglePlanHaltedPayload(
+        OperationPlanContext context,
+        OperationPlan plan,
+        SinglePlanDeliveryState state)
+    {
+        var completed = ImmutableList.CreateBuilder<CompletedResult>();
+        var errors = context.GetErrorsAfter(state.PublishedErrorCount);
+
+        foreach (var group in plan.DeliveryGroups)
+        {
+            if (state.Announced[group.Id] && !state.Completed[group.Id])
+            {
+                state.Completed[group.Id] = true;
+                completed.Add(new CompletedResult(group.Id, errors.Count > 0 ? errors : null));
+                errors = [];
+            }
+        }
+
+        state.PublishedErrorCount = context.ErrorCount;
+
+        var payload = OperationResult.FromError(ErrorBuilder.New().SetMessage("placeholder").Build());
+        payload.Completed = completed.ToImmutable();
+        payload.Data = null;
+        payload.Errors = [];
+        payload.HasNext = false;
+        return payload;
     }
 
     private static OperationResult CreateSinglePlanFinalPayload()
@@ -579,7 +649,8 @@ internal static partial class OperationPlanExecutor
                         errors = [];
                     }
 
-                    completed.Add(new CompletedResult(id));
+                    completed.Add(new CompletedResult(id, errors.Count > 0 ? errors : null));
+                    errors = [];
                 }
 
                 foreach (var child in plan.DeliveryGroups)
@@ -1552,8 +1623,29 @@ internal static partial class OperationPlanExecutor
 
         if (segmentIndex == selectionPath.Length)
         {
-            if (claimRows && !document.ClaimDeliveryRows(element.Cursor, deliveryGroupId))
+            if (claimRows)
             {
+                var roots = new List<(CompositeResultDocument.Cursor Cursor, Path Path)>();
+
+                if (!document.ClaimDeliveryRows(element.Cursor, deliveryGroupId, subPath, roots))
+                {
+                    return;
+                }
+
+                foreach (var (cursor, path) in roots)
+                {
+                    results.Add(
+                        new IncrementalObjectResult(
+                            deliveryGroupId,
+                            errors,
+                            path.IsRoot ? null : path,
+                            new OperationResultData(
+                                document,
+                                isValueNull: false,
+                                new DeliveryPayloadDataFormatter(document, cursor, deliveryGroupId),
+                                memoryHolder: null)));
+                }
+
                 return;
             }
 
@@ -1562,9 +1654,7 @@ internal static partial class OperationPlanExecutor
                     deliveryGroupId,
                     errors,
                     subPath.IsRoot ? null : subPath,
-                    claimRows
-                        ? CreateDeliveryData(document, element, deliveryGroupId)
-                        : CreateIncrementalData(document, element)));
+                    CreateIncrementalData(document, element)));
             return;
         }
 
@@ -1630,16 +1720,6 @@ internal static partial class OperationPlanExecutor
             document,
             isValueNull: element.IsNullMarker,
             new DeferredPayloadDataFormatter(element),
-            memoryHolder: null);
-
-    private static OperationResultData CreateDeliveryData(
-        CompositeResultDocument document,
-        CompositeResultElement element,
-        int deliveryGroupId)
-        => new(
-            document,
-            isValueNull: element.IsNullMarker,
-            new DeliveryPayloadDataFormatter(document, element.Cursor, deliveryGroupId),
             memoryHolder: null);
 
     public static async Task<IExecutionResult> SubscribeAsync(

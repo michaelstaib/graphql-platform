@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Text.Json;
@@ -61,6 +63,20 @@ public sealed partial class OperationPlanContext
         return builder.ToImmutable();
     }
 
+    /// <summary>
+    /// Writes the errors that failed steps reported, each under the write filter of its step.
+    /// </summary>
+    internal void ApplyDeliveryErrors(SinglePlanDeliveryState state)
+    {
+        while (state.TryDequeueError(out var error))
+        {
+            if (!_resultStore.AddDeliveryErrors(error, state.GetDeliveryGroups(error.ResultSelectionSet)))
+            {
+                ExecutionState.CancelProcessing();
+            }
+        }
+    }
+
     internal CompositeResultDocument ResultDocument => _resultStore.Result;
 
     internal int ErrorCount => _resultStore.Errors?.Count ?? 0;
@@ -77,6 +93,9 @@ internal sealed class SinglePlanDeliveryState
     private readonly object _sync = new();
     private readonly List<ExecutionNode> _markedNodes = [];
     private readonly Dictionary<SelectionPath, SelectionSet[]> _targetSets = [];
+    private readonly Dictionary<ResultSelectionSet, ImmutableArray<int>> _groupsByResultSelectionSet
+        = new(ReferenceEqualityComparer.Instance);
+    private readonly ConcurrentQueue<DeliveryError> _errors = new();
 
     public SinglePlanDeliveryState(
         OperationPlan plan,
@@ -119,6 +138,7 @@ internal sealed class SinglePlanDeliveryState
             }
 
             _markedNodes.Add(node);
+            AddResultSelectionSets(node);
 
             foreach (var group in groups)
             {
@@ -128,6 +148,12 @@ internal sealed class SinglePlanDeliveryState
     }
 
     public OperationPlan Plan { get; }
+
+    /// <summary>
+    /// Gets or sets a value that indicates whether the errors of failed steps are queued for the executor
+    /// instead of being written by the thread of the step.
+    /// </summary>
+    public volatile bool QueuesErrors;
 
     public ConditionFlags IncludeFlags { get; }
 
@@ -155,6 +181,57 @@ internal sealed class SinglePlanDeliveryState
     /// Gets the number of errors that payloads already carry.
     /// </summary>
     public int PublishedErrorCount { get; set; }
+
+    /// <summary>
+    /// Queues the errors of a failed step.
+    /// </summary>
+    public void EnqueueError(IError error, ResultSelectionSet resultSelectionSet, ReadOnlySpan<Path> paths)
+        => _errors.Enqueue(new DeliveryError(error, resultSelectionSet, paths.ToArray(), compactPaths: null));
+
+    /// <summary>
+    /// Queues the errors of a failed step.
+    /// </summary>
+    public void EnqueueError(IError error, ResultSelectionSet resultSelectionSet, ReadOnlySpan<CompactPath> paths)
+    {
+        var detached = new CompactPath[paths.Length];
+
+        for (var i = 0; i < detached.Length; i++)
+        {
+            detached[i] = paths[i].Detach();
+        }
+
+        _errors.Enqueue(new DeliveryError(error, resultSelectionSet, paths: null, detached));
+    }
+
+    public bool TryDequeueError([NotNullWhen(true)] out DeliveryError? error)
+        => _errors.TryDequeue(out error);
+
+    /// <summary>
+    /// Gets the delivery groups of the step that owns <paramref name="resultSelectionSet"/>, or an empty
+    /// array when the step belongs to the initial payload.
+    /// </summary>
+    public ImmutableArray<int> GetDeliveryGroups(ResultSelectionSet resultSelectionSet)
+        => _groupsByResultSelectionSet.TryGetValue(resultSelectionSet, out var groups) ? groups : default;
+
+    private void AddResultSelectionSets(ExecutionNode node)
+    {
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                _groupsByResultSelectionSet[operation.ResultSelectionSet] = operation.DeliveryGroups;
+                break;
+
+            case OperationBatchExecutionNode batch:
+                var groups = GetDeliveryGroups(batch);
+
+                foreach (var definition in batch.Operations)
+                {
+                    _groupsByResultSelectionSet[definition.ResultSelectionSet] = groups;
+                }
+
+                break;
+        }
+    }
 
     /// <summary>
     /// Gets the ids of the delivery groups a step carries, or an empty array when the step belongs to
@@ -248,6 +325,109 @@ internal sealed class SinglePlanDeliveryState
             }
 
             return resolution;
+        }
+    }
+
+    /// <summary>
+    /// Determines whether a step of the plan reads <paramref name="selection"/> as a key or a requirement.
+    /// </summary>
+    public bool IsKeyOrRequirement(Selection selection)
+        => Plan.KeyAndRequirementSelectionIds.Contains(selection.Id);
+
+    /// <summary>
+    /// Collects the ids of the selections that a step of the plan can read as a key or a requirement.
+    /// The result can contain selections that no step reads.
+    /// </summary>
+    internal static HashSet<int> CollectKeyAndRequirementSelectionIds(
+        Operation operation,
+        ImmutableArray<ExecutionNode> nodes)
+    {
+        var ids = new HashSet<int>();
+
+        foreach (var node in nodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode single:
+                    CollectKeyAndRequirementSelectionIds(operation, single.Requirements, ids);
+                    break;
+
+                case OperationBatchExecutionNode batch:
+                    foreach (var definition in batch.Operations)
+                    {
+                        CollectKeyAndRequirementSelectionIds(operation, definition.Requirements, ids);
+                    }
+
+                    break;
+            }
+        }
+
+        return ids;
+    }
+
+    private static void CollectKeyAndRequirementSelectionIds(
+        Operation operation,
+        ReadOnlySpan<OperationRequirement> requirements,
+        HashSet<int> ids)
+    {
+        foreach (var requirement in requirements)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var map = requirement.Map.ToString() ?? string.Empty;
+            var start = -1;
+
+            for (var i = 0; i <= map.Length; i++)
+            {
+                var isNameChar = i < map.Length && (char.IsLetterOrDigit(map[i]) || map[i] == '_');
+
+                if (isNameChar && start < 0)
+                {
+                    start = i;
+                }
+                else if (!isNameChar && start >= 0)
+                {
+                    names.Add(map[start..i]);
+                    start = -1;
+                }
+            }
+
+            foreach (var selectionSet in GetTargetSelectionSets(operation, requirement.Path))
+            {
+                CollectKeyAndRequirementSelectionIds(operation, selectionSet, names, ids, depth: 0);
+            }
+        }
+    }
+
+    private static void CollectKeyAndRequirementSelectionIds(
+        Operation operation,
+        SelectionSet selectionSet,
+        HashSet<string> names,
+        HashSet<int> ids,
+        int depth)
+    {
+        foreach (var name in names)
+        {
+            if (!selectionSet.TryGetSelection(name, out var selection))
+            {
+                continue;
+            }
+
+            ids.Add(selection.Id);
+
+            if (selection.IsLeaf || depth > 8)
+            {
+                continue;
+            }
+
+            foreach (var type in operation.GetPossibleTypes(selection))
+            {
+                CollectKeyAndRequirementSelectionIds(
+                    operation,
+                    operation.GetSelectionSet(selection, type),
+                    names,
+                    ids,
+                    depth + 1);
+            }
         }
     }
 
@@ -404,11 +584,43 @@ internal sealed class SinglePlanDeliveryState
                     honored.Add(group.Id);
                 }
             }
+
+            if (!field.IsLeaf)
+            {
+                CollectHonoredBelow(field, groups, honored, depth: 0);
+            }
         }
 
         foreach (var fragment in resultSelectionSet.Fragments)
         {
             CollectHonored(selectionSet, fragment.Body, groups, honored);
+        }
+    }
+
+    private void CollectHonoredBelow(Selection field, ImmutableArray<int> groups, List<int> honored, int depth)
+    {
+        if (depth > 32)
+        {
+            return;
+        }
+
+        foreach (var type in Plan.Operation.GetPossibleTypes(field))
+        {
+            foreach (var child in Plan.Operation.GetSelectionSet(field, type).Selections)
+            {
+                foreach (var group in Resolve(child).Groups)
+                {
+                    if (groups.Contains(group.Id) && ActiveGroups.IsSet(group.Id) && !honored.Contains(group.Id))
+                    {
+                        honored.Add(group.Id);
+                    }
+                }
+
+                if (!child.IsLeaf)
+                {
+                    CollectHonoredBelow(child, groups, honored, depth + 1);
+                }
+            }
         }
     }
 
@@ -419,7 +631,13 @@ internal sealed class SinglePlanDeliveryState
             return cached;
         }
 
-        var operation = Plan.Operation;
+        var result = GetTargetSelectionSets(Plan.Operation, path);
+        _targetSets[path] = result;
+        return result;
+    }
+
+    private static SelectionSet[] GetTargetSelectionSets(Operation operation, SelectionPath path)
+    {
         var current = new List<SelectionSet> { operation.RootSelectionSet };
         var selections = new List<Selection>();
 
@@ -454,7 +672,7 @@ internal sealed class SinglePlanDeliveryState
 
             if (selections.Count > 0)
             {
-                ExpandPossibleTypes(selections, current);
+                ExpandPossibleTypes(operation, selections, current);
             }
 
             selections.Clear();
@@ -472,23 +690,21 @@ internal sealed class SinglePlanDeliveryState
 
         if (selections.Count > 0)
         {
-            ExpandPossibleTypes(selections, current);
+            ExpandPossibleTypes(operation, selections, current);
         }
 
-        var result = current.ToArray();
-        _targetSets[path] = result;
-        return result;
+        return current.ToArray();
     }
 
-    private void ExpandPossibleTypes(List<Selection> selections, List<SelectionSet> output)
+    private static void ExpandPossibleTypes(Operation operation, List<Selection> selections, List<SelectionSet> output)
     {
         output.Clear();
 
         foreach (var selection in selections)
         {
-            foreach (var type in Plan.Operation.GetPossibleTypes(selection))
+            foreach (var type in operation.GetPossibleTypes(selection))
             {
-                output.Add(Plan.Operation.GetSelectionSet(selection, type));
+                output.Add(operation.GetSelectionSet(selection, type));
             }
         }
     }
@@ -524,6 +740,24 @@ internal sealed class SinglePlanDeliveryState
 
         return true;
     }
+}
+
+/// <summary>
+/// The error of a failed step with the result paths it applies to.
+/// </summary>
+internal sealed class DeliveryError(
+    IError error,
+    ResultSelectionSet resultSelectionSet,
+    Path[]? paths,
+    CompactPath[]? compactPaths)
+{
+    public IError Error { get; } = error;
+
+    public ResultSelectionSet ResultSelectionSet { get; } = resultSelectionSet;
+
+    public Path[]? Paths { get; } = paths;
+
+    public CompactPath[]? CompactPaths { get; } = compactPaths;
 }
 
 /// <summary>

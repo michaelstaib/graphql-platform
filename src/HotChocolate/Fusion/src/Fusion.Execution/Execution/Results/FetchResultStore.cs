@@ -544,6 +544,12 @@ internal sealed partial class FetchResultStore : IDisposable
         ResultSelectionSet resultSelectionSet,
         params ReadOnlySpan<Path> paths)
     {
+        if (_result.Delivery is { QueuesErrors: true } delivery)
+        {
+            delivery.EnqueueError(error, resultSelectionSet, paths);
+            return true;
+        }
+
         lock (_lock)
         {
             ref var path = ref MemoryMarshal.GetReference(paths);
@@ -588,6 +594,12 @@ AddErrors_Next:
         ResultSelectionSet resultSelectionSet,
         ReadOnlySpan<CompactPath> paths)
     {
+        if (_result.Delivery is { QueuesErrors: true } delivery)
+        {
+            delivery.EnqueueError(error, resultSelectionSet, paths);
+            return true;
+        }
+
         lock (_lock)
         {
             ref var path = ref MemoryMarshal.GetReference(paths);
@@ -621,6 +633,73 @@ AddErrors_Next:
 
 AddErrors_Next:
                 path = ref Unsafe.Add(ref path, 1);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes a queued error of a failed step. A step that carries delivery groups writes only the rows
+    /// its groups may write.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the execution can continue.
+    /// <c>false</c>, if the execution needs to be halted.
+    /// </returns>
+    internal bool AddDeliveryErrors(DeliveryError queued, ImmutableArray<int> deliveryGroups)
+    {
+        lock (_lock)
+        {
+            var resultData = _result.Data;
+            var count = queued.Paths?.Length ?? queued.CompactPaths!.Length;
+
+            for (var i = 0; i < count; i++)
+            {
+                if (resultData.IsInvalidated)
+                {
+                    return false;
+                }
+
+                CompositeResultElement element;
+                CompactPath compactPath;
+
+                if (queued.CompactPaths is { } compactPaths)
+                {
+                    compactPath = compactPaths[i];
+                    element = compactPath.IsRoot ? resultData : GetStartObjectResultUnsafe(compactPath);
+                }
+                else
+                {
+                    var path = queued.Paths![i];
+                    element = path.IsRoot ? resultData : GetStartObjectResultUnsafe(path);
+                    compactPath = element.IsNullOrInvalidated ? default : element.CompactPath;
+                }
+
+                if (element.IsNullOrInvalidated)
+                {
+                    continue;
+                }
+
+                var canExecutionContinue = deliveryGroups.IsDefaultOrEmpty
+                    ? _valueCompletion.BuildErrorResult(
+                        element,
+                        queued.ResultSelectionSet,
+                        queued.Error,
+                        compactPath)
+                    : _valueCompletion.BuildErrorResult(
+                        element,
+                        queued.ResultSelectionSet,
+                        queued.Error,
+                        compactPath,
+                        _result,
+                        deliveryGroups);
+
+                if (!canExecutionContinue)
+                {
+                    resultData.Invalidate();
+                    return false;
+                }
             }
         }
 

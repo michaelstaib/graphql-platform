@@ -10,6 +10,11 @@ public sealed partial class CompositeResultDocument
     private SinglePlanDeliveryState? _delivery;
 
     /// <summary>
+    /// Gets the delivery state of the request, or <c>null</c> when the request has no delivery groups.
+    /// </summary>
+    internal SinglePlanDeliveryState? Delivery => _delivery;
+
+    /// <summary>
     /// Makes the document decide per request where each field is delivered. Objects that already exist
     /// are re-stamped, so this has to be called before any data is added.
     /// </summary>
@@ -58,76 +63,84 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
-    /// Determines whether the merge of a marked step may write <paramref name="field"/>.
+    /// Determines whether the merge of a marked step may write <paramref name="field"/> or go below it.
     /// </summary>
     internal bool AllowsMarkedWrite(
         CompositeResultElement field,
         Selection selection,
         ImmutableArray<int> deliveryGroups,
-        bool isTargetField)
+        bool sourceIsContainer)
     {
         if (selection.IsInternal)
         {
             return true;
         }
 
+        var propertyCursor = field.Cursor.AddRows(-1);
+        var marks = _metaDb.Get(propertyCursor).DeliveryMarks;
+        var token = _metaDb.Get(field.Cursor).TokenType;
+
+        if (token is not ElementTokenType.None || (marks & PropertyMarks.Written) != 0)
+        {
+            return sourceIsContainer
+                && !selection.IsLeaf
+                && token is ElementTokenType.Reference or ElementTokenType.StartObject or ElementTokenType.StartArray;
+        }
+
         var resolution = _delivery!.Resolve(selection);
 
-        if (resolution.Kind is not DeliveryKind.Groups)
-        {
-            return !isTargetField;
-        }
-
-        if (!SinglePlanDeliveryState.Intersects(resolution, deliveryGroups))
-        {
-            return false;
-        }
-
-        if (!isTargetField)
+        if (resolution.Kind is DeliveryKind.Absent)
         {
             return true;
         }
 
-        var valueCursor = field.Cursor;
-        var marks = _metaDb.Get(valueCursor.AddRows(-1)).DeliveryMarks;
+        if (resolution.Kind is not DeliveryKind.Groups
+            || !(SinglePlanDeliveryState.Intersects(resolution, deliveryGroups)
+                || _delivery.IsKeyOrRequirement(selection)))
+        {
+            return false;
+        }
 
-        return (marks & PropertyMarks.Delivered) == 0
-            && _metaDb.Get(valueCursor).TokenType is ElementTokenType.None;
+        _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Written);
+        return true;
     }
 
     /// <summary>
-    /// Claims the rows below <paramref name="anchor"/> that resolve to <paramref name="deliveryGroupId"/>
-    /// and are not delivered yet.
+    /// Claims the rows at and below <paramref name="anchor"/> that resolve to
+    /// <paramref name="deliveryGroupId"/>, were written by a step and are not delivered yet, and lists the
+    /// objects that hold a claimed row with their path below the anchor.
     /// </summary>
     /// <returns><c>true</c> when at least one row was claimed.</returns>
-    internal bool ClaimDeliveryRows(Cursor anchor, int deliveryGroupId)
+    internal bool ClaimDeliveryRows(
+        Cursor anchor,
+        int deliveryGroupId,
+        Path path,
+        List<(Cursor Cursor, Path Path)> roots)
     {
-        var row = _metaDb.Get(anchor);
-        return DeliveryValue(anchor, row, deliveryGroupId, written: false, claim: true, writer: null);
+        var before = roots.Count;
+        SearchClaims(anchor, _metaDb.Get(anchor), deliveryGroupId, path, roots);
+
+        return roots.Count > before;
     }
 
     /// <summary>
-    /// Writes the rows below <paramref name="anchor"/> that <see cref="ClaimDeliveryRows"/> claimed for
-    /// <paramref name="deliveryGroupId"/>.
+    /// Writes the rows that <see cref="ClaimDeliveryRows"/> claimed for <paramref name="deliveryGroupId"/>
+    /// in the object at <paramref name="root"/>.
     /// </summary>
-    internal void WriteDeliveryRows(JsonWriter writer, Cursor anchor, int deliveryGroupId)
+    internal void WriteDeliveryRows(JsonWriter writer, Cursor root, int deliveryGroupId)
     {
-        var row = _metaDb.Get(anchor);
+        var row = _metaDb.Get(root);
 
-        if (!DeliveryValue(anchor, row, deliveryGroupId, written: false, claim: false, writer))
+        if (row.TokenType is ElementTokenType.Reference)
         {
-            writer.WriteStartObject();
-            writer.WriteEndObject();
+            root = new Cursor(row.Location);
+            row = _metaDb.Get(root);
         }
+
+        WriteClaimedObject(writer, root, row, deliveryGroupId, below: false);
     }
 
-    private bool DeliveryValue(
-        Cursor cursor,
-        DbRow row,
-        int groupId,
-        bool written,
-        bool claim,
-        JsonWriter? writer)
+    private bool IsContainer(ref Cursor cursor, ref DbRow row)
     {
         if (row.TokenType is ElementTokenType.Reference)
         {
@@ -135,54 +148,163 @@ public sealed partial class CompositeResultDocument
             row = _metaDb.Get(cursor);
         }
 
-        var isSourceResult = (ElementFlags.SourceResult & row.Flags) == ElementFlags.SourceResult;
+        return row.TokenType is ElementTokenType.StartObject or ElementTokenType.StartArray
+            && (ElementFlags.SourceResult & row.Flags) != ElementFlags.SourceResult
+            && (row.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated;
+    }
 
-        switch (row.TokenType)
+    private void SearchClaims(
+        Cursor cursor,
+        DbRow row,
+        int groupId,
+        Path path,
+        List<(Cursor Cursor, Path Path)> roots)
+    {
+        if (!IsContainer(ref cursor, ref row))
         {
-            case ElementTokenType.StartObject when !isSourceResult:
-                if ((row.Flags & ElementFlags.Invalidated) == ElementFlags.Invalidated)
-                {
-                    break;
-                }
-
-                return DeliveryObject(cursor, row, groupId, written, claim, writer);
-
-            case ElementTokenType.StartArray when !isSourceResult:
-                return DeliveryArray(cursor, row, groupId, written, claim, writer);
+            return;
         }
 
-        if (!written)
+        if (row.TokenType is ElementTokenType.StartArray)
+        {
+            var length = row.SizeOrLength;
+
+            for (var i = 0; i < length; i++)
+            {
+                var elementCursor = cursor.AddRows(i + 1);
+                SearchClaims(elementCursor, _metaDb.Get(elementCursor), groupId, path.Append(i), roots);
+            }
+
+            return;
+        }
+
+        var index = roots.Count;
+        var any = false;
+        var count = row.SizeOrLength;
+
+        for (var i = 0; i < count; i++)
+        {
+            var propertyCursor = cursor.AddRows((i * 2) + 1);
+            var property = _metaDb.Get(propertyCursor);
+            var flags = property.Flags;
+
+            if ((flags & ElementFlags.IsInternal) == ElementFlags.IsInternal)
+            {
+                continue;
+            }
+
+            var marks = property.DeliveryMarks;
+            var valueCursor = propertyCursor.AddRows(1);
+            var valueRow = _metaDb.Get(valueCursor);
+            var selection = _operation.GetSelectionById(property.OperationReferenceId);
+
+            if ((marks & PropertyMarks.Held) != 0)
+            {
+                if ((marks & PropertyMarks.Delivered) != 0)
+                {
+                    // Another payload sent the row. The rows below it can still be this group's.
+                    SearchClaims(valueCursor, valueRow, groupId, path.Append(selection.ResponseName), roots);
+                }
+                else if (TryClaim(propertyCursor, selection, groupId))
+                {
+                    any = true;
+                    ClaimBelow(valueCursor, valueRow, groupId);
+                }
+
+                continue;
+            }
+
+            if ((flags & ElementFlags.IsExcluded) != ElementFlags.IsExcluded)
+            {
+                SearchClaims(valueCursor, valueRow, groupId, path.Append(selection.ResponseName), roots);
+            }
+        }
+
+        if (any)
+        {
+            roots.Insert(index, (cursor, path));
+        }
+    }
+
+    private bool TryClaim(Cursor propertyCursor, Selection selection, int groupId)
+    {
+        if ((_metaDb.Get(propertyCursor).DeliveryMarks & PropertyMarks.Written) == 0
+            || !SinglePlanDeliveryState.Contains(_delivery!.Resolve(selection), groupId))
         {
             return false;
         }
 
-        if (writer is not null)
-        {
-            if ((row.Flags & ElementFlags.Invalidated) == ElementFlags.Invalidated)
-            {
-                writer.WriteNullValue();
-            }
-            else
-            {
-                new RawJsonFormatter(this, writer).WriteValue(cursor, row);
-            }
-        }
-
+        _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, groupId));
         return true;
     }
 
-    private bool DeliveryObject(
-        Cursor start,
-        DbRow startRow,
-        int groupId,
-        bool written,
-        bool claim,
-        JsonWriter? writer)
+    private void ClaimBelow(Cursor cursor, DbRow row, int groupId)
     {
-        var any = false;
+        if (!IsContainer(ref cursor, ref row))
+        {
+            return;
+        }
+
+        if (row.TokenType is ElementTokenType.StartArray)
+        {
+            var length = row.SizeOrLength;
+
+            for (var i = 0; i < length; i++)
+            {
+                var elementCursor = cursor.AddRows(i + 1);
+                ClaimBelow(elementCursor, _metaDb.Get(elementCursor), groupId);
+            }
+
+            return;
+        }
+
+        var count = row.SizeOrLength;
+
+        for (var i = 0; i < count; i++)
+        {
+            var propertyCursor = cursor.AddRows((i * 2) + 1);
+            var property = _metaDb.Get(propertyCursor);
+
+            if ((property.Flags & ElementFlags.IsInternal) == ElementFlags.IsInternal)
+            {
+                continue;
+            }
+
+            var marks = property.DeliveryMarks;
+            var valueCursor = propertyCursor.AddRows(1);
+            var valueRow = _metaDb.Get(valueCursor);
+
+            if ((marks & PropertyMarks.Held) != 0)
+            {
+                if ((marks & PropertyMarks.Delivered) == 0
+                    && TryClaim(
+                        propertyCursor,
+                        _operation.GetSelectionById(property.OperationReferenceId),
+                        groupId))
+                {
+                    ClaimBelow(valueCursor, valueRow, groupId);
+                }
+
+                continue;
+            }
+
+            if ((property.Flags & ElementFlags.IsExcluded) != ElementFlags.IsExcluded)
+            {
+                ClaimBelow(valueCursor, valueRow, groupId);
+            }
+        }
+    }
+
+    private static bool IsClaimedBy(int marks, int groupId)
+        => (marks & (PropertyMarks.Held | PropertyMarks.Delivered)) == (PropertyMarks.Held | PropertyMarks.Delivered)
+            && PropertyMarks.GetClaimant(marks) == groupId;
+
+    // Writes the claimed rows of one object. Below a claimed row every row that is not held is written too.
+    private void WriteClaimedObject(JsonWriter writer, Cursor start, DbRow startRow, int groupId, bool below)
+    {
         var count = startRow.SizeOrLength;
 
-        writer?.WriteStartObject();
+        writer.WriteStartObject();
 
         for (var i = 0; i < count; i++)
         {
@@ -196,113 +318,61 @@ public sealed partial class CompositeResultDocument
             }
 
             var marks = property.DeliveryMarks;
-            var selection = _operation.GetSelectionById(property.OperationReferenceId);
-            var qualifies = IsClaimedBy(marks, selection, groupId, claim);
+            var held = (marks & PropertyMarks.Held) != 0;
+            var excluded = (flags & ElementFlags.IsExcluded) == ElementFlags.IsExcluded;
 
-            if (!qualifies && (flags & ElementFlags.IsExcluded) == ElementFlags.IsExcluded)
+            if (held ? !IsClaimedBy(marks, groupId) : !below || excluded)
             {
                 continue;
             }
 
             var valueCursor = propertyCursor.AddRows(1);
-            var valueRow = _metaDb.Get(valueCursor);
 
-            if (qualifies || written)
-            {
-                if (qualifies && claim)
+            writer.WritePropertyName(_operation.GetSelectionById(property.OperationReferenceId).Utf8ResponseName);
+            WriteBelow(writer, valueCursor, _metaDb.Get(valueCursor), groupId);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private void WriteBelow(JsonWriter writer, Cursor cursor, DbRow row, int groupId)
+    {
+        if (row.TokenType is ElementTokenType.Reference)
+        {
+            cursor = new Cursor(row.Location);
+            row = _metaDb.Get(cursor);
+        }
+
+        if ((row.Flags & ElementFlags.Invalidated) == ElementFlags.Invalidated)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+
+        var isSourceResult = (ElementFlags.SourceResult & row.Flags) == ElementFlags.SourceResult;
+
+        switch (row.TokenType)
+        {
+            case ElementTokenType.StartObject when !isSourceResult:
+                WriteClaimedObject(writer, cursor, row, groupId, below: true);
+                return;
+
+            case ElementTokenType.StartArray when !isSourceResult:
+                var length = row.SizeOrLength;
+                writer.WriteStartArray();
+
+                for (var i = 0; i < length; i++)
                 {
-                    _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, groupId));
+                    var elementCursor = cursor.AddRows(i + 1);
+                    WriteBelow(writer, elementCursor, _metaDb.Get(elementCursor), groupId);
                 }
 
-                any = true;
+                writer.WriteEndArray();
+                return;
 
-                writer?.WritePropertyName(selection.Utf8ResponseName);
-
-                DeliveryValue(valueCursor, valueRow, groupId, written: true, claim, writer);
-                continue;
-            }
-
-            if (writer is null)
-            {
-                any |= DeliveryValue(valueCursor, valueRow, groupId, written: false, claim, writer: null);
-                continue;
-            }
-
-            if (!DeliveryValue(valueCursor, valueRow, groupId, written: false, claim: false, writer: null))
-            {
-                continue;
-            }
-
-            any = true;
-            writer.WritePropertyName(selection.Utf8ResponseName);
-            DeliveryValue(valueCursor, valueRow, groupId, written: false, claim: false, writer);
+            default:
+                new RawJsonFormatter(this, writer).WriteValue(cursor, row);
+                return;
         }
-
-        writer?.WriteEndObject();
-        return any;
-    }
-
-    private bool DeliveryArray(
-        Cursor start,
-        DbRow startRow,
-        int groupId,
-        bool written,
-        bool claim,
-        JsonWriter? writer)
-    {
-        var any = false;
-        var length = startRow.SizeOrLength;
-
-        writer?.WriteStartArray();
-
-        for (var i = 0; i < length; i++)
-        {
-            var elementCursor = start.AddRows(i + 1);
-            var elementRow = _metaDb.Get(elementCursor);
-
-            if (writer is null)
-            {
-                any |= DeliveryValue(elementCursor, elementRow, groupId, written, claim, writer: null);
-                continue;
-            }
-
-            var resolvedRow = elementRow;
-
-            if (resolvedRow.TokenType is ElementTokenType.Reference)
-            {
-                resolvedRow = _metaDb.Get(new Cursor(resolvedRow.Location));
-            }
-
-            var isContainer = resolvedRow.TokenType is ElementTokenType.StartObject or ElementTokenType.StartArray
-                && (ElementFlags.SourceResult & resolvedRow.Flags) != ElementFlags.SourceResult;
-
-            if (!written && !isContainer)
-            {
-                writer.WriteNullValue();
-                continue;
-            }
-
-            any |= DeliveryValue(elementCursor, elementRow, groupId, written, claim: false, writer);
-        }
-
-        writer?.WriteEndArray();
-        return any;
-    }
-
-    private bool IsClaimedBy(int marks, Selection selection, int groupId, bool claim)
-    {
-        if ((marks & PropertyMarks.Held) == 0)
-        {
-            return false;
-        }
-
-        if (claim)
-        {
-            return (marks & PropertyMarks.Delivered) == 0
-                && SinglePlanDeliveryState.Contains(_delivery!.Resolve(selection), groupId);
-        }
-
-        return (marks & PropertyMarks.Delivered) != 0
-            && PropertyMarks.GetClaimant(marks) == groupId;
     }
 }

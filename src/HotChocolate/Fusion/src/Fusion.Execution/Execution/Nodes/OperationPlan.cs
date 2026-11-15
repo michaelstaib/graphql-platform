@@ -16,6 +16,7 @@ namespace HotChocolate.Fusion.Execution.Nodes;
 public sealed partial record OperationPlan : IOperationPlan
 {
     private static readonly JsonOperationPlanFormatter s_formatter = new();
+    private static readonly HashSet<int> s_noSelectionIds = [];
     private readonly ExecutionNode?[] _nodesById = [];
     private readonly Dictionary<Operation, int>? _incrementalPlanIndexes;
 
@@ -48,6 +49,10 @@ public sealed partial record OperationPlan : IOperationPlan
         UsesBatchNodes = usesBatchNodes;
         Policies = policies;
         _incrementalPlanIndexes = CreateIncrementalPlanIndexes(incrementalPlans);
+        HasDeferredDelivery = !incrementalPlans.IsDefaultOrEmpty || !deliveryGroups.IsDefaultOrEmpty;
+        KeyAndRequirementSelectionIds = incrementalPlans.IsDefaultOrEmpty && !deliveryGroups.IsDefaultOrEmpty
+            ? SinglePlanDeliveryState.CollectKeyAndRequirementSelectionIds(operation, allNodes)
+            : s_noSelectionIds;
 
         if (EntityReuseCandidateMap.Create(this) is { } entityReuseCandidateMap)
         {
@@ -112,6 +117,17 @@ public sealed partial record OperationPlan : IOperationPlan
     /// Empty if the operation has no <c>@defer</c> directives.
     /// </summary>
     public ImmutableArray<IncrementalPlan> IncrementalPlans { get; }
+
+    /// <summary>
+    /// Gets a value that indicates whether the plan delivers parts of its result after the initial result.
+    /// </summary>
+    public bool HasDeferredDelivery { get; }
+
+    /// <summary>
+    /// Gets the ids of the selections that a step of a plan with delivery groups can read as a key or a
+    /// requirement.
+    /// </summary>
+    internal HashSet<int> KeyAndRequirementSelectionIds { get; }
 
     /// <summary>
     /// Gets the highest plan node identifier that can be resolved by this plan.

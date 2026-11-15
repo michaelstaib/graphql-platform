@@ -209,6 +209,11 @@ public sealed partial class CompositeResultDocument
         /// </summary>
         public const int Delivered = 2;
 
+        /// <summary>
+        /// A marked step wrote a result into the row, also a null or a null with an error.
+        /// </summary>
+        public const int Written = 0x1000;
+
         public const int ClaimantShift = 2;
         public const int ClaimantMask = 0x3FF;
 

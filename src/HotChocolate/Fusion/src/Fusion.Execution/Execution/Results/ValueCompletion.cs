@@ -72,8 +72,12 @@ internal sealed class ValueCompletion
         _writeFilterGroups = default;
     }
 
-    private bool IsWriteDenied(CompositeResultElement field, Selection selection, bool isTargetField)
-        => !_writeFilterDocument!.AllowsMarkedWrite(field, selection, _writeFilterGroups, isTargetField);
+    private bool IsWriteDenied(CompositeResultElement field, Selection selection, JsonValueKind sourceKind)
+        => !_writeFilterDocument!.AllowsMarkedWrite(
+            field,
+            selection,
+            _writeFilterGroups,
+            sourceKind is JsonValueKind.Object or JsonValueKind.Array);
 
     /// <summary>
     /// Releases the request state so that the value completion can be initialized again.
@@ -170,13 +174,13 @@ internal sealed class ValueCompletion
                     sourceResponseName = selection.ResponseName;
                 }
 
-                if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, isTargetField: true))
+                var propertyValueSnapshot = property.Value.CreateSnapshot();
+                var propertyValueKind = propertyValueSnapshot.ValueKind;
+
+                if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, propertyValueKind))
                 {
                     continue;
                 }
-
-                var propertyValueSnapshot = property.Value.CreateSnapshot();
-                var propertyValueKind = propertyValueSnapshot.ValueKind;
 
                 if (errorTrie is null && propertyValueKind.IsScalarValue())
                 {
@@ -227,13 +231,13 @@ internal sealed class ValueCompletion
                     continue;
                 }
 
-                if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, isTargetField: true))
+                var propertyValueSnapshot = properties.Value;
+                var propertyValueKind = propertyValueSnapshot.ValueKind;
+
+                if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, propertyValueKind))
                 {
                     continue;
                 }
-
-                var propertyValueSnapshot = properties.Value;
-                var propertyValueKind = propertyValueSnapshot.ValueKind;
 
                 // Fast path: when there are no errors and the source value is a
                 // scalar (string, number, bool) we can set it directly without
@@ -376,6 +380,54 @@ internal sealed class ValueCompletion
             }
 
             var selection = fieldResult.AssertSelection();
+
+            if (!ApplyFieldError(fieldResult, selection, error, errorPath.Append(responseName)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path of each field selected by
+    /// <paramref name="resultSelectionSet"/> that a step of <paramref name="deliveryGroups"/> may write.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the execution can continue.
+    /// <c>false</c>, if the execution needs to be halted.
+    /// </returns>
+    public bool BuildErrorResult(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        IError error,
+        CompactPath path,
+        CompositeResultDocument document,
+        ImmutableArray<int> deliveryGroups)
+    {
+        var operation = target.Operation;
+        var errorPath = path.ToPath(operation);
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (target.IsNullOrInvalidated)
+            {
+                return true;
+            }
+
+            if (!target.TryGetProperty(responseName, out var fieldResult)
+                || fieldResult.IsInternal)
+            {
+                continue;
+            }
+
+            var selection = fieldResult.AssertSelection();
+
+            if (!document.AllowsMarkedWrite(fieldResult, selection, deliveryGroups, sourceIsContainer: false))
+            {
+                continue;
+            }
 
             if (!ApplyFieldError(fieldResult, selection, error, errorPath.Append(responseName)))
             {
@@ -1566,13 +1618,13 @@ TryCompleteList_MoveNext:
                 continue;
             }
 
-            if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, isTargetField: false))
+            var propertyValueSnapshot = properties.Value;
+            var propertyValueKind = propertyValueSnapshot.ValueKind;
+
+            if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, propertyValueKind))
             {
                 continue;
             }
-
-            var propertyValueSnapshot = properties.Value;
-            var propertyValueKind = propertyValueSnapshot.ValueKind;
 
             if (errorTrie is null)
             {
@@ -1707,13 +1759,13 @@ TryCompleteList_MoveNext:
                 sourceResponseName = selection.ResponseName;
             }
 
-            if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, isTargetField: false))
+            var propertyValueSnapshot = property.Value.CreateSnapshot();
+            var propertyValueKind = propertyValueSnapshot.ValueKind;
+
+            if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, propertyValueKind))
             {
                 continue;
             }
-
-            var propertyValueSnapshot = property.Value.CreateSnapshot();
-            var propertyValueKind = propertyValueSnapshot.ValueKind;
 
             if (errorTrie is null && propertyValueKind.IsScalarValue())
             {
