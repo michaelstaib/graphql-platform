@@ -3636,12 +3636,15 @@ public sealed partial class OperationPlanner
     {
         var selectionSets = SelectionSetIndexer.CreateIdSet(operation.SelectionSet, index);
 
-        if (step.SelectionSets.IsSubsetOf(selectionSets))
+        foreach (var id in step.SelectionSets)
         {
-            return selectionSets;
+            if (!selectionSets.Contains(id))
+            {
+                RegisterMergedSelectionSets(step.Definition.SelectionSet, null);
+                break;
+            }
         }
 
-        RegisterMergedSelectionSets(step.Definition.SelectionSet, null);
         return selectionSets;
 
         void RegisterMergedSelectionSets(SelectionSetNode selectionSet, uint? enclosingSelectionSetId)
