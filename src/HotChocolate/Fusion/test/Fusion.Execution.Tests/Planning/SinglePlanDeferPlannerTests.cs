@@ -1478,6 +1478,42 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_EqualThePlanWithoutDefer_When_TheFragmentSelectsOnlyTypename()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema, ReviewsSchema);
+        const string operationText =
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "t") { __typename }
+                }
+            }
+            """;
+        const string operationTextWithoutDefer =
+            """
+            {
+                product(id: "1") {
+                    name
+                    __typename
+                }
+            }
+            """;
+
+        // act
+        var result = Plan(schema, operationText);
+        var planWithoutDefer = Plan(schema, operationTextWithoutDefer);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        Assert.Empty(result.Plan.DeliveryGroups);
+        Assert.All(result.Plan.AllNodes.OfType<OperationExecutionNode>(), static n => Assert.Empty(n.DeliveryGroups));
+        Assert.Equal(Format(planWithoutDefer.Plan), Format(result.Plan));
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_KeepTheWrapperFieldsInTheGroupStep_When_TheWrapperIsTypedWithTheLookupType()
     {
         // arrange

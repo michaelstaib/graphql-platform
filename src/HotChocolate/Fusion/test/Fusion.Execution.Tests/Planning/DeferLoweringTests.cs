@@ -966,15 +966,15 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_KeepFragmentDeferred_When_OnlyTypenameIsSelectedAndAnchorTypeHasLookup()
+    public void Lower_Should_InlineFragment_When_OnlyTypenameIsSelectedAndAnchorTypeHasLookup()
     {
         // arrange
         const string operation =
             """
             query {
                 user(id: "1") {
-                    id
-                    ... @defer(label: "type") {
+                    name
+                    ... @defer(label: "t") {
                         __typename
                     }
                 }
@@ -989,9 +989,221 @@ public class DeferLoweringTests : FusionTestBase
             """
             {
               user(id: "1") {
-                id
-                ... @defer(label: "type") {
+                name
+                ... {
                   __typename
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_SelectTypenameOnceWithoutCondition_When_SwitchableFragmentSelectsOnlyTypename()
+    {
+        // arrange
+        const string operation =
+            """
+            query($v: Boolean!) {
+                user(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "t") {
+                        __typename
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($v: Boolean!) {
+              user(id: "1") {
+                name
+                ... {
+                  __typename
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_OnlyTypenameIsLeftAfterTheOwnFieldIsPruned()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer {
+                        name
+                        __typename
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                ... {
+                  name
+                  __typename
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOuterFragmentAndKeepInnerFragment_When_OuterSelectsOnlyTypenameAndNestedFragment()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        __typename
+                        ... @defer(label: "i") {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                ... {
+                  __typename
+                  ... @defer(label: "i") {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentDeferred_When_TypenameIsSelectedNextToOtherOwnField()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "t") {
+                        __typename
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                ... @defer(label: "t") {
+                  __typename
+                  email
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentDeferred_When_CompositeFieldSelectsOnlyTypename()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "t") {
+                        profile {
+                            __typename
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                ... @defer(label: "t") {
+                  profile {
+                    __typename
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_OnlyAliasedTypenameIsSelected()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    ... @defer(label: "t") {
+                        t: __typename
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                ... {
+                  t: __typename
                 }
               }
             }
