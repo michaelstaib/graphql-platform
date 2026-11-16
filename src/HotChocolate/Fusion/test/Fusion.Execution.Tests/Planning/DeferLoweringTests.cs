@@ -2730,6 +2730,47 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_NumberTheParentBeforeItsChild_When_TheNestedFragmentStandsInAPart()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                users {
+                    name
+                }
+                ... @defer(label: "outer") {
+                    users {
+                        email
+                        ... @defer(label: "inner") {
+                            total
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              users {
+                name
+                ... @defer(label: "outer", __group: 0, __parent: -1, __levels: 1) {
+                  email
+                  ... @defer(label: "inner", __group: 1, __parent: 0) {
+                    total
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);

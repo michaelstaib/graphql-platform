@@ -547,15 +547,30 @@ internal static class DeferLowering
                         break;
 
                     case InlineFragmentNode fragment:
-                        if (_sites.TryGetValue(fragment, out var site) && site.Levels == 0 && site.Group.Number < 0)
+                        if (_sites.TryGetValue(fragment, out var site) && site.Levels == 0)
                         {
-                            site.Group.Number = next++;
+                            AssignNumber(site.Group, ref next);
                         }
 
                         Number(fragment.SelectionSet.Selections, ref next);
                         break;
                 }
             }
+        }
+
+        private static void AssignNumber(DeferGroup group, ref int next)
+        {
+            if (group.Number >= 0)
+            {
+                return;
+            }
+
+            if (group.Parent is { } parent)
+            {
+                AssignNumber(parent, ref next);
+            }
+
+            group.Number = next++;
         }
 
         private List<ISelectionNode> Write(IReadOnlyList<ISelectionNode> items)
@@ -831,7 +846,7 @@ internal static class DeferLowering
 
     /// <summary>
     /// The delivery group of one deferred fragment. The number is assigned in the document order of the places
-    /// where the fragments stand.
+    /// where the fragments stand, and a parent always has a lower number than its children.
     /// </summary>
     private sealed class DeferGroup(DeferGroup? parent)
     {

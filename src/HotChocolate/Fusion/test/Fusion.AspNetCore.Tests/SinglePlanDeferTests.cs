@@ -1011,6 +1011,32 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_AnnounceTheNestedGroupWhenItsParentCompletes_When_TheNestedStepAnswersFirst()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(["B:3", "B:2"], ("A", ProductListSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                products { name }
+                ... @defer(label: "outer") {
+                    products {
+                        price
+                        ... @defer(label: "inner") { rating }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
     {
         // arrange

@@ -1969,6 +1969,32 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_ParentTheNestedGroup_When_ItsFragmentStandsInAPart()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products { name }
+                ... @defer(label: "outer") {
+                    products {
+                        price
+                        ... @defer(label: "inner") { rating }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Partition_Should_ReadTheGroupsFromTheOperationText_When_TheOperationHasAPart()
     {
         // arrange
