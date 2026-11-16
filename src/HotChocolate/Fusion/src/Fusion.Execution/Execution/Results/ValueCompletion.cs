@@ -809,19 +809,29 @@ internal sealed class ValueCompletion
     /// <returns>
     /// <c>true</c>, if the null propagated up to the root.
     /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool PropagateNullValues<TMode>(CompositeResultElement result)
         where TMode : struct, IMode
     {
         if (TMode.HasDelivery)
         {
-            _stoppedAtGroupBoundary = false;
-
-            if (_store.Result.TryGetDestination(result, out var destination))
-            {
-                return PropagateNullValuesInGroups(result, destination);
-            }
+            return PropagateNullValuesWithDelivery(result);
         }
 
+        return PropagateNullValues(result);
+    }
+
+    private bool PropagateNullValuesWithDelivery(CompositeResultElement result)
+    {
+        _stoppedAtGroupBoundary = false;
+
+        return _store.Result.TryGetDestination(result, out var destination)
+            ? PropagateNullValuesInGroups(result, destination)
+            : PropagateNullValues(result);
+    }
+
+    private static bool PropagateNullValues(CompositeResultElement result)
+    {
         var current = result;
 
         do
@@ -840,7 +850,7 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Invalidates the field and its parents like <see cref="PropagateNullValues"/>, but stops before an object
+    /// Invalidates the field and its parents like <see cref="PropagateNullValues(CompositeResultElement)"/>, but stops before an object
     /// that is delivered elsewhere than the field. The groups of the field fail at that object.
     /// </summary>
     /// <returns>

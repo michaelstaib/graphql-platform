@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
@@ -949,6 +950,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
             _singlePlanDelivery!.ExcludeGroupErrors(_resultStore.Errors));
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void FinalizeResult()
     {
         _resultStore.FinalizePocketedErrors();
@@ -959,6 +961,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private OperationResult CreateResult(
         bool reusable,
         bool retainMemoryForDefer,
