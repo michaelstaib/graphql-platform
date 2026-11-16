@@ -9,7 +9,7 @@
 ## Payload 2
 
 ```json
-{"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["products",0,"price"]}]},{"id":"1","errors":[{"message":"Unexpected Execution Error","path":["products",0,"price"]}]},{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["products",0,"price"]}]}],"hasNext":false}
+{"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["products",0,"price"]}]},{"id":"1","errors":[{"message":"Unexpected Execution Error","path":["products",1,"price"]}]},{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["products",2,"price"]}]}],"hasNext":false}
 ```
 
 ## Requests

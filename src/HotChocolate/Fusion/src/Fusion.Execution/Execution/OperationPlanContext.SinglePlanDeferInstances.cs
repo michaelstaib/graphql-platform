@@ -9,6 +9,7 @@ internal sealed partial class SinglePlanDeliveryState
 {
     private const byte DoneFlag = 1;
     private const byte ClosedFlag = 2;
+    private const byte FailedFlag = 4;
 
     private readonly DeliveryGroup[] _groupsById;
     private readonly byte[] _groupStatus;
@@ -30,6 +31,13 @@ internal sealed partial class SinglePlanDeliveryState
     private int _instanceCount;
     private int _doneCount;
     private Dictionary<int, int>?[]? _instancesByAnchor;
+
+    // The errors of the rows of a group below an anchor object, by group and anchor, and the failed anchors.
+    private Dictionary<long, List<GroupError>>? _groupErrors;
+    private HashSet<IError>? _groupOwnedErrors;
+    private HashSet<long>? _failedAnchors;
+    private List<GroupError>? _takenPayload;
+    private List<IError>?[]? _stepErrors;
 
     /// <summary>
     /// Gets the number of group instances announced so far.
@@ -53,6 +61,203 @@ internal sealed partial class SinglePlanDeliveryState
     public bool IsDone(int instance) => (_instanceFlags[instance] & DoneFlag) != 0;
 
     /// <summary>
+    /// Determines whether the instance failed, so that it completes with errors and without data.
+    /// </summary>
+    public bool IsFailed(int instance) => (_instanceFlags[instance] & FailedFlag) != 0;
+
+    /// <summary>
+    /// Marks an instance as failed.
+    /// </summary>
+    public void MarkFailed(int instance) => _instanceFlags[instance] |= FailedFlag;
+
+    /// <summary>
+    /// Marks the instance of a group at an anchor object as failed, also when it is announced later.
+    /// </summary>
+    public void FailInstance(int groupId, CompositeResultDocument.Cursor anchor)
+    {
+        lock (_sync)
+        {
+            (_failedAnchors ??= []).Add(CreateKey(groupId, anchor));
+        }
+
+        if (_instanceCount > 0 && TryGetInstance(groupId, anchor, out var instance))
+        {
+            MarkFailed(instance);
+        }
+    }
+
+    /// <summary>
+    /// Determines whether a step of the group failed.
+    /// </summary>
+    public bool IsGroupFailed(int groupId)
+    {
+        foreach (var node in NodesByGroup[groupId])
+        {
+            if (Failed[node.Id])
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether every step of every group of the resolution is done, skipped or failed.
+    /// </summary>
+    public bool AreGroupsSettled(DeliveryResolution resolution)
+    {
+        foreach (var group in resolution.Groups)
+        {
+            if (!IsSettled(group.Id, _executionState))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Records an error for the rows of a group below an anchor object.
+    /// </summary>
+    public void AddGroupError(int groupId, CompositeResultDocument.Cursor anchor, GroupError error)
+    {
+        lock (_sync)
+        {
+            _groupErrors ??= [];
+
+            var key = CreateKey(groupId, anchor);
+
+            if (!_groupErrors.TryGetValue(key, out var errors))
+            {
+                errors = _groupErrors[key] = [];
+            }
+
+            errors.Add(error);
+            (_groupOwnedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(error.Error);
+        }
+    }
+
+    /// <summary>
+    /// Determines whether the error belongs to a delivery group instead of the initial payload.
+    /// </summary>
+    public bool IsGroupError(IError error)
+    {
+        lock (_sync)
+        {
+            return _groupOwnedErrors?.Contains(error) is true;
+        }
+    }
+
+    /// <summary>
+    /// Gets the errors without the errors that belong to a delivery group, or <c>null</c> when none is left.
+    /// </summary>
+    public ImmutableList<IError>? ExcludeGroupErrors(IReadOnlyList<IError>? errors)
+    {
+        if (errors is null)
+        {
+            return null;
+        }
+
+        var builder = ImmutableList.CreateBuilder<IError>();
+
+        foreach (var error in errors)
+        {
+            if (!IsGroupError(error))
+            {
+                builder.Add(error);
+            }
+        }
+
+        return builder.Count > 0 ? builder.ToImmutable() : null;
+    }
+
+    /// <summary>
+    /// Takes the errors that were recorded for the rows of the instance. An error that another instance already
+    /// sent is only taken when <paramref name="includeSent"/> is set.
+    /// </summary>
+    public ImmutableList<IError>? TakeGroupErrors(int instance, bool includeSent)
+    {
+        lock (_sync)
+        {
+            if (_groupErrors is null
+                || !_groupErrors.TryGetValue(
+                    CreateKey(_instanceGroups[instance], _instanceAnchors[instance]),
+                    out var errors))
+            {
+                return null;
+            }
+
+            ImmutableList<IError>.Builder? builder = null;
+
+            foreach (var error in errors)
+            {
+                if (error.Sent && !includeSent)
+                {
+                    continue;
+                }
+
+                if (!error.Sent)
+                {
+                    error.Sent = true;
+                    (_takenPayload ??= []).Add(error);
+                }
+
+                (builder ??= ImmutableList.CreateBuilder<IError>()).Add(error.Error);
+            }
+
+            return builder?.ToImmutable();
+        }
+    }
+
+    /// <summary>
+    /// Records the error of a failed step for the groups of the step.
+    /// </summary>
+    public void AddStepError(IError error, ImmutableArray<int> groups)
+    {
+        if (groups.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        _stepErrors ??= new List<IError>?[_groupsById.Length];
+
+        foreach (var group in groups)
+        {
+            var errors = _stepErrors[group] ??= [];
+
+            if (!errors.Contains(error))
+            {
+                errors.Add(error);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the errors that the failed steps of the group reported, or <c>null</c> when there are none.
+    /// </summary>
+    public ImmutableList<IError>? GetStepErrors(int groupId)
+        => _stepErrors?[groupId] is { Count: > 0 } errors ? [.. errors] : null;
+
+    /// <summary>
+    /// Creates an error from the exception of a failed step of the group, or returns <c>null</c> when no step
+    /// of the group failed with an exception.
+    /// </summary>
+    public IError? CreateFailureError(int groupId)
+    {
+        foreach (var node in NodesByGroup[groupId])
+        {
+            if (Failed[node.Id] && FailureExceptions[node.Id] is { } exception)
+            {
+                return ErrorHelper.UnexpectedExecutionError(exception);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Marks an instance as completed in the payload that is being created.
     /// </summary>
     public void MarkDone(int instance)
@@ -73,6 +278,7 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         _donePayload.Clear();
+        _takenPayload?.Clear();
     }
 
     /// <summary>
@@ -89,6 +295,16 @@ internal sealed partial class SinglePlanDeliveryState
         _donePayload.Clear();
         _instanceCount = instanceCountBefore;
         _instancesByAnchor = null;
+
+        if (_takenPayload is not null)
+        {
+            foreach (var error in _takenPayload)
+            {
+                error.Sent = false;
+            }
+
+            _takenPayload.Clear();
+        }
     }
 
     /// <summary>
@@ -155,9 +371,14 @@ internal sealed partial class SinglePlanDeliveryState
         => new(instance, _instancePaths[instance], _groupsById[_instanceGroups[instance]].Label);
 
     /// <summary>
-    /// Finds an announced instance of a group at an anchor object that no payload closed.
+    /// Finds an announced instance of a group at an anchor object that no payload closed and that did not fail.
     /// </summary>
     public bool TryFindOpenInstance(int groupId, CompositeResultDocument.Cursor anchor, out int instance)
+        => TryGetInstance(groupId, anchor, out instance)
+            && (_instanceFlags[instance] & (ClosedFlag | FailedFlag)) == 0
+            && !IsGroupFailed(groupId);
+
+    private bool TryGetInstance(int groupId, CompositeResultDocument.Cursor anchor, out int instance)
     {
         var map = (_instancesByAnchor ??= new Dictionary<int, int>?[_groupsById.Length])[groupId];
 
@@ -174,8 +395,11 @@ internal sealed partial class SinglePlanDeliveryState
             }
         }
 
-        return map.TryGetValue(anchor.Value, out instance) && (_instanceFlags[instance] & ClosedFlag) == 0;
+        return map.TryGetValue(anchor.Value, out instance);
     }
+
+    private static long CreateKey(int groupId, CompositeResultDocument.Cursor anchor)
+        => ((long)anchor.Value << 10) | (uint)groupId;
 
     public DeliveryClaimScratch GetClaimScratch() => _claimScratch ??= new DeliveryClaimScratch();
 
@@ -363,6 +587,14 @@ internal sealed partial class SinglePlanDeliveryState
             map[anchor.Value] = instance;
         }
 
+        lock (_sync)
+        {
+            if (_failedAnchors?.Contains(CreateKey(groupId, anchor)) is true)
+            {
+                _instanceFlags[instance] |= FailedFlag;
+            }
+        }
+
         return instance;
     }
 
@@ -380,6 +612,16 @@ internal sealed partial class SinglePlanDeliveryState
 
         return count;
     }
+}
+
+/// <summary>
+/// An error that belongs to the rows of one or more delivery groups.
+/// </summary>
+internal sealed class GroupError(IError error)
+{
+    public IError Error { get; } = error;
+
+    public bool Sent { get; set; }
 }
 
 /// <summary>

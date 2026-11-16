@@ -1906,6 +1906,474 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_FailTheGroupAndKeepTheAnchor_When_ANonNullDeferredFieldFails()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { featured: Product! product(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! name: String! }
+                """),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float! @error rating: Int! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { featured { name ... @defer(label: "d") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheSiblingGroup_When_TheTransportOfAnotherGroupFails(bool failingFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            failingFirst ? ["B:3>", "C:2"] : ["C:2>", "B:3"],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { price }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"failingFirst={failingFirst}");
+    }
+
+    [Theory]
+    [InlineData("outerFirst")]
+    [InlineData("innerFirst")]
+    [InlineData("innerAuthorFirst")]
+    public async Task Defer_Should_DeliverTheSiblingGroup_When_TheInnerGroupFailsBelowTheSharedAnchor(string order)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            order switch
+            {
+                "outerFirst" => ["B:3", "C:4>", "D:5", "B:6", "C:7"],
+                "innerFirst" => ["D:5", "B:6", "C:7>", "B:3", "C:4"],
+                _ => ["B:6", "C:7", "D:5>", "B:3", "C:4"]
+            },
+            rewrite: null,
+            failingSchema: "D",
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource),
+            ("D", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "a") { product(id: "1") { author { bio } } }
+                product(id: "1") { name ... @defer(label: "b") { author { bio } reviews { body } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"order={order}");
+    }
+
+    private const string RootBadSource =
+        """
+        type Query { bad: String! x: String! }
+        """;
+
+    [GeneratedRegex("\"bad\":\"[^\"]*\"")]
+    private static partial Regex BadValue();
+
+    // The source answers the non-null field with null and no error.
+    private static string NullTheBadField(string schema, string body, string text)
+        => schema == "A" && body.Contains("bad") ? BadValue().Replace(text, "\"bad\":null") : text;
+
+    private const string RootSlowSource =
+        """
+        type Query { slow: String! }
+        """;
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheSharedFieldWithTheNestedGroup_When_TheSiblingGroupFails(bool xFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            xFirst ? ["A:4>", "A:3", "B:2"] : ["A:4>", "B:2>", "A:3"],
+            NullTheBadField,
+            failingSchema: null,
+            configure: null,
+            ("A", RootBadSource),
+            ("B", RootSlowSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { ... @defer(label: "R") { bad x } ... @defer(label: "P") { slow ... @defer(label: "C") { x } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"xFirst={xFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailBothGroups_When_TheSharedNonNullFieldFailsFirst(bool slowFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            slowFirst ? ["B:2>", "A:4>", "A:3"] : ["A:4>", "A:3", "B:2"],
+            NullTheBadField,
+            failingSchema: null,
+            configure: null,
+            ("A", RootBadSource),
+            ("B", RootSlowSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { ... @defer(label: "R") { bad x } ... @defer(label: "P") { slow ... @defer(label: "C") { bad } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"slowFirst={slowFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportBothErrors_When_ANullableAndARequiredFieldOfTheGroupFail()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! nullable: String @error required: String! @error }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer { nullable required } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_NeverAnnounceTheChild_When_TheParentGroupFailsWhileTheChildRequestIsInFlight(
+        bool childFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            childFirst ? ["C:3", "B:2>"] : ["B:2>", "C:3"],
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! bad: String! @error }
+                """),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "P") { bad ... @defer(label: "C") { reviews { body } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(1, run.PendingCount);
+        MatchPayloads(run, $"childFirst={childFirst}");
+    }
+
+    [GeneratedRegex("\"x\":\"[^\"]*\"")]
+    private static partial Regex SharedXValue();
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_KeepTheFirstResult_When_SiblingGroupsAnswerASharedNonNullFieldWithAValueAndANull(
+        bool nullFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            nullFirst ? ["B:2>", "B:3"] : ["B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && body.Contains("_2") && !body.Contains("_3")
+                ? SharedXValue().Replace(text, "\"x\":null")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { x } ... @defer(label: "b") { x } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"nullFirst={nullFirst}");
+    }
+
+    private const string RequirementWithErrorSource =
+        """
+        type Query { product(id: ID!): Product @lookup products: [Product!]! }
+        type Product @key(fields: "id") { id: ID! name: String! weight: Float @error }
+        """;
+
+    private const string NullableShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(weight: Float @require(field: "weight")): Float
+        }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheGroupOfTheField_When_TheRequirementErrorIsReadInTheInitialPhase()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["A:3@2"],
+            ("A", RequirementWithErrorSource),
+            ("C", NullableShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { weight } ... @defer(label: "b") { shipping } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [GeneratedRegex("\"weight\":[^,}]*")]
+    private static partial Regex WeightValue();
+
+    [Fact]
+    public async Task Defer_Should_SendTheNull_When_AStepWithoutGroupsWritesANullableRequirementAsNull()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["C:2>", "A:3"],
+            (schema, body, text) => schema == "A" && body.Contains("weight")
+                ? WeightValue().Replace(text, "\"weight\":null")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", """
+                type Query { product(id: ID!): Product @lookup products: [Product!]! }
+                type Product @key(fields: "id") { id: ID! name: String! weight: Float }
+                """),
+            ("C", NullableShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { weight } ... @defer(label: "b") { shipping } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private sealed class ThrowingListener(string schema) : FusionExecutionDiagnosticEventListener
+    {
+        public override IDisposable ExecuteOperationNode(
+            OperationPlanContext context,
+            OperationExecutionNode node,
+            string schemaName)
+            => schemaName == schema
+                ? throw new InvalidOperationException("The diagnostic listener faulted.")
+                : base.ExecuteOperationNode(context, node, schemaName);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteWithAnError_When_TheStepFailsWithoutARecordedError()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3@2"],
+            rewrite: null,
+            failingSchema: null,
+            configure: builder => builder.AddDiagnosticEventListener(_ => new ThrowingListener("C")),
+            ("A", ProductSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { price }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteWithTheError_When_TheMergeFailsAtTheDepthLimit()
+    {
+        // arrange
+        const int depth = 33;
+        var chain = string.Concat(Enumerable.Repeat("n { ", depth))
+            + "w"
+            + string.Concat(Enumerable.Repeat(" }", depth));
+        var types = string.Join(
+            "\n",
+            Enumerable.Range(1, 40).Select(i => i == 40
+                ? $"type N{i} {{ v: Int! w: Float! }}"
+                : $"type N{i} {{ n: N{i + 1}! v: Int! w: Float! }}"));
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! n: N1! }
+                """ + "\n" + types));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ product(id: \"1\") { name ... @defer(label: \"d\") { " + chain + " } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheGroupOfTheField_When_UnlabelledSiblingsShareOneStep()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float @error rating: Int! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer { rating } ... @defer { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NullTheNullableItem_When_ARequiredFieldOfTheItemFailsInsideTheGroup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("C", """
+                type Query { productByIdForReviews(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! reviews: [Review] }
+                type Review { body: String! @error }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "r") { reviews { body } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepTheObjectsOfTheInitialPayload_When_ARequiredFieldBelowTheAnchorFails()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", ReviewKeySource),
+            ("C", """
+                type Query { reviewById(id: ID!): Review @lookup }
+                type Review @key(fields: "id") { id: ID! rating: Int! @error }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name reviews { id } ... @defer(label: "b") { reviews { rating } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string MutationSource =
         """
         type Query { product(id: ID!): Product @lookup }
@@ -2650,7 +3118,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
     // every id is announced once and completed exactly once, an entry refers to an id that an earlier or the
     // same payload announced and that is still open, an announced path holds an object, hasNext is false only
     // on the last payload, a single payload carries neither pending nor hasNext, an incremental entry targets
-    // an object that exists and never carries a field the object already has.
+    // an object that exists and never carries a field the object already has, no payload sends data for an id that it
+    // completes with errors, an id that a later payload announces has an id with the same path or a shorter path
+    // that completed in an earlier or the same payload, and the last payload carries hasNext false.
     private static List<string> ReadDelivery(List<string> payloads)
     {
         var problems = new List<string>();
@@ -2681,6 +3151,16 @@ public partial class SinglePlanDeferTests : FusionTestBase
             {
                 problems.Add($"payload {number} of {payloads.Count} has hasNext {hasNext}");
             }
+
+            if (isLast && payloads.Count > 1 && payload["hasNext"] is not JsonValue)
+            {
+                problems.Add($"payload {number} is the last payload and has no hasNext");
+            }
+
+            var failedIds = done
+                .Where(t => t!["errors"] is JsonArray { Count: > 0 })
+                .Select(t => t!["id"]!.GetValue<string>())
+                .ToHashSet(StringComparer.Ordinal);
 
             if (announced is { Count: 0 })
             {
@@ -2719,6 +3199,11 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 {
                     problems.Add($"payload {number} has data for id {id}, which is not pending");
                     continue;
+                }
+
+                if (failedIds.Contains(id))
+                {
+                    problems.Add($"payload {number} has data for id {id}, which it completes with errors");
                 }
 
                 var target = data;
@@ -2769,6 +3254,17 @@ public partial class SinglePlanDeferTests : FusionTestBase
                     problems.Add($"payload {number} completes id {id}, which is not pending");
                 }
             }
+
+            if (i > 0)
+            {
+                foreach (var (id, path) in announcedPaths)
+                {
+                    if (!completed.Any(other => other != id && IsEnclosingPath(pending[other], path)))
+                    {
+                        problems.Add($"payload {number} announces id {id} before an enclosing id completed");
+                    }
+                }
+            }
         }
 
         foreach (var id in pending.Keys.Where(id => !completed.Contains(id)))
@@ -2777,6 +3273,25 @@ public partial class SinglePlanDeferTests : FusionTestBase
         }
 
         return problems;
+    }
+
+    // A path encloses another path when it is the same or a prefix of it.
+    private static bool IsEnclosingPath(JsonArray outer, JsonArray inner)
+    {
+        if (outer.Count > inner.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < outer.Count; i++)
+        {
+            if (outer[i]!.ToJsonString() != inner[i]!.ToJsonString())
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static void MergeStrict(

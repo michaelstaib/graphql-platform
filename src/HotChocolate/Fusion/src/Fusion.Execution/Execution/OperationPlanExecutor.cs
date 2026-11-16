@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -404,6 +405,7 @@ internal static partial class OperationPlanExecutor
             executionState.CompleteNode(plan, node, result);
             state.Finished[result.Id] = true;
             state.Failed[result.Id] = result.Status is ExecutionStatus.Failed;
+            state.FailureExceptions[result.Id] = result.Exception;
         }
 
         if (!cancellationToken.IsCancellationRequested)
@@ -566,10 +568,17 @@ internal static partial class OperationPlanExecutor
             if (!state.IsDone(instance))
             {
                 state.MarkDone(instance);
-                completed.Add(new CompletedResult(instance, errors.Count > 0 ? errors : null));
+
+                var instanceErrors = state.TakeGroupErrors(instance, includeSent: true) ?? [];
+                instanceErrors = instanceErrors.AddRange(errors);
+                completed.Add(new CompletedResult(instance, instanceErrors.Count > 0 ? instanceErrors : null));
                 errors = [];
             }
         }
+
+        // The loop faults only while an announced instance is open, and the protocol has no place for the error
+        // of a fault when no id is open.
+        Debug.Assert(fault is null || completed.Count > 0, "The error of the fault has no open id to carry it.");
 
         state.EndPayload();
         state.PublishedErrorCount = context.ErrorCount;
@@ -600,10 +609,9 @@ internal static partial class OperationPlanExecutor
         var incremental = ImmutableList.CreateBuilder<IIncrementalResult>();
         var completed = ImmutableList.CreateBuilder<CompletedResult>();
         var document = context.ResultDocument;
-        var errors = context.GetErrorsAfter(state.PublishedErrorCount);
+        var unattributed = context.GetErrorsAfter(state.PublishedErrorCount);
         var instanceCountBefore = state.InstanceCount;
         var roots = new List<ClaimedObject>();
-        Dictionary<int, ImmutableList<IError>>? failedErrors = null;
         var progressed = true;
 
         state.BeginPayload(document);
@@ -618,70 +626,71 @@ internal static partial class OperationPlanExecutor
                 // The announcements of this payload append to the instances, so the loop reads the count again.
                 for (var instance = 0; instance < state.InstanceCount; instance++)
                 {
-                    var group = state.GetInstanceGroup(instance);
-
-                    if (state.IsDone(instance) || !state.IsGroupSettled(group, executionState, out var failed))
+                    if (state.IsDone(instance))
                     {
                         continue;
                     }
+
+                    var group = state.GetInstanceGroup(instance);
+
+                    if (!state.IsGroupSettled(group, executionState, out var groupFailed))
+                    {
+                        continue;
+                    }
+
+                    if (groupFailed)
+                    {
+                        state.MarkFailed(instance);
+                    }
+
+                    var failed = state.IsFailed(instance);
 
                     progressed = true;
 
                     if (failed)
                     {
-                        // A failed group fails every instance, so each completion carries the errors.
-                        if (errors.Count > 0)
-                        {
-                            (failedErrors ??= [])[group] = errors;
-                            errors = [];
-                        }
-
-                        ImmutableList<IError>? groupErrors = null;
-                        failedErrors?.TryGetValue(group, out groupErrors);
-                        completed.Add(new CompletedResult(instance, groupErrors));
+                        // A failed instance completes with its errors and without data, and announces nothing.
+                        var failure = TakeFailureErrors(state, instance, ref unattributed);
+                        completed.Add(new CompletedResult(instance, failure.Count > 0 ? failure : null));
+                        state.MarkDone(instance);
+                        continue;
                     }
-                    else
+
+                    var errors = state.TakeGroupErrors(instance, includeSent: false) ?? [];
+
+                    if (unattributed.Count > 0)
                     {
-                        var before = incremental.Count;
+                        errors = errors.AddRange(unattributed);
+                        unattributed = [];
+                    }
 
-                        roots.Clear();
-                        document.ClaimDeliveryRows(instance, roots);
+                    roots.Clear();
+                    document.ClaimDeliveryRows(instance, roots);
 
-                        foreach (var root in roots)
+                    foreach (var root in roots)
+                    {
+                        var entryErrors = errors.Count > 0 && root.Instance == instance ? errors : null;
+
+                        if (entryErrors is not null)
                         {
-                            incremental.Add(
-                                new IncrementalObjectResult(
-                                    root.Instance,
-                                    errors: null,
-                                    root.SubPath.IsRoot ? null : root.SubPath,
-                                    new OperationResultData(
-                                        document,
-                                        isValueNull: false,
-                                        new DeliveryPayloadDataFormatter(document, root.Cursor, root.Group),
-                                        memoryHolder: null)));
-                        }
-
-                        if (errors.Count > 0 && incremental.Count > before)
-                        {
-                            var first = (IncrementalObjectResult)incremental[before];
-                            incremental[before] = new IncrementalObjectResult(
-                                first.Id,
-                                errors,
-                                first.SubPath,
-                                first.Data);
                             errors = [];
                         }
 
-                        completed.Add(new CompletedResult(instance, errors.Count > 0 ? errors : null));
-                        errors = [];
+                        incremental.Add(
+                            new IncrementalObjectResult(
+                                root.Instance,
+                                entryErrors,
+                                root.SubPath.IsRoot ? null : root.SubPath,
+                                new OperationResultData(
+                                    document,
+                                    isValueNull: false,
+                                    new DeliveryPayloadDataFormatter(document, root.Cursor, root.Group),
+                                    memoryHolder: null)));
                     }
 
+                    completed.Add(new CompletedResult(instance, errors.Count > 0 ? errors : null));
                     state.MarkDone(instance);
-
-                    if (!failed)
-                    {
-                        state.AnnounceChildren(document, instance, pending);
-                    }
+                    state.AnnounceChildren(document, instance, pending);
                 }
             }
         }
@@ -707,6 +716,35 @@ internal static partial class OperationPlanExecutor
             incremental.ToImmutable(),
             completed.ToImmutable(),
             hasNext);
+    }
+
+    // The errors of a failed instance are the errors recorded for its rows, else the errors of its failed
+    // steps, else the errors that no group owns, else the error of the exception of a failed step.
+    private static ImmutableList<IError> TakeFailureErrors(
+        SinglePlanDeliveryState state,
+        int instance,
+        ref ImmutableList<IError> unattributed)
+    {
+        if (state.TakeGroupErrors(instance, includeSent: true) is { } own)
+        {
+            return own;
+        }
+
+        var group = state.GetInstanceGroup(instance);
+
+        if (state.GetStepErrors(group) is { } stepErrors)
+        {
+            return stepErrors;
+        }
+
+        if (unattributed.Count > 0)
+        {
+            var errors = unattributed;
+            unattributed = [];
+            return errors;
+        }
+
+        return state.CreateFailureError(group) is { } error ? [error] : [];
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(

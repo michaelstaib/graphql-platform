@@ -82,9 +82,13 @@ public sealed partial class CompositeResultDocument
 
         var propertyCursor = field.Cursor.AddRows(-1);
         var marks = _metaDb.Get(propertyCursor).DeliveryMarks;
-        var token = _metaDb.Get(field.Cursor).TokenType;
+        var valueRow = _metaDb.Get(field.Cursor);
+        var token = valueRow.TokenType;
 
-        if (token is not ElementTokenType.None || (marks & PropertyMarks.Written) != 0)
+        // A row that a failure invalidated holds a result too, so a later step does not write it.
+        if (token is not ElementTokenType.None
+            || (marks & PropertyMarks.Written) != 0
+            || (valueRow.Flags & ElementFlags.Invalidated) == ElementFlags.Invalidated)
         {
             return sourceIsContainer
                 && !selection.IsLeaf
@@ -108,6 +112,178 @@ public sealed partial class CompositeResultDocument
         _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Written);
         return true;
     }
+
+    /// <summary>
+    /// Determines whether the field of <paramref name="element"/> is held back for delivery groups, and gets the
+    /// groups. A list item has the groups of its list.
+    /// </summary>
+    internal bool TryGetDestination(CompositeResultElement element, out DeliveryResolution resolution)
+    {
+        var current = element.Cursor;
+
+        while (!current.IsZero)
+        {
+            var property = _metaDb.Get(current.AddRows(-1));
+
+            if (property.TokenType is ElementTokenType.PropertyName)
+            {
+                if ((property.DeliveryMarks & PropertyMarks.Held) != 0)
+                {
+                    resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+                    return true;
+                }
+
+                break;
+            }
+
+            current = GetLogicalParentCursor(current);
+        }
+
+        resolution = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether the destination of <paramref name="element"/> differs from <paramref name="other"/>.
+    /// </summary>
+    internal bool HasOtherDestination(CompositeResultElement element, DeliveryResolution other)
+    {
+        if (!TryGetDestination(element, out var resolution))
+        {
+            return true;
+        }
+
+        var groups = resolution.Groups;
+        var otherGroups = other.Groups;
+
+        if (groups.Length != otherGroups.Length)
+        {
+            return true;
+        }
+
+        foreach (var group in groups)
+        {
+            if (!SinglePlanDeliveryState.Contains(other, group.Id))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Fails the instances of the groups of a field at the anchor objects above the field.
+    /// </summary>
+    internal void FailGroups(CompositeResultElement field, DeliveryResolution groups)
+    {
+        var delivery = _delivery!;
+
+        foreach (var group in groups.Groups)
+        {
+            if (TryGetObjectAtDepth(field.Cursor, delivery.AnchorDepths[group.Id], out var anchor))
+            {
+                delivery.FailInstance(group.Id, anchor);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records an error for the delivery groups that hold the field, so that it is sent with the instances of the
+    /// groups instead of the initial payload.
+    /// </summary>
+    /// <returns><c>true</c> when the field is held back for delivery groups.</returns>
+    internal bool TryRecordGroupError(CompositeResultElement element, IError error)
+    {
+        var delivery = _delivery;
+
+        if (delivery is null || !TryGetDestination(element, out var resolution))
+        {
+            return false;
+        }
+
+        // A row with an error holds a result, so that no later step writes it and reports its error again.
+        var propertyCursor = element.Cursor.AddRows(-1);
+
+        if (_metaDb.Get(propertyCursor).TokenType is ElementTokenType.PropertyName)
+        {
+            _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Written);
+        }
+
+        var record = new GroupError(error);
+        var recorded = false;
+
+        foreach (var group in resolution.Groups)
+        {
+            if (TryGetObjectAtDepth(element.Cursor, delivery.AnchorDepths[group.Id], out var anchor))
+            {
+                delivery.AddGroupError(group.Id, anchor, record);
+                recorded = true;
+            }
+        }
+
+        return recorded;
+    }
+
+    // The anchor of a group lies as many field segments below the root as the group path has, list items not counted.
+    private bool TryGetObjectAtDepth(Cursor value, int depth, out Cursor anchor)
+    {
+        var count = 0;
+        var current = value;
+
+        while (!current.IsZero)
+        {
+            current = GetLogicalParentCursor(current);
+
+            if (IsObject(current))
+            {
+                count++;
+            }
+        }
+
+        var skip = count - 1 - depth;
+        var seen = -1;
+        current = value;
+
+        while (skip >= 0 && !current.IsZero)
+        {
+            current = GetLogicalParentCursor(current);
+
+            if (IsObject(current) && ++seen == skip)
+            {
+                anchor = ResolveReference(current);
+                return true;
+            }
+        }
+
+        anchor = default;
+        return false;
+    }
+
+    private bool IsObject(Cursor cursor)
+    {
+        if (cursor.IsZero)
+        {
+            return true;
+        }
+
+        var row = _metaDb.Get(cursor);
+
+        if (row.TokenType is ElementTokenType.Reference)
+        {
+            row = _metaDb.Get(new Cursor(row.Location));
+        }
+
+        return row.TokenType is ElementTokenType.StartObject;
+    }
+
+    private Cursor ResolveReference(Cursor cursor)
+        => !cursor.IsZero && _metaDb.Get(cursor).TokenType is ElementTokenType.Reference
+            ? new Cursor(_metaDb.Get(cursor).Location)
+            : cursor;
+
+    private Cursor GetLogicalParentCursor(Cursor current)
+        => GetParent(current).Cursor;
 
     /// <summary>
     /// Claims the rows at and below the anchor object of <paramref name="instance"/> that resolve to its
@@ -290,9 +466,13 @@ public sealed partial class CompositeResultDocument
         return false;
     }
 
-    private static bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
-        => ((marks & PropertyMarks.Written) != 0 || valueRow.TokenType is not ElementTokenType.None)
-            && SinglePlanDeliveryState.Contains(resolution, groupId);
+    // A row that no step wrote is a null result once every step of every group that holds the row is settled,
+    // which is how the plain path completes a row that its steps did not write.
+    private bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
+        => SinglePlanDeliveryState.Contains(resolution, groupId)
+            && ((marks & PropertyMarks.Written) != 0
+                || valueRow.TokenType is not ElementTokenType.None
+                || _delivery!.AreGroupsSettled(resolution));
 
     // The claiming instance sends the row unless an open instance below it holds the row too.
     private (int Group, int Instance) ChooseCarrier(

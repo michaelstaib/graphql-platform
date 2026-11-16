@@ -27,7 +27,8 @@ public sealed partial class OperationPlanContext
             plan,
             IncludeConditionFlags,
             DeferConditionFlags,
-            DeliveryGroup.GetActive(plan.DeliveryGroups, Variables));
+            DeliveryGroup.GetActive(plan.DeliveryGroups, Variables),
+            ExecutionState);
         _singlePlanDelivery = state;
         _resultStore.Result.AttachDelivery(state);
         return state;
@@ -43,7 +44,8 @@ public sealed partial class OperationPlanContext
         => _resultStore.ClearWriteFilter();
 
     /// <summary>
-    /// Gets the errors of the result that were recorded after the first <paramref name="count"/> errors.
+    /// Gets the errors of the result that were recorded after the first <paramref name="count"/> errors and
+    /// that no delivery group owns.
     /// </summary>
     internal ImmutableList<IError> GetErrorsAfter(int count)
     {
@@ -58,7 +60,10 @@ public sealed partial class OperationPlanContext
 
         for (var i = count; i < errors.Count; i++)
         {
-            builder.Add(errors[i]);
+            if (_singlePlanDelivery?.IsGroupError(errors[i]) is not true)
+            {
+                builder.Add(errors[i]);
+            }
         }
 
         return builder.ToImmutable();
@@ -71,7 +76,11 @@ public sealed partial class OperationPlanContext
     {
         while (state.TryDequeueError(out var error))
         {
-            if (!_resultStore.AddDeliveryErrors(error, state.GetDeliveryGroups(error.ResultSelectionSet)))
+            var groups = state.GetDeliveryGroups(error.ResultSelectionSet);
+
+            state.AddStepError(error.Error, groups);
+
+            if (!_resultStore.AddDeliveryErrors(error, groups))
             {
                 ExecutionState.CancelProcessing();
             }
@@ -97,6 +106,7 @@ internal sealed partial class SinglePlanDeliveryState
     private readonly Dictionary<ResultSelectionSet, ImmutableArray<int>> _groupsByResultSelectionSet
         = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentQueue<DeliveryError> _errors = new();
+    private readonly ExecutionState _executionState;
     private volatile bool _queuesErrors;
 #if DEBUG
     private int _loopThreadId;
@@ -106,9 +116,11 @@ internal sealed partial class SinglePlanDeliveryState
         OperationPlan plan,
         ConditionFlags includeFlags,
         ConditionFlags deferFlags,
-        ConditionFlags activeGroups)
+        ConditionFlags activeGroups,
+        ExecutionState executionState)
     {
         Plan = plan;
+        _executionState = executionState;
         IncludeFlags = includeFlags;
         DeferFlags = deferFlags;
         ActiveGroups = activeGroups;
@@ -135,6 +147,7 @@ internal sealed partial class SinglePlanDeliveryState
         Needed = new bool[plan.MaxNodeId + 1];
         Finished = new bool[plan.MaxNodeId + 1];
         Failed = new bool[plan.MaxNodeId + 1];
+        FailureExceptions = new Exception?[plan.MaxNodeId + 1];
 
         for (var i = 0; i < groupCount; i++)
         {
@@ -238,6 +251,11 @@ internal sealed partial class SinglePlanDeliveryState
     public bool[] Finished { get; }
 
     public bool[] Failed { get; }
+
+    /// <summary>
+    /// Gets the exception of each failed step, indexed by step id.
+    /// </summary>
+    public Exception?[] FailureExceptions { get; }
 
     /// <summary>
     /// Gets the number of errors that payloads already carry.

@@ -27,6 +27,7 @@ internal sealed class ValueCompletion
     private bool _propagateNullValues;
     private CompositeResultDocument? _writeFilterDocument;
     private ImmutableArray<int> _writeFilterGroups;
+    private bool _stoppedAtGroupBoundary;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
@@ -90,6 +91,7 @@ internal sealed class ValueCompletion
         _propagateNullValues = false;
         _writeFilterDocument = null;
         _writeFilterGroups = default;
+        _stoppedAtGroupBoundary = false;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -216,6 +218,11 @@ internal sealed class ValueCompletion
                         return false;
                     }
 
+                    if (_stoppedAtGroupBoundary && !target.IsNullOrInvalidated)
+                    {
+                        continue;
+                    }
+
                     return ApplyPocketedErrors(target);
                 }
             }
@@ -276,6 +283,11 @@ internal sealed class ValueCompletion
                             if (didPropagateToRoot)
                             {
                                 return false;
+                            }
+
+                            if (_stoppedAtGroupBoundary && !target.IsNullOrInvalidated)
+                            {
+                                continue;
                             }
 
                             return ApplyPocketedErrors(target);
@@ -526,7 +538,7 @@ internal sealed class ValueCompletion
                 var promotedError = ErrorBuilder.FromError(error)
                     .SetPath(parentPath);
 
-                _store.AddError(_errorHandler.Handle(promotedError.Build()));
+                AddError(_errorHandler.Handle(promotedError.Build()), parentResult);
                 parentResult.SetNullValue();
                 _store.RemovePocketedErrorsInSubtree(parentPath);
                 continue;
@@ -693,8 +705,15 @@ internal sealed class ValueCompletion
     /// <returns>
     /// <c>true</c>, if the null propagated up to the root.
     /// </returns>
-    private static bool PropagateNullValues(CompositeResultElement result)
+    private bool PropagateNullValues(CompositeResultElement result)
     {
+        _stoppedAtGroupBoundary = false;
+
+        if (_store.Result.Delivery is not null && _store.Result.TryGetDestination(result, out var destination))
+        {
+            return PropagateNullValuesInGroups(result, destination);
+        }
+
         var current = result;
 
         do
@@ -710,6 +729,40 @@ internal sealed class ValueCompletion
         } while (!current.IsNullOrInvalidated);
 
         return true;
+    }
+
+    /// <summary>
+    /// Invalidates the field and its parents like <see cref="PropagateNullValues"/>, but stops before an object
+    /// that is delivered elsewhere than the field. The groups of the field fail at that object.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c>, because the null never propagates up to the root.
+    /// </returns>
+    private bool PropagateNullValuesInGroups(CompositeResultElement result, DeliveryResolution destination)
+    {
+        var document = _store.Result;
+        var current = result;
+
+        do
+        {
+            if (current.Cursor.Value != result.Cursor.Value && document.HasOtherDestination(current, destination))
+            {
+                document.FailGroups(result, destination);
+                _stoppedAtGroupBoundary = true;
+                return false;
+            }
+
+            if (current.IsNullable)
+            {
+                current.SetNullValue();
+                return false;
+            }
+
+            current.Invalidate();
+            current = current.Parent;
+        } while (!current.IsNullOrInvalidated);
+
+        return false;
     }
 
     private bool BuildResultForInvalidSource(
@@ -797,6 +850,11 @@ internal sealed class ValueCompletion
                         if (didPropagateToRoot)
                         {
                             return false;
+                        }
+
+                        if (_stoppedAtGroupBoundary && !target.IsNullOrInvalidated)
+                        {
+                            continue;
                         }
 
                         return ApplyPocketedErrors(target);
@@ -956,7 +1014,7 @@ internal sealed class ValueCompletion
             .Build();
         errorWithPath = _errorHandler.Handle(errorWithPath);
 
-        _store.AddError(errorWithPath);
+        AddError(errorWithPath, fieldResult);
 
         switch (_errorHandlingMode)
         {
@@ -966,6 +1024,14 @@ internal sealed class ValueCompletion
         }
 
         return true;
+    }
+
+    // An error of a field that a delivery group holds back is also recorded for the group, so that the group
+    // sends it and the initial payload does not.
+    private void AddError(IError error, CompositeResultElement element)
+    {
+        _store.AddError(error);
+        _store.Result.TryRecordGroupError(element, error);
     }
 
     private void PocketErrors(Path path, ResultSelectionSet resultSelectionSet, IError error)
@@ -1112,7 +1178,7 @@ internal sealed class ValueCompletion
 
             error = _errorHandler.Handle(error);
 
-            _store.AddError(error);
+            AddError(error, target);
 
             return !_propagateNullValues;
         }
@@ -1141,7 +1207,7 @@ internal sealed class ValueCompletion
                 .Build();
             errorWithPath = _errorHandler.Handle(errorWithPath);
 
-            _store.AddError(errorWithPath);
+            AddError(errorWithPath, target);
         }
         else
         {
@@ -1159,7 +1225,7 @@ internal sealed class ValueCompletion
             .Build();
         errorWithPath = _errorHandler.Handle(errorWithPath);
 
-        _store.AddError(errorWithPath);
+        AddError(errorWithPath, target);
     }
 
     /// <summary>

@@ -949,7 +949,9 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
                 resultDocument.Data.IsNullOrInvalidated || resultDocument.Data.IsNullMarker,
                 resultDocument,
                 retainMemoryForDefer ? null : resultDocument),
-            _resultStore.Errors?.ToImmutableList())
+            _singlePlanDelivery is { } delivery
+                ? delivery.ExcludeGroupErrors(_resultStore.Errors)
+                : _resultStore.Errors?.ToImmutableList())
         {
             RequestIndex = RequestContext.RequestIndex > -1 ? RequestContext.RequestIndex : null,
             VariableIndex = _variableIndex > -1 ? _variableIndex : null
