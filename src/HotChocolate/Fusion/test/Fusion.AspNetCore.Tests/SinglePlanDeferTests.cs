@@ -978,6 +978,114 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_FetchTheDeferredLeafThroughTheLookupOfTheItem_When_ItsListIsAlsoSelectedPlain()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("C", """
+                type Query {
+                    productByIdForReviews(id: ID!): Product @lookup
+                    reviewById(id: ID!): Review @lookup
+                }
+                type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
+                type Review @key(fields: "id") { id: ID! body: String! stars: Int! }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { body }
+                    ... @defer(label: "d") { reviews { stars } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
+    {
+        // arrange
+        var gateway = await CreateProductReviewGatewayAsync("C:3>", "C:4");
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                products {
+                    id
+                    ... @defer(label: "o") { reviews { id rating } }
+                    reviews { id ... @defer(label: "i") { rating } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_JoinThePriceToItsItem_When_AnotherFetchOfTheListWouldReturnTheItemsInAnotherOrder()
+    {
+        // arrange
+        var listRequests = 0;
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) =>
+            {
+                // A second fetch of the list answers with the items in the reverse order.
+                if (schema == "A" && body.Contains("products"))
+                {
+                    string[] ids = Interlocked.Increment(ref listRequests) == 1
+                        ? ["p0", "p1", "p2"]
+                        : ["p2", "p1", "p0"];
+                    var items = string.Join(",", ids.Select(id => $"{{\"name\":\"n-{id}\",\"id\":\"{id}\"}}"));
+
+                    return $"{{\"data\":{{\"products\":[{items}]}}}}";
+                }
+
+                // The price of an item is 10 plus the number in its id.
+                return schema == "B"
+                    ? string.Concat(
+                        ItemKey().Matches(body).Select((m, i) =>
+                            $"{{\"variableIndex\":{i},\"data\":{{\"productById\":"
+                            + $"{{\"price\":{10 + int.Parse(m.Groups[1].Value)}}}}}}}\n"))
+                    : text;
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                products { name }
+                ... @defer(label: "top") { products { price } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [GeneratedRegex("\"__fusion_\\d+_id\":\"p(\\d)\"")]
+    private static partial Regex ItemKey();
+
+    [Fact]
     public async Task Defer_Should_DeliverPriceForEveryItem_When_ARootGroupSelectsAListOfTheInitialPayload()
     {
         // arrange
