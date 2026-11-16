@@ -11,7 +11,7 @@ operation:
             id @fusion__requirement
           }
           ... @include(if: $a) {
-            ... @defer(if: $a, label: "x") {
+            ... @defer(if: $a, label: "x", __group: 0, __parent: -1) {
               reviews {
                 body
               }
@@ -27,7 +27,7 @@ operation:
             id @fusion__requirement
           }
           ... @include(if: $b) {
-            ... @defer(if: $b, label: "y") {
+            ... @defer(if: $b, label: "y", __group: 1, __parent: -1) {
               reviews {
                 body
               }

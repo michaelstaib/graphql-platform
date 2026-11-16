@@ -706,10 +706,16 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        for (var i = 0; i < compiled.Length; i++)
+        foreach (var planned in deliveryGroups)
         {
-            var planned = deliveryGroups[i];
-            var actual = compiled[i];
+            // The groups are numbered, so a group is found by its number.
+            if (planned.Id < 0 || planned.Id >= compiled.Length)
+            {
+                cause = $"Delivery group {planned.Id} has no counterpart in the compiled operation.";
+                return false;
+            }
+
+            var actual = compiled[planned.Id];
 
             if (planned.Id != actual.Id
                 || !Equals(planned.Path, actual.Path)

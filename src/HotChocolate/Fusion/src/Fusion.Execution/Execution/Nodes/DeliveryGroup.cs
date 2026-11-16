@@ -32,13 +32,13 @@ public sealed record DeliveryGroup(
     internal const int MaxCount = 1023;
 
     /// <summary>
-    /// A plan-stable numeric identifier for this delivery group.
+    /// A plan-stable numeric identifier for this delivery group. It equals the group number that the
+    /// <c>@defer</c> directives of the group carry in a lowered operation.
     /// </summary>
     public int Id { get; init; } = -1;
 
     /// <summary>
-    /// The selection path to the object whose selection set contains this
-    /// <c>@defer</c>.
+    /// The selection path to the object where the deferred fragment was spread.
     /// </summary>
     public SelectionPath? Path { get; init; }
 

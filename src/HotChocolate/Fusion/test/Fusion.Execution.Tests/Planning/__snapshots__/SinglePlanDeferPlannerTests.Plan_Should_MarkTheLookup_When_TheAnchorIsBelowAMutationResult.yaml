@@ -3,7 +3,7 @@ operation:
       mutation {
         createProduct(name: "Shoe") {
           name
-          ... @defer(label: "price") {
+          ... @defer(label: "price", __group: 0, __parent: -1) {
             price
             id @fusion__requirement
           }

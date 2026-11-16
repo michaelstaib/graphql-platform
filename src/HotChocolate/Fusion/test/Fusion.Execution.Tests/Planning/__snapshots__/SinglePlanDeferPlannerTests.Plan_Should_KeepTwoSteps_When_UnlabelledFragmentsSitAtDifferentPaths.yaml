@@ -4,13 +4,13 @@ operation:
         product(id: "1") {
           name
           author {
-            ... @defer {
+            ... @defer(__group: 0, __parent: -1) {
               bio
               id @fusion__requirement
             }
           }
           editor {
-            ... @defer {
+            ... @defer(__group: 1, __parent: -1) {
               bio
               id @fusion__requirement
             }

@@ -4,7 +4,7 @@ operation:
         createUser(id: 1) {
           soft
           id @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             id
             id @fusion__requirement
             sku

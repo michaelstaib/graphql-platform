@@ -3,12 +3,12 @@ operation:
       query($c: Boolean!) {
         product(id: "1") {
           name
-          ... @defer(label: "o") {
+          ... @defer(label: "o", __group: 0, __parent: -1) {
             price
             id @fusion__requirement
             ... @include(if: $c) {
               rating
-              ... @defer(label: "i") {
+              ... @defer(label: "i", __group: 1, __parent: 0) {
                 reviews {
                   body
                 }

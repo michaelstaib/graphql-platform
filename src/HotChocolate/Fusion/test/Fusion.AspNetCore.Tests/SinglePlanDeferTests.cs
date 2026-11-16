@@ -325,7 +325,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
-            x ? [] : ["A:2>", "E:3"],
             ("A", """
                 type Query { user(id: ID!): User @lookup }
                 type User @key(fields: "id") { id: ID! friends: [User!]! }
@@ -349,8 +348,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             new Dictionary<string, object?> { ["x"] = x });
 
         // assert
-        // the deferred plan fetches the friends again and the mock answers that request with other ids
-        MatchRun(run, $"x={x}", compareValues: false);
+        MatchRun(run, $"x={x}");
     }
 
     [Theory]
@@ -497,7 +495,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateProductReviewGatewayAsync(
-            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6", "B:3@2", "C:4@3"]);
+            topStepFirst ? ["B:2", "C:3>", "B:4>", "C:5"] : ["B:4", "C:5", "B:2@2", "C:3@3"]);
 
         // act
         var run = await RunWithTwinAsync(
@@ -527,7 +525,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateProductReviewGatewayAsync(
-            topStepFirst ? ["B:3", "C:4>", "B:5>", "C:6"] : ["B:5", "C:6", "B:3@2", "C:4@3"]);
+            topStepFirst ? ["B:2", "C:3>", "B:4>", "C:5"] : ["B:4", "C:5", "B:2@2", "C:3@3"]);
 
         // act
         var run = await RunWithTwinAsync(

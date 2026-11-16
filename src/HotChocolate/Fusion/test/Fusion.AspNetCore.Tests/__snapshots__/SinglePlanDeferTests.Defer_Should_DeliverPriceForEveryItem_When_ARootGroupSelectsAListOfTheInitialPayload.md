@@ -15,6 +15,6 @@
 ## Requests
 
 ```text
-deferred: A=2, B=1
+deferred: A=1, B=1
 plain twin: A=1, B=1
 ```

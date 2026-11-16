@@ -1629,10 +1629,9 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             """);
         const string operationText =
             """
-            query($x: Boolean!) {
+            query {
                 user(id: "1") {
-                    friends @include(if: $x) { id }
-                    ... @defer { friends { ... @defer { name } } }
+                    ... @defer { friends { id ... @defer { name } } }
                 }
             }
             """;

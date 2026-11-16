@@ -5,7 +5,7 @@ operation:
           name
           carrier {
             name
-            ... @defer(label: "r") {
+            ... @defer(label: "r", __group: 0, __parent: -1) {
               rating
               id @fusion__requirement
             }

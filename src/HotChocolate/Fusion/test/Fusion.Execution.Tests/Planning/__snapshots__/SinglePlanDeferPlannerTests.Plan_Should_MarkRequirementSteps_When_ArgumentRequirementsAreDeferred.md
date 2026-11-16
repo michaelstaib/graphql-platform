@@ -12,7 +12,7 @@ operation:
           upc @fusion__requirement
           price(cur: "USD") @fusion__requirement
           fusion__requirement_price_0: price(cur: "EUR") @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             both
             upc @fusion__requirement
             price(cur: "EUR", tax: true) @fusion__requirement
@@ -156,7 +156,7 @@ operation:
           usd
           upc @fusion__requirement
           price(cur: "USD") @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
@@ -270,7 +270,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             usd
             upc @fusion__requirement
             price(cur: "USD") @fusion__requirement
@@ -346,12 +346,12 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
           }
-          ... @defer {
+          ... @defer(__group: 1, __parent: -1) {
             usd
             upc @fusion__requirement
             price(cur: "USD") @fusion__requirement
@@ -475,7 +475,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             price
             upc @fusion__requirement
@@ -554,7 +554,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             price
             usd
@@ -646,7 +646,7 @@ operation:
         products {
           price
           upc @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
@@ -739,7 +739,7 @@ operation:
       {
         product {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
@@ -815,7 +815,7 @@ operation:
       {
         product {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eurC
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
@@ -891,7 +891,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eurC
             eur
             upc @fusion__requirement
@@ -991,7 +991,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             netWeight
             upc @fusion__requirement
             weight @fusion__requirement
@@ -1067,7 +1067,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             weightC
             upc @fusion__requirement
             weight @fusion__requirement
@@ -1143,7 +1143,7 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             chained
             upc @fusion__requirement
             eur @fusion__requirement
@@ -1247,7 +1247,7 @@ operation:
           price(cur: "EUR") @fusion__requirement
           eurC @skip(if: $v)
           ... @include(if: $v) {
-            ... @defer(if: $v) {
+            ... @defer(if: $v, __group: 0, __parent: -1) {
               eurC
               upc @fusion__requirement
               price(cur: "EUR") @fusion__requirement

@@ -15,56 +15,56 @@ operation:
           id @fusion__requirement
           price @skip(if: $s1)
           ... @include(if: $s1) {
-            ... @defer(if: $s1, label: "l1") {
+            ... @defer(if: $s1, label: "l1", __group: 0, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s2)
           ... @include(if: $s2) {
-            ... @defer(if: $s2, label: "l2") {
+            ... @defer(if: $s2, label: "l2", __group: 1, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s3)
           ... @include(if: $s3) {
-            ... @defer(if: $s3, label: "l3") {
+            ... @defer(if: $s3, label: "l3", __group: 2, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s4)
           ... @include(if: $s4) {
-            ... @defer(if: $s4, label: "l4") {
+            ... @defer(if: $s4, label: "l4", __group: 3, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s5)
           ... @include(if: $s5) {
-            ... @defer(if: $s5, label: "l5") {
+            ... @defer(if: $s5, label: "l5", __group: 4, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s6)
           ... @include(if: $s6) {
-            ... @defer(if: $s6, label: "l6") {
+            ... @defer(if: $s6, label: "l6", __group: 5, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s7)
           ... @include(if: $s7) {
-            ... @defer(if: $s7, label: "l7") {
+            ... @defer(if: $s7, label: "l7", __group: 6, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $s8)
           ... @include(if: $s8) {
-            ... @defer(if: $s8, label: "l8") {
+            ... @defer(if: $s8, label: "l8", __group: 7, __parent: -1) {
               price
               id @fusion__requirement
             }

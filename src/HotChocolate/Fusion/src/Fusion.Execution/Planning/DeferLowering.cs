@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using HotChocolate.Types;
@@ -29,14 +30,22 @@ internal static class DeferLowering
         var lowerer = new Lowerer(schema, operation.Operation);
         var rootItems = operation.SelectionSet.Selections;
         var rootScope = Scope.Root(schema.GetOperationType(operation.Operation), rootItems);
-        var selections = lowerer.LowerList(rootItems, rootScope);
+        var selections = lowerer.LowerPass(rootItems, rootScope);
 
-        return operation.WithSelectionSet(new SelectionSetNode(selections));
+        return operation.WithSelectionSet(new SelectionSetNode(lowerer.Finish(selections)));
     }
 
     private sealed class Lowerer(FusionSchemaDefinition schema, OperationType operationType)
     {
-        public List<ISelectionNode> LowerList(IReadOnlyList<ISelectionNode> items, Scope scope)
+        private readonly Dictionary<InlineFragmentNode, Site> _sites = new(ReferenceEqualityComparer.Instance);
+
+        public List<ISelectionNode> LowerPass(IReadOnlyList<ISelectionNode> items, Scope scope)
+        {
+            var lowered = LowerList(items, scope);
+            return AttachParts(lowered, scope.Pass, scope.Sink);
+        }
+
+        private List<ISelectionNode> LowerList(IReadOnlyList<ISelectionNode> items, Scope scope)
         {
             var result = new List<ISelectionNode>(items.Count);
 
@@ -49,7 +58,9 @@ internal static class DeferLowering
                             GetFieldType(scope.Type, field),
                             selectionSet.Selections);
                         var lowered = LowerList(selectionSet.Selections, fieldScope);
-                        result.Add(field.WithSelectionSet(new SelectionSetNode(lowered)));
+                        var output = field.WithSelectionSet(new SelectionSetNode(lowered));
+                        scope.Pass.Outputs[field] = output;
+                        result.Add(output);
                         break;
 
                     case InlineFragmentNode fragment:
@@ -72,54 +83,89 @@ internal static class DeferLowering
 
             if (!HasDeferDirective(fragment))
             {
-                var content = LowerList(
-                    items,
-                    scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false));
+                var content = LowerList(items, scope.EnterFragment(fragmentType, fragment, items));
                 result.Add(fragment.WithSelectionSet(new SelectionSetNode(content)));
                 return;
             }
 
-            var isDeferrable = DeferCondition.TryCreate(fragment, out var condition);
-            var plainScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, false);
-            List<ISelectionNode>? deferredContent = null;
-            var coverage = Coverage.Empty;
-
-            if (isDeferrable)
+            if (DeferCondition.TryCreate(fragment, out var condition)
+                && TryLowerDeferred(fragment, condition, fragmentType, scope, result))
             {
-                // The content is lowered first, so a nested fragment that was inlined is part of it.
-                var deferredScope = scope.EnterFragment(fragmentType, fragment.TypeCondition, items, true);
-                coverage = Coverage.Create(scope, fragment.TypeCondition);
-                deferredContent = Prune(LowerList(items, deferredScope), coverage);
+                return;
             }
 
             // The fragment is inlined when it cannot be delivered later or adds nothing.
+            var inlined = new InlineFragmentNode(
+                null,
+                fragment.TypeCondition,
+                fragment.Directives.Where(static d => !IsDeferDirective(d)).ToArray(),
+                new SelectionSetNode(LowerList(items, scope.EnterFragment(fragmentType, fragment, items))));
+            result.Add(inlined);
+        }
+
+        private bool TryLowerDeferred(
+            InlineFragmentNode fragment,
+            DeferCondition condition,
+            ITypeDefinition? fragmentType,
+            Scope scope,
+            List<ISelectionNode> result)
+        {
+            var items = fragment.SelectionSet.Selections;
+            var group = new DeferGroup(scope.Group);
+
+            // The content is lowered first, so a nested fragment that was inlined is part of it.
+            var attempt = scope.EnterDeferred(fragmentType, fragment, items, group);
+            var lowered = LowerPass(items, attempt);
+            var coverage = Coverage.Create(scope, fragment.TypeCondition);
+            var state = new PruneState(fragment, group, condition.IfVariableName);
+            var content = Prune(lowered, coverage, fragmentType, 0, false, state);
+
             // The decision reads the content that is left after the pruning of the deferred copy.
-            if (deferredContent is null || ShouldInline(deferredContent, fragmentType, coverage, scope))
+            if (ShouldInline(content, fragmentType, coverage, scope, state))
             {
-                var inlined = new InlineFragmentNode(
-                    null,
-                    fragment.TypeCondition,
-                    fragment.Directives.Where(static d => !IsDeferDirective(d)).ToArray(),
-                    new SelectionSetNode(LowerList(items, plainScope)));
-                result.Add(inlined);
-                return;
+                return false;
             }
 
             if (condition.IfVariableName is { } variableName)
             {
-                result.Add(CreatePlainCopy(fragment, variableName, LowerList(items, plainScope)));
+                var copyScope = scope.EnterCopy(fragmentType, fragment, items);
+                result.Add(CreatePlainCopy(fragment, variableName, LowerPass(items, copyScope)));
+                scope.Sink.AddRange(copyScope.Sink);
             }
 
-            // The deferred copy drops the leaf fields that an enclosing selection at the same place selects.
-            result.Add(CreateDeferredCopy(fragment, condition, deferredContent));
+            if (content.Count > 0)
+            {
+                // The deferred copy drops the leaf fields that an enclosing selection at the same place selects.
+                var (copy, deferred) = CreateDeferredCopy(fragment, condition, content);
+                _sites[deferred] = new Site(group, 0);
+                result.Add(copy);
+            }
+            else
+            {
+                // The group stands at its place without a fragment, so the numbering sees where it was.
+                var marker = new InlineFragmentNode(null, null, [], new SelectionSetNode([]));
+                _sites[marker] = new Site(group, 0) { IsMarker = true };
+                result.Add(marker);
+            }
+
+            scope.Sink.AddRange(attempt.Sink);
+            scope.Sink.AddRange(state.Parts);
+            return true;
         }
 
         private bool ShouldInline(
             List<ISelectionNode> content,
             ITypeDefinition? anchorType,
             Coverage coverage,
-            Scope scope)
+            Scope scope,
+            PruneState state)
         {
+            // A part that cannot keep its place in the outside selection of its list.
+            if (state.MustInline)
+            {
+                return true;
+            }
+
             // A mutation root field runs exactly once.
             if (scope.IsRoot && operationType is OperationType.Mutation)
             {
@@ -132,8 +178,18 @@ internal static class DeferLowering
                 return true;
             }
 
+            // A part is fetched through a direct lookup of the item type of its list.
+            foreach (var part in state.Parts)
+            {
+                if (!HasDirectLookups(part.Content, part.ItemType))
+                {
+                    return true;
+                }
+            }
+
             // Nothing in the fragment is new.
-            return !HasOwnField(content, coverage);
+            return !HasOwnField(content, coverage)
+                && !state.Parts.Exists(static part => HasOwnField(part.Content, Coverage.Empty));
         }
 
         private static bool HasOwnField(IReadOnlyList<ISelectionNode> items, Coverage coverage)
@@ -150,8 +206,8 @@ internal static class DeferLowering
                         return true;
 
                     case FieldNode { SelectionSet: { } selectionSet } composite:
-                        if (!coverage.Fields.TryGetValue(GetResponseName(composite), out var childCoverage)
-                            || HasOwnField(selectionSet.Selections, childCoverage))
+                        if (!coverage.Fields.TryGetValue(GetResponseName(composite), out var covered)
+                            || HasOwnField(selectionSet.Selections, covered.Child))
                         {
                             return true;
                         }
@@ -223,7 +279,13 @@ internal static class DeferLowering
             return false;
         }
 
-        private static List<ISelectionNode> Prune(IReadOnlyList<ISelectionNode> items, Coverage coverage)
+        private List<ISelectionNode> Prune(
+            IReadOnlyList<ISelectionNode> items,
+            Coverage coverage,
+            ITypeDefinition? type,
+            int depth,
+            bool typed,
+            PruneState state)
         {
             var result = new List<ISelectionNode>(items.Count);
 
@@ -240,19 +302,23 @@ internal static class DeferLowering
                         break;
 
                     case FieldNode { SelectionSet: { } selectionSet } composite:
-                        var childCoverage =
-                            coverage.Fields.GetValueOrDefault(GetResponseName(composite)) ?? Coverage.Empty;
-                        var children = Prune(selectionSet.Selections, childCoverage);
+                        PruneComposite(composite, selectionSet, coverage, type, depth, typed, state, result);
+                        break;
 
-                        if (children.Count > 0)
-                        {
-                            result.Add(composite.WithSelectionSet(new SelectionSetNode(children)));
-                        }
-
+                    case InlineFragmentNode marker when IsMarker(marker):
+                        result.Add(marker);
                         break;
 
                     case InlineFragmentNode fragment when !HasDeferDirective(fragment):
-                        var content = Prune(fragment.SelectionSet.Selections, coverage);
+                        var mark = state.Push(fragment.Directives);
+                        var content = Prune(
+                            fragment.SelectionSet.Selections,
+                            coverage,
+                            GetFragmentType(type, fragment),
+                            depth,
+                            typed || fragment.TypeCondition is not null,
+                            state);
+                        state.Pop(mark);
 
                         if (content.Count > 0)
                         {
@@ -269,6 +335,315 @@ internal static class DeferLowering
 
             return result;
         }
+
+        private void PruneComposite(
+            FieldNode composite,
+            SelectionSetNode selectionSet,
+            Coverage coverage,
+            ITypeDefinition? type,
+            int depth,
+            bool typed,
+            PruneState state,
+            List<ISelectionNode> result)
+        {
+            var responseName = GetResponseName(composite);
+            var isList = IsListField(type, composite);
+
+            if (!coverage.Fields.TryGetValue(responseName, out var covered))
+            {
+                // The outside selection of a list that D selects carries a condition.
+                if (isList && coverage.ConditionalFields.Contains(responseName))
+                {
+                    state.MustInline = true;
+                }
+
+                result.Add(composite);
+                return;
+            }
+
+            var fieldType = GetFieldType(type, composite);
+            var mark = state.Push(composite.Directives);
+            var children = Prune(selectionSet.Selections, covered.Child, fieldType, depth + 1, typed, state);
+
+            if (!isList)
+            {
+                state.Pop(mark);
+
+                if (children.Count > 0)
+                {
+                    result.Add(composite.WithSelectionSet(new SelectionSetNode(children)));
+                }
+
+                return;
+            }
+
+            // Below a covered list the deferred copy keeps nothing. What is left becomes a part of the
+            // outside selection of the list.
+            if (children.Count > 0)
+            {
+                CreatePart(covered, children, fieldType, depth + 1, typed, state);
+            }
+
+            state.Pop(mark);
+        }
+
+        private void CreatePart(
+            CoveredField covered,
+            List<ISelectionNode> content,
+            ITypeDefinition? itemType,
+            int levels,
+            bool typed,
+            PruneState state)
+        {
+            var fragment = state.Fragment;
+
+            if (typed
+                || state.Unsupported > 0
+                || !covered.Attachable
+                || fragment.TypeCondition is not null)
+            {
+                state.MustInline = true;
+                return;
+            }
+
+            var deferDirective = fragment.Directives.First(static d => IsDeferDirective(d));
+            var conditions = fragment.Directives.Where(static d => !IsDeferDirective(d)).ToList();
+            var coreDirectives = new List<DirectiveNode>(2);
+
+            if (state.SwitchVariable is { } variableName
+                && !conditions.Exists(
+                    d => d.Name.Value.Equals(DirectiveNames.Include.Name, StringComparison.Ordinal)
+                        && IsConditionDirective(d, variableName)))
+            {
+                coreDirectives.Add(CreateConditionDirective(DirectiveNames.Include.Name, variableName));
+            }
+
+            coreDirectives.Add(deferDirective);
+            conditions.AddRange(state.Conditions);
+
+            var core = new InlineFragmentNode(null, null, coreDirectives, new SelectionSetNode(content));
+            _sites[core] = new Site(state.Group, levels);
+            var outermost = core;
+
+            for (var i = conditions.Count - 1; i >= 0; i--)
+            {
+                outermost = new InlineFragmentNode(
+                    null,
+                    null,
+                    [conditions[i]],
+                    new SelectionSetNode([outermost]));
+            }
+
+            state.Parts.Add(new PendingPart(covered.Pass, covered.Node, outermost, itemType, content));
+        }
+
+        private static List<ISelectionNode> AttachParts(
+            List<ISelectionNode> items,
+            Pass pass,
+            List<PendingPart> sink)
+        {
+            Dictionary<FieldNode, List<InlineFragmentNode>>? byOutput = null;
+
+            foreach (var part in sink)
+            {
+                if (part.Target != pass)
+                {
+                    continue;
+                }
+
+                byOutput ??= new Dictionary<FieldNode, List<InlineFragmentNode>>(ReferenceEqualityComparer.Instance);
+                var output = pass.Outputs[part.Input];
+
+                if (!byOutput.TryGetValue(output, out var parts))
+                {
+                    parts = [];
+                    byOutput.Add(output, parts);
+                }
+
+                parts.Add(part.Fragment);
+            }
+
+            if (byOutput is null)
+            {
+                return items;
+            }
+
+            sink.RemoveAll(part => part.Target == pass);
+            return Attach(items, byOutput) ?? items;
+        }
+
+        private static List<ISelectionNode>? Attach(
+            IReadOnlyList<ISelectionNode> items,
+            Dictionary<FieldNode, List<InlineFragmentNode>> byOutput)
+        {
+            List<ISelectionNode>? result = null;
+
+            for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                ISelectionNode? replacement = null;
+
+                switch (item)
+                {
+                    case FieldNode { SelectionSet: { } selectionSet } field:
+                        var children = Attach(selectionSet.Selections, byOutput);
+
+                        if (byOutput.TryGetValue(field, out var parts))
+                        {
+                            children = [.. children ?? selectionSet.Selections, .. parts];
+                        }
+
+                        if (children is not null)
+                        {
+                            replacement = field.WithSelectionSet(new SelectionSetNode(children));
+                        }
+
+                        break;
+
+                    case InlineFragmentNode fragment when !HasDeferDirective(fragment):
+                        var content = Attach(fragment.SelectionSet.Selections, byOutput);
+
+                        if (content is not null)
+                        {
+                            replacement = fragment.WithSelectionSet(new SelectionSetNode(content));
+                        }
+
+                        break;
+                }
+
+                if (replacement is null)
+                {
+                    result?.Add(item);
+                    continue;
+                }
+
+                result ??= [.. items.Take(i)];
+                result.Add(replacement);
+            }
+
+            return result;
+        }
+
+        public List<ISelectionNode> Finish(List<ISelectionNode> items)
+        {
+            if (_sites.Count == 0)
+            {
+                return items;
+            }
+
+            var next = 0;
+            Number(items, ref next);
+            return Write(items);
+        }
+
+        private void Number(IReadOnlyList<ISelectionNode> items, ref int next)
+        {
+            foreach (var item in items)
+            {
+                switch (item)
+                {
+                    case FieldNode { SelectionSet: { } selectionSet }:
+                        Number(selectionSet.Selections, ref next);
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        if (_sites.TryGetValue(fragment, out var site) && site.Levels == 0 && site.Group.Number < 0)
+                        {
+                            site.Group.Number = next++;
+                        }
+
+                        Number(fragment.SelectionSet.Selections, ref next);
+                        break;
+                }
+            }
+        }
+
+        private List<ISelectionNode> Write(IReadOnlyList<ISelectionNode> items)
+        {
+            var result = new List<ISelectionNode>(items.Count);
+
+            foreach (var item in items)
+            {
+                switch (item)
+                {
+                    case FieldNode { SelectionSet: { } selectionSet } field:
+                        var children = Write(selectionSet.Selections);
+
+                        if (children.Count > 0 || selectionSet.Selections.Count == 0)
+                        {
+                            result.Add(field.WithSelectionSet(new SelectionSetNode(children)));
+                        }
+
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        _sites.TryGetValue(fragment, out var site);
+
+                        if (site is { IsMarker: true })
+                        {
+                            break;
+                        }
+
+                        var content = Write(fragment.SelectionSet.Selections);
+
+                        if (content.Count == 0 && fragment.SelectionSet.Selections.Count > 0)
+                        {
+                            break;
+                        }
+
+                        var written = fragment.WithSelectionSet(new SelectionSetNode(content));
+                        result.Add(site is null ? written : written.WithDirectives(WriteDirectives(fragment, site)));
+                        break;
+
+                    default:
+                        result.Add(item);
+                        break;
+                }
+            }
+
+            return result;
+        }
+
+        private static List<DirectiveNode> WriteDirectives(InlineFragmentNode fragment, Site site)
+        {
+            var directives = new List<DirectiveNode>(fragment.Directives.Count);
+
+            foreach (var directive in fragment.Directives)
+            {
+                if (!IsDeferDirective(directive))
+                {
+                    directives.Add(directive);
+                    continue;
+                }
+
+                var arguments = directive.Arguments
+                    .Where(static a => !IsInternalArgument(a))
+                    .ToList();
+                arguments.Add(CreateIntArgument(DocumentRewriter.DeferArguments.Group, site.Group.Number));
+                arguments.Add(
+                    CreateIntArgument(DocumentRewriter.DeferArguments.Parent, site.Group.Parent?.Number ?? -1));
+
+                if (site.Levels > 0)
+                {
+                    arguments.Add(CreateIntArgument(DocumentRewriter.DeferArguments.Levels, site.Levels));
+                }
+
+                directives.Add(new DirectiveNode(directive.Name.Value, arguments.ToArray()));
+            }
+
+            return directives;
+        }
+
+        private static ArgumentNode CreateIntArgument(string name, int value)
+            => new(name, new IntValueNode(value));
+
+        private static bool IsInternalArgument(ArgumentNode argument)
+            => argument.Name.Value is DocumentRewriter.DeferArguments.Group
+                or DocumentRewriter.DeferArguments.Parent
+                or DocumentRewriter.DeferArguments.Levels;
+
+        private bool IsMarker(InlineFragmentNode fragment)
+            => _sites.TryGetValue(fragment, out var site) && site.IsMarker;
 
         private static InlineFragmentNode CreatePlainCopy(
             InlineFragmentNode fragment,
@@ -294,7 +669,7 @@ internal static class DeferLowering
                 new SelectionSetNode([inner]));
         }
 
-        private static InlineFragmentNode CreateDeferredCopy(
+        private static (InlineFragmentNode Copy, InlineFragmentNode Deferred) CreateDeferredCopy(
             InlineFragmentNode fragment,
             DeferCondition condition,
             List<ISelectionNode> content)
@@ -304,7 +679,8 @@ internal static class DeferLowering
             // An unconditional @defer has no plain copy that the deferred copy must exclude.
             if (condition.IfVariableName is not { } variableName)
             {
-                return fragment.WithSelectionSet(selectionSet);
+                var unconditional = fragment.WithSelectionSet(selectionSet);
+                return (unconditional, unconditional);
             }
 
             var include = CreateConditionDirective(DirectiveNames.Include.Name, variableName);
@@ -325,22 +701,25 @@ internal static class DeferLowering
                     directives.Add(directive);
                 }
 
-                return new InlineFragmentNode(null, fragment.TypeCondition, directives, selectionSet);
+                var switched = new InlineFragmentNode(null, fragment.TypeCondition, directives, selectionSet);
+                return (switched, switched);
             }
 
             if (IsConditionDirective(existing, variableName))
             {
-                return fragment.WithSelectionSet(selectionSet);
+                var same = fragment.WithSelectionSet(selectionSet);
+                return (same, same);
             }
 
             // A fragment has one @include, so the client's directives go onto an enclosing fragment.
             var defer = fragment.Directives.First(static d => IsDeferDirective(d));
             var inner = new InlineFragmentNode(null, null, [include, defer], selectionSet);
-            return new InlineFragmentNode(
+            var outer = new InlineFragmentNode(
                 null,
                 fragment.TypeCondition,
                 fragment.Directives.Where(static d => !IsDeferDirective(d)).ToList(),
                 new SelectionSetNode([inner]));
+            return (outer, inner);
         }
 
         private static DirectiveNode CreateConditionDirective(string name, string variableName)
@@ -355,6 +734,11 @@ internal static class DeferLowering
                 && complexType.Fields.TryGetField(field.Name.Value, out var fieldDefinition)
                     ? fieldDefinition.Type.NamedType()
                     : null;
+
+        private static bool IsListField(ITypeDefinition? type, FieldNode field)
+            => type is IComplexTypeDefinition complexType
+                && complexType.Fields.TryGetField(field.Name.Value, out var fieldDefinition)
+                && fieldDefinition.Type.IsListType();
 
         private ITypeDefinition? GetFragmentType(ITypeDefinition? type, InlineFragmentNode fragment)
         {
@@ -389,49 +773,226 @@ internal static class DeferLowering
     }
 
     /// <summary>
+    /// The state of the pruning of one deferred fragment: the parts that it cuts off, the conditions between
+    /// the fragment and the current field, and whether it must be inlined.
+    /// </summary>
+    private sealed class PruneState(InlineFragmentNode fragment, DeferGroup group, string? switchVariable)
+    {
+        public InlineFragmentNode Fragment { get; } = fragment;
+
+        public DeferGroup Group { get; } = group;
+
+        public string? SwitchVariable { get; } = switchVariable;
+
+        public List<PendingPart> Parts { get; } = [];
+
+        public List<DirectiveNode> Conditions { get; } = [];
+
+        public int Unsupported { get; private set; }
+
+        public bool MustInline { get; set; }
+
+        public (int Conditions, int Unsupported) Push(IReadOnlyList<DirectiveNode> directives)
+        {
+            var mark = (Conditions.Count, Unsupported);
+
+            foreach (var directive in directives)
+            {
+                if (directive.Name.Value is DirectiveNames.Skip.Name or DirectiveNames.Include.Name)
+                {
+                    Conditions.Add(directive);
+                }
+                else
+                {
+                    Unsupported++;
+                }
+            }
+
+            return mark;
+        }
+
+        public void Pop((int Conditions, int Unsupported) mark)
+        {
+            Conditions.RemoveRange(mark.Conditions, Conditions.Count - mark.Conditions);
+            Unsupported = mark.Unsupported;
+        }
+    }
+
+    /// <summary>
+    /// A fragment that a deferred fragment cuts off below a covered list, with the field of the outside
+    /// selection that it is attached to.
+    /// </summary>
+    private sealed record PendingPart(
+        Pass Target,
+        FieldNode Input,
+        InlineFragmentNode Fragment,
+        ITypeDefinition? ItemType,
+        List<ISelectionNode> Content);
+
+    /// <summary>
+    /// The delivery group of one deferred fragment. The number is assigned in the document order of the places
+    /// where the fragments stand.
+    /// </summary>
+    private sealed class DeferGroup(DeferGroup? parent)
+    {
+        public DeferGroup? Parent { get; } = parent;
+
+        public int Number { get; set; } = -1;
+    }
+
+    /// <summary>
+    /// The group of a deferred fragment in the lowered operation, the field levels between a part and the
+    /// place of its fragment, and whether the fragment only marks that place.
+    /// </summary>
+    private sealed record Site(DeferGroup Group, int Levels)
+    {
+        public bool IsMarker { get; init; }
+    }
+
+    /// <summary>
+    /// One lowering of a selection list: the lowered field of every composite field, by the field it was
+    /// lowered from.
+    /// </summary>
+    private sealed class Pass
+    {
+        public Dictionary<FieldNode, FieldNode> Outputs { get; } = new(ReferenceEqualityComparer.Instance);
+    }
+
+    /// <summary>
     /// The position of a selection list: the type of its fields, the lists that enclose it on the same
-    /// field level, and whether it sits in a deferred fragment.
+    /// field level, and the lowering pass and group that it belongs to.
     /// </summary>
     private sealed class Scope
     {
-        private Scope(ITypeDefinition? type, bool isRoot, bool inDeferred, Level level)
+        private Scope(
+            ITypeDefinition? type,
+            bool isRoot,
+            Level level,
+            Pass pass,
+            DeferGroup? group,
+            List<PendingPart> sink)
         {
             Type = type;
             IsRoot = isRoot;
-            InDeferred = inDeferred;
             Level = level;
+            Pass = pass;
+            Group = group;
+            Sink = sink;
         }
 
         public ITypeDefinition? Type { get; }
 
         public bool IsRoot { get; }
 
-        public bool InDeferred { get; }
-
         public Level Level { get; }
 
+        public Pass Pass { get; }
+
+        public DeferGroup? Group { get; }
+
+        public List<PendingPart> Sink { get; }
+
         public static Scope Root(ITypeDefinition type, IReadOnlyList<ISelectionNode> items)
-            => new(type, true, false, new Level(items, null, null));
+        {
+            var pass = new Pass();
+            return new(type, true, new Level(items, null, null, pass), pass, null, []);
+        }
 
         public Scope EnterField(ITypeDefinition? type, IReadOnlyList<ISelectionNode> items)
-            => new(type, false, InDeferred, new Level(items, null, null));
+            => new(type, false, new Level(items, null, null, Pass), Pass, Group, Sink);
 
-        public Scope EnterFragment(
+        public Scope EnterFragment(ITypeDefinition? type, InlineFragmentNode owner, IReadOnlyList<ISelectionNode> items)
+            => new(type, IsRoot, new Level(items, owner, Level, Pass), Pass, Group, Sink);
+
+        public Scope EnterDeferred(
             ITypeDefinition? type,
-            NamedTypeNode? typeCondition,
+            InlineFragmentNode owner,
             IReadOnlyList<ISelectionNode> items,
-            bool deferred)
-            => new(type, IsRoot, InDeferred || deferred, new Level(items, typeCondition, Level));
+            DeferGroup group)
+        {
+            var pass = new Pass();
+            return new(type, IsRoot, new Level(items, owner, Level, pass), pass, group, []);
+        }
+
+        public Scope EnterCopy(ITypeDefinition? type, InlineFragmentNode owner, IReadOnlyList<ISelectionNode> items)
+        {
+            var pass = new Pass();
+            return new(type, IsRoot, new Level(items, owner, Level, pass), pass, Group, []);
+        }
     }
 
     /// <summary>
-    /// A selection list on one field level, with the type condition of the fragment that owns it and the list
-    /// that encloses it at the same level.
+    /// A selection list on one field level, with the fragment that owns it and the list that encloses it at
+    /// the same level.
     /// </summary>
-    private sealed record Level(
-        IReadOnlyList<ISelectionNode> Items,
-        NamedTypeNode? OwnerTypeCondition,
-        Level? Outer);
+    private sealed class Level(
+        IReadOnlyList<ISelectionNode> items,
+        InlineFragmentNode? owner,
+        Level? outer,
+        Pass pass)
+    {
+        public IReadOnlyList<ISelectionNode> Items { get; } = items;
+
+        public NamedTypeNode? OwnerTypeCondition => owner?.TypeCondition;
+
+        public Level? Outer { get; } = outer;
+
+        public Pass Pass { get; } = pass;
+
+        /// <summary>
+        /// Whether a selection of an outer level can take a part of a fragment that stands in this level,
+        /// which holds when the owner adds no type condition and no directive but an unconditional
+        /// <c>@defer</c>.
+        /// </summary>
+        public bool IsTransparent
+        {
+            get
+            {
+                if (owner is null)
+                {
+                    return true;
+                }
+
+                if (owner.TypeCondition is not null)
+                {
+                    return false;
+                }
+
+                foreach (var directive in owner.Directives)
+                {
+                    if (!directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    foreach (var argument in directive.Arguments)
+                    {
+                        if (argument.Name.Value.Equals(DirectiveNames.Defer.Arguments.If, StringComparison.Ordinal))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A field that an enclosing selection selects without conditions, the pass that lowers it, and whether
+    /// a part can be attached to it.
+    /// </summary>
+    private sealed class CoveredField(FieldNode node, Pass pass, bool attachable)
+    {
+        public FieldNode Node { get; } = node;
+
+        public Pass Pass { get; } = pass;
+
+        public bool Attachable { get; } = attachable;
+
+        public Coverage Child { get; } = new();
+    }
 
     /// <summary>
     /// The fields that an enclosing selection at a place selects without conditions: outside of any deferred
@@ -441,12 +1002,18 @@ internal static class DeferLowering
     {
         public static readonly Coverage Empty = new();
 
-        public Dictionary<string, Coverage> Fields { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, CoveredField> Fields { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The response names of composite fields that an enclosing selection selects only under a condition.
+        /// </summary>
+        public HashSet<string> ConditionalFields { get; } = new(StringComparer.Ordinal);
 
         public static Coverage Create(Scope scope, NamedTypeNode? typeCondition)
         {
             var coverage = new Coverage();
             var typeConditions = new HashSet<string>(StringComparer.Ordinal);
+            var attachable = true;
 
             if (typeCondition is not null)
             {
@@ -455,46 +1022,81 @@ internal static class DeferLowering
 
             for (var level = scope.Level; level is not null; level = level.Outer)
             {
-                coverage.Collect(level.Items, typeConditions);
+                coverage.Collect(level.Items, typeConditions, level.Pass, attachable, false, false);
 
                 if (level.OwnerTypeCondition is not null)
                 {
                     typeConditions.Add(level.OwnerTypeCondition.Name.Value);
                 }
+
+                attachable &= level.IsTransparent;
             }
 
             return coverage;
         }
 
-        private void Collect(IReadOnlyList<ISelectionNode> items, HashSet<string> typeConditions)
+        private void Collect(
+            IReadOnlyList<ISelectionNode> items,
+            HashSet<string> typeConditions,
+            Pass pass,
+            bool attachable,
+            bool typed,
+            bool conditional)
         {
             foreach (var item in items)
             {
                 switch (item)
                 {
-                    case FieldNode { Directives.Count: 0 } field:
+                    case FieldNode { Directives.Count: 0 } field when !conditional:
                         var name = field.Alias?.Value ?? field.Name.Value;
 
-                        if (!Fields.TryGetValue(name, out var child))
+                        if (!Fields.TryGetValue(name, out var covered))
                         {
-                            child = new Coverage();
-                            Fields.Add(name, child);
+                            covered = new CoveredField(field, pass, attachable && !typed);
+                            Fields.Add(name, covered);
                         }
 
                         if (field.SelectionSet is { } selectionSet)
                         {
-                            child.Collect(selectionSet.Selections, []);
+                            covered.Child.Collect(selectionSet.Selections, [], pass, covered.Attachable, false, false);
                         }
 
                         break;
 
-                    case InlineFragmentNode { Directives.Count: 0 } fragment
+                    case FieldNode { SelectionSet: not null } field:
+                        ConditionalFields.Add(field.Alias?.Value ?? field.Name.Value);
+                        break;
+
+                    case InlineFragmentNode fragment
                         when fragment.TypeCondition is null
                             || typeConditions.Contains(fragment.TypeCondition.Name.Value):
-                        Collect(fragment.SelectionSet.Selections, typeConditions);
+                        if (fragment.Directives.Count == 0 || IsOnlyConditional(fragment))
+                        {
+                            Collect(
+                                fragment.SelectionSet.Selections,
+                                typeConditions,
+                                pass,
+                                attachable,
+                                typed || fragment.TypeCondition is not null,
+                                conditional || fragment.Directives.Count > 0);
+                        }
+
                         break;
                 }
             }
+        }
+
+        private static bool IsOnlyConditional(InlineFragmentNode fragment)
+        {
+            foreach (var directive in fragment.Directives)
+            {
+                if (directive.Name.Value is not (DirectiveNames.Skip.Name or DirectiveNames.Include.Name))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

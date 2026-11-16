@@ -3,7 +3,7 @@ operation:
       {
         product(id: "1") {
           name
-          ... @defer(label: "inner") {
+          ... @defer(label: "inner", __group: 0, __parent: -1) {
             price
             id @fusion__requirement
           }

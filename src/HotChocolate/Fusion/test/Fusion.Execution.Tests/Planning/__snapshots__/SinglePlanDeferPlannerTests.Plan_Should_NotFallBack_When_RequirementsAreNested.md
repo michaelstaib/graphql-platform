@@ -13,7 +13,7 @@ operation:
             weight @fusion__requirement
             shippingCost @skip(if: $b)
             ... @include(if: $b) {
-              ... @defer(if: $b, label: "i") {
+              ... @defer(if: $b, label: "i", __group: 0, __parent: -1) {
                 shippingCost
                 id @fusion__requirement
                 weight @fusion__requirement
@@ -21,12 +21,12 @@ operation:
             }
           }
           ... @include(if: $a) {
-            ... @defer(if: $a, label: "o") {
+            ... @defer(if: $a, label: "o", __group: 1, __parent: -1) {
               id @fusion__requirement
               weight @fusion__requirement
               shippingCost @skip(if: $b)
               ... @include(if: $b) {
-                ... @defer(if: $b, label: "i") {
+                ... @defer(if: $b, label: "i", __group: 2, __parent: 1) {
                   shippingCost
                   id @fusion__requirement
                   weight @fusion__requirement
@@ -300,11 +300,11 @@ operation:
         products {
           price
           upc @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
-            ... @defer {
+            ... @defer(__group: 1, __parent: 0) {
               usd
               upc @fusion__requirement
               price(cur: "USD") @fusion__requirement

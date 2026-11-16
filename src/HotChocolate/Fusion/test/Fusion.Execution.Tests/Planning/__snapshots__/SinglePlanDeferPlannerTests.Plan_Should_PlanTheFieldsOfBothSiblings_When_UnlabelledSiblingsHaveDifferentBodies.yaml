@@ -3,11 +3,11 @@ operation:
       {
         product(id: "1") {
           name
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             price
             id @fusion__requirement
           }
-          ... @defer {
+          ... @defer(__group: 1, __parent: -1) {
             price
             rating
             id @fusion__requirement

@@ -4,7 +4,7 @@ operation:
         product(id: "1") {
           name
         }
-        ... @defer(label: "root") {
+        ... @defer(label: "root", __group: 0, __parent: -1) {
           other: product(id: "2") {
             name
           }

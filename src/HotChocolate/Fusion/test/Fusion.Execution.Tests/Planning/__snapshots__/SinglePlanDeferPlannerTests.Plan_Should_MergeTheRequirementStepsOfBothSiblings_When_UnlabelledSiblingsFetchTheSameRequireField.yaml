@@ -3,12 +3,12 @@ operation:
       {
         products {
           upc
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement
           }
-          ... @defer {
+          ... @defer(__group: 1, __parent: -1) {
             eur
             upc @fusion__requirement
             price(cur: "EUR") @fusion__requirement

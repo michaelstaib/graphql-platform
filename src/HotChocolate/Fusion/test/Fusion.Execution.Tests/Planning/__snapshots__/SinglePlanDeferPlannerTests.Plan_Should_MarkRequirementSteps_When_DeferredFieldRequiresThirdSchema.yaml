@@ -7,7 +7,7 @@ operation:
           weight @fusion__requirement
           shippingCost @skip(if: $v)
           ... @include(if: $v) {
-            ... @defer(if: $v, label: "s") {
+            ... @defer(if: $v, label: "s", __group: 0, __parent: -1) {
               shippingCost
               id @fusion__requirement
               weight @fusion__requirement

@@ -91,7 +91,7 @@ public class DeferLoweringTests : FusionTestBase
             {
               user(id: "1") {
                 id
-                ... @defer(label: "mail") {
+                ... @defer(label: "mail", __group: 0, __parent: -1) {
                   email
                 }
               }
@@ -127,7 +127,7 @@ public class DeferLoweringTests : FusionTestBase
                 ... @skip(if: $d) {
                   email
                 }
-                ... @include(if: $d) @defer(if: $d, label: "mail") {
+                ... @include(if: $d) @defer(if: $d, label: "mail", __group: 0, __parent: -1) {
                   email
                 }
               }
@@ -168,16 +168,22 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $b) {
                     email
                   }
-                  ... @include(if: $b) @defer(if: $b, label: "inner") {
+                  ...
+                    @include(if: $b)
+                    @defer(if: $b, label: "inner", __group: 0, __parent: -1) {
                     email
                   }
                 }
-                ... @include(if: $a) @defer(if: $a, label: "outer") {
+                ...
+                  @include(if: $a)
+                  @defer(if: $a, label: "outer", __group: 1, __parent: -1) {
                   name
                   ... @skip(if: $b) {
                     email
                   }
-                  ... @include(if: $b) @defer(if: $b, label: "inner") {
+                  ...
+                    @include(if: $b)
+                    @defer(if: $b, label: "inner", __group: 2, __parent: 1) {
                     email
                   }
                 }
@@ -323,7 +329,7 @@ public class DeferLoweringTests : FusionTestBase
               user(id: "1") {
                 id
                 sku
-                ... @defer(label: "outer") {
+                ... @defer(label: "outer", __group: 0, __parent: -1) {
                   total
                 }
               }
@@ -357,7 +363,7 @@ public class DeferLoweringTests : FusionTestBase
             query($x: Boolean!) {
               user(id: "1") {
                 sku @include(if: $x)
-                ... @defer {
+                ... @defer(__group: 0, __parent: -1) {
                   sku
                   total
                 }
@@ -393,7 +399,7 @@ public class DeferLoweringTests : FusionTestBase
                   id
                 }
               }
-              ... @include(if: $d) @defer(if: $d) {
+              ... @include(if: $d) @defer(if: $d, __group: 0, __parent: -1) {
                 user(id: "1") {
                   id
                 }
@@ -464,7 +470,7 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $d) {
                     email
                   }
-                  ... @include(if: $d) @defer(if: $d) {
+                  ... @include(if: $d) @defer(if: $d, __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -503,7 +509,7 @@ public class DeferLoweringTests : FusionTestBase
                     email
                   }
                 }
-                ... @skip(if: $s) @include(if: $d) @defer(if: $d) {
+                ... @skip(if: $s) @include(if: $d) @defer(if: $d, __group: 0, __parent: -1) {
                   email
                 }
               }
@@ -605,7 +611,7 @@ public class DeferLoweringTests : FusionTestBase
               user(id: "1") {
                 id
                 sku
-                ... @defer {
+                ... @defer(__group: 0, __parent: -1) {
                   total
                 }
               }
@@ -646,7 +652,7 @@ public class DeferLoweringTests : FusionTestBase
                 profile {
                   bio
                 }
-                ... @defer {
+                ... @defer(__group: 0, __parent: -1) {
                   profile {
                     avatar
                   }
@@ -683,7 +689,7 @@ public class DeferLoweringTests : FusionTestBase
             query($x: Boolean!) {
               user(id: "1") {
                 sku @include(if: $x)
-                ... @defer {
+                ... @defer(__group: 0, __parent: -1) {
                   sku
                   total
                 }
@@ -720,7 +726,7 @@ public class DeferLoweringTests : FusionTestBase
               order(id: "1") {
                 id
                 sku
-                ... @defer {
+                ... @defer(__group: 0, __parent: -1) {
                   total
                 }
               }
@@ -756,7 +762,7 @@ public class DeferLoweringTests : FusionTestBase
               user(id: "1") {
                 id
                 ... {
-                  ... @defer(label: "inner") {
+                  ... @defer(label: "inner", __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -793,7 +799,7 @@ public class DeferLoweringTests : FusionTestBase
               user(id: "1") {
                 id
                 ... {
-                  ... @defer(label: "inner") {
+                  ... @defer(label: "inner", __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -832,7 +838,7 @@ public class DeferLoweringTests : FusionTestBase
                 id
                 ... {
                   id
-                  ... @defer(label: "inner") {
+                  ... @defer(label: "inner", __group: 0, __parent: -1) {
                     name
                   }
                 }
@@ -868,11 +874,13 @@ public class DeferLoweringTests : FusionTestBase
             query($c: Boolean!) {
               user(id: "1") {
                 id
-                ... @defer(label: "outer") {
+                ... @defer(label: "outer", __group: 0, __parent: -1) {
                   ... @skip(if: $c) {
                     email
                   }
-                  ... @include(if: $c) @defer(if: $c, label: "inner") {
+                  ...
+                    @include(if: $c)
+                    @defer(if: $c, label: "inner", __group: 1, __parent: 0) {
                     email
                   }
                 }
@@ -908,9 +916,9 @@ public class DeferLoweringTests : FusionTestBase
             """
             {
               user(id: "1") {
-                ... @defer(label: "outer") {
+                ... @defer(label: "outer", __group: 0, __parent: -1) {
                   friends {
-                    ... @defer(label: "inner") {
+                    ... @defer(label: "inner", __group: 1, __parent: 0) {
                       name
                     }
                   }
@@ -955,7 +963,7 @@ public class DeferLoweringTests : FusionTestBase
                 }
                 ... {
                   friends {
-                    ... @defer(label: "inner") {
+                    ... @defer(label: "inner", __group: 0, __parent: -1) {
                       name
                     }
                   }
@@ -1096,7 +1104,7 @@ public class DeferLoweringTests : FusionTestBase
                 name
                 ... {
                   __typename
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -1131,7 +1139,7 @@ public class DeferLoweringTests : FusionTestBase
             {
               user(id: "1") {
                 name
-                ... @defer(label: "t") {
+                ... @defer(label: "t", __group: 0, __parent: -1) {
                   __typename
                   email
                 }
@@ -1167,7 +1175,7 @@ public class DeferLoweringTests : FusionTestBase
             {
               user(id: "1") {
                 name
-                ... @defer(label: "t") {
+                ... @defer(label: "t", __group: 0, __parent: -1) {
                   profile {
                     __typename
                   }
@@ -1280,16 +1288,22 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $v) {
                     nick
                   }
-                  ... @include(if: $v) @defer(if: $v, label: "inner") {
+                  ...
+                    @include(if: $v)
+                    @defer(if: $v, label: "inner", __group: 0, __parent: -1) {
                     nick
                   }
                 }
-                ... @include(if: $v) @defer(if: $v, label: "outer") {
+                ...
+                  @include(if: $v)
+                  @defer(if: $v, label: "outer", __group: 1, __parent: -1) {
                   email
                   ... @skip(if: $v) {
                     nick
                   }
-                  ... @include(if: $v) @defer(if: $v, label: "inner") {
+                  ...
+                    @include(if: $v)
+                    @defer(if: $v, label: "inner", __group: 2, __parent: 1) {
                     nick
                   }
                 }
@@ -1327,7 +1341,7 @@ public class DeferLoweringTests : FusionTestBase
                   ... @skip(if: $v) {
                     email
                   }
-                  ... @include(if: $v) @defer(if: $v) {
+                  ... @include(if: $v) @defer(if: $v, __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -1365,7 +1379,7 @@ public class DeferLoweringTests : FusionTestBase
                   email
                 }
                 ... @include(if: $x) {
-                  ... @include(if: $v) @defer(if: $v) {
+                  ... @include(if: $v) @defer(if: $v, __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -1402,7 +1416,7 @@ public class DeferLoweringTests : FusionTestBase
                 ... @include(if: $v) @skip(if: $v) {
                   email
                 }
-                ... @include(if: $v) @defer(if: $v) {
+                ... @include(if: $v) @defer(if: $v, __group: 0, __parent: -1) {
                   email
                 }
               }
@@ -1441,7 +1455,9 @@ public class DeferLoweringTests : FusionTestBase
                   }
                 }
                 ... on User @skip(if: $s) @include(if: $x) {
-                  ... @include(if: $v) @defer(if: $v, label: "mail") {
+                  ...
+                    @include(if: $v)
+                    @defer(if: $v, label: "mail", __group: 0, __parent: -1) {
                     email
                   }
                 }
@@ -1477,9 +1493,9 @@ public class DeferLoweringTests : FusionTestBase
             """
             {
               user(id: "1") {
-                ... @defer(label: "o") {
+                ... @defer(label: "o", __group: 0, __parent: -1) {
                   name
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 1, __parent: 0) {
                     nick
                   }
                 }
@@ -1514,7 +1530,7 @@ public class DeferLoweringTests : FusionTestBase
             """
             {
               user(id: "1") {
-                ... @defer(label: "o") {
+                ... @defer(label: "o", __group: 0, __parent: -1) {
                   name
                   ... {
                     name
@@ -1552,10 +1568,10 @@ public class DeferLoweringTests : FusionTestBase
             """
             {
               user(id: "1") {
-                ... @defer(label: "a") {
+                ... @defer(label: "a", __group: 0, __parent: -1) {
                   name
                 }
-                ... @defer(label: "b") {
+                ... @defer(label: "b", __group: 1, __parent: -1) {
                   name
                   nick
                 }
@@ -1593,13 +1609,13 @@ public class DeferLoweringTests : FusionTestBase
               user(id: "1") {
                 ... @skip(if: $o) {
                   name
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 0, __parent: -1) {
                     nick
                   }
                 }
-                ... @include(if: $o) @defer(if: $o, label: "o") {
+                ... @include(if: $o) @defer(if: $o, label: "o", __group: 1, __parent: -1) {
                   name
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 2, __parent: 1) {
                     nick
                   }
                 }
@@ -1635,9 +1651,9 @@ public class DeferLoweringTests : FusionTestBase
             """
             query($x: Boolean!) {
               user(id: "1") {
-                ... @defer(label: "o") {
+                ... @defer(label: "o", __group: 0, __parent: -1) {
                   name @include(if: $x)
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 1, __parent: 0) {
                     name
                     nick
                   }
@@ -1676,11 +1692,11 @@ public class DeferLoweringTests : FusionTestBase
             """
             {
               user(id: "1") {
-                ... @defer(label: "o") {
+                ... @defer(label: "o", __group: 0, __parent: -1) {
                   ... on User {
                     name
                   }
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 1, __parent: 0) {
                     name
                     nick
                   }
@@ -1718,17 +1734,17 @@ public class DeferLoweringTests : FusionTestBase
         lowered.MatchInlineSnapshot(
             """
             query($o: Boolean!) {
-              ... @defer(label: "d") {
+              ... @defer(label: "d", __group: 0, __parent: -1) {
                 user(id: "1") {
                   ... @skip(if: $o) {
                     name
-                    ... @defer(label: "i") {
+                    ... @defer(label: "i", __group: 1, __parent: 0) {
                       nick
                     }
                   }
-                  ... @include(if: $o) @defer(if: $o, label: "o") {
+                  ... @include(if: $o) @defer(if: $o, label: "o", __group: 2, __parent: 0) {
                     name
-                    ... @defer(label: "i") {
+                    ... @defer(label: "i", __group: 3, __parent: 2) {
                       nick
                     }
                   }
@@ -1769,7 +1785,7 @@ public class DeferLoweringTests : FusionTestBase
                 name
                 ... {
                   name
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 0, __parent: -1) {
                     nick
                   }
                 }
@@ -1804,10 +1820,10 @@ public class DeferLoweringTests : FusionTestBase
         lowered.MatchInlineSnapshot(
             """
             {
-              ... @defer(label: "o") {
+              ... @defer(label: "o", __group: 0, __parent: -1) {
                 user(id: "1") {
                   id
-                  ... @defer(label: "i") {
+                  ... @defer(label: "i", __group: 1, __parent: 0) {
                     name
                   }
                 }
@@ -1841,7 +1857,7 @@ public class DeferLoweringTests : FusionTestBase
         lowered.MatchInlineSnapshot(
             """
             {
-              ... @defer(label: "o") {
+              ... @defer(label: "o", __group: 0, __parent: -1) {
                 user(id: "1") {
                   id
                   ... {
@@ -1931,7 +1947,7 @@ public class DeferLoweringTests : FusionTestBase
               user(id: "1") {
                 name
               }
-              ... @defer(label: "i") {
+              ... @defer(label: "i", __group: 0, __parent: -1) {
                 __type(name: "User") {
                   name
                 }
@@ -2017,7 +2033,7 @@ public class DeferLoweringTests : FusionTestBase
                 __type(name: "User") {
                   name
                 }
-                ... @defer(label: "i") {
+                ... @defer(label: "i", __group: 0, __parent: -1) {
                   user(id: "1") {
                     name
                   }

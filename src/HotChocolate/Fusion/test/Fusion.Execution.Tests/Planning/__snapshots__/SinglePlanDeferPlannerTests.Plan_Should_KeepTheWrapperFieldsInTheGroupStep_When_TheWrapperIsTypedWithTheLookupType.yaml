@@ -4,11 +4,11 @@ operation:
         item(id: "1") {
           __typename @fusion__requirement
           name
-          ... on Priced @defer(label: "o") {
+          ... on Priced @defer(label: "o", __group: 0, __parent: -1) {
             id @fusion__requirement
             ... on Book @include(if: $c) {
               rating
-              ... @defer(label: "i") {
+              ... @defer(label: "i", __group: 1, __parent: 0) {
                 reviews {
                   body
                 }

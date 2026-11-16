@@ -9,7 +9,7 @@ operation:
             rating @include(if: $q)
           }
           ... @include(if: $a) {
-            ... @defer(if: $a, label: "x") {
+            ... @defer(if: $a, label: "x", __group: 0, __parent: -1) {
               id @fusion__requirement
               price @include(if: $p)
               rating @include(if: $q)
@@ -21,7 +21,7 @@ operation:
             rating @include(if: $q)
           }
           ... @include(if: $b) {
-            ... @defer(if: $b, label: "y") {
+            ... @defer(if: $b, label: "y", __group: 1, __parent: -1) {
               id @fusion__requirement
               price @include(if: $p)
               rating @include(if: $q)

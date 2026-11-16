@@ -5,7 +5,7 @@ operation:
           name
           rating
           id @fusion__requirement
-          ... @defer(label: "price") {
+          ... @defer(label: "price", __group: 0, __parent: -1) {
             price
             id @fusion__requirement
           }

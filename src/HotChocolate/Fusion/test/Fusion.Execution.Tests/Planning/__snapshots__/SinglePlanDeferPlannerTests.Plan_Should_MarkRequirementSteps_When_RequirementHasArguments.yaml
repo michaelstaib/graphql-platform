@@ -7,7 +7,7 @@ operation:
           price(cur: "EUR") @fusion__requirement
           eur @skip(if: $v)
           ... @include(if: $v) {
-            ... @defer(if: $v) {
+            ... @defer(if: $v, __group: 0, __parent: -1) {
               eur
               upc @fusion__requirement
               price(cur: "EUR") @fusion__requirement

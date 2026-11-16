@@ -9,7 +9,7 @@ operation:
             id @fusion__requirement
           }
           ... @include(if: $d) {
-            ... @defer(if: $d, label: "L") {
+            ... @defer(if: $d, label: "L", __group: 0, __parent: -1) {
               name
               price
               id @fusion__requirement

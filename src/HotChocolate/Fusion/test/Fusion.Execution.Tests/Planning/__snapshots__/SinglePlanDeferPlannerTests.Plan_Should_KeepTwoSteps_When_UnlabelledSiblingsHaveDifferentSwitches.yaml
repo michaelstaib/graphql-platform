@@ -6,14 +6,14 @@ operation:
           id @fusion__requirement
           price @skip(if: $a)
           ... @include(if: $a) {
-            ... @defer(if: $a) {
+            ... @defer(if: $a, __group: 0, __parent: -1) {
               price
               id @fusion__requirement
             }
           }
           price @skip(if: $b)
           ... @include(if: $b) {
-            ... @defer(if: $b) {
+            ... @defer(if: $b, __group: 1, __parent: -1) {
               price
               id @fusion__requirement
             }

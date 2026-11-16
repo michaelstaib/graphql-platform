@@ -5,7 +5,7 @@ operation:
           id
           id @fusion__requirement
           sku
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             total
             email @fusion__requirement
             sku @fusion__requirement

@@ -5,7 +5,7 @@ operation:
           profile {
             bio
           }
-          ... @defer(label: "L") {
+          ... @defer(label: "L", __group: 0, __parent: -1) {
             profile {
               avatar
             }

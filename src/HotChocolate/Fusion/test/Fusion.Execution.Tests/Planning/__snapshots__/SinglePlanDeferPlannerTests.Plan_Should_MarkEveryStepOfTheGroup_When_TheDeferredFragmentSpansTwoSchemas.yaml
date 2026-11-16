@@ -3,7 +3,7 @@ operation:
       {
         product(id: "1") {
           name
-          ... @defer(label: "details") {
+          ... @defer(label: "details", __group: 0, __parent: -1) {
             price
             reviews {
               body

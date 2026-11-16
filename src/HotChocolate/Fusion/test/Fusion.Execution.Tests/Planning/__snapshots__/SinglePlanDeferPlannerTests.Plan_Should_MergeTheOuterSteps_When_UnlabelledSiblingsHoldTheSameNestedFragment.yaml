@@ -3,18 +3,18 @@ operation:
       {
         product(id: "1") {
           name
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             author {
-              ... @defer {
+              ... @defer(__group: 1, __parent: 0) {
                 bio
                 id @fusion__requirement
               }
             }
             id @fusion__requirement
           }
-          ... @defer {
+          ... @defer(__group: 2, __parent: -1) {
             author {
-              ... @defer {
+              ... @defer(__group: 3, __parent: 2) {
                 bio
                 id @fusion__requirement
               }

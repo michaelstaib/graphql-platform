@@ -9,7 +9,7 @@ operation:
         user(id: 1) {
           soft
           id @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             id
             id @fusion__requirement
             sku
@@ -111,7 +111,7 @@ operation:
           id
           id @fusion__requirement
           sku
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             s: sku
             total
             id @fusion__requirement
@@ -212,7 +212,7 @@ operation:
           id
           id @fusion__requirement
           k: sku
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             sku
             sku @fusion__requirement
             total
@@ -313,7 +313,7 @@ operation:
           id @fusion__requirement
           soft
           sku @include(if: $c)
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             sku
             sku @fusion__requirement
             total
@@ -419,7 +419,7 @@ operation:
           sku @fusion__requirement
           total @skip(if: $v)
           ... @include(if: $v) {
-            ... @defer(if: $v) {
+            ... @defer(if: $v, __group: 0, __parent: -1) {
               total
               email @fusion__requirement
               sku @fusion__requirement
@@ -548,7 +548,7 @@ operation:
         user(id: 1) {
           soft
           id @fusion__requirement
-          ... @defer {
+          ... @defer(__group: 0, __parent: -1) {
             total
             email @fusion__requirement
             sku @fusion__requirement
