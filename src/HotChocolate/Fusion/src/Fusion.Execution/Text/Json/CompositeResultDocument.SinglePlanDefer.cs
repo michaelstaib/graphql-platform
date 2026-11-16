@@ -626,6 +626,91 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
+    /// Determines whether a row at or below the anchor object of <paramref name="instance"/> holds no result while
+    /// a step of a group that holds the row can still write it.
+    /// </summary>
+    internal bool HasOpenRows(int instance)
+    {
+        var delivery = _delivery!;
+        delivery.AssertOnLoop();
+
+        var anchor = delivery.GetInstanceAnchor(instance);
+
+        return HasOpenRows(anchor, _metaDb.Get(anchor), delivery.GetInstanceGroup(instance));
+    }
+
+    private bool HasOpenRows(Cursor cursor, DbRow row, int groupId)
+    {
+        if (!IsContainer(ref cursor, ref row))
+        {
+            return false;
+        }
+
+        if (row.TokenType is ElementTokenType.StartArray)
+        {
+            var length = row.SizeOrLength;
+
+            for (var i = 0; i < length; i++)
+            {
+                var elementCursor = cursor.AddRows(i + 1);
+
+                if (HasOpenRows(elementCursor, _metaDb.Get(elementCursor), groupId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        var count = row.SizeOrLength;
+
+        for (var i = 0; i < count; i++)
+        {
+            var propertyCursor = cursor.AddRows((i * 2) + 1);
+            var property = _metaDb.Get(propertyCursor);
+            var flags = property.Flags;
+
+            if ((flags & ElementFlags.IsInternal) == ElementFlags.IsInternal)
+            {
+                continue;
+            }
+
+            var marks = property.DeliveryMarks;
+            var valueCursor = propertyCursor.AddRows(1);
+            var valueRow = _metaDb.Get(valueCursor);
+
+            if ((marks & PropertyMarks.Held) == 0)
+            {
+                if ((flags & ElementFlags.IsExcluded) == ElementFlags.IsExcluded)
+                {
+                    continue;
+                }
+            }
+            else if ((marks & (PropertyMarks.Written | PropertyMarks.Delivered)) == 0
+                && valueRow.TokenType is ElementTokenType.None
+                && (valueRow.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated)
+            {
+                var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+
+                if (SinglePlanDeliveryState.Contains(resolution, groupId) && !_delivery.AreGroupsSettled(resolution))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (HasOpenRows(valueCursor, valueRow, groupId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Finds the objects of the client data that the group applies to below the scope object. An object is
     /// honored when its selection set holds a selection that resolves to the group, and objects that are not
     /// honored are only listed when <paramref name="keepUnhonored"/> is set.

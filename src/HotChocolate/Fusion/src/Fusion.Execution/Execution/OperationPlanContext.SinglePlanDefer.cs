@@ -174,6 +174,7 @@ internal sealed partial class SinglePlanDeliveryState
         _groupsById = new DeliveryGroup[groupCount];
         _anchorDepths = new int[groupCount];
         _groupStatus = new byte[groupCount];
+        _sharesRows = new bool[groupCount];
 
         foreach (var group in plan.DeliveryGroups)
         {
@@ -450,6 +451,14 @@ internal sealed partial class SinglePlanDeliveryState
             {
                 resolution = selection.ResolveDelivery(IncludeFlags, DeferFlags);
                 _resolutions.Add(selection.Id, resolution);
+
+                if (resolution.Groups.Length > 1)
+                {
+                    foreach (var group in resolution.Groups)
+                    {
+                        _sharesRows[group.Id] = true;
+                    }
+                }
             }
 
             return resolution;

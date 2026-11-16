@@ -2926,6 +2926,278 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    private const string SharedPriceSource =
+        """
+        type Query { productByIdP(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! price: Float! }
+        """;
+
+    private const string MissingEntity = "{\"data\":{\"productById\":null}}";
+
+    private const string SharedBioQuery =
+        """
+        {
+            product(id: "1") {
+                name
+                ... @defer(label: "a") { author { id } }
+                ... @defer(label: "b") { author { bio } }
+                ... @defer(label: "c") { author { bio } }
+                ... @defer(label: "d") { price }
+            }
+        }
+        """;
+
+    // The steps are B:5 for a, B:4 for b, B:3 for c and P:2 for d. The payload of d lies between the answers of
+    // b and c.
+    private static readonly string[] s_sharedFieldOrder = ["B:5>", "B:4", "P:2>", "B:3"];
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_KeepTheGroupOpen_When_ItsEntityIsMissingAndTheSiblingGroupStillFetchesTheField(
+        bool withError)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            s_sharedFieldOrder,
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "4"
+                ? withError ? FailedEntity : MissingEntity
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, SharedBioQuery, []);
+
+        // assert
+        MatchPayloads(run, $"withError={withError}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailBothGroups_When_TheEntityOfBothIsMissingBelowAnObjectOfAThirdGroup(
+        bool withError)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            s_sharedFieldOrder,
+            (schema, body, text) => schema != "B"
+                ? text
+                : StepId().Match(body).Groups[1].Value switch
+                {
+                    "4" => withError ? FailedEntity : MissingEntity,
+                    "3" => MissingEntity,
+                    _ => text
+                },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, SharedBioQuery, []);
+
+        // assert
+        MatchPayloads(run, $"withError={withError}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendNullForTheSharedNullableField_When_TheEntityOfBothGroupsIsMissing(
+        bool withError)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            s_sharedFieldOrder,
+            (schema, body, text) => schema != "B"
+                ? text
+                : StepId().Match(body).Groups[1].Value switch
+                {
+                    "4" => withError ? FailedEntity : MissingEntity,
+                    "3" => MissingEntity,
+                    _ => text
+                },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { note } }
+                    ... @defer(label: "c") { author { note } }
+                    ... @defer(label: "d") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"withError={withError}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailBothGroups_When_TheEntityOfOneIsMissingAndTheStepOfTheOtherFailsInTransport()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            s_sharedFieldOrder,
+            (schema, body, text) => schema != "B"
+                ? text
+                : StepId().Match(body).Groups[1].Value switch
+                {
+                    "4" => MissingEntity,
+                    "3" => "this is not json",
+                    _ => text
+                },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, SharedBioQuery, []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepOnlyTheInstanceOfTheItemOpen_When_ItsEntityIsMissingAndTheSiblingStillFetches()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? string.Join(
+                    "\n",
+                    text.Split('\n').Select(line => line.Contains("\"variableIndex\":1,")
+                        ? "{\"variableIndex\":1,\"data\":{\"productById\":null}}"
+                        : line))
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                products {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                    ... @defer(label: "c") { author { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepTheGroupOpen_When_AnItemOfItsAnswerIsNullAndTheSiblingGroupStillFetchesTheList()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            s_sharedFieldOrder,
+            (schema, body, text) =>
+            {
+                if (schema != "B" || StepId().Match(body).Groups[1].Value != "4")
+                {
+                    return text;
+                }
+
+                // The first item of the list of the source is replaced.
+                var start = text.IndexOf("[{", StringComparison.Ordinal) + 1;
+                var end = text.IndexOf('}', start) + 1;
+
+                return text[..start] + "null" + text[end..];
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorListSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { authors { id } }
+                    ... @defer(label: "b") { authors { bio } }
+                    ... @defer(label: "c") { authors { bio } }
+                    ... @defer(label: "d") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheSharedFieldWithTheGroupAtTheLongerPath_When_TheEntityOfOneGroupIsMissing(
+        bool outerMissing)
+    {
+        // arrange
+        // The steps are B:6 for a, B:5 for b, P:4 for d and A:2 and B:3 for o.
+        var missing = outerMissing ? "3" : "5";
+        var gateway = await CreateGatewayAsync(
+            outerMissing ? ["B:6>", "B:3", "P:4>", "B:5"] : ["B:6>", "B:5", "P:4>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == missing
+                ? MissingEntity
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "o") { product(id: "1") { author { bio } } }
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                    ... @defer(label: "d") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"outerMissing={outerMissing}");
+    }
+
     // The source reports an error without a path in front of its other errors.
     private static string AddErrorWithoutPath(string text)
     {

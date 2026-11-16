@@ -659,6 +659,14 @@ internal static partial class OperationPlanExecutor
 
                     var failed = state.IsFailed(instance);
 
+                    // The instance stays open while a step of another group can still write one of its rows.
+                    if (!failed
+                        && state.CanShareOpenRows(group, executionState)
+                        && document.HasOpenRows(instance))
+                    {
+                        continue;
+                    }
+
                     progressed = true;
 
                     if (failed)

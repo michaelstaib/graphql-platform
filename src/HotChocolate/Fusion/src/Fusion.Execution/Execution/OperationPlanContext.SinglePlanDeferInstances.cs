@@ -14,6 +14,7 @@ internal sealed partial class SinglePlanDeliveryState
 
     private readonly DeliveryGroup[] _groupsById;
     private readonly byte[] _groupStatus;
+    private readonly bool[] _sharesRows;
     private readonly int[] _anchorDepths;
     private readonly Dictionary<long, bool> _selectionSetHoldsGroup = [];
     private readonly List<int> _donePayload = [];
@@ -122,6 +123,28 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Determines whether the group holds a resolved row together with another group while a step of some group
+    /// is not settled.
+    /// </summary>
+    public bool CanShareOpenRows(int groupId, ExecutionState executionState)
+    {
+        if (!_sharesRows[groupId])
+        {
+            return false;
+        }
+
+        for (var group = 0; group < _groupStatus.Length; group++)
+        {
+            if (!IsGroupSettled(group, executionState, out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
