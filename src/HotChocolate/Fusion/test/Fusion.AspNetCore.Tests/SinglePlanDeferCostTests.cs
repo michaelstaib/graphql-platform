@@ -11,6 +11,10 @@ public sealed class SinglePlanDeferCostCollection
     public const string Name = "SinglePlanDeferCost";
 }
 
+/// <summary>
+/// Compares an operation without <c>@defer</c> with the single plan option on and off. Catches a delivery state on
+/// a plain request, and an allocation or a result row that depends on the option.
+/// </summary>
 [Collection(SinglePlanDeferCostCollection.Name)]
 public class SinglePlanDeferCostTests : FusionTestBase
 {
@@ -55,7 +59,6 @@ public class SinglePlanDeferCostTests : FusionTestBase
 
     private static async Task WarmUpAsync(IRequestExecutor onExecutor, IRequestExecutor offExecutor, string query)
     {
-        // A second round after a pause lets the tiered compilation settle on the optimized code.
         for (var round = 0; round < 2; round++)
         {
             for (var i = 0; i < WarmUpRequests; i++)
@@ -85,9 +88,8 @@ public class SinglePlanDeferCostTests : FusionTestBase
         return (on, off);
     }
 
-    // The window covers the request, the disposal of its result and a pause for the work that runs after the
-    // executor returned. Pools refill now and then, which only adds bytes, so a measurement keeps the smallest
-    // window of its samples.
+    // Measures the bytes allocated from before the request to after the disposal of its result, with a pause
+    // before and after the request when settle is set.
     private static async Task<Measurement> RunAsync(IRequestExecutor executor, string query, bool settle)
     {
         if (settle)
@@ -124,8 +126,7 @@ public class SinglePlanDeferCostTests : FusionTestBase
             configureGatewayBuilder: builder => builder
                 .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = enableSinglePlanDefer));
 
-    // A response that takes a moment makes the executor wait for every step, so that each request suspends in the
-    // same places.
+    // Creates a source schema that answers each request after a delay of 2 milliseconds.
     private (string Name, TestServer Server) CreateSlowSourceSchema(string name, string schemaText)
     {
         HttpMessageInvoker? invoker = null;

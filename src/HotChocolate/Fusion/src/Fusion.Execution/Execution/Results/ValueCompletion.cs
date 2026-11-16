@@ -850,8 +850,8 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Invalidates the field and its parents like <see cref="PropagateNullValues(CompositeResultElement)"/>, but stops before an object
-    /// that is delivered elsewhere than the field. The groups of the field fail at that object.
+    /// Invalidates the field and its parents, but stops before an object that is delivered elsewhere than the
+    /// field. The groups of the field fail at that object.
     /// </summary>
     /// <returns>
     /// <c>false</c>, because the null never propagates up to the root.
@@ -2326,7 +2326,7 @@ TryCompleteList_MoveNext:
     }
 
     /// <summary>
-    /// Selects at compile time whether a completion reads the delivery state of the result document.
+    /// Describes whether a completion reads the delivery state of the result document.
     /// </summary>
     private interface IMode
     {
