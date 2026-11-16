@@ -5,6 +5,10 @@ using HotChocolate.Execution;
 using HotChocolate.Execution.Pipeline;
 using HotChocolate.Fusion.Execution.CostAnalysis;
 using HotChocolate.Fusion.Diagnostics;
+using HotChocolate.Fusion.Execution.Rewriters;
+using HotChocolate.Fusion.Planning;
+using HotChocolate.Fusion.Types;
+using HotChocolate.Language;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Execution.Pipeline;
@@ -15,17 +19,20 @@ internal sealed class CostAnalysisMiddleware
     private readonly Cache<CostPlan> _cache;
     private readonly FusionCostOptions _options;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
+    private readonly DocumentRewriter? _mergeAcrossDeferRewriter;
 
     private CostAnalysisMiddleware(
         CostSchemaIndex schemaIndex,
         Cache<CostPlan> cache,
         FusionCostOptions options,
-        IFusionExecutionDiagnosticEvents diagnosticEvents)
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        DocumentRewriter? mergeAcrossDeferRewriter)
     {
         _schemaIndex = schemaIndex;
         _cache = cache;
         _options = options;
         _diagnosticEvents = diagnosticEvents;
+        _mergeAcrossDeferRewriter = mergeAcrossDeferRewriter;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
@@ -73,11 +80,17 @@ internal sealed class CostAnalysisMiddleware
                     analyses |= CostAnalyses.ResponseSize;
                 }
 
-                plan = CostPlanCompiler.Compile(
-                    _schemaIndex,
-                    context.GetNormalizedDocument(),
-                    context.GetNormalizedOperation(),
-                    analyses);
+                var document = context.GetNormalizedDocument();
+                var operation = context.GetNormalizedOperation();
+
+                // An operation with @defer is costed from its document merged across @defer, like one without.
+                if (_mergeAcrossDeferRewriter is not null && DeferOperationRewriter.HasDeferDirective(operation))
+                {
+                    document = _mergeAcrossDeferRewriter.RewriteDocument(document);
+                    operation = (OperationDefinitionNode)document.Definitions[0];
+                }
+
+                plan = CostPlanCompiler.Compile(_schemaIndex, document, operation, analyses);
                 _cache.TryAdd(operationId, plan);
             }
 
@@ -326,7 +339,19 @@ internal sealed class CostAnalysisMiddleware
                 var options = fc.SchemaServices.GetRequiredService<FusionCostOptions>();
                 var diagnosticEvents =
                     fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
-                var middleware = new CostAnalysisMiddleware(schemaIndex, cache, options, diagnosticEvents);
+                var mergeAcrossDeferRewriter =
+                    fc.SchemaServices.GetRequiredService<OperationPlannerOptions>().EnableSinglePlanDefer
+                        ? new DocumentRewriter(
+                            fc.SchemaServices.GetRequiredService<FusionSchemaDefinition>(),
+                            mergeAcrossDefer: true,
+                            removeStaticallyExcludedSelections: true)
+                        : null;
+                var middleware = new CostAnalysisMiddleware(
+                    schemaIndex,
+                    cache,
+                    options,
+                    diagnosticEvents,
+                    mergeAcrossDeferRewriter);
                 return context => middleware.InvokeAsync(context, next);
             },
             WellKnownRequestMiddleware.CostAnalyzerMiddleware);
