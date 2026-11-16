@@ -148,6 +148,18 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
+    /// Keeps an error of the result out of every payload, because the denied answer that holds the same error
+    /// sends it at a row.
+    /// </summary>
+    public void KeepWithDeniedAnswer(IError error)
+    {
+        lock (_sync)
+        {
+            (_groupOwnedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(error);
+        }
+    }
+
+    /// <summary>
     /// Records an error for the rows of a group below an anchor object.
     /// </summary>
     public void AddGroupError(int groupId, CompositeResultDocument.Cursor anchor, GroupError error)

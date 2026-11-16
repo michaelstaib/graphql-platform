@@ -2932,6 +2932,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Product @key(fields: "id") { id: ID! price: Float! }
         """;
 
+    private const string SharedAuthorNoteListSource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! authors: [Author] }
+        type Author { id: ID! note: String }
+        """;
+
     private const string MissingEntity = "{\"data\":{\"productById\":null}}";
 
     private const string SharedBioQuery =
@@ -3196,6 +3203,46 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchPayloads(run, $"outerMissing={outerMissing}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_ReportOneError_When_AnItemOfItsAnswerIsNullWithAnErrorBelowAListOfTheSiblingGroup(
+        bool nonNull)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "B:2"],
+            (schema, body, text) =>
+            {
+                if (schema != "B" || StepId().Match(body).Groups[1].Value != "2")
+                {
+                    return text;
+                }
+
+                // The first item of the list of the source is replaced.
+                var start = text.IndexOf("[{", StringComparison.Ordinal) + 1;
+                var end = text.IndexOf('}', start) + 1;
+
+                return "{\"errors\":[{\"message\":\"The item failed.\","
+                    + "\"path\":[\"productById\",\"authors\",0]}],"
+                    + text[1..start] + "null" + text[end..];
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", nonNull ? SharedAuthorListSource : SharedAuthorNoteListSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ product(id: \"1\") { name ... @defer(label: \"a\") { authors { id } } "
+            + "... @defer(label: \"b\") { authors { " + (nonNull ? "bio" : "note") + " } } } }",
+            []);
+
+        // assert
+        MatchPayloads(run, $"nonNull={nonNull}");
     }
 
     // The source reports an error without a path in front of its other errors.

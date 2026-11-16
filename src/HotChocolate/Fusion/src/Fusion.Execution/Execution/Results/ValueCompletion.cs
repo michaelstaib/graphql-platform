@@ -1435,6 +1435,13 @@ internal sealed class ValueCompletion
                     && _writeFilterDocument is not null
                     && targetEnumerator.Current.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
                 {
+                    // GetListElementErrorTrie added the error of the item as the last error of the result just now.
+                    // The remembered answer sends it with the rows below the item.
+                    if (errorTrieForIndex?.Error is not null && _store.Errors is { Count: > 0 } storeErrors)
+                    {
+                        _writeFilterDocument.Delivery!.KeepWithDeniedAnswer(storeErrors[^1]);
+                    }
+
                     RecordDeniedAnswer(targetEnumerator.Current, errorTrieForIndex?.FindFirstError());
                     goto TryCompleteList_MoveNext;
                 }
