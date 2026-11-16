@@ -279,7 +279,7 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
 
             type User @key(fields: "id") {
                 id: ID!
-                friends: [User!]!
+                bestFriend: User
             }
             """,
             """
@@ -300,8 +300,8 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             """
             query($x: Boolean!) {
                 user(id: "1") {
-                    friends @include(if: $x) { id }
-                    ... @defer { friends { ... @defer { name } } }
+                    bestFriend @include(if: $x) { id }
+                    ... @defer { bestFriend { ... @defer { name } } }
                 }
             }
             """);

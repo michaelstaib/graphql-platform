@@ -981,7 +981,20 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_FetchTheDeferredLeafThroughTheLookupOfTheItem_When_ItsListIsAlsoSelectedPlain()
     {
         // arrange
+        var listRequests = 0;
         var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) =>
+            {
+                if (schema == "C" && body.Contains("productByIdForReviews"))
+                {
+                    Interlocked.Increment(ref listRequests);
+                }
+
+                return text;
+            },
+            failingSchema: null,
+            configure: null,
             ("A", ProductListSource),
             ("C", """
                 type Query {
@@ -1007,6 +1020,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
+        // The deferred run and its plain twin fetch the list once each.
+        Assert.Equal(2, listRequests);
         MatchRun(run);
     }
 
