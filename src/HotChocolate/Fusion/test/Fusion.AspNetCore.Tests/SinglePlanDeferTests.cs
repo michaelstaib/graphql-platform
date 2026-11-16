@@ -1969,6 +1969,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [InlineData("outerFirst")]
     [InlineData("innerFirst")]
     [InlineData("innerAuthorFirst")]
+    [InlineData("failedStepFirst")]
     public async Task Defer_Should_DeliverTheSiblingGroup_When_TheInnerGroupFailsBelowTheSharedAnchor(string order)
     {
         // arrange
@@ -1977,6 +1978,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             {
                 "outerFirst" => ["B:3", "C:4>", "D:5", "B:6", "C:7"],
                 "innerFirst" => ["D:5", "B:6", "C:7>", "B:3", "C:4"],
+                "failedStepFirst" => ["D:5", "B:3", "C:4>", "B:6", "C:7"],
                 _ => ["B:6", "C:7", "D:5>", "B:3", "C:4"]
             },
             rewrite: null,
