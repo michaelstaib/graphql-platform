@@ -3,7 +3,7 @@
 ## Payload 1
 
 ```json
-{"data":{"product":{"price":0,"rating":0}},"hasNext":false}
+{"data":{"product":{"price":0,"rating":0}}}
 ```
 
 ## Requests

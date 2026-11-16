@@ -3,7 +3,7 @@
 ## Payload 1
 
 ```json
-{"errors":[{"message":"Unexpected Execution Error","path":["products"]}],"data":null,"hasNext":false}
+{"errors":[{"message":"Unexpected Execution Error","path":["products"]}],"data":null}
 ```
 
 ## Requests

@@ -314,8 +314,6 @@ internal static partial class OperationPlanExecutor
                 }
             }
 
-            initialResult.HasNext = pendingResults.Count > 0;
-            initialResult.Pending = pendingResults.ToImmutable();
             state.PublishedErrorCount = context.ErrorCount;
 
             if (pendingResults.Count == 0)
@@ -325,6 +323,9 @@ internal static partial class OperationPlanExecutor
                 await context.DisposeAsync();
                 return initialResult;
             }
+
+            initialResult.HasNext = true;
+            initialResult.Pending = pendingResults.ToImmutable();
 
             var requestArena = context.Memory;
             var stream = new ResponseStream(

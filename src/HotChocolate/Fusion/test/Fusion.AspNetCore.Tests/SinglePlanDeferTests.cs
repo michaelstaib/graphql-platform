@@ -2474,8 +2474,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         };
 
     // Reads the payloads in the order they were sent and lists every break of the delivery rules:
-    // each pending id is completed exactly once, hasNext is false only on the last payload, an
-    // incremental entry targets an object that exists and never carries a field the object already has.
+    // each pending id is completed exactly once, hasNext is false only on the last payload, a single
+    // payload carries neither pending nor hasNext, an incremental entry targets an object that exists and
+    // never carries a field the object already has.
     private static List<string> ReadDelivery(List<string> payloads)
     {
         var problems = new List<string>();
@@ -2510,6 +2511,11 @@ public partial class SinglePlanDeferTests : FusionTestBase
             if (announced is { Count: 0 })
             {
                 problems.Add($"payload {number} has an empty pending list");
+            }
+
+            if (payloads.Count == 1 && (announced is not null || payload.ContainsKey("hasNext")))
+            {
+                problems.Add("the only payload carries pending or hasNext");
             }
 
             if (i > 0 && hasNext && incremental.Count == 0 && done.Count == 0 && announced is null)
