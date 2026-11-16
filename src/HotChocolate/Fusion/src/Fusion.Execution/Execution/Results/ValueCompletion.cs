@@ -844,6 +844,21 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
+    /// Adds <paramref name="error"/> to the result for a field that no step wrote, without writing the field. The
+    /// error has the path of the field only when <paramref name="withPath"/> is set.
+    /// </summary>
+    internal IError AddUnwrittenFieldError(CompositeResultElement field, IError error, bool withPath)
+    {
+        var errorWithPath = ErrorBuilder.FromError(error)
+            .SetPath(withPath ? field.Path : null)
+            .Build();
+        errorWithPath = _errorHandler.Handle(errorWithPath);
+
+        _store.AddError(errorWithPath);
+        return errorWithPath;
+    }
+
+    /// <summary>
     /// Stops the <c>null</c> of a failed field before its parent object when the parent is delivered elsewhere than
     /// the field.
     /// </summary>

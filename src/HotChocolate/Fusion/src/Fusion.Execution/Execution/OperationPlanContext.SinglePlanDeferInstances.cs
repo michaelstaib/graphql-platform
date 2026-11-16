@@ -381,7 +381,8 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Completes the rows of the instance that no step wrote below a value for which a step of the group
-    /// answered <c>null</c>, an error or a missing entity. The instance fails when such a row is non-null.
+    /// answered <c>null</c>, an error or a missing entity. The instance fails when such a row is non-null. A failed
+    /// instance writes no row and reports the error of each answer once.
     /// </summary>
     public void CompleteDeniedAnswers(CompositeResultDocument document, int instance)
     {
@@ -391,6 +392,7 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         var group = _instanceGroups[instance];
+        var anchor = _instanceAnchors[instance];
         var rows = _unwrittenRows ??= [];
 
         for (var i = 0; i < _deniedAnswers.Count; i++)
@@ -402,17 +404,39 @@ internal sealed partial class SinglePlanDeliveryState
                 continue;
             }
 
+            var failed = IsFailed(instance);
+
+            if (failed && answer.Error is null)
+            {
+                continue;
+            }
+
             rows.Clear();
-            document.FindUnwrittenRows(answer.Container, group, _instanceAnchors[instance], rows);
+            document.FindUnwrittenRows(answer.Container, group, anchor, settledOnly: !failed, rows);
+
+            if (failed)
+            {
+                if (rows.Count > 0)
+                {
+                    // The error has the path of the row when no group outside the answer holds the row.
+                    var error = _completion!.AddUnwrittenFieldError(
+                        rows[0],
+                        answer.Error!,
+                        document.HoldsOnlyRowsOf(rows[0], answer.Groups));
+                    AddGroupError(group, anchor, new GroupError(error));
+                }
+
+                continue;
+            }
 
             foreach (var row in rows)
             {
+                _completion!.CompleteUnwrittenField(row, row.AssertSelection(), answer.Error);
+
                 if (IsFailed(instance))
                 {
-                    return;
+                    break;
                 }
-
-                _completion!.CompleteUnwrittenField(row, row.AssertSelection(), answer.Error);
             }
         }
     }

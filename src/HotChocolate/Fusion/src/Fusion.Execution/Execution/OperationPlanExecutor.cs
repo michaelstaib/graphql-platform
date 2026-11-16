@@ -652,10 +652,8 @@ internal static partial class OperationPlanExecutor
                     {
                         state.MarkFailed(instance);
                     }
-                    else if (!state.IsFailed(instance))
-                    {
-                        state.CompleteDeniedAnswers(document, instance);
-                    }
+
+                    state.CompleteDeniedAnswers(document, instance);
 
                     var failed = state.IsFailed(instance);
 

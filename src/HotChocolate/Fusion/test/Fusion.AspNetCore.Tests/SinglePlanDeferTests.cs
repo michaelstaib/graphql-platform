@@ -3245,6 +3245,91 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run, $"nonNull={nonNull}");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_ReportTheErrorOfItsEntity_When_TheGroupFailedForAnotherReason(bool entityFirst)
+    {
+        // arrange
+        // The steps are B:4 for a, and B:2 and P:3 for b.
+        var gateway = await CreateGatewayAsync(
+            entityFirst ? ["B:4>", "B:2", "P:3"] : ["B:4>", "P:3", "B:2"],
+            (schema, body, text) => schema switch
+            {
+                "P" => PriceValue().Replace(text, "\"price\":null"),
+                "B" when StepId().Match(body).Groups[1].Value == "2" => FailedEntity,
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { note } price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"entityFirst={entityFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_ReportTheErrorOfItsEntity_When_TheFailedGroupSharesTheFieldWithASiblingGroup(
+        bool siblingMissing)
+    {
+        // arrange
+        // The steps are B:5 for a, B:3 and P:4 for b and B:2 for c.
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "P:4", "B:3>", "B:2"],
+            (schema, body, text) => schema switch
+            {
+                "P" => PriceValue().Replace(text, "\"price\":null"),
+                "B" => StepId().Match(body).Groups[1].Value switch
+                {
+                    "3" => FailedEntity,
+                    "2" when siblingMissing => MissingEntity,
+                    _ => text
+                },
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { note } price }
+                    ... @defer(label: "c") { author { note } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"siblingMissing={siblingMissing}");
+    }
+
     // The source reports an error without a path in front of its other errors.
     private static string AddErrorWithoutPath(string text)
     {

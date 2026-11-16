@@ -554,9 +554,15 @@ public sealed partial class CompositeResultDocument
 
     /// <summary>
     /// Lists the rows at and below <paramref name="container"/> that the group holds and that no step wrote, when
-    /// the container lies below <paramref name="anchor"/>.
+    /// the container lies below <paramref name="anchor"/>. With <paramref name="settledOnly"/>, a row that a step
+    /// of one of its groups can still write is left out.
     /// </summary>
-    internal void FindUnwrittenRows(Cursor container, int groupId, Cursor anchor, List<CompositeResultElement> rows)
+    internal void FindUnwrittenRows(
+        Cursor container,
+        int groupId,
+        Cursor anchor,
+        bool settledOnly,
+        List<CompositeResultElement> rows)
     {
         var delivery = _delivery!;
         delivery.AssertOnLoop();
@@ -564,12 +570,17 @@ public sealed partial class CompositeResultDocument
         if (TryGetObjectAtDepth(container, delivery.AnchorDepths[groupId], out var found)
             && found.Value == anchor.Value)
         {
-            FindUnwrittenRows(container, _metaDb.Get(container), groupId, rows);
+            FindUnwrittenRows(container, _metaDb.Get(container), groupId, settledOnly, rows);
         }
     }
 
-    // A row that holds no result and whose groups are settled completes as a null.
-    private void FindUnwrittenRows(Cursor cursor, DbRow row, int groupId, List<CompositeResultElement> rows)
+    // A row that holds no result completes as a null once its groups are settled.
+    private void FindUnwrittenRows(
+        Cursor cursor,
+        DbRow row,
+        int groupId,
+        bool settledOnly,
+        List<CompositeResultElement> rows)
     {
         if (!IsContainer(ref cursor, ref row))
         {
@@ -584,7 +595,7 @@ public sealed partial class CompositeResultDocument
             {
                 var elementCursor = cursor.AddRows(i + 1);
 
-                FindUnwrittenRows(elementCursor, _metaDb.Get(elementCursor), groupId, rows);
+                FindUnwrittenRows(elementCursor, _metaDb.Get(elementCursor), groupId, settledOnly, rows);
             }
 
             return;
@@ -613,7 +624,8 @@ public sealed partial class CompositeResultDocument
             {
                 var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
 
-                if (SinglePlanDeliveryState.Contains(resolution, groupId) && _delivery.AreGroupsSettled(resolution))
+                if (SinglePlanDeliveryState.Contains(resolution, groupId)
+                    && (!settledOnly || _delivery.AreGroupsSettled(resolution)))
                 {
                     rows.Add(new CompositeResultElement(this, valueCursor));
                 }
@@ -621,7 +633,7 @@ public sealed partial class CompositeResultDocument
                 continue;
             }
 
-            FindUnwrittenRows(valueCursor, valueRow, groupId, rows);
+            FindUnwrittenRows(valueCursor, valueRow, groupId, settledOnly, rows);
         }
     }
 
