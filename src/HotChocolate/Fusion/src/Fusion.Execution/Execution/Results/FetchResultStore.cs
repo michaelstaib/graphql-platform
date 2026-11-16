@@ -108,6 +108,9 @@ internal sealed partial class FetchResultStore : IDisposable
 
     public CompositeResultDocument Result => _result;
 
+    internal void EnableDelivery()
+        => _valueCompletion.EnableDelivery();
+
     internal void SetWriteFilter(ImmutableArray<int> deliveryGroups)
         => _valueCompletion.SetWriteFilter(_result, deliveryGroups);
 
@@ -544,12 +547,6 @@ internal sealed partial class FetchResultStore : IDisposable
         ResultSelectionSet resultSelectionSet,
         params ReadOnlySpan<Path> paths)
     {
-        if (_result.Delivery is { QueuesErrors: true } delivery)
-        {
-            delivery.EnqueueError(error, resultSelectionSet, paths);
-            return true;
-        }
-
         lock (_lock)
         {
             ref var path = ref MemoryMarshal.GetReference(paths);
@@ -594,12 +591,6 @@ AddErrors_Next:
         ResultSelectionSet resultSelectionSet,
         ReadOnlySpan<CompactPath> paths)
     {
-        if (_result.Delivery is { QueuesErrors: true } delivery)
-        {
-            delivery.EnqueueError(error, resultSelectionSet, paths);
-            return true;
-        }
-
         lock (_lock)
         {
             ref var path = ref MemoryMarshal.GetReference(paths);

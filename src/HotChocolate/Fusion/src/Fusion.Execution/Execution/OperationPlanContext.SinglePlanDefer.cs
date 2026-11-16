@@ -30,6 +30,7 @@ public sealed partial class OperationPlanContext
             DeliveryGroup.GetActive(plan.DeliveryGroups, Variables),
             ExecutionState);
         _singlePlanDelivery = state;
+        _resultStore.EnableDelivery();
         _resultStore.Result.AttachDelivery(state);
         return state;
     }

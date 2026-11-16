@@ -881,6 +881,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         ResultSelectionSet resultSelectionSet,
         params ReadOnlySpan<Path> paths)
     {
+        if (_singlePlanDelivery is { QueuesErrors: true } delivery)
+        {
+            delivery.EnqueueError(error, resultSelectionSet, paths);
+            return;
+        }
+
         var canExecutionContinue = _resultStore.AddErrors(error, resultSelectionSet, paths);
 
         if (!canExecutionContinue)
@@ -891,6 +897,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal void AddErrors(IError error, ResultSelectionSet resultSelectionSet, ReadOnlySpan<CompactPath> paths)
     {
+        if (_singlePlanDelivery is { QueuesErrors: true } delivery)
+        {
+            delivery.EnqueueError(error, resultSelectionSet, paths);
+            return;
+        }
+
         var canExecutionContinue = _resultStore.AddErrors(error, resultSelectionSet, paths);
 
         if (!canExecutionContinue)
@@ -918,13 +930,40 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal OperationResult Complete(bool reusable = false, bool retainMemoryForDefer = false)
     {
+        FinalizeResult();
+
+        return CreateResult(reusable, retainMemoryForDefer, _resultStore.Errors?.ToImmutableList());
+    }
+
+    /// <summary>
+    /// Completes the initial result of a request that has delivery groups. The errors that delivery groups own
+    /// are not part of the result.
+    /// </summary>
+    internal OperationResult CompleteSinglePlanDelivery()
+    {
+        FinalizeResult();
+
+        return CreateResult(
+            reusable: false,
+            retainMemoryForDefer: true,
+            _singlePlanDelivery!.ExcludeGroupErrors(_resultStore.Errors));
+    }
+
+    private void FinalizeResult()
+    {
         _resultStore.FinalizePocketedErrors();
 
         if (PolicyEvaluationResult.RequiresFinalization)
         {
             _resultStore.FinalizeDeniedSelections(PolicyEvaluationResult);
         }
+    }
 
+    private OperationResult CreateResult(
+        bool reusable,
+        bool retainMemoryForDefer,
+        ImmutableList<IError>? errors)
+    {
         var environment = Schema.TryGetEnvironment();
 
         var trace = _collectTelemetry
@@ -949,9 +988,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
                 resultDocument.Data.IsNullOrInvalidated || resultDocument.Data.IsNullMarker,
                 resultDocument,
                 retainMemoryForDefer ? null : resultDocument),
-            _singlePlanDelivery is { } delivery
-                ? delivery.ExcludeGroupErrors(_resultStore.Errors)
-                : _resultStore.Errors?.ToImmutableList())
+            errors)
         {
             RequestIndex = RequestContext.RequestIndex > -1 ? RequestContext.RequestIndex : null,
             VariableIndex = _variableIndex > -1 ? _variableIndex : null
