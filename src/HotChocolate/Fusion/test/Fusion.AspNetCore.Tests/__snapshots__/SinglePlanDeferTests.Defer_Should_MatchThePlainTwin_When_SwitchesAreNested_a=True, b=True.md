@@ -3,19 +3,19 @@
 ## Payload 1
 
 ```json
-{"data":{"product":{"name":"s"}},"pending":[{"id":"1","path":["product"],"label":"outer"}],"hasNext":true}
+{"data":{"product":{"name":"s"}},"pending":[{"id":"0","path":["product"],"label":"outer"}],"hasNext":true}
 ```
 
 ## Payload 2
 
 ```json
-{"pending":[{"id":"2","path":["product"],"label":"inner"}],"incremental":[{"id":"1","data":{"price":0}}],"completed":[{"id":"1"}],"hasNext":true}
+{"pending":[{"id":"1","path":["product"],"label":"inner"}],"incremental":[{"id":"0","data":{"price":0}}],"completed":[{"id":"0"}],"hasNext":true}
 ```
 
 ## Payload 3
 
 ```json
-{"incremental":[{"id":"2","data":{"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"2"}],"hasNext":false}
+{"incremental":[{"id":"1","data":{"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

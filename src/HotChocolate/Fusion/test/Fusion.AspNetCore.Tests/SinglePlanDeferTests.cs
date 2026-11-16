@@ -1733,6 +1733,125 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(0, run.Deferred.PendingCount);
     }
 
+    [Fact]
+    public async Task Defer_Should_AnnounceOneIdPerItem_When_TheAnchorIsAListOfThreeItems()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResult_When_TheListOfTheAnchorIsEmpty()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, _, response) => schema is "A"
+                ? ProductsList().Replace(response, "\"products\":[]")
+                : response,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [GeneratedRegex("\"products\":\\[.*\\]")]
+    private static partial Regex ProductsList();
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResult_When_TheAnchorFieldReturnsNull()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { product(id: ID!): Product @lookup @null }
+                type Product @key(fields: "id") { id: ID! name: String! }
+                """),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_AnnounceOneIdPerItem_When_TheAnchorIsInsideNestedLists()
+    {
+        // arrange
+        var gateway = await CreateProductReviewGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { id reviews { id ... @defer(label: "r") { rating } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_AnnounceTheItemsOfTheTypeCondition_When_TheListHoldsTwoBooksAndAMovie()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query {
+                    items: [Item!]! @returns(types: ["Book", "Book", "Movie"])
+                    book(id: ID!): Book @lookup
+                }
+                interface Item { id: ID! }
+                type Book implements Item @key(fields: "id") { id: ID! title: String! }
+                type Movie implements Item { id: ID! title: String! }
+                """),
+            ("B", """
+                type Query { bookById(id: ID!): Book @lookup }
+                type Book @key(fields: "id") { id: ID! rating: Int! }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { items { id ... on Book @defer(label: "b") { rating } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
     private const string MutationSource =
         """
         type Query { product(id: ID!): Product @lookup }
@@ -2474,9 +2593,10 @@ public partial class SinglePlanDeferTests : FusionTestBase
         };
 
     // Reads the payloads in the order they were sent and lists every break of the delivery rules:
-    // each pending id is completed exactly once, hasNext is false only on the last payload, a single
-    // payload carries neither pending nor hasNext, an incremental entry targets an object that exists and
-    // never carries a field the object already has.
+    // every id is announced once and completed exactly once, an entry refers to an id that an earlier or the
+    // same payload announced and that is still open, an announced path holds an object, hasNext is false only
+    // on the last payload, a single payload carries neither pending nor hasNext, an incremental entry targets
+    // an object that exists and never carries a field the object already has.
     private static List<string> ReadDelivery(List<string> payloads)
     {
         var problems = new List<string>();
@@ -2523,12 +2643,18 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 problems.Add($"payload {number} carries only hasNext");
             }
 
+            var announcedPaths = new List<(string Id, JsonArray Path)>();
+
             foreach (var entry in announced ?? [])
             {
-                if (!pending.TryAdd(entry!["id"]!.GetValue<string>(), entry["path"]!.AsArray()))
+                var id = entry!["id"]!.GetValue<string>();
+
+                if (!pending.TryAdd(id, entry["path"]!.AsArray()))
                 {
-                    problems.Add($"payload {number} announces id {entry["id"]} again");
+                    problems.Add($"payload {number} announces id {id} again");
                 }
+
+                announcedPaths.Add((id, entry["path"]!.AsArray()));
             }
 
             foreach (var entry in incremental)
@@ -2560,6 +2686,24 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 }
 
                 MergeStrict(targetObject, source, position, number, problems);
+            }
+
+            foreach (var (id, path) in announcedPaths)
+            {
+                var target = data;
+
+                foreach (var segment in path)
+                {
+                    var value = segment!.GetValue<JsonElement>();
+                    target = value.ValueKind is JsonValueKind.Number
+                        ? (target is JsonArray array && value.GetInt32() < array.Count ? array[value.GetInt32()] : null)
+                        : (target as JsonObject)?[value.GetString()!];
+                }
+
+                if (target is not JsonObject)
+                {
+                    problems.Add($"payload {number} announces id {id} at {path.ToJsonString()}, which is no object");
+                }
             }
 
             foreach (var entry in done)

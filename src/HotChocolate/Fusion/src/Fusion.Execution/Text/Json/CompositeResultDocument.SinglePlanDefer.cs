@@ -1,7 +1,9 @@
 using System.Collections.Immutable;
+using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Text.Json;
+using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Text.Json;
 
@@ -108,21 +110,23 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
-    /// Claims the rows at and below <paramref name="anchor"/> that resolve to
-    /// <paramref name="deliveryGroupId"/>, are not delivered yet and hold a value or the result of a marked
-    /// step, and lists the objects that hold a claimed row with their path below the anchor.
+    /// Claims the rows at and below the anchor object of <paramref name="instance"/> that resolve to its
+    /// group, hold a result and are not delivered yet, and lists the objects that hold a claimed row.
     /// </summary>
     /// <returns><c>true</c> when at least one row was claimed.</returns>
-    internal bool ClaimDeliveryRows(
-        Cursor anchor,
-        int deliveryGroupId,
-        Path path,
-        List<(Cursor Cursor, Path Path)> roots)
+    internal bool ClaimDeliveryRows(int instance, List<ClaimedObject> roots)
     {
-        _delivery!.AssertOnLoop();
+        var delivery = _delivery!;
+        delivery.AssertOnLoop();
 
+        var group = delivery.GetInstanceGroup(instance);
+        var anchor = delivery.GetInstanceAnchor(instance);
+        var depth = delivery.AnchorDepths[group];
+        var scratch = delivery.GetClaimScratch();
         var before = roots.Count;
-        SearchClaims(anchor, _metaDb.Get(anchor), deliveryGroupId, path, roots);
+
+        scratch.Begin(instance, group, depth, roots);
+        ClaimRows(anchor, _metaDb.Get(anchor), depth, enclosing: -1, scratch);
 
         return roots.Count > before;
     }
@@ -159,12 +163,8 @@ public sealed partial class CompositeResultDocument
             && (row.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated;
     }
 
-    private void SearchClaims(
-        Cursor cursor,
-        DbRow row,
-        int groupId,
-        Path path,
-        List<(Cursor Cursor, Path Path)> roots)
+    // The enclosing group is the group whose payload entry already writes the position, or -1.
+    private void ClaimRows(Cursor cursor, DbRow row, int depth, int enclosing, DeliveryClaimScratch scratch)
     {
         if (!IsContainer(ref cursor, ref row))
         {
@@ -178,14 +178,19 @@ public sealed partial class CompositeResultDocument
             for (var i = 0; i < length; i++)
             {
                 var elementCursor = cursor.AddRows(i + 1);
-                SearchClaims(elementCursor, _metaDb.Get(elementCursor), groupId, path.Append(i), roots);
+
+                scratch.PushIndex(i);
+                ClaimRows(elementCursor, _metaDb.Get(elementCursor), depth, enclosing, scratch);
+                scratch.Pop();
             }
 
             return;
         }
 
-        var index = roots.Count;
-        var any = false;
+        scratch.EnterObject(depth, cursor);
+
+        var frame = scratch.Carriers.Count;
+        var rootIndex = scratch.Roots.Count;
         var count = row.SizeOrLength;
 
         for (var i = 0; i < count; i++)
@@ -208,13 +213,28 @@ public sealed partial class CompositeResultDocument
             {
                 if ((marks & PropertyMarks.Delivered) != 0)
                 {
-                    // Another payload sent the row. The rows below it can still be this group's.
-                    SearchClaims(valueCursor, valueRow, groupId, path.Append(selection.ResponseName), roots);
+                    // Another payload sent the row. The rows below it can still be rows of this group.
+                    scratch.PushName(selection.ResponseName);
+                    ClaimRows(valueCursor, valueRow, depth + 1, enclosing: -1, scratch);
+                    scratch.Pop();
                 }
-                else if (TryClaim(propertyCursor, marks, valueRow, selection, groupId))
+                else
                 {
-                    any = true;
-                    ClaimBelow(valueCursor, valueRow, groupId);
+                    var resolution = _delivery!.Resolve(selection);
+
+                    if (HoldsResult(marks, valueRow, resolution, scratch.Group))
+                    {
+                        _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, scratch.Group));
+
+                        if (enclosing != scratch.Group && !ContainsCarrier(scratch.Carriers, frame, scratch.Group))
+                        {
+                            scratch.Carriers.Add((scratch.Group, scratch.Instance));
+                        }
+
+                        scratch.PushName(selection.ResponseName);
+                        ClaimRows(valueCursor, valueRow, depth + 1, scratch.Group, scratch);
+                        scratch.Pop();
+                    }
                 }
 
                 continue;
@@ -222,30 +242,77 @@ public sealed partial class CompositeResultDocument
 
             if ((flags & ElementFlags.IsExcluded) != ElementFlags.IsExcluded)
             {
-                SearchClaims(valueCursor, valueRow, groupId, path.Append(selection.ResponseName), roots);
+                scratch.PushName(selection.ResponseName);
+                ClaimRows(valueCursor, valueRow, depth + 1, enclosing, scratch);
+                scratch.Pop();
             }
         }
 
-        if (any)
-        {
-            roots.Insert(index, (cursor, path));
-        }
-    }
+        var added = 0;
 
-    private bool TryClaim(Cursor propertyCursor, int marks, DbRow valueRow, Selection selection, int groupId)
-    {
-        if (((marks & PropertyMarks.Written) == 0 && valueRow.TokenType is ElementTokenType.None)
-            || !SinglePlanDeliveryState.Contains(_delivery!.Resolve(selection), groupId))
+        for (var i = frame; i < scratch.Carriers.Count; i++)
         {
-            return false;
+            var (group, instance) = scratch.Carriers[i];
+
+            var path = scratch.CreatePathFrom(_delivery!.AnchorDepths[group]);
+
+            scratch.Roots.Insert(rootIndex + added, new ClaimedObject(cursor, group, instance, path));
+            added++;
         }
 
-        _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, groupId));
-        return true;
+        scratch.Carriers.RemoveRange(frame, scratch.Carriers.Count - frame);
     }
 
-    private void ClaimBelow(Cursor cursor, DbRow row, int groupId)
+    private static bool ContainsCarrier(List<(int Group, int Instance)> carriers, int start, int group)
     {
+        for (var i = start; i < carriers.Count; i++)
+        {
+            if (carriers[i].Group == group)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
+        => ((marks & PropertyMarks.Written) != 0 || valueRow.TokenType is not ElementTokenType.None)
+            && SinglePlanDeliveryState.Contains(resolution, groupId);
+
+    /// <summary>
+    /// Finds the objects of the client data that the group applies to below the scope object. An object is
+    /// honored when its selection set holds a selection that resolves to the group, and objects that are not
+    /// honored are only listed when <paramref name="keepUnhonored"/> is set.
+    /// </summary>
+    internal void FindDeliveryAnchors(
+        DeliveryGroup group,
+        int firstSegment,
+        Cursor scope,
+        Path scopePath,
+        bool keepUnhonored,
+        List<DeliveryAnchor> found)
+    {
+        _delivery!.AssertLoopNotRunningElsewhere();
+
+        var selectionPath = group.Path ?? SelectionPath.Root;
+
+        FindAnchors(scope, scopePath, -1, group.Id, selectionPath, firstSegment, keepUnhonored, found);
+    }
+
+    // The path of the position is the parent path followed by the index, when the index is not negative.
+    private void FindAnchors(
+        Cursor cursor,
+        Path parentPath,
+        int index,
+        int groupId,
+        SelectionPath selectionPath,
+        int segmentIndex,
+        bool keepUnhonored,
+        List<DeliveryAnchor> found)
+    {
+        var row = _metaDb.Get(cursor);
+
         if (!IsContainer(ref cursor, ref row))
         {
             return;
@@ -253,55 +320,90 @@ public sealed partial class CompositeResultDocument
 
         if (row.TokenType is ElementTokenType.StartArray)
         {
+            var arrayPath = index < 0 ? parentPath : parentPath.Append(index);
             var length = row.SizeOrLength;
 
             for (var i = 0; i < length; i++)
             {
-                var elementCursor = cursor.AddRows(i + 1);
-                ClaimBelow(elementCursor, _metaDb.Get(elementCursor), groupId);
+                FindAnchors(
+                    cursor.AddRows(i + 1),
+                    arrayPath,
+                    i,
+                    groupId,
+                    selectionPath,
+                    segmentIndex,
+                    keepUnhonored,
+                    found);
             }
 
             return;
         }
 
-        var count = row.SizeOrLength;
-
-        for (var i = 0; i < count; i++)
+        if (row.OperationReferenceType is not OperationReferenceType.SelectionSet)
         {
-            var propertyCursor = cursor.AddRows((i * 2) + 1);
-            var property = _metaDb.Get(propertyCursor);
+            return;
+        }
 
-            if ((property.Flags & ElementFlags.IsInternal) == ElementFlags.IsInternal)
+        var selectionSet = _operation.GetSelectionSetById(row.OperationReferenceId);
+
+        while (segmentIndex < selectionPath.Length)
+        {
+            var segment = selectionPath[segmentIndex];
+
+            if (segment.Kind is SelectionPathSegmentKind.Field)
             {
-                continue;
-            }
-
-            var marks = property.DeliveryMarks;
-            var valueCursor = propertyCursor.AddRows(1);
-            var valueRow = _metaDb.Get(valueCursor);
-
-            if ((marks & PropertyMarks.Held) != 0)
-            {
-                if ((marks & PropertyMarks.Delivered) == 0
-                    && TryClaim(
-                        propertyCursor,
-                        marks,
-                        valueRow,
-                        _operation.GetSelectionById(property.OperationReferenceId),
-                        groupId))
+                if (!TryGetNamedPropertyValue(cursor, segment.Name, out var value))
                 {
-                    ClaimBelow(valueCursor, valueRow, groupId);
+                    return;
                 }
 
-                continue;
+                var propertyCursor = value.Cursor.AddRows(-1);
+                var property = _metaDb.Get(propertyCursor);
+
+                if (!IsDelivered(property))
+                {
+                    return;
+                }
+
+                var objectPath = index < 0 ? parentPath : parentPath.Append(index);
+
+                FindAnchors(
+                    value.Cursor,
+                    objectPath.Append(segment.Name),
+                    -1,
+                    groupId,
+                    selectionPath,
+                    segmentIndex + 1,
+                    keepUnhonored,
+                    found);
+                return;
             }
 
-            if ((property.Flags & ElementFlags.IsExcluded) != ElementFlags.IsExcluded)
+            if (segment.Kind is SelectionPathSegmentKind.InlineFragment
+                && !_operation.Schema.Types.GetType<IOutputTypeDefinition>(segment.Name)
+                    .IsAssignableFrom(selectionSet.Type))
             {
-                ClaimBelow(valueCursor, valueRow, groupId);
+                return;
             }
+
+            segmentIndex++;
+        }
+
+        if (_delivery!.IsHonoredAt(groupId, selectionSet))
+        {
+            found.Add(new DeliveryAnchor(cursor, index < 0 ? parentPath : parentPath.Append(index), Honored: true));
+        }
+        else if (keepUnhonored)
+        {
+            found.Add(new DeliveryAnchor(cursor, index < 0 ? parentPath : parentPath.Append(index), Honored: false));
         }
     }
+
+    // A row is part of the client data when it belongs to the initial payload or a payload sent it.
+    private static bool IsDelivered(DbRow property)
+        => (property.Flags & ElementFlags.IsExcluded) != ElementFlags.IsExcluded
+            || (property.DeliveryMarks & (PropertyMarks.Held | PropertyMarks.Delivered))
+                == (PropertyMarks.Held | PropertyMarks.Delivered);
 
     private static bool IsClaimedBy(int marks, int groupId)
         => (marks & (PropertyMarks.Held | PropertyMarks.Delivered)) == (PropertyMarks.Held | PropertyMarks.Delivered)

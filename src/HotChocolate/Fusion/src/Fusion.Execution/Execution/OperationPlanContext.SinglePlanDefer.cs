@@ -87,7 +87,7 @@ public sealed partial class OperationPlanContext
 /// The per request state of a plan with marked steps: where each field is delivered, which steps are
 /// needed and how far each delivery group is.
 /// </summary>
-internal sealed class SinglePlanDeliveryState
+internal sealed partial class SinglePlanDeliveryState
 {
     private readonly Dictionary<int, DeliveryResolution> _resolutions = [];
     private readonly Dictionary<int, DeliveryBlock> _blocks = [];
@@ -120,9 +120,17 @@ internal sealed class SinglePlanDeliveryState
             groupCount = Math.Max(groupCount, group.Id + 1);
         }
 
+        _groupsById = new DeliveryGroup[groupCount];
+        _anchorDepths = new int[groupCount];
+        _groupStatus = new byte[groupCount];
+
+        foreach (var group in plan.DeliveryGroups)
+        {
+            _groupsById[group.Id] = group;
+            _anchorDepths[group.Id] = CountFieldSegments(group.Path);
+        }
+
         Honored = new bool[groupCount];
-        Announced = new bool[groupCount];
-        Completed = new bool[groupCount];
         NodesByGroup = new List<ExecutionNode>[groupCount];
         Needed = new bool[plan.MaxNodeId + 1];
         Finished = new bool[plan.MaxNodeId + 1];
@@ -222,10 +230,6 @@ internal sealed class SinglePlanDeliveryState
     public IReadOnlyList<ExecutionNode> MarkedNodes => _markedNodes;
 
     public bool[] Honored { get; }
-
-    public bool[] Announced { get; }
-
-    public bool[] Completed { get; }
 
     public List<ExecutionNode>[] NodesByGroup { get; }
 
@@ -564,6 +568,8 @@ internal sealed class SinglePlanDeliveryState
                 }
             }
         }
+
+        ComputeEffectiveChildren();
     }
 
     private bool NeedsAnyGroup(ExecutionNode node, ImmutableArray<int> groups, out List<int> honored)
@@ -758,22 +764,6 @@ internal sealed class SinglePlanDeliveryState
                 output.Add(operation.GetSelectionSet(selection, type));
             }
         }
-    }
-
-    /// <summary>
-    /// Gets the nearest honored delivery group above <paramref name="group"/>, or <c>null</c>.
-    /// </summary>
-    public DeliveryGroup? GetHonoredParent(DeliveryGroup group)
-    {
-        for (var parent = group.Parent; parent is not null; parent = parent.Parent)
-        {
-            if (Honored[parent.Id])
-            {
-                return parent;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>

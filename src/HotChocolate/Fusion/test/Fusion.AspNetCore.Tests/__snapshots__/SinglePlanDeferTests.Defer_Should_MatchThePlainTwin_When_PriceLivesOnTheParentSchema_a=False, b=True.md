@@ -3,13 +3,13 @@
 ## Payload 1
 
 ```json
-{"data":{"product":{"name":"s","price":0}},"pending":[{"id":"1","path":["product"],"label":"reviews"}],"hasNext":true}
+{"data":{"product":{"name":"s","price":0}},"pending":[{"id":"0","path":["product"],"label":"reviews"}],"hasNext":true}
 ```
 
 ## Payload 2
 
 ```json
-{"incremental":[{"id":"1","data":{"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"1"}],"hasNext":false}
+{"incremental":[{"id":"0","data":{"reviews":[{"body":"s"},{"body":"s"},{"body":"s"}]}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests

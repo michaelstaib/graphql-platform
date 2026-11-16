@@ -9,13 +9,13 @@
 ## Payload 2
 
 ```json
-{"pending":[{"id":"1","path":["product","reviews"],"label":"i"}],"incremental":[{"id":"0","data":{"reviews":[{},{},{}]}}],"completed":[{"id":"0"}],"hasNext":true}
+{"pending":[{"id":"1","path":["product","reviews",0],"label":"i"},{"id":"2","path":["product","reviews",1],"label":"i"},{"id":"3","path":["product","reviews",2],"label":"i"}],"incremental":[{"id":"0","data":{"reviews":[{},{},{}]}}],"completed":[{"id":"0"}],"hasNext":true}
 ```
 
 ## Payload 3
 
 ```json
-{"incremental":[{"id":"1","subPath":[0],"data":{"__typename":"s","id":"s","rating":0}},{"id":"1","subPath":[1],"data":{"__typename":"s","id":"s","rating":0}},{"id":"1","subPath":[2],"data":{"__typename":"s","id":"s","rating":0}}],"completed":[{"id":"1"}],"hasNext":false}
+{"incremental":[{"id":"1","data":{"__typename":"s","id":"s","rating":0}},{"id":"2","data":{"__typename":"s","id":"s","rating":0}},{"id":"3","data":{"__typename":"s","id":"s","rating":0}}],"completed":[{"id":"1"},{"id":"2"},{"id":"3"}],"hasNext":false}
 ```
 
 ## Requests
