@@ -96,6 +96,15 @@ public sealed class Selection : ISelection
             _flags |= Flags.HasPolicies;
         }
 
+        foreach (var syntaxNode in syntaxNodes)
+        {
+            if (syntaxNode.DeliveryGroup is not null)
+            {
+                _flags |= Flags.HasDeliveryGroupNode;
+                break;
+            }
+        }
+
         var type = field.Type;
         _type = type;
 
@@ -211,6 +220,12 @@ public sealed class Selection : ISelection
     /// Gets a value indicating whether the selection's field type is non-nullable.
     /// </summary>
     internal bool IsNonNull => (_flags & Flags.NonNull) == Flags.NonNull;
+
+    /// <summary>
+    /// Gets a value indicating whether a syntax node of this selection was collected under a delivery group, so
+    /// that the selection can be delivered with a group for some request.
+    /// </summary>
+    internal bool HasDeliveryGroupNode => (_flags & Flags.HasDeliveryGroupNode) == Flags.HasDeliveryGroupNode;
 
     /// <summary>
     /// Gets a value indicating whether the field of this selection carries a policy requirement.
@@ -939,7 +954,8 @@ nextItem:
         NonNullListElement = 64,
         RequiresWideIncludeFlags = 128,
         RequiresWideDeferFlags = 256,
-        HasPolicies = 512
+        HasPolicies = 512,
+        HasDeliveryGroupNode = 1024
     }
 }
 
