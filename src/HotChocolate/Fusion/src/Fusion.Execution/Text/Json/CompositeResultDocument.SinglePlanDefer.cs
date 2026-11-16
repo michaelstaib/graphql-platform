@@ -111,7 +111,8 @@ public sealed partial class CompositeResultDocument
 
     /// <summary>
     /// Claims the rows at and below the anchor object of <paramref name="instance"/> that resolve to its
-    /// group, hold a result and are not delivered yet, and lists the objects that hold a claimed row.
+    /// group, hold a result and are not delivered yet, and lists the objects that hold a claimed row. Each
+    /// row goes to the open instance with the longest path among the groups that hold the row.
     /// </summary>
     /// <returns><c>true</c> when at least one row was claimed.</returns>
     internal bool ClaimDeliveryRows(int instance, List<ClaimedObject> roots)
@@ -224,15 +225,22 @@ public sealed partial class CompositeResultDocument
 
                     if (HoldsResult(marks, valueRow, resolution, scratch.Group))
                     {
-                        _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, scratch.Group));
+                        var (carrierGroup, carrierInstance) = ChooseCarrier(scratch, resolution, depth);
 
-                        if (enclosing != scratch.Group && !ContainsCarrier(scratch.Carriers, frame, scratch.Group))
+                        _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, carrierGroup));
+
+                        if (carrierGroup != scratch.Group)
                         {
-                            scratch.Carriers.Add((scratch.Group, scratch.Instance));
+                            _delivery.RecordCrossClaim(propertyCursor);
+                        }
+
+                        if (carrierGroup != enclosing && !ContainsCarrier(scratch.Carriers, frame, carrierGroup))
+                        {
+                            scratch.Carriers.Add((carrierGroup, carrierInstance));
                         }
 
                         scratch.PushName(selection.ResponseName);
-                        ClaimRows(valueCursor, valueRow, depth + 1, scratch.Group, scratch);
+                        ClaimRows(valueCursor, valueRow, depth + 1, carrierGroup, scratch);
                         scratch.Pop();
                     }
                 }
@@ -254,7 +262,13 @@ public sealed partial class CompositeResultDocument
         {
             var (group, instance) = scratch.Carriers[i];
 
-            var path = scratch.CreatePathFrom(_delivery!.AnchorDepths[group]);
+            // The entry that another walk listed for the object and the group writes these rows too.
+            if (_delivery!.ListsObject(cursor, group, add: group != scratch.Group))
+            {
+                continue;
+            }
+
+            var path = scratch.CreatePathFrom(_delivery.AnchorDepths[group]);
 
             scratch.Roots.Insert(rootIndex + added, new ClaimedObject(cursor, group, instance, path));
             added++;
@@ -279,6 +293,36 @@ public sealed partial class CompositeResultDocument
     private static bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
         => ((marks & PropertyMarks.Written) != 0 || valueRow.TokenType is not ElementTokenType.None)
             && SinglePlanDeliveryState.Contains(resolution, groupId);
+
+    // The claiming instance sends the row unless an open instance below it holds the row too.
+    private (int Group, int Instance) ChooseCarrier(
+        DeliveryClaimScratch scratch,
+        DeliveryResolution resolution,
+        int depth)
+    {
+        var delivery = _delivery!;
+        var group = scratch.Group;
+        var instance = scratch.Instance;
+        var longest = scratch.BaseDepth;
+
+        foreach (var candidate in resolution.Groups)
+        {
+            var candidateDepth = delivery.AnchorDepths[candidate.Id];
+
+            if (candidateDepth <= longest
+                || candidateDepth > depth
+                || !delivery.TryFindOpenInstance(candidate.Id, scratch.GetObject(candidateDepth), out var found))
+            {
+                continue;
+            }
+
+            group = candidate.Id;
+            instance = found;
+            longest = candidateDepth;
+        }
+
+        return (group, instance);
+    }
 
     /// <summary>
     /// Finds the objects of the client data that the group applies to below the scope object. An object is
@@ -404,6 +448,17 @@ public sealed partial class CompositeResultDocument
         => (property.Flags & ElementFlags.IsExcluded) != ElementFlags.IsExcluded
             || (property.DeliveryMarks & (PropertyMarks.Held | PropertyMarks.Delivered))
                 == (PropertyMarks.Held | PropertyMarks.Delivered);
+
+    /// <summary>
+    /// Marks rows that a payload sent, so that no later payload writes them again.
+    /// </summary>
+    internal void RetireClaims(ReadOnlySpan<int> propertyRows)
+    {
+        foreach (var propertyRow in propertyRows)
+        {
+            _metaDb.OrDeliveryMarks(new Cursor(propertyRow), PropertyMarks.Retired);
+        }
+    }
 
     private static bool IsClaimedBy(int marks, int groupId)
         => (marks & (PropertyMarks.Held | PropertyMarks.Delivered)) == (PropertyMarks.Held | PropertyMarks.Delivered)

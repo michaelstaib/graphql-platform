@@ -220,6 +220,11 @@ public sealed partial class CompositeResultDocument
         public static int Claim(int marks, int deliveryGroupId)
             => marks | Delivered | ((deliveryGroupId & ClaimantMask) << ClaimantShift);
 
+        /// <summary>
+        /// The claimant of a row that a payload sent and that no group claims any more.
+        /// </summary>
+        public const int Retired = Delivered | (ClaimantMask << ClaimantShift);
+
         public static int GetClaimant(int marks)
             => (marks >>> ClaimantShift) & ClaimantMask;
     }

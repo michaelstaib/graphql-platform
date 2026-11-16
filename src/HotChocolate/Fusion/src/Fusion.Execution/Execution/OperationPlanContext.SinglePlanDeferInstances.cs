@@ -8,6 +8,7 @@ namespace HotChocolate.Fusion.Execution;
 internal sealed partial class SinglePlanDeliveryState
 {
     private const byte DoneFlag = 1;
+    private const byte ClosedFlag = 2;
 
     private readonly DeliveryGroup[] _groupsById;
     private readonly byte[] _groupStatus;
@@ -17,6 +18,9 @@ internal sealed partial class SinglePlanDeliveryState
     private readonly List<DeliveryAnchor> _found = [];
     private int[][] _effectiveChildren = [];
     private DeliveryClaimScratch? _claimScratch;
+    private HashSet<long>? _crossRoots;
+    private int[] _crossClaims = [];
+    private int _crossClaimCount;
 
     // One entry per announced group instance. The pending id of an instance is its index.
     private CompositeResultDocument.Cursor[] _instanceAnchors = [];
@@ -25,6 +29,7 @@ internal sealed partial class SinglePlanDeliveryState
     private byte[] _instanceFlags = [];
     private int _instanceCount;
     private int _doneCount;
+    private Dictionary<int, int>?[]? _instancesByAnchor;
 
     /// <summary>
     /// Gets the number of group instances announced so far.
@@ -58,9 +63,17 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
-    /// Ends the payload that is being created.
+    /// Closes the instances that the payload completed, so that no later payload sends data under them.
     /// </summary>
-    public void EndPayload() => _donePayload.Clear();
+    public void EndPayload()
+    {
+        foreach (var instance in _donePayload)
+        {
+            _instanceFlags[instance] |= ClosedFlag;
+        }
+
+        _donePayload.Clear();
+    }
 
     /// <summary>
     /// Undoes the announcements and the completions of the payload that could not be created.
@@ -75,6 +88,7 @@ internal sealed partial class SinglePlanDeliveryState
 
         _donePayload.Clear();
         _instanceCount = instanceCountBefore;
+        _instancesByAnchor = null;
     }
 
     /// <summary>
@@ -140,7 +154,70 @@ internal sealed partial class SinglePlanDeliveryState
     public PendingResult CreatePending(int instance)
         => new(instance, _instancePaths[instance], _groupsById[_instanceGroups[instance]].Label);
 
+    /// <summary>
+    /// Finds an announced instance of a group at an anchor object that no payload closed.
+    /// </summary>
+    public bool TryFindOpenInstance(int groupId, CompositeResultDocument.Cursor anchor, out int instance)
+    {
+        var map = (_instancesByAnchor ??= new Dictionary<int, int>?[_groupsById.Length])[groupId];
+
+        if (map is null)
+        {
+            map = _instancesByAnchor[groupId] = [];
+
+            for (var i = 0; i < _instanceCount; i++)
+            {
+                if (_instanceGroups[i] == groupId)
+                {
+                    map[_instanceAnchors[i].Value] = i;
+                }
+            }
+        }
+
+        return map.TryGetValue(anchor.Value, out instance) && (_instanceFlags[instance] & ClosedFlag) == 0;
+    }
+
     public DeliveryClaimScratch GetClaimScratch() => _claimScratch ??= new DeliveryClaimScratch();
+
+    /// <summary>
+    /// Starts a payload and retires the rows that the previous payload claimed for an instance below the
+    /// claiming one.
+    /// </summary>
+    public void BeginPayload(CompositeResultDocument document)
+    {
+        document.RetireClaims(_crossClaims.AsSpan(0, _crossClaimCount));
+        _crossClaimCount = 0;
+        _crossRoots?.Clear();
+    }
+
+    /// <summary>
+    /// Records a row that an instance claimed for an instance below it.
+    /// </summary>
+    public void RecordCrossClaim(CompositeResultDocument.Cursor propertyRow)
+    {
+        if (_crossClaimCount == _crossClaims.Length)
+        {
+            Array.Resize(ref _crossClaims, Math.Max(16, _crossClaimCount * 2));
+        }
+
+        _crossClaims[_crossClaimCount++] = propertyRow.Value;
+    }
+
+    /// <summary>
+    /// Determines whether the payload lists the object for the group, and lists it when
+    /// <paramref name="add"/> is set.
+    /// </summary>
+    public bool ListsObject(CompositeResultDocument.Cursor cursor, int groupId, bool add)
+    {
+        var key = ((long)cursor.Value << 10) | (uint)groupId;
+
+        if (add)
+        {
+            return !(_crossRoots ??= []).Add(key);
+        }
+
+        return _crossRoots is { Count: > 0 } && _crossRoots.Contains(key);
+    }
 
     /// <summary>
     /// Determines whether the selection set holds, at any depth, a selection that resolves to the group.
@@ -280,6 +357,11 @@ internal sealed partial class SinglePlanDeliveryState
         _instancePaths[instance] = path;
         _instanceGroups[instance] = groupId;
         _instanceFlags[instance] = 0;
+
+        if (_instancesByAnchor?[groupId] is { } map)
+        {
+            map[anchor.Value] = instance;
+        }
 
         return instance;
     }

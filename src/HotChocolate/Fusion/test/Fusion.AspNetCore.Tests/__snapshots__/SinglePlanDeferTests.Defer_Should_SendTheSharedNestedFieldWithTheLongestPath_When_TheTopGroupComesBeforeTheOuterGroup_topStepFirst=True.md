@@ -1,4 +1,4 @@
-# Defer_Should_SendTheSharedNestedFieldWithTheTopGroup_When_TheTopGroupComesBeforeTheOuterGroup
+# Defer_Should_SendTheSharedNestedFieldWithTheLongestPath_When_TheTopGroupComesBeforeTheOuterGroup
 
 ## Payload 1
 
@@ -9,7 +9,7 @@
 ## Payload 2
 
 ```json
-{"incremental":[{"id":"3","subPath":["products",0],"data":{"reviews":[{"rating":0},{"rating":0},{"rating":0}]}},{"id":"3","subPath":["products",1],"data":{"reviews":[{"rating":0},{"rating":0},{"rating":0}]}},{"id":"3","subPath":["products",2],"data":{"reviews":[{"rating":0},{"rating":0},{"rating":0}]}}],"completed":[{"id":"3"}],"hasNext":true}
+{"incremental":[{"id":"0","data":{"reviews":[{},{},{}]}},{"id":"3","subPath":["products",0,"reviews",0],"data":{"rating":0}},{"id":"3","subPath":["products",0,"reviews",1],"data":{"rating":0}},{"id":"3","subPath":["products",0,"reviews",2],"data":{"rating":0}},{"id":"1","data":{"reviews":[{},{},{}]}},{"id":"3","subPath":["products",1,"reviews",0],"data":{"rating":0}},{"id":"3","subPath":["products",1,"reviews",1],"data":{"rating":0}},{"id":"3","subPath":["products",1,"reviews",2],"data":{"rating":0}},{"id":"2","data":{"reviews":[{},{},{}]}},{"id":"3","subPath":["products",2,"reviews",0],"data":{"rating":0}},{"id":"3","subPath":["products",2,"reviews",1],"data":{"rating":0}},{"id":"3","subPath":["products",2,"reviews",2],"data":{"rating":0}}],"completed":[{"id":"3"}],"hasNext":true}
 ```
 
 ## Payload 3

@@ -492,7 +492,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Defer_Should_SendTheSharedNestedFieldWithTheTopGroup_When_TheTopGroupComesBeforeTheOuterGroup(
+    public async Task Defer_Should_SendTheSharedNestedFieldWithTheLongestPath_When_TheTopGroupComesBeforeTheOuterGroup(
         bool topStepFirst)
     {
         // arrange
@@ -522,7 +522,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Defer_Should_SendTheSharedNestedFieldWithTheOuterGroup_When_TheTopGroupComesAfterTheOuterGroup(
+    public async Task Defer_Should_SendTheSharedNestedFieldWithTheLongestPath_When_TheTopGroupComesAfterTheOuterGroup(
         bool topStepFirst)
     {
         // arrange
@@ -1845,6 +1845,60 @@ public partial class SinglePlanDeferTests : FusionTestBase
             gateway,
             """
             { items { id ... on Book @defer(label: "b") { rating } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheSharedFieldWithTheLongestPath_When_AnOuterAndAnInnerFragmentSelectIt(
+        bool outerStepFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            outerStepFirst ? ["B:3", "C:4>", "B:5", "C:6"] : ["B:5", "C:6>", "B:3", "C:4"],
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "a") { product(id: "1") { author { bio } } }
+                product(id: "1") { name ... @defer(label: "b") { author { bio } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"outerStepFirst={outerStepFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotSendTheSharedFieldAgain_When_TheInnerGroupCompletesAfterTheOuterGroup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "C:4>", "D:5", "B:6", "C:7"],
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource),
+            ("D", ReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "a") { product(id: "1") { author { bio } } }
+                product(id: "1") { name ... @defer(label: "b") { author { bio } reviews { body } } }
+            }
             """,
             []);
 

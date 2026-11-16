@@ -606,6 +606,8 @@ internal static partial class OperationPlanExecutor
         Dictionary<int, ImmutableList<IError>>? failedErrors = null;
         var progressed = true;
 
+        state.BeginPayload(document);
+
         try
         {
             while (progressed)
