@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Language;
@@ -19,6 +20,7 @@ internal sealed class ResultSelectionSet
     private readonly string[] _allResponseNames;
     private readonly SourceResponseNameMapping[]? _sourceResponseNameMappings;
     private readonly Dictionary<string, ResultSelectionSet?>? _childLookup;
+    private readonly bool _hasDistinctSelections;
 
     private ResultSelectionSet(
         ResultSelection[] selections,
@@ -47,6 +49,11 @@ internal sealed class ResultSelectionSet
             }
 
             _childLookup = lookup;
+            _hasDistinctSelections = lookup.Count == selections.Length;
+        }
+        else
+        {
+            _hasDistinctSelections = HasDistinctResponseNames(selections);
         }
     }
 
@@ -128,6 +135,51 @@ internal sealed class ResultSelectionSet
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Gets the child selection set for a given response name (type-unaware),
+    /// checking the direct selection at <paramref name="position"/> first.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ResultSelectionSet? TryGetChild(string responseName, int position)
+        => TryGetChildAt(responseName, position, out var child)
+            ? child
+            : TryGetChild(responseName);
+
+    /// <summary>
+    /// Gets the child selection set for a given response name, filtered by type condition,
+    /// checking the direct selection at <paramref name="position"/> first.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ResultSelectionSet? TryGetChild(
+        string responseName,
+        IComplexTypeDefinition objectType,
+        int position)
+        => TryGetChildAt(responseName, position, out var child)
+            ? child
+            : TryGetChild(responseName, objectType);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool TryGetChildAt(string responseName, int position, out ResultSelectionSet? child)
+    {
+        var selections = _selections;
+
+        // With a repeated response name the direct selection at the position
+        // is not necessarily the one a search returns.
+        if (_hasDistinctSelections && (uint)position < (uint)selections.Length)
+        {
+            ref readonly var expected = ref selections[position];
+
+            if (string.Equals(expected.ResponseName, responseName, StringComparison.Ordinal))
+            {
+                child = expected.Child;
+                return true;
+            }
+        }
+
+        child = null;
+        return false;
     }
 
     /// <summary>
@@ -577,6 +629,25 @@ internal sealed class ResultSelectionSet
         }
 
         return filtered ?? directives;
+    }
+
+    private static bool HasDistinctResponseNames(ResultSelection[] selections)
+    {
+        for (var i = 1; i < selections.Length; i++)
+        {
+            for (var j = 0; j < i; j++)
+            {
+                if (string.Equals(
+                    selections[i].ResponseName,
+                    selections[j].ResponseName,
+                    StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private static ITypeDefinition? ResolveFieldType(ITypeDefinition? parentType, string fieldName)

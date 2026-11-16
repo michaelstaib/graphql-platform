@@ -193,9 +193,21 @@ internal sealed class ValueCompletion
         {
             var properties = sourceSnapshot.EnumeratePropertySnapshots();
 
+            // A source schema returns the fields in the order of its operation, so the next
+            // property is expected to match the selection after the last match and the
+            // result selection at its own position.
+            var selectionPosition = 0;
+            var sourcePosition = -1;
+
             while (properties.MoveNext())
             {
-                if (!objectContext.TryGetProperty(properties.Name, out var resultField, out var selection))
+                sourcePosition++;
+
+                if (!objectContext.TryGetProperty(
+                    properties.Name,
+                    ref selectionPosition,
+                    out var resultField,
+                    out var selection))
                 {
                     continue;
                 }
@@ -224,7 +236,7 @@ internal sealed class ValueCompletion
                 ErrorTrie? errorTrieForResponseName = null;
                 errorTrie?.TryGetValue(selection.ResponseName, out errorTrieForResponseName);
 
-                var childSet = resultSelectionSet.TryGetChild(selection.ResponseName);
+                var childSet = resultSelectionSet.TryGetChild(selection.ResponseName, sourcePosition);
                 if (!TryCompleteValue(
                         propertyValueSnapshot,
                         resultField,
@@ -1517,9 +1529,21 @@ TryCompleteList_MoveNext:
 
         var properties = source.EnumeratePropertySnapshots();
 
+        // A source schema returns the fields in the order of its operation, so the next
+        // property is expected to match the selection after the last match and the
+        // result selection at its own position.
+        var selectionPosition = 0;
+        var sourcePosition = -1;
+
         while (properties.MoveNext())
         {
-            if (!objectContext.TryGetProperty(properties.Name, out var targetProperty, out var selection))
+            sourcePosition++;
+
+            if (!objectContext.TryGetProperty(
+                properties.Name,
+                ref selectionPosition,
+                out var targetProperty,
+                out var selection))
             {
                 continue;
             }
@@ -1559,7 +1583,7 @@ TryCompleteList_MoveNext:
                         selection,
                         Unsafe.As<ITypeDefinition, IObjectTypeDefinition>(ref namedType),
                         depth,
-                        resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
+                        resultSelectionSet?.TryGetChild(selection.ResponseName, objectType, sourcePosition),
                         preparedSelectionSet: null))
                     {
                         return false;
@@ -1580,7 +1604,7 @@ TryCompleteList_MoveNext:
                         selection.ListElementKind,
                         selection.IsNonNullListElement,
                         depth,
-                        resultSelectionSet?.TryGetChild(selection.ResponseName, objectType)))
+                        resultSelectionSet?.TryGetChild(selection.ResponseName, objectType, sourcePosition)))
                     {
                         return false;
                     }
@@ -1592,7 +1616,7 @@ TryCompleteList_MoveNext:
             ErrorTrie? errorTrieForResponseName = null;
             errorTrie?.TryGetValue(selection.ResponseName, out errorTrieForResponseName);
 
-            var childSet = resultSelectionSet?.TryGetChild(selection.ResponseName, objectType);
+            var childSet = resultSelectionSet?.TryGetChild(selection.ResponseName, objectType, sourcePosition);
             if (!TryCompleteValue(
                     propertyValueSnapshot,
                     targetProperty,

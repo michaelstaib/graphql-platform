@@ -153,6 +153,53 @@ public sealed class SelectionSet : ISelectionSet
         return _utf8ResponseNameLookup.TryGetSelection(utf8ResponseName, out selection);
     }
 
+    /// <summary>
+    /// Tries to resolve a selection by name, checking the selection at <paramref name="position"/> first.
+    /// </summary>
+    /// <param name="utf8ResponseName">
+    /// The selection response name.
+    /// </param>
+    /// <param name="position">
+    /// The position of the selection that is expected to match. When a selection is resolved,
+    /// it is set to the position that follows the resolved selection.
+    /// </param>
+    /// <param name="selection">
+    /// The resolved selection.
+    /// </param>
+    /// <returns>
+    /// Returns true if the selection was successfully resolved.
+    /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryGetSelection(
+        ReadOnlySpan<byte> utf8ResponseName,
+        ref int position,
+        [NotNullWhen(true)] out Selection? selection)
+    {
+        var selections = _selections;
+        var expected = position;
+
+        if ((uint)expected < (uint)selections.Length)
+        {
+            var candidate = selections[expected];
+
+            if (utf8ResponseName.SequenceEqual(candidate.Utf8ResponseName))
+            {
+                position = expected + 1;
+                selection = candidate;
+                return true;
+            }
+        }
+
+        if (TryGetSelection(utf8ResponseName, out selection))
+        {
+            // Selection ids follow the id of their selection set in selection order.
+            position = selection.Id - Id;
+            return true;
+        }
+
+        return false;
+    }
+
     internal void Seal(Operation operation)
     {
         if (_isSealed)
