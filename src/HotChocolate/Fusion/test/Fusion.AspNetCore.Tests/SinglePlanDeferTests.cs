@@ -2374,6 +2374,102 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_ReportTheErrorOnce_When_GroupsAtDifferentAnchorsShareAFailingNonNullField(
+        bool innerFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            innerFirst ? ["B:4>", "B:3"] : ["B:3>", "B:4"],
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float! @error }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "a") { product(id: "1") { price } }
+                product(id: "1") { name ... @defer(label: "b") { price } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"innerFirst={innerFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_KeepTheFirstResult_When_ALaterAnswerOfTheSharedNonNullFieldIsAFailedEntity(
+        bool valueFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            valueFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? "{\"errors\":[{\"message\":\"The entity failed.\",\"path\":[\"productById\",\"x\"]}],"
+                    + "\"data\":{\"productById\":null}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { x } ... @defer(label: "b") { x } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"valueFirst={valueFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_KeepTheFirstResult_When_ALaterAnswerOfTheSharedFieldIsAMissingEntity(
+        bool valueFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            valueFirst ? ["W:4>", "W:5"] : ["W:5>", "W:4"],
+            (schema, body, text) => schema == "W" && StepId().Match(body).Groups[1].Value == "5"
+                ? "{\"data\":{\"productById\":null}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("W", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! weight: Float }
+                """),
+            ("S", NullableShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { weight } ... @defer(label: "b") { shipping } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"valueFirst={valueFirst}");
+    }
+
     private const string MutationSource =
         """
         type Query { product(id: ID!): Product @lookup }

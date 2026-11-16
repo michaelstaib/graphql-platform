@@ -359,7 +359,8 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path
-    /// of each field selected by <paramref name="resultSelectionSet"/>.
+    /// of each field selected by <paramref name="resultSelectionSet"/>. Under a write filter only the fields
+    /// that the filter allows are written.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the execution can continue.
@@ -371,6 +372,17 @@ internal sealed class ValueCompletion
         IError error,
         CompactPath path)
     {
+        if (_writeFilterDocument is { } writeFilterDocument)
+        {
+            return BuildErrorResult(
+                target,
+                resultSelectionSet,
+                error,
+                path,
+                writeFilterDocument,
+                _writeFilterGroups);
+        }
+
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
 
@@ -833,6 +845,12 @@ internal sealed class ValueCompletion
             }
 
             var selection = fieldResult.AssertSelection();
+
+            if (_writeFilterDocument is not null && IsWriteDenied(fieldResult, selection, JsonValueKind.Null))
+            {
+                continue;
+            }
+
             var childSet = resultSelectionSet.TryGetChild(selection.ResponseName);
 
             if (!TryCompleteValue(
