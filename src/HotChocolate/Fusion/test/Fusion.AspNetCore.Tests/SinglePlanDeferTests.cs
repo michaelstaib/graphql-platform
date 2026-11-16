@@ -3358,8 +3358,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
     // same payload announced and that is still open, an announced path holds an object, hasNext is false only
     // on the last payload, a single payload carries neither pending nor hasNext, an incremental entry targets
     // an object that exists and never carries a field the object already has, no payload sends data for an id that it
-    // completes with errors, an id that a later payload announces has an id with the same path or a shorter path
-    // that completed in an earlier or the same payload, and the last payload carries hasNext false.
+    // completes with errors, a payload after the first that announces an id completes, without errors and in the
+    // same payload, another id whose path encloses the announced path, and the last payload carries hasNext false.
     private static List<string> ReadDelivery(List<string> payloads)
     {
         var problems = new List<string>();
@@ -3498,9 +3498,17 @@ public partial class SinglePlanDeferTests : FusionTestBase
             {
                 foreach (var (id, path) in announcedPaths)
                 {
-                    if (!completed.Any(other => other != id && IsEnclosingPath(pending[other], path)))
+                    var completesEnclosing = done
+                        .Select(t => t!["id"]!.GetValue<string>())
+                        .Any(other => other != id
+                            && !failedIds.Contains(other)
+                            && pending.TryGetValue(other, out var otherPath)
+                            && IsEnclosingPath(otherPath, path));
+
+                    if (!completesEnclosing)
                     {
-                        problems.Add($"payload {number} announces id {id} before an enclosing id completed");
+                        problems.Add(
+                            $"payload {number} announces id {id} and completes no enclosing id without errors");
                     }
                 }
             }
