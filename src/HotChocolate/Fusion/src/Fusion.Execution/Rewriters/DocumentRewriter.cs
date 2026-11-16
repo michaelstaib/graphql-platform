@@ -708,6 +708,9 @@ public sealed partial class DocumentRewriter(
             {
                 StringValueNode? label = null;
                 IValueNode? ifValue = null;
+                IntValueNode? group = null;
+                IntValueNode? parent = null;
+                IntValueNode? levels = null;
                 var dropDirective = false;
 
                 foreach (var argument in directive.Arguments)
@@ -734,6 +737,21 @@ public sealed partial class DocumentRewriter(
                     {
                         label = labelValue;
                     }
+                    else if (argument.Value is IntValueNode intValue)
+                    {
+                        if (argument.Name.Value.Equals(DeferArguments.Group, StringComparison.Ordinal))
+                        {
+                            group = intValue;
+                        }
+                        else if (argument.Name.Value.Equals(DeferArguments.Parent, StringComparison.Ordinal))
+                        {
+                            parent = intValue;
+                        }
+                        else if (argument.Name.Value.Equals(DeferArguments.Levels, StringComparison.Ordinal))
+                        {
+                            levels = intValue;
+                        }
+                    }
                 }
 
                 if (dropDirective)
@@ -741,7 +759,7 @@ public sealed partial class DocumentRewriter(
                     continue;
                 }
 
-                defer = new Defer { Label = label, If = ifValue };
+                defer = new Defer { Label = label, If = ifValue, Group = group, Parent = parent, Levels = levels };
 
                 continue;
             }
@@ -1595,6 +1613,21 @@ public sealed partial class DocumentRewriter(
         /// </summary>
         public IValueNode? If { get; init; }
 
+        /// <summary>
+        /// The internal <c>__group</c> argument, or <c>null</c> when the directive has none.
+        /// </summary>
+        public IntValueNode? Group { get; init; }
+
+        /// <summary>
+        /// The internal <c>__parent</c> argument, or <c>null</c> when the directive has none.
+        /// </summary>
+        public IntValueNode? Parent { get; init; }
+
+        /// <summary>
+        /// The internal <c>__levels</c> argument, or <c>null</c> when the directive has none.
+        /// </summary>
+        public IntValueNode? Levels { get; init; }
+
         public DirectiveNode ToDirective()
         {
             List<ArgumentNode>? arguments = null;
@@ -1611,8 +1644,47 @@ public sealed partial class DocumentRewriter(
                 arguments.Add(new ArgumentNode(DirectiveNames.Defer.Arguments.Label, Label));
             }
 
+            if (Group is not null)
+            {
+                arguments ??= [];
+                arguments.Add(new ArgumentNode(DeferArguments.Group, Group));
+            }
+
+            if (Parent is not null)
+            {
+                arguments ??= [];
+                arguments.Add(new ArgumentNode(DeferArguments.Parent, Parent));
+            }
+
+            if (Levels is not null)
+            {
+                arguments ??= [];
+                arguments.Add(new ArgumentNode(DeferArguments.Levels, Levels));
+            }
+
             return new DirectiveNode(DirectiveNames.Defer.Name, arguments?.ToArray() ?? []);
         }
+    }
+
+    /// <summary>
+    /// The names of the internal arguments that <c>@defer</c> carries after the defer lowering.
+    /// </summary>
+    internal static class DeferArguments
+    {
+        /// <summary>
+        /// The number of the delivery group of the fragment.
+        /// </summary>
+        public const string Group = "__group";
+
+        /// <summary>
+        /// The number of the parent delivery group, or <c>-1</c> when there is none.
+        /// </summary>
+        public const string Parent = "__parent";
+
+        /// <summary>
+        /// The number of field levels between a part and the place of its fragment.
+        /// </summary>
+        public const string Levels = "__levels";
     }
 
     #region Comparers

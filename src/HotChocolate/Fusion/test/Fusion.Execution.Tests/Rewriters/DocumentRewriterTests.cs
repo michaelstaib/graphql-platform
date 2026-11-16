@@ -4535,6 +4535,96 @@ public class DocumentRewriterTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void RewriteDocument_Should_KeepTheInternalDeferArguments_When_DeferFragmentsAreNotMerged()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            query($a: Boolean!) {
+                user {
+                    id
+                    ... @defer(if: $a, label: "top", __group: 3, __parent: -1) {
+                        name
+                        ... @defer(label: "inner", __group: 4, __parent: 3, __levels: 2) {
+                            nick
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            query($a: Boolean!) {
+              user {
+                id
+                ... @defer(if: $a, label: "top", __group: 3, __parent: -1) {
+                  name
+                  ... @defer(label: "inner", __group: 4, __parent: 3, __levels: 2) {
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void RewriteDocument_Should_KeepTwoFragmentsAtTheirPlaces_When_TheyShareOneGroupNumber()
+    {
+        // arrange
+        var schemaDefinition = CreateDeferSchema();
+        var doc = Utf8GraphQLParser.Parse(
+            """
+            {
+                user {
+                    id
+                    ... @defer(label: "top", __group: 0, __parent: -1) {
+                        profile {
+                            avatar
+                        }
+                    }
+                    profile {
+                        bio
+                        ... @defer(label: "top", __group: 0, __parent: -1, __levels: 1) {
+                            avatar
+                        }
+                    }
+                }
+            }
+            """);
+
+        // act
+        var rewritten = new DocumentRewriter(schemaDefinition, mergeAcrossDefer: false).RewriteDocument(doc);
+
+        // assert
+        rewritten.MatchInlineSnapshot(
+            """
+            {
+              user {
+                id
+                profile {
+                  bio
+                  ... @defer(label: "top", __group: 0, __parent: -1, __levels: 1) {
+                    avatar
+                  }
+                }
+                ... @defer(label: "top", __group: 0, __parent: -1) {
+                  profile {
+                    avatar
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static FusionSchemaDefinition CreateDeferSchema()
         => ComposeSchema(
             """
