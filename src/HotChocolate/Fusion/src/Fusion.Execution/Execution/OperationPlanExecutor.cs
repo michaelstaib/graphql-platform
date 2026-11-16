@@ -24,10 +24,7 @@ internal static partial class OperationPlanExecutor
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
-        if (!operationPlan.DeliveryGroups.IsDefaultOrEmpty
-            && operationPlan.IncrementalPlans.IsDefaultOrEmpty
-            && variableIndex < 0
-            && operationPlan.Operation.Definition.Operation is OperationType.Query or OperationType.Mutation)
+        if (operationPlan.UsesSinglePlanDelivery && variableIndex < 0)
         {
             return await ExecuteWithSinglePlanDeferAsync(
                 requestContext,
@@ -295,7 +292,7 @@ internal static partial class OperationPlanExecutor
             cancellationToken.ThrowIfCancellationRequested();
 
             var halted = executionCts.IsCancellationRequested;
-            var initialResult = context.Complete(retainMemoryForDefer: true);
+            var initialResult = context.CompleteSinglePlanDelivery();
 
             context.ActivateIncrementalPlans(operationPlan, variables);
 

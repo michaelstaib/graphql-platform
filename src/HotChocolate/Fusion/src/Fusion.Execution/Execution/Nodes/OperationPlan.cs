@@ -50,6 +50,9 @@ public sealed partial record OperationPlan : IOperationPlan
         Policies = policies;
         _incrementalPlanIndexes = CreateIncrementalPlanIndexes(incrementalPlans);
         HasDeferredDelivery = !incrementalPlans.IsDefaultOrEmpty || !deliveryGroups.IsDefaultOrEmpty;
+        UsesSinglePlanDelivery = incrementalPlans.IsDefaultOrEmpty
+            && !deliveryGroups.IsDefaultOrEmpty
+            && operation.Definition.Operation is OperationType.Query or OperationType.Mutation;
         KeyAndRequirementSelectionIds = incrementalPlans.IsDefaultOrEmpty && !deliveryGroups.IsDefaultOrEmpty
             ? SinglePlanDeliveryState.CollectKeyAndRequirementSelectionIds(operation, allNodes).ToFrozenSet()
 #if NET9_0_OR_GREATER
@@ -126,6 +129,12 @@ public sealed partial record OperationPlan : IOperationPlan
     /// Gets a value that indicates whether the plan has incremental plans or delivery groups.
     /// </summary>
     internal bool HasDeferredDelivery { get; }
+
+    /// <summary>
+    /// Gets a value that indicates whether the plan delivers its delivery groups from one plan. Only
+    /// queries and mutations can do so.
+    /// </summary>
+    internal bool UsesSinglePlanDelivery { get; }
 
     /// <summary>
     /// Gets the ids of the selections that a step of a plan with delivery groups can read as a key or a
