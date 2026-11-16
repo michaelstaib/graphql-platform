@@ -1995,24 +1995,54 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_KeepTheGroupOfThePartAtItsPlace_When_TheNormalizerRemovesANumberedCopy()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                products { name }
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "outer") {
+                        price
+                        ... @defer(if: $v, label: "inner") { rating }
+                    }
+                }
+                ... @defer(label: "top") { products { price } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Partition_Should_ReadTheGroupsFromTheOperationText_When_TheOperationHasAPart()
     {
         // arrange
         var schema = ComposeSchema(ProductListSchema, PriceSchema, ReviewKeySchema, ReviewRatingSchema);
-        var result = Plan(
-            schema,
+        var operation = Utf8GraphQLParser.Parse(
             """
             {
                 product(id: "1") {
                     name
-                    reviews { id }
-                    ... @defer(label: "x") { reviews { rating } }
-                    ... @defer(label: "y") { price }
+                    reviews {
+                        id
+                        ... @defer(label: "x", __group: 2, __parent: -1, __levels: 1) {
+                            rating
+                            ... @defer(label: "z", __group: 5, __parent: 2) { id }
+                        }
+                    }
+                    ... @defer(label: "y", __group: 1, __parent: -1) { price }
                 }
             }
-            """);
-        var text = result.Plan.Operation.Definition.ToString();
-        var operation = Utf8GraphQLParser.Parse(text).Definitions.OfType<OperationDefinitionNode>().Single();
+            """).Definitions.OfType<OperationDefinitionNode>().Single();
 
         // act
         var partitioning = DeferPartitioner.Partition(
@@ -2020,20 +2050,74 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
 
         // assert
-        Assert.Collection(
-            partitioning.AllDeliveryGroups,
-            x =>
+        partitioning.AllDeliveryGroups
+            .Select(g => $"{g.Id} {g.Label} {g.Path} parent {g.Parent?.Id}")
+            .MatchInlineSnapshots(
+            [
+                "0 y $.product parent ",
+                "1 x $.product parent ",
+                "2 z $.product.reviews parent 1"
+            ]);
+    }
+
+    [Fact]
+    public void Partition_Should_ReportANumberingError_When_OnlySomeFragmentsCarryAGroupNumber()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var operation = Utf8GraphQLParser.Parse(
+            """
             {
-                Assert.Equal("x", x.Label);
-                Assert.Equal(0, x.Id);
-                Assert.Equal("$.product", x.Path?.ToString());
-            },
-            y =>
-            {
-                Assert.Equal("y", y.Label);
-                Assert.Equal(1, y.Id);
-                Assert.Equal("$.product", y.Path?.ToString());
-            });
+                product(id: "1") {
+                    name
+                    ... @defer(label: "x", __group: 0, __parent: -1) { price }
+                    ... @defer(label: "y") { rating }
+                }
+            }
+            """).Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var partitioning = DeferPartitioner.Partition(
+            operation,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        partitioning.NumberingError.MatchInlineSnapshot(
+            "A @defer fragment carries no group number while another one does.");
+        partitioning.AllDeliveryGroups
+            .Select(g => $"{g.Id} {g.Label} {g.Path}")
+            .MatchInlineSnapshots(["0 x $.product", "1 y $.product"]);
+    }
+
+    [Fact]
+    public void ValidateCompiledDeliveryGroups_Should_Fail_When_TheGroupNumbersAreInconsistent()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var planner = CreatePlanner(schema, out _);
+        var operation = CreateCompiler(schema).Compile(
+            "1",
+            "1",
+            "1",
+            Normalize(
+                schema,
+                """
+                {
+                    product(id: "1") {
+                        name
+                        ... @defer(label: "x", __group: 0, __parent: -1) { price }
+                        ... @defer(label: "y") { rating }
+                    }
+                }
+                """),
+            mergeAcrossDefer: false);
+
+        // act
+        var valid = planner.TryValidateCompiledDeliveryGroups(operation, [], out var cause);
+
+        // assert
+        Assert.False(valid);
+        cause.MatchInlineSnapshot("A @defer fragment carries no group number while another one does.");
     }
 
     private const string ProductListSchema =

@@ -13,7 +13,8 @@ namespace HotChocolate.Fusion.Planning;
 /// </summary>
 internal sealed class DeferPartitioningResult(
     ImmutableArray<DeliveryGroup> allDeliveryGroups,
-    IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment)
+    IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> byFragment,
+    string? numberingError)
 {
     /// <summary>
     /// Every <see cref="DeliveryGroup"/> discovered in the operation, in
@@ -28,4 +29,10 @@ internal sealed class DeferPartitioningResult(
     /// node.
     /// </summary>
     public IReadOnlyDictionary<InlineFragmentNode, DeliveryGroup> ByFragment { get; } = byFragment;
+
+    /// <summary>
+    /// The reason why the group numbers of the operation disagree, or <c>null</c> when they agree or the
+    /// operation has none. With a reason the groups are numbered by position.
+    /// </summary>
+    public string? NumberingError { get; } = numberingError;
 }

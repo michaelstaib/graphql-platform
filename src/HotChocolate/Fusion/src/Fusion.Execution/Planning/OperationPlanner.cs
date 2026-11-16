@@ -695,9 +695,17 @@ public sealed partial class OperationPlanner
         ImmutableArray<DeliveryGroup> deliveryGroups,
         out string? cause)
     {
-        var compiled = DeferPartitioner.Partition(
+        var partitioning = DeferPartitioner.Partition(
             operation.Definition,
-            new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions)).AllDeliveryGroups;
+            new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions));
+
+        if (partitioning.NumberingError is { } numberingError)
+        {
+            cause = numberingError;
+            return false;
+        }
+
+        var compiled = partitioning.AllDeliveryGroups;
 
         if (compiled.Length != deliveryGroups.Length)
         {

@@ -1092,6 +1092,37 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_AnnounceTheGroupOfAPartOnceAtItsPlace_When_ACopyOfANestedSwitchIsRemoved()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:2>", "B:3"],
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($v: Boolean!) {
+                products { name }
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "outer") {
+                        price
+                        ... @defer(if: $v, label: "inner") { rating }
+                    }
+                }
+                ... @defer(label: "top") { products { price } }
+            }
+            """,
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
     {
         // arrange

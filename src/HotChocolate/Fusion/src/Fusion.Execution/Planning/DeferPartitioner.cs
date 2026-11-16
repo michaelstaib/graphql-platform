@@ -40,8 +40,11 @@ internal static class DeferPartitioner
             deferConditions,
             occurrences);
 
-        // The lowering numbers the groups. A document without numbers is numbered in declaration order.
-        var groups = HasGroupNumbers(occurrences)
+        // The lowering numbers the groups. A document without numbers, or with numbers that disagree, is numbered
+        // in declaration order.
+        var numbered = HasGroupNumbers(occurrences);
+        var numberingError = numbered ? FindNumberingError(occurrences) : null;
+        var groups = numbered && numberingError is null
             ? CreateNumberedGroups(occurrences)
             : CreatePositionalGroups(occurrences);
 
@@ -52,7 +55,7 @@ internal static class DeferPartitioner
             byFragment[occurrences[i].Fragment] = groups.ByOccurrence[i];
         }
 
-        return new DeferPartitioningResult(groups.All, byFragment);
+        return new DeferPartitioningResult(groups.All, byFragment, numberingError);
     }
 
     private static void Walk(
@@ -113,68 +116,96 @@ internal static class DeferPartitioner
 
     private static bool HasGroupNumbers(List<Occurrence> occurrences)
     {
-        if (occurrences.Count == 0)
-        {
-            return false;
-        }
-
-        var numbers = new HashSet<int>();
-
         foreach (var occurrence in occurrences)
         {
-            if (occurrence.Group is not { } group || occurrence.Parent is null)
+            if (occurrence.Group is not null || occurrence.Parent is not null)
             {
-                return false;
-            }
-
-            numbers.Add(group);
-        }
-
-        // The numbers are dense, so a number is the index of its group.
-        for (var i = 0; i < numbers.Count; i++)
-        {
-            if (!numbers.Contains(i))
-            {
-                return false;
+                return true;
             }
         }
 
-        return true;
+        return false;
     }
 
     /// <summary>
-    /// Creates one <see cref="DeliveryGroup"/> per group number. The path of a group is the path of its fragment
-    /// without the field levels of a part, and its parent is the group of the parent number.
+    /// Returns the reason why the group numbers of the fragments disagree, or <c>null</c> when they agree.
+    /// </summary>
+    private static string? FindNumberingError(List<Occurrence> occurrences)
+    {
+        var parents = new Dictionary<int, int>();
+
+        foreach (var occurrence in occurrences)
+        {
+            if (occurrence.Group is not { } number || occurrence.Parent is not { } parent)
+            {
+                return "A @defer fragment carries no group number while another one does.";
+            }
+
+            if (parents.TryGetValue(number, out var known) && known != parent)
+            {
+                return $"The fragments of delivery group {number} name different parents.";
+            }
+
+            if (parent < -1 || parent >= number)
+            {
+                return $"The parent {parent} of delivery group {number} is not a lower group number.";
+            }
+
+            if (occurrence.Levels < 0 || occurrence.Levels > occurrence.Path.Length)
+            {
+                return $"A fragment of delivery group {number} spans {occurrence.Levels} field levels "
+                    + $"below a path of {occurrence.Path.Length}.";
+            }
+
+            parents[number] = parent;
+        }
+
+        foreach (var (number, parent) in parents)
+        {
+            if (parent >= 0 && !parents.ContainsKey(parent))
+            {
+                return $"The parent {parent} of delivery group {number} is not the number of a group.";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Creates one <see cref="DeliveryGroup"/> per group number, in the order of the numbers. The path of a group
+    /// is the path of its fragment without the field levels of a part, and its parent is the group of the parent
+    /// number.
     /// </summary>
     private static Groups CreateNumberedGroups(List<Occurrence> occurrences)
     {
-        var first = new Occurrence?[occurrences.Max(static o => o.Group!.Value) + 1];
+        var numbers = occurrences.Select(static o => o.Group!.Value).Distinct().Order().ToArray();
+        var first = new Occurrence?[numbers.Length];
 
         // A group is created from the fragment at its place, which has no field levels. A group that has
         // only parts is created from its first part.
         foreach (var occurrence in occurrences)
         {
-            var number = occurrence.Group!.Value;
+            var rank = Array.BinarySearch(numbers, occurrence.Group!.Value);
 
-            if (first[number] is null || (first[number]!.Levels > 0 && occurrence.Levels == 0))
+            if (first[rank] is null || (first[rank]!.Levels > 0 && occurrence.Levels == 0))
             {
-                first[number] = occurrence;
+                first[rank] = occurrence;
             }
         }
 
         var all = ImmutableArray.CreateBuilder<DeliveryGroup>(first.Length);
 
-        for (var number = 0; number < first.Length; number++)
+        for (var rank = 0; rank < first.Length; rank++)
         {
-            var occurrence = first[number]!;
-            var path = occurrence.Path.Slice(Math.Max(0, occurrence.Path.Length - occurrence.Levels));
+            var occurrence = first[rank]!;
+            var path = occurrence.Path.Slice(occurrence.Path.Length - occurrence.Levels);
             var parentNumber = occurrence.Parent!.Value;
-            var parent = parentNumber >= 0 && parentNumber < number ? all[parentNumber] : null;
+            var parent = parentNumber >= 0 ? all[Array.BinarySearch(numbers, parentNumber)] : null;
 
             all.Add(
                 new DeliveryGroup(occurrence.Label, parent, occurrence.DeferConditionIndex)
                 {
-                    Id = number,
+                    Id = rank,
                     Path = path,
                     IfVariable = occurrence.IfVariable
                 });
@@ -184,7 +215,7 @@ internal static class DeferPartitioner
 
         for (var i = 0; i < occurrences.Count; i++)
         {
-            byOccurrence[i] = all[occurrences[i].Group!.Value];
+            byOccurrence[i] = all[Array.BinarySearch(numbers, occurrences[i].Group!.Value)];
         }
 
         return new Groups(all.MoveToImmutable(), byOccurrence);
