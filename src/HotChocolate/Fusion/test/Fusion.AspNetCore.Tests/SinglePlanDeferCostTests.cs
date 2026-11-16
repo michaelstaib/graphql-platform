@@ -19,6 +19,7 @@ public sealed class SinglePlanDeferCostCollection
 public class SinglePlanDeferCostTests : FusionTestBase
 {
     private const int WarmUpRequests = 60;
+    private const int SettledWarmUpRequests = 20;
     private const int Samples = 10;
     private static readonly TimeSpan s_settle = TimeSpan.FromMilliseconds(20);
 
@@ -68,6 +69,12 @@ public class SinglePlanDeferCostTests : FusionTestBase
             }
 
             await Task.Delay(300, TestContext.Current.CancellationToken);
+        }
+
+        for (var i = 0; i < SettledWarmUpRequests; i++)
+        {
+            await RunAsync(onExecutor, query, settle: true);
+            await RunAsync(offExecutor, query, settle: true);
         }
     }
 
