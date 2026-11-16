@@ -487,7 +487,7 @@ public sealed partial class CompositeResultDocument : IDisposable
 
         var startObjectCursor = template.IsRequestInvariant
             ? _metaDb.AppendObjectBlock(template.Rows, parent.Value, excludedRowOffsets: [])
-            : AppendConditionalObjectBlock(parent, template, selections);
+            : AppendConditionalObjectBlock(parent, selectionSet);
 
         objectContext = new CompositeObjectContext(
             this,
@@ -499,11 +499,11 @@ public sealed partial class CompositeResultDocument : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private Cursor AppendConditionalObjectBlock(
-        Cursor parent,
-        ObjectTemplate template,
-        ReadOnlySpan<Selection> selections)
+    private Cursor AppendConditionalObjectBlock(Cursor parent, SelectionSet selectionSet)
     {
+        var template = selectionSet.ObjectTemplate;
+        var selections = selectionSet.Selections;
+
         // The template rows are canonical: they never carry IsExcluded. Each document evaluates
         // its own skip/include and defer state and hands the block-relative property row offsets
         // of the selections it excludes to the block append, which stamps the flag alongside the
