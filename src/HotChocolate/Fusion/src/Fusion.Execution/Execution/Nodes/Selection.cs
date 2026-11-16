@@ -222,8 +222,7 @@ public sealed class Selection : ISelection
     internal bool IsNonNull => (_flags & Flags.NonNull) == Flags.NonNull;
 
     /// <summary>
-    /// Gets a value indicating whether a syntax node of this selection was collected under a delivery group, so
-    /// that the selection can be delivered with a group for some request.
+    /// Gets a value indicating whether a syntax node of this selection is in a delivery group.
     /// </summary>
     internal bool HasDeliveryGroupNode => (_flags & Flags.HasDeliveryGroupNode) == Flags.HasDeliveryGroupNode;
 

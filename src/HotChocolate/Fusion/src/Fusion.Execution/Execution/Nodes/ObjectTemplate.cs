@@ -43,13 +43,13 @@ internal readonly struct ObjectTemplate
     public ReadOnlySpan<int> ConditionalSelections => _conditionalSelections;
 
     /// <summary>
-    /// Gets a value indicating whether a row of the block can resolve to delivery groups for some request.
+    /// Gets a value indicating whether a selection of the block has a syntax node in a delivery group.
     /// </summary>
     public bool HasGroupRows => _hasGroupRows;
 
     /// <summary>
-    /// Gets a value indicating whether the block is the same for every request, so the rows can be copied as they
-    /// are.
+    /// Gets a value indicating whether the block has no conditional selection and no selection with a syntax node
+    /// in a delivery group.
     /// </summary>
     public bool IsRequestInvariant => _isRequestInvariant;
 
