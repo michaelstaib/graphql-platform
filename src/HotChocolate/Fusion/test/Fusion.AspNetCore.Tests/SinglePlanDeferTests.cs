@@ -802,7 +802,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 ? $"type N{i} {{ w: Float! }}"
                 : $"type N{i} {{ n: N{i + 1}! }}"));
         var gateway = await CreateGatewayAsync(
-            requirementStepFirst ? ["B:4", "C:3", "B:5"] : ["B:5", "B:4", "C:3"],
+            requirementStepFirst ? ["B:4", "C:3>", "B:5"] : ["B:5>", "B:4", "C:3"],
             ("A", ProductListSource),
             ("B", $$"""
                 type Query { productById(id: ID!): Product @lookup }
