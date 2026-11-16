@@ -44,6 +44,30 @@ public sealed partial class OperationPlanContext
         => _resultStore.ClearWriteFilter();
 
     /// <summary>
+    /// Hands the errors that were recorded after the first <paramref name="count"/> errors and that no delivery
+    /// group owns to <paramref name="deliveryGroups"/>.
+    /// </summary>
+    internal void AddSourceErrorsAfter(int count, ImmutableArray<int> deliveryGroups)
+    {
+        var errors = _resultStore.Errors;
+
+        if (errors is null || errors.Count <= count || deliveryGroups.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        var state = _singlePlanDelivery!;
+
+        for (var i = count; i < errors.Count; i++)
+        {
+            if (!state.IsGroupError(errors[i]))
+            {
+                state.AddSourceError(errors[i], deliveryGroups);
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets the errors of the result that were recorded after the first <paramref name="count"/> errors and
     /// that no delivery group owns.
     /// </summary>
@@ -80,10 +104,14 @@ public sealed partial class OperationPlanContext
 
             state.AddStepError(error.Error, groups);
 
+            var errorCount = ErrorCount;
+
             if (!_resultStore.AddDeliveryErrors(error, groups))
             {
                 ExecutionState.CancelProcessing();
             }
+
+            AddSourceErrorsAfter(errorCount, state.GetOwnDeliveryGroups(error.ResultSelectionSet));
         }
     }
 
@@ -104,6 +132,8 @@ internal sealed partial class SinglePlanDeliveryState
     private readonly List<ExecutionNode> _markedNodes = [];
     private readonly Dictionary<SelectionPath, SelectionSet[]> _targetSets = [];
     private readonly Dictionary<ResultSelectionSet, ImmutableArray<int>> _groupsByResultSelectionSet
+        = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<ResultSelectionSet, ImmutableArray<int>> _ownGroupsByResultSelectionSet
         = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentQueue<DeliveryError> _errors = new();
     private readonly ExecutionState _executionState;
@@ -293,12 +323,20 @@ internal sealed partial class SinglePlanDeliveryState
     public ImmutableArray<int> GetDeliveryGroups(ResultSelectionSet resultSelectionSet)
         => _groupsByResultSelectionSet.TryGetValue(resultSelectionSet, out var groups) ? groups : default;
 
+    /// <summary>
+    /// Gets the delivery groups of the operation that owns <paramref name="resultSelectionSet"/>, or an empty
+    /// array when the operation belongs to the initial payload.
+    /// </summary>
+    public ImmutableArray<int> GetOwnDeliveryGroups(ResultSelectionSet resultSelectionSet)
+        => _ownGroupsByResultSelectionSet.TryGetValue(resultSelectionSet, out var groups) ? groups : default;
+
     private void AddResultSelectionSets(ExecutionNode node)
     {
         switch (node)
         {
             case OperationExecutionNode operation:
                 _groupsByResultSelectionSet[operation.ResultSelectionSet] = operation.DeliveryGroups;
+                _ownGroupsByResultSelectionSet[operation.ResultSelectionSet] = operation.DeliveryGroups;
                 break;
 
             case OperationBatchExecutionNode batch:
@@ -307,6 +345,7 @@ internal sealed partial class SinglePlanDeliveryState
                 foreach (var definition in batch.Operations)
                 {
                     _groupsByResultSelectionSet[definition.ResultSelectionSet] = groups;
+                    _ownGroupsByResultSelectionSet[definition.ResultSelectionSet] = definition.DeliveryGroups;
                 }
 
                 break;

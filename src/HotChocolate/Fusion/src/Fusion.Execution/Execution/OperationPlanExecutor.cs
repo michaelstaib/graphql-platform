@@ -431,6 +431,8 @@ internal static partial class OperationPlanExecutor
             return;
         }
 
+        var errorCount = context.ErrorCount;
+
         context.SetWriteFilter(groups);
 
         try
@@ -441,6 +443,10 @@ internal static partial class OperationPlanExecutor
         {
             context.ClearWriteFilter();
         }
+
+        context.AddSourceErrorsAfter(
+            errorCount,
+            context.SinglePlanDelivery!.GetOwnDeliveryGroups(merge.ResultSelectionSet));
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateSinglePlanStream(
@@ -570,6 +576,7 @@ internal static partial class OperationPlanExecutor
                 state.MarkDone(instance);
 
                 var instanceErrors = state.TakeGroupErrors(instance, includeSent: true) ?? [];
+                instanceErrors = state.TakeSourceErrors(state.GetInstanceGroup(instance), instanceErrors);
                 instanceErrors = instanceErrors.AddRange(errors);
                 completed.Add(new CompletedResult(instance, instanceErrors.Count > 0 ? instanceErrors : null));
                 errors = [];
@@ -657,6 +664,7 @@ internal static partial class OperationPlanExecutor
                     }
 
                     var errors = state.TakeGroupErrors(instance, includeSent: false) ?? [];
+                    errors = state.TakeSourceErrors(group, errors);
 
                     if (unattributed.Count > 0)
                     {
@@ -718,33 +726,34 @@ internal static partial class OperationPlanExecutor
             hasNext);
     }
 
-    // The errors of a failed instance are the errors recorded for its rows, else the errors of its failed
-    // steps, else the errors that no group owns, else the error of the exception of a failed step.
+    // The errors of a failed instance are the errors recorded for its rows and the errors its steps reported for
+    // no row, else the errors of its failed steps. The errors that no group owns follow, and without any error the
+    // instance carries the error of the exception of a failed step.
     private static ImmutableList<IError> TakeFailureErrors(
         SinglePlanDeliveryState state,
         int instance,
         ref ImmutableList<IError> unattributed)
     {
-        if (state.TakeGroupErrors(instance, includeSent: true) is { } own)
-        {
-            return own;
-        }
-
         var group = state.GetInstanceGroup(instance);
+        var errors = state.TakeSourceErrors(group, state.TakeGroupErrors(instance, includeSent: true) ?? []);
 
-        if (state.GetStepErrors(group) is { } stepErrors)
+        if (errors.Count == 0)
         {
-            return stepErrors;
+            errors = state.GetStepErrors(group) ?? [];
         }
 
         if (unattributed.Count > 0)
         {
-            var errors = unattributed;
+            errors = errors.AddRange(unattributed);
             unattributed = [];
-            return errors;
         }
 
-        return state.CreateFailureError(group) is { } error ? [error] : [];
+        if (errors.Count == 0 && state.CreateFailureError(group) is { } error)
+        {
+            errors = [error];
+        }
+
+        return errors;
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(

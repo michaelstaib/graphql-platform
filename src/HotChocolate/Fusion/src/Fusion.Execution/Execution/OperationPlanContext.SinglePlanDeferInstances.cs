@@ -38,6 +38,7 @@ internal sealed partial class SinglePlanDeliveryState
     private HashSet<long>? _failedAnchors;
     private List<GroupError>? _takenPayload;
     private List<IError>?[]? _stepErrors;
+    private List<SourceError>? _sourceErrors;
 
     /// <summary>
     /// Gets the number of group instances announced so far.
@@ -208,6 +209,46 @@ internal sealed partial class SinglePlanDeliveryState
             }
 
             return builder?.ToImmutable();
+        }
+    }
+
+    /// <summary>
+    /// Records an error that a step reported for no row, for the groups of the step.
+    /// </summary>
+    public void AddSourceError(IError error, ImmutableArray<int> groups)
+    {
+        lock (_sync)
+        {
+            (_groupOwnedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(error);
+            (_sourceErrors ??= []).Add(new SourceError(new GroupError(error), groups));
+        }
+    }
+
+    /// <summary>
+    /// Appends the errors that the steps of the group reported for no row and that no payload sent yet.
+    /// </summary>
+    public ImmutableList<IError> TakeSourceErrors(int groupId, ImmutableList<IError> errors)
+    {
+        lock (_sync)
+        {
+            if (_sourceErrors is null)
+            {
+                return errors;
+            }
+
+            foreach (var (error, groups) in _sourceErrors)
+            {
+                if (error.Sent || !groups.Contains(groupId))
+                {
+                    continue;
+                }
+
+                error.Sent = true;
+                (_takenPayload ??= []).Add(error);
+                errors = errors.Add(error.Error);
+            }
+
+            return errors;
         }
     }
 
@@ -623,6 +664,11 @@ internal sealed class GroupError(IError error)
 
     public bool Sent { get; set; }
 }
+
+/// <summary>
+/// An error that a step reported for no row, with the delivery groups of the step.
+/// </summary>
+internal readonly record struct SourceError(GroupError Error, ImmutableArray<int> Groups);
 
 /// <summary>
 /// An object that a delivery group is applied to.

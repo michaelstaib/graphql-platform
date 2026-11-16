@@ -2470,6 +2470,147 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run, $"valueFirst={valueFirst}");
     }
 
+    // The source reports an error without a path in front of its other errors.
+    private static string AddErrorWithoutPath(string text)
+    {
+        const string error = "{\"message\":\"The source failed.\"}";
+        var errors = text.IndexOf("\"errors\":[", StringComparison.Ordinal);
+
+        return errors < 0
+            ? text.Insert(text.IndexOf('{') + 1, "\"errors\":[" + error + "],")
+            : text.Insert(errors + 10, error + ",");
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheErrorWithoutAPath_When_TheGroupFailsOnANonNullField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B"
+                ? AddErrorWithoutPath(PriceValue().Replace(text, "\"price\":null"))
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_ReportTheRootError_When_TheSourceOfTheFailedGroupAnswersWithoutData(
+        bool failingFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            failingFirst ? ["B:3>", "C:2"] : ["C:2>", "B:3"],
+            (schema, _, text) => schema == "B"
+                ? "{\"errors\":[{\"message\":\"The source failed.\"}],\"data\":null}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { price }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"failingFirst={failingFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheErrorWithoutAPathWithItsGroup_When_UnlabelledSiblingsShareOneStep(
+        bool failingFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? AddErrorWithoutPath(text) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float! @error rating: Int! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            failingFirst
+                ? """
+                  { product(id: "1") { name ... @defer { price } ... @defer { rating } } }
+                  """
+                : """
+                  { product(id: "1") { name ... @defer { rating } ... @defer { price } } }
+                  """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"failingFirst={failingFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithoutAPathOnce_When_TheGroupHasAnInstancePerListItem()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) =>
+            {
+                if (schema != "B")
+                {
+                    return text;
+                }
+
+                var index = 0;
+                return AddErrorWithoutPath(
+                    PriceValue().Replace(text, m => index++ == 1 ? "\"price\":null" : m.Value));
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "p") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string MutationSource =
         """
         type Query { product(id: ID!): Product @lookup }
