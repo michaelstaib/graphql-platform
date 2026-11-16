@@ -682,6 +682,118 @@ public sealed class FetchResultStoreTests : FusionTestBase
         Assert.Null(store.Errors);
     }
 
+    [Theory]
+    [InlineData(
+        """
+        {"data":{"item":{"a":"first","b":5,"c":{"x":"c","y":1},"d":[{"x":"d1","y":2},{"x":"d2","y":3}],"e":"last"}}}
+        """)]
+    [InlineData(
+        """
+        {"data":{"item":{"e":"last","d":[{"y":2,"x":"d1"},{"x":"d2","y":3}],"c":{"y":1,"x":"c"},"b":5,"a":"first"}}}
+        """)]
+    [InlineData(
+        """
+        {"data":{"item":{"c":{"x":"c","y":1},"unknown":true,"a":"first","e":"last","d":[{"x":"d1","y":2},{"y":3,"x":"d2"}],"b":5}}}
+        """)]
+    public void AddPartialResults_Should_CompleteEveryField_When_SourceFieldOrderVaries(string payload)
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              item: Item
+            }
+            type Item {
+              a: String
+              b: Int
+              c: Child
+              d: [Child]
+              e: String
+            }
+            type Child {
+              x: String
+              y: Int
+            }
+            """);
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+
+        // act
+        using var store = CreateLiveStore(
+            schema,
+            "{ item { a b c { x y } d { x y } e } }",
+            payload,
+            resultArena,
+            sourceArena);
+
+        // assert
+        Assert.Equal(
+            """
+            {"item":{"a":"first","b":5,"c":{"x":"c","y":1},"d":[{"x":"d1","y":2},{"x":"d2","y":3}],"e":"last"}}
+            """,
+            RenderData(store));
+        Assert.Null(store.Errors);
+    }
+
+    [Theory]
+    [InlineData(
+        """
+        {"data":{"wide":{"f1":1,"f2":2,"f3":{"x":"three"},"f4":4,"f5":5,"f6":6,"f7":7,"f8":8,"f9":[{"x":"nine"}],"f10":10}}}
+        """)]
+    [InlineData(
+        """
+        {"data":{"wide":{"f10":10,"f9":[{"x":"nine"}],"f8":8,"f7":7,"f6":6,"f5":5,"f4":4,"f3":{"x":"three"},"f2":2,"f1":1}}}
+        """)]
+    [InlineData(
+        """
+        {"data":{"wide":{"f6":6,"f7":7,"f8":8,"f9":[{"x":"nine"}],"f10":10,"unknown":0,"f1":1,"f2":2,"f3":{"x":"three"},"f4":4,"f5":5}}}
+        """)]
+    public void AddPartialResults_Should_CompleteEveryField_When_WideSourceFieldOrderVaries(string payload)
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              wide: Wide
+            }
+            type Wide {
+              f1: Int
+              f2: Int
+              f3: Child
+              f4: Int
+              f5: Int
+              f6: Int
+              f7: Int
+              f8: Int
+              f9: [Child]
+              f10: Int
+            }
+            type Child {
+              x: String
+            }
+            """);
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+
+        // act
+        using var store = CreateLiveStore(
+            schema,
+            "{ wide { f1 f2 f3 { x } f4 f5 f6 f7 f8 f9 { x } f10 } }",
+            payload,
+            resultArena,
+            sourceArena);
+
+        // assert
+        Assert.Equal(
+            """
+            {"wide":{"f1":1,"f2":2,"f3":{"x":"three"},"f4":4,"f5":5,"f6":6,"f7":7,"f8":8,"f9":[{"x":"nine"}],"f10":10}}
+            """,
+            RenderData(store));
+        Assert.Null(store.Errors);
+    }
+
     [Fact]
     public void AddPartialResults_Should_PreserveNullableObjectLists_When_ListsAreEmptyOrContainNulls()
     {

@@ -61,6 +61,38 @@ internal readonly struct CompositeObjectContext
         return TryGetRawObjectProperty(propertyName, out value, out selection);
     }
 
+    /// <summary>
+    /// Tries to resolve a property by name, checking the selection at <paramref name="position"/> first.
+    /// When a property of a selection set is resolved, <paramref name="position"/> is set to the
+    /// position that follows its selection.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryGetProperty(
+        ReadOnlySpan<byte> propertyName,
+        ref int position,
+        out CompositeResultElement value,
+        out Selection selection)
+    {
+        if (_selectionSet is { } selectionSet && _numberOfRows != 1)
+        {
+            if (selectionSet.TryGetSelection(propertyName, ref position, out var found))
+            {
+                selection = found;
+                var valueCursor = _objectStartCursor + CompositeResultDocument.GetValueRowOffset(selectionSet, found);
+                Debug.Assert(_document._metaDb.GetElementTokenType(valueCursor - 1) is ElementTokenType.PropertyName);
+                Debug.Assert(_document._metaDb.Get(valueCursor - 1).OperationReferenceId == found.Id);
+                value = new CompositeResultElement(_document, valueCursor);
+                return true;
+            }
+
+            value = default;
+            selection = null!;
+            return false;
+        }
+
+        return TryGetRawObjectProperty(propertyName, out value, out selection);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool TryGetRawObjectProperty(
         ReadOnlySpan<byte> propertyName,
