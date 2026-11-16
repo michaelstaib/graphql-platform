@@ -148,8 +148,8 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
-    /// Keeps an error of the result out of every payload, because the denied answer that holds the same error
-    /// sends it at a row.
+    /// Excludes an error of the result from the initial payload and from the errors that no group owns. The denied
+    /// answer that holds the same error sends it.
     /// </summary>
     public void KeepWithDeniedAnswer(IError error)
     {
