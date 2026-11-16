@@ -2090,6 +2090,110 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Partition_Should_ReportANumberingError_When_FragmentsOfOneGroupNameDifferentParents()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var operation = Utf8GraphQLParser.Parse(
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "p", __group: 0, __parent: -1) { price }
+                    ... @defer(label: "q", __group: 1, __parent: -1) { rating }
+                    ... @defer(label: "x", __group: 2, __parent: 0) { id }
+                    ... @defer(label: "x", __group: 2, __parent: 1) { name }
+                }
+            }
+            """).Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var partitioning = DeferPartitioner.Partition(
+            operation,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        partitioning.NumberingError.MatchInlineSnapshot(
+            "The fragments of delivery group 2 name different parents.");
+    }
+
+    [Theory]
+    [InlineData(
+        "{ product(id: \"1\") { name ... @defer(label: \"x\", __group: 1, __parent: 0) { price } } }",
+        "The parent 0 of delivery group 1 is not the number of a group.")]
+    [InlineData(
+        "{ product(id: \"1\") { name ... @defer(label: \"x\", __group: 0, __parent: 1) { price } "
+        + "... @defer(label: \"y\", __group: 1, __parent: -1) { rating } } }",
+        "The parent 1 of delivery group 0 is not a lower group number.")]
+    public void Partition_Should_ReportANumberingError_When_TheParentIsNotALowerNumberOfAnExistingGroup(
+        string operationText,
+        string expectedError)
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var operation = Utf8GraphQLParser.Parse(operationText)
+            .Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var partitioning = DeferPartitioner.Partition(
+            operation,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        Assert.Equal(expectedError, partitioning.NumberingError);
+    }
+
+    [Fact]
+    public void Partition_Should_ReportANumberingError_When_TheLevelsExceedThePathOfTheFragment()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var operation = Utf8GraphQLParser.Parse(
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "x", __group: 0, __parent: -1, __levels: 2) { price }
+                }
+            }
+            """).Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var partitioning = DeferPartitioner.Partition(
+            operation,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        partitioning.NumberingError.MatchInlineSnapshot(
+            "A fragment of delivery group 0 spans 2 field levels below a path of 1.");
+    }
+
+    [Fact]
+    public void Partition_Should_ReportANumberingError_When_TheLevelsAreNegative()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var operation = Utf8GraphQLParser.Parse(
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "x", __group: 0, __parent: -1, __levels: -1) { price }
+                }
+            }
+            """).Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var partitioning = DeferPartitioner.Partition(
+            operation,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        partitioning.NumberingError.MatchInlineSnapshot(
+            "A fragment of delivery group 0 spans -1 field levels below a path of 1.");
+    }
+
+    [Fact]
     public void ValidateCompiledDeliveryGroups_Should_Fail_When_TheGroupNumbersAreInconsistent()
     {
         // arrange

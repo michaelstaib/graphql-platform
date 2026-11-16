@@ -6,10 +6,8 @@ namespace HotChocolate.Fusion.Planning;
 
 /// <summary>
 /// Result of <see cref="DeferPartitioner.Partition"/>. Carries the complete
-/// <see cref="DeliveryGroup"/> tree (in declaration order) together with the
-/// <see cref="InlineFragmentNode"/>-keyed lookup so downstream stages can
-/// resolve any <c>... @defer</c> in the same AST to the canonical
-/// <see cref="DeliveryGroup"/> instance.
+/// <see cref="DeliveryGroup"/> tree together with the <see cref="InlineFragmentNode"/>-keyed lookup
+/// that resolves any <c>... @defer</c> in the same AST to its <see cref="DeliveryGroup"/>.
 /// </summary>
 internal sealed class DeferPartitioningResult(
     ImmutableArray<DeliveryGroup> allDeliveryGroups,
@@ -17,9 +15,9 @@ internal sealed class DeferPartitioningResult(
     string? numberingError)
 {
     /// <summary>
-    /// Every <see cref="DeliveryGroup"/> discovered in the operation, in
-    /// declaration order (depth-first, left-to-right as encountered).
-    /// The array index equals each usage's <see cref="DeliveryGroup.Id"/>.
+    /// Every <see cref="DeliveryGroup"/> of the operation, in the order of their group numbers, or in
+    /// declaration order when the operation carries none or they disagree. The array index equals
+    /// <see cref="DeliveryGroup.Id"/>.
     /// </summary>
     public ImmutableArray<DeliveryGroup> AllDeliveryGroups { get; } = allDeliveryGroups;
 
