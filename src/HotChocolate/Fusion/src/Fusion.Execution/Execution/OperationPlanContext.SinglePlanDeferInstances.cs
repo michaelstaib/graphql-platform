@@ -39,6 +39,7 @@ internal sealed partial class SinglePlanDeliveryState
     private List<GroupError>? _takenPayload;
     private List<IError>?[]? _stepErrors;
     private List<SourceError>? _sourceErrors;
+    private Dictionary<long, List<IError>>? _deniedErrors;
 
     /// <summary>
     /// Gets the number of group instances announced so far.
@@ -249,6 +250,44 @@ internal sealed partial class SinglePlanDeliveryState
             }
 
             return errors;
+        }
+    }
+
+    /// <summary>
+    /// Records an error that a step reported for a row of the group below an anchor object that already held a
+    /// result.
+    /// </summary>
+    public void AddDeniedError(int groupId, CompositeResultDocument.Cursor anchor, IError error)
+    {
+        lock (_sync)
+        {
+            _deniedErrors ??= [];
+
+            var key = CreateKey(groupId, anchor);
+
+            if (!_deniedErrors.TryGetValue(key, out var errors))
+            {
+                errors = _deniedErrors[key] = [];
+            }
+
+            errors.Add(error);
+        }
+    }
+
+    /// <summary>
+    /// Gets the errors that steps reported for rows of the instance that already held a result, or
+    /// <c>null</c> when there are none.
+    /// </summary>
+    public ImmutableList<IError>? GetDeniedErrors(int instance)
+    {
+        lock (_sync)
+        {
+            return _deniedErrors is not null
+                && _deniedErrors.TryGetValue(
+                    CreateKey(_instanceGroups[instance], _instanceAnchors[instance]),
+                    out var errors)
+                ? [.. errors]
+                : null;
         }
     }
 

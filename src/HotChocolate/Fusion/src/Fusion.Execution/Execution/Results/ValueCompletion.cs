@@ -450,6 +450,11 @@ internal sealed class ValueCompletion
 
             if (!document.AllowsMarkedWrite(fieldResult, selection, deliveryGroups, sourceIsContainer: false))
             {
+                var deniedError = ErrorBuilder.FromError(error)
+                    .SetPath(errorPath.Append(responseName))
+                    .Build();
+
+                document.RecordDeniedError(fieldResult, deliveryGroups, _errorHandler.Handle(deniedError));
                 continue;
             }
 

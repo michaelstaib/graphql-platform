@@ -225,6 +225,32 @@ public sealed partial class CompositeResultDocument
         return recorded;
     }
 
+    /// <summary>
+    /// Records an error that a step reported for a field that already holds a result, for the instances of the
+    /// groups of the step that hold the field.
+    /// </summary>
+    internal void RecordDeniedError(
+        CompositeResultElement element,
+        ImmutableArray<int> deliveryGroups,
+        IError error)
+    {
+        var delivery = _delivery!;
+
+        if (!TryGetDestination(element, out var resolution))
+        {
+            return;
+        }
+
+        foreach (var group in resolution.Groups)
+        {
+            if (deliveryGroups.Contains(group.Id)
+                && TryGetObjectAtDepth(element.Cursor, delivery.AnchorDepths[group.Id], out var anchor))
+            {
+                delivery.AddDeniedError(group.Id, anchor, error);
+            }
+        }
+    }
+
     // The anchor of a group lies as many field segments below the root as the group path has, list items not counted.
     private bool TryGetObjectAtDepth(Cursor value, int depth, out Cursor anchor)
     {
