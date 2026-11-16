@@ -531,6 +531,79 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
+    /// Lists the rows at and below <paramref name="container"/> that the group holds and that no step wrote, when
+    /// the container lies below <paramref name="anchor"/>.
+    /// </summary>
+    internal void FindUnwrittenRows(Cursor container, int groupId, Cursor anchor, List<CompositeResultElement> rows)
+    {
+        var delivery = _delivery!;
+        delivery.AssertOnLoop();
+
+        if (TryGetObjectAtDepth(container, delivery.AnchorDepths[groupId], out var found)
+            && found.Value == anchor.Value)
+        {
+            FindUnwrittenRows(container, _metaDb.Get(container), groupId, rows);
+        }
+    }
+
+    // A row that holds no result and whose groups are settled completes as a null.
+    private void FindUnwrittenRows(Cursor cursor, DbRow row, int groupId, List<CompositeResultElement> rows)
+    {
+        if (!IsContainer(ref cursor, ref row))
+        {
+            return;
+        }
+
+        if (row.TokenType is ElementTokenType.StartArray)
+        {
+            var length = row.SizeOrLength;
+
+            for (var i = 0; i < length; i++)
+            {
+                var elementCursor = cursor.AddRows(i + 1);
+
+                FindUnwrittenRows(elementCursor, _metaDb.Get(elementCursor), groupId, rows);
+            }
+
+            return;
+        }
+
+        var count = row.SizeOrLength;
+
+        for (var i = 0; i < count; i++)
+        {
+            var propertyCursor = cursor.AddRows((i * 2) + 1);
+            var property = _metaDb.Get(propertyCursor);
+
+            if ((property.Flags & ElementFlags.IsInternal) == ElementFlags.IsInternal)
+            {
+                continue;
+            }
+
+            var marks = property.DeliveryMarks;
+            var valueCursor = propertyCursor.AddRows(1);
+            var valueRow = _metaDb.Get(valueCursor);
+
+            if ((marks & PropertyMarks.Held) != 0
+                && (marks & (PropertyMarks.Written | PropertyMarks.Delivered)) == 0
+                && valueRow.TokenType is ElementTokenType.None
+                && (valueRow.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated)
+            {
+                var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+
+                if (SinglePlanDeliveryState.Contains(resolution, groupId) && _delivery.AreGroupsSettled(resolution))
+                {
+                    rows.Add(new CompositeResultElement(this, valueCursor));
+                }
+
+                continue;
+            }
+
+            FindUnwrittenRows(valueCursor, valueRow, groupId, rows);
+        }
+    }
+
+    /// <summary>
     /// Finds the objects of the client data that the group applies to below the scope object. An object is
     /// honored when its selection set holds a selection that resolves to the group, and objects that are not
     /// honored are only listed when <paramref name="keepUnhonored"/> is set.

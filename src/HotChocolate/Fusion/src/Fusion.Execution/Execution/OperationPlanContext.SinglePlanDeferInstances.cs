@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Text.Json;
 
 namespace HotChocolate.Fusion.Execution;
@@ -40,6 +41,9 @@ internal sealed partial class SinglePlanDeliveryState
     private List<IError>?[]? _stepErrors;
     private List<SourceError>? _sourceErrors;
     private Dictionary<long, List<IError>>? _deniedErrors;
+    private List<DeniedAnswer>? _deniedAnswers;
+    private List<CompositeResultElement>? _unwrittenRows;
+    private ValueCompletion? _completion;
 
     /// <summary>
     /// Gets the number of group instances announced so far.
@@ -288,6 +292,60 @@ internal sealed partial class SinglePlanDeliveryState
                     out var errors)
                 ? [.. errors]
                 : null;
+        }
+    }
+
+    /// <summary>
+    /// Records that a step of <paramref name="groups"/> answered <c>null</c>, an error or a missing entity for a
+    /// value that already held an object or a list.
+    /// </summary>
+    public void AddDeniedAnswer(
+        ValueCompletion completion,
+        CompositeResultDocument.Cursor container,
+        ImmutableArray<int> groups,
+        IError? error)
+    {
+        AssertOnLoop();
+
+        _completion = completion;
+        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error));
+    }
+
+    /// <summary>
+    /// Completes the rows of the instance that no step wrote below a value for which a step of the group
+    /// answered <c>null</c>, an error or a missing entity. The instance fails when such a row is non-null.
+    /// </summary>
+    public void CompleteDeniedAnswers(CompositeResultDocument document, int instance)
+    {
+        if (_deniedAnswers is null)
+        {
+            return;
+        }
+
+        var group = _instanceGroups[instance];
+        var rows = _unwrittenRows ??= [];
+
+        for (var i = 0; i < _deniedAnswers.Count; i++)
+        {
+            var answer = _deniedAnswers[i];
+
+            if (!answer.Groups.Contains(group))
+            {
+                continue;
+            }
+
+            rows.Clear();
+            document.FindUnwrittenRows(answer.Container, group, _instanceAnchors[instance], rows);
+
+            foreach (var row in rows)
+            {
+                if (IsFailed(instance))
+                {
+                    return;
+                }
+
+                _completion!.CompleteUnwrittenField(row, row.AssertSelection(), answer.Error);
+            }
         }
     }
 
@@ -708,6 +766,15 @@ internal sealed class GroupError(IError error)
 /// An error that a step reported for no row, with the delivery groups of the step.
 /// </summary>
 internal readonly record struct SourceError(GroupError Error, ImmutableArray<int> Groups);
+
+/// <summary>
+/// A value that held an object or a list when a step of the delivery groups answered <c>null</c>, an error or a
+/// missing entity for it.
+/// </summary>
+internal readonly record struct DeniedAnswer(
+    CompositeResultDocument.Cursor Container,
+    ImmutableArray<int> Groups,
+    IError? Error);
 
 /// <summary>
 /// An object that a delivery group is applied to.

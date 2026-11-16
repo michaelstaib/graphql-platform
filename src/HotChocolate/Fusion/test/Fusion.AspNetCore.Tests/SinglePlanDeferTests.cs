@@ -2472,6 +2472,294 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run, $"valueFirst={valueFirst}");
     }
 
+    private const string SharedAuthorSource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! author: Author }
+        type Author { id: ID! bio: String! age: Int! note: String }
+        """;
+
+    private const string SharedAuthorListSource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! authors: [Author] }
+        type Author { id: ID! bio: String! }
+        """;
+
+    private const string FailedEntity =
+        "{\"errors\":[{\"message\":\"The entity failed.\",\"path\":[\"productById\"]}],"
+        + "\"data\":{\"productById\":null}}";
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheGroup_When_ItsEntityFailsBelowAnObjectOfTheSiblingGroup(bool objectFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            objectFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2" ? FailedEntity : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"objectFirst={objectFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheGroup_When_ItsEntityIsMissingBelowAnObjectOfTheSiblingGroup(bool objectFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            objectFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? "{\"data\":{\"productById\":null}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"objectFirst={objectFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendNullForTheNullableField_When_ItsEntityFailsBelowAnObjectOfTheSiblingGroup(
+        bool withError)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? withError ? FailedEntity : "{\"data\":{\"productById\":null}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { note } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"withError={withError}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheGroup_When_TheSourceAnswersNullForAnObjectOfTheSiblingGroup(bool withError)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? withError
+                    ? "{\"errors\":[{\"message\":\"The author failed.\",\"path\":[\"productById\",\"author\"]}],"
+                        + "\"data\":{\"productById\":{\"author\":null}}}"
+                    : "{\"data\":{\"productById\":{\"author\":null}}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"withError={withError}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheInstanceOfTheItem_When_ItsEntityIsMissingBelowAnObjectOfTheSiblingGroup(
+        bool objectFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            objectFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? string.Join(
+                    "\n",
+                    text.Split('\n').Select(line => line.Contains("\"variableIndex\":1,")
+                        ? "{\"variableIndex\":1,\"data\":{\"productById\":null}}"
+                        : line))
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "a") { author { id } } ... @defer(label: "b") { author { bio } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"objectFirst={objectFirst}");
+    }
+
+    [Theory]
+    [InlineData("missingEntity", true)]
+    [InlineData("missingEntity", false)]
+    [InlineData("nullList", true)]
+    [InlineData("nullItem", true)]
+    [InlineData("nullItem", false)]
+    [InlineData("nullItemWithError", true)]
+    public async Task Defer_Should_FailTheGroup_When_ItsAnswerIsNullBelowAListOfTheSiblingGroup(
+        string answer,
+        bool listFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            listFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) =>
+            {
+                if (schema != "B" || StepId().Match(body).Groups[1].Value != "2")
+                {
+                    return text;
+                }
+
+                // The first item of the list of the source is replaced.
+                var start = text.IndexOf("[{", StringComparison.Ordinal) + 1;
+                var end = text.IndexOf('}', start) + 1;
+
+                return answer switch
+                {
+                    "missingEntity" => "{\"data\":{\"productById\":null}}",
+                    "nullList" => "{\"data\":{\"productById\":{\"authors\":null}}}",
+                    "nullItem" => text[..start] + "null" + text[end..],
+                    "nullItemWithError" =>
+                        "{\"errors\":[{\"message\":\"The bio failed.\","
+                        + "\"path\":[\"productById\",\"authors\",0,\"bio\"]}],"
+                        + text[1..start] + "null" + text[end..],
+                    _ => text[..start] + "{\"bio\":null}" + text[end..]
+                };
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorListSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { authors { id } }
+                    ... @defer(label: "b") { authors { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"answer={answer}, listFirst={listFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheGroup_When_ItsEntityFailsTwoObjectsBelowTheAnchor(bool withError)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? withError ? FailedEntity : "{\"data\":{\"productById\":null}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! author: Author }
+                type Author { id: ID! publisher: Publisher }
+                type Publisher { id: ID! title: String! city: String }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { publisher { id } } }
+                    ... @defer(label: "b") { author { publisher { title city } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"withError={withError}");
+    }
+
     // The source reports an error without a path in front of its other errors.
     private static string AddErrorWithoutPath(string text)
     {

@@ -181,6 +181,11 @@ internal sealed class ValueCompletion
 
                 if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, propertyValueKind))
                 {
+                    if (propertyValueKind is JsonValueKind.Null)
+                    {
+                        RecordDeniedNull(resultField, errorTrie, sourceResponseName);
+                    }
+
                     continue;
                 }
 
@@ -243,6 +248,11 @@ internal sealed class ValueCompletion
 
                 if (_writeFilterDocument is not null && IsWriteDenied(resultField, selection, propertyValueKind))
                 {
+                    if (propertyValueKind is JsonValueKind.Null)
+                    {
+                        RecordDeniedNull(resultField, errorTrie, selection.ResponseName);
+                    }
+
                     continue;
                 }
 
@@ -450,6 +460,13 @@ internal sealed class ValueCompletion
 
             if (!document.AllowsMarkedWrite(fieldResult, selection, deliveryGroups, sourceIsContainer: false))
             {
+                // A merge records the answer for the rows below the value. A failed step records the error.
+                if (_writeFilterDocument is not null)
+                {
+                    RecordDeniedAnswer(fieldResult, error);
+                    continue;
+                }
+
                 var deniedError = ErrorBuilder.FromError(error)
                     .SetPath(errorPath.Append(responseName))
                     .Build();
@@ -782,6 +799,47 @@ internal sealed class ValueCompletion
         return false;
     }
 
+    /// <summary>
+    /// Records the <c>null</c> that a step answered for a field that already holds an object or a list.
+    /// </summary>
+    private void RecordDeniedNull(CompositeResultElement field, ErrorTrie? errorTrie, string sourceResponseName)
+    {
+        ErrorTrie? errorTrieForResponseName = null;
+        errorTrie?.TryGetValue(sourceResponseName, out errorTrieForResponseName);
+
+        RecordDeniedAnswer(field, errorTrieForResponseName?.FindFirstError());
+    }
+
+    /// <summary>
+    /// Records that a step answered <c>null</c>, an error or a missing entity for a value that already holds an
+    /// object or a list.
+    /// </summary>
+    private void RecordDeniedAnswer(CompositeResultElement value, IError? error)
+    {
+        if (!value.IsNullOrInvalidated && value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+        {
+            _writeFilterDocument!.Delivery!.AddDeniedAnswer(this, value.Cursor, _writeFilterGroups, error);
+        }
+    }
+
+    /// <summary>
+    /// Completes a field that no step wrote the way a <c>null</c> source completes it, or with
+    /// <paramref name="error"/> when there is one.
+    /// </summary>
+    internal void CompleteUnwrittenField(CompositeResultElement field, Selection selection, IError? error)
+    {
+        if (error is not null)
+        {
+            ApplyFieldError(field, selection, error, field.Path);
+            return;
+        }
+
+        if (!TryCompleteNullValue(JsonValueKind.Null, field, errorTrie: null, selection, resultSelectionSet: null))
+        {
+            PropagateNullValues(field);
+        }
+    }
+
     private bool BuildResultForInvalidSource(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
@@ -853,6 +911,7 @@ internal sealed class ValueCompletion
 
             if (_writeFilterDocument is not null && IsWriteDenied(fieldResult, selection, JsonValueKind.Null))
             {
+                RecordDeniedAnswer(fieldResult, error: null);
                 continue;
             }
 
@@ -1308,6 +1367,7 @@ internal sealed class ValueCompletion
         // result. Create the array only on the first write; otherwise reuse it
         // so sibling contributions accumulate through the positional merge below.
         CompositeResultElement.ArrayEnumerator targetEnumerator;
+        var mergesIntoList = false;
 
         if (target.ValueKind is JsonValueKind.Undefined)
         {
@@ -1321,6 +1381,7 @@ internal sealed class ValueCompletion
         else
         {
             targetEnumerator = target.EnumerateArray().GetEnumerator();
+            mergesIntoList = true;
         }
 
         var listObjectType = elementTypeKind is TypeKind.Object
@@ -1346,6 +1407,14 @@ internal sealed class ValueCompletion
             var elementValueKind = elementSnapshot.ValueKind;
             if (elementValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             {
+                if (mergesIntoList
+                    && _writeFilterDocument is not null
+                    && targetEnumerator.Current.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    RecordDeniedAnswer(targetEnumerator.Current, errorTrieForIndex?.FindFirstError());
+                    goto TryCompleteList_MoveNext;
+                }
+
                 // The element might have been nulled due to a down-stream null propagation,
                 // so the errors below it are forwarded with their paths.
                 if (errorTrieForIndex is { Count: > 0 })
@@ -1712,6 +1781,11 @@ TryCompleteList_MoveNext:
 
             if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, propertyValueKind))
             {
+                if (propertyValueKind is JsonValueKind.Null)
+                {
+                    RecordDeniedNull(targetProperty, errorTrie, selection.ResponseName);
+                }
+
                 continue;
             }
 
@@ -1853,6 +1927,11 @@ TryCompleteList_MoveNext:
 
             if (_writeFilterDocument is not null && IsWriteDenied(targetProperty, selection, propertyValueKind))
             {
+                if (propertyValueKind is JsonValueKind.Null)
+                {
+                    RecordDeniedNull(targetProperty, errorTrie, sourceResponseName);
+                }
+
                 continue;
             }
 
