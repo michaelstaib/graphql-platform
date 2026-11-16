@@ -20,8 +20,14 @@ public class SinglePlanDeferCostPlanTests : FusionTestBase
     private static readonly TimeSpan s_costAnalysisBound = TimeSpan.FromMilliseconds(100);
     private const string CostValuesSchemaText =
         """
-        directive @cost(weight: String!) on ARGUMENT_DEFINITION | ENUM | FIELD_DEFINITION | INPUT_FIELD_DEFINITION | OBJECT | SCALAR
-        directive @listSize(assumedSize: Int, slicingArguments: [String!], sizedFields: [String!], requireOneSlicingArgument: Boolean = true) on FIELD_DEFINITION
+        directive @cost(weight: String!)
+          on ARGUMENT_DEFINITION | ENUM | FIELD_DEFINITION | INPUT_FIELD_DEFINITION | OBJECT | SCALAR
+        directive @listSize(
+          assumedSize: Int,
+          slicingArguments: [String!],
+          sizedFields: [String!],
+          requireOneSlicingArgument: Boolean = true)
+          on FIELD_DEFINITION
 
         type Query { product(id: ID!): Product }
 
@@ -85,21 +91,21 @@ public class SinglePlanDeferCostPlanTests : FusionTestBase
 
         // assert
         Assert.Equal(off, on);
-        string.Join("\n", on).MatchInlineSnapshot(
-            """
-            both 3: fieldCost: 4, typeCost: 5
-            if false 3: fieldCost: 4, typeCost: 5
-            if true 3: fieldCost: 4, typeCost: 5
-            three occurrences 3: fieldCost: 4, typeCost: 5
-            both 6: fieldCost: 7, typeCost: 8
-            if false 6: fieldCost: 7, typeCost: 8
-            if true 6: fieldCost: 7, typeCost: 8
-            three occurrences 6: fieldCost: 7, typeCost: 8
-            interface 3: fieldCost: 5, typeCost: 6
-            list: fieldCost: 14, typeCost: 6
-            slicing: fieldCost: 17, typeCost: 8
-            nested lists: fieldCost: 80, typeCost: 35
-            """);
+        on.MatchInlineSnapshots(
+        [
+            "both 3: fieldCost: 4, typeCost: 5",
+            "if false 3: fieldCost: 4, typeCost: 5",
+            "if true 3: fieldCost: 4, typeCost: 5",
+            "three occurrences 3: fieldCost: 4, typeCost: 5",
+            "both 6: fieldCost: 7, typeCost: 8",
+            "if false 6: fieldCost: 7, typeCost: 8",
+            "if true 6: fieldCost: 7, typeCost: 8",
+            "three occurrences 6: fieldCost: 7, typeCost: 8",
+            "interface 3: fieldCost: 5, typeCost: 6",
+            "list: fieldCost: 14, typeCost: 6",
+            "slicing: fieldCost: 17, typeCost: 8",
+            "nested lists: fieldCost: 80, typeCost: 35"
+        ]);
     }
 
     private static IEnumerable<(string Name, string Query, Dictionary<string, object?>? Variables)>
@@ -122,13 +128,15 @@ public class SinglePlanDeferCostPlanTests : FusionTestBase
                 new Dictionary<string, object?> { ["v"] = true });
             yield return (
                 $"three occurrences {depth}",
-                $"{{ {product} ... @defer(label: \"d\") {{ {deferred} }} ... @defer(label: \"e\") {{ {deferred} }} }} }}",
+                $"{{ {product} ... @defer(label: \"d\") {{ {deferred} }} "
+                + $"... @defer(label: \"e\") {{ {deferred} }} }} }}",
                 null);
         }
 
         yield return (
             "interface 3",
-            "{ product(id: \"1\") { name j { n { n { n { v } } } } ... @defer(label: \"d\") { j { n { n { n { v } } } } } } }",
+            "{ product(id: \"1\") { name j { n { n { n { v } } } } "
+            + "... @defer(label: \"d\") { j { n { n { n { v } } } } } } }",
             null);
         yield return (
             "list",

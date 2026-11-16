@@ -83,7 +83,7 @@ internal sealed class CostAnalysisMiddleware
                 var document = context.GetNormalizedDocument();
                 var operation = context.GetNormalizedOperation();
 
-                // An operation with @defer is costed from its document merged across @defer, like one without.
+                // An operation with @defer is costed from its document merged across @defer.
                 if (_mergeAcrossDeferRewriter is not null && DeferOperationRewriter.HasDeferDirective(operation))
                 {
                     document = _mergeAcrossDeferRewriter.RewriteDocument(document);
