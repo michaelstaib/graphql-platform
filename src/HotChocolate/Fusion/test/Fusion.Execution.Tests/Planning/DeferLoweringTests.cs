@@ -16,6 +16,7 @@ public class DeferLoweringTests : FusionTestBase
         # name: a
         type Query {
             user(id: ID!): User @lookup
+            users: [User!]!
             order(id: ID!): Order
         }
 
@@ -28,6 +29,7 @@ public class DeferLoweringTests : FusionTestBase
             name: String!
             sku: String!
             profile: Profile!
+            profiles: [Profile!]!
             friends: [User!]!
         }
 
@@ -2074,6 +2076,654 @@ public class DeferLoweringTests : FusionTestBase
               ... {
                 __type(name: "User") {
                   name
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_AttachPartToRootList_When_FragmentSelectsListOfTheRootSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                users {
+                    name
+                }
+                ... @defer(label: "top") {
+                    users {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              users {
+                name
+                ... @defer(label: "top", __group: 0, __parent: -1, __levels: 1) {
+                  email
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_AttachPartToList_When_FragmentSelectsListOfTheEnclosingObject()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    name
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "b") {
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                name
+                friends {
+                  id
+                  ... @defer(label: "b", __group: 0, __parent: -1, __levels: 1) {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepOwnFieldsAtThePlace_When_FragmentAlsoHasAPart()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "b") {
+                        total
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                  ... @defer(label: "b", __group: 0, __parent: -1, __levels: 1) {
+                    email
+                  }
+                }
+                ... @defer(label: "b", __group: 0, __parent: -1) {
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_NumberGroupsInDocumentOrderOfTheirPlaces_When_AFragmentHasOnlyParts()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "x") {
+                        friends {
+                            email
+                        }
+                    }
+                    ... @defer(label: "y") {
+                        total
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                  ... @defer(label: "x", __group: 0, __parent: -1, __levels: 1) {
+                    email
+                  }
+                }
+                ... @defer(label: "y", __group: 1, __parent: -1) {
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_ReplaceInternalArguments_When_TheClientSendsThem()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    id
+                    ... @defer(label: "mail", __group: 9, __parent: 8, __levels: 7) {
+                        email
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                id
+                ... @defer(label: "mail", __group: 0, __parent: -1) {
+                  email
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_CutAtTheDeepestCoveredList_When_ListsAreNested()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                        friends {
+                            id
+                        }
+                    }
+                    ... @defer(label: "n") {
+                        friends {
+                            email
+                            friends {
+                                total
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                  friends {
+                    id
+                    ... @defer(label: "n", __group: 0, __parent: -1, __levels: 2) {
+                      total
+                    }
+                  }
+                  ... @defer(label: "n", __group: 0, __parent: -1, __levels: 1) {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_AttachPartToTheListOfTheEnclosingFragment_When_FragmentIsNestedInADeferredFragment()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "outer") {
+                        total
+                        ... @defer(label: "inner") {
+                            friends {
+                                email
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                  ... @defer(label: "inner", __group: 1, __parent: 0, __levels: 1) {
+                    email
+                  }
+                }
+                ... @defer(label: "outer", __group: 0, __parent: -1) {
+                  total
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_CarryTheConditionsOfTheCutFields_When_TheListIsSelectedUnderACondition()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "b") {
+                        friends @include(if: $x) {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") {
+                friends {
+                  id
+                  ... @include(if: $x) {
+                    ... @defer(label: "b", __group: 0, __parent: -1, __levels: 1) {
+                      email
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_AttachPartToTheDeferredCopy_When_FragmentIsSwitchable()
+    {
+        // arrange
+        const string operation =
+            """
+            query($d: Boolean!) {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(if: $d, label: "b") {
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($d: Boolean!) {
+              user(id: "1") {
+                friends {
+                  id
+                  ...
+                    @include(if: $d)
+                    @defer(if: $d, label: "b", __group: 0, __parent: -1, __levels: 1) {
+                    email
+                  }
+                }
+                ... @skip(if: $d) {
+                  friends {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_ItemTypeOfTheListHasNoLookup()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    profiles {
+                        bio
+                    }
+                    ... @defer(label: "b") {
+                        profiles {
+                            avatar
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                profiles {
+                  bio
+                }
+                ... {
+                  profiles {
+                    avatar
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_OutsideSelectionOfTheListHasAnIncludeCondition()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") {
+                    friends @include(if: $x) {
+                        id
+                    }
+                    ... @defer(label: "b") {
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") {
+                friends @include(if: $x) {
+                  id
+                }
+                ... {
+                  friends {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_FragmentHasATypeCondition()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... on User @defer(label: "b") {
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                }
+                ... on User {
+                  friends {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_ATypeConditionIsBetweenTheFragmentAndTheList()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(label: "b") {
+                        ... on User {
+                            friends {
+                                email
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                friends {
+                  id
+                }
+                ... {
+                  ... on User {
+                    friends {
+                      email
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentUnchanged_When_TheCoveredFieldIsNotAList()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                user(id: "1") {
+                    profile {
+                        bio
+                    }
+                    ... @defer(label: "b") {
+                        total
+                        profile {
+                            avatar
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              user(id: "1") {
+                profile {
+                  bio
+                }
+                ... @defer(label: "b", __group: 0, __parent: -1) {
+                  total
+                  profile {
+                    avatar
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineInnerFragment_When_ASwitchableFragmentStandsBetweenItAndTheList()
+    {
+        // arrange
+        const string operation =
+            """
+            query($d: Boolean!) {
+                user(id: "1") {
+                    friends {
+                        id
+                    }
+                    ... @defer(if: $d, label: "outer") {
+                        total
+                        ... @defer(label: "inner") {
+                            friends {
+                                email
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($d: Boolean!) {
+              user(id: "1") {
+                friends {
+                  id
+                  ...
+                    @include(if: $d)
+                    @defer(if: $d, label: "outer", __group: 0, __parent: -1, __levels: 1) {
+                    email
+                  }
+                }
+                ... @skip(if: $d) {
+                  total
+                  ... {
+                    friends {
+                      email
+                    }
+                  }
+                }
+                ...
+                  @include(if: $d)
+                  @defer(if: $d, label: "outer", __group: 0, __parent: -1) {
+                  total
                 }
               }
             }
