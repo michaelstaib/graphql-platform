@@ -2771,6 +2771,149 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineFragment_When_ATypedFragmentSelectsTheListBelowTheCoveredList_InputIsNotNormalized()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                users {
+                    ... on User {
+                        name
+                        friends {
+                            id
+                        }
+                    }
+                }
+                ... @defer(label: "d") {
+                    users {
+                        ... on User {
+                            friends {
+                                email
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = LowerNotNormalized(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              users {
+                ... on User {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                users {
+                  ... on User {
+                    friends {
+                      email
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineFragment_When_TheObjectAboveTheListIsSelectedOutsideUnderACondition()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    name
+                    friends {
+                        id
+                    }
+                }
+                ... @defer(label: "d") {
+                    user(id: "1") {
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                user(id: "1") {
+                  friends {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepFragmentDeferred_When_TheConditionalObjectOutsideDoesNotSelectTheList()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    name
+                }
+                ... @defer(label: "d") {
+                    user(id: "1") {
+                        friends {
+                            email
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                name
+              }
+              ... @defer(label: "d", __group: 0, __parent: -1) {
+                user(id: "1") {
+                  friends {
+                    email
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);

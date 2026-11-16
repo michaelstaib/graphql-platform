@@ -351,8 +351,10 @@ internal static class DeferLowering
 
             if (!coverage.Fields.TryGetValue(responseName, out var covered))
             {
-                // The outside selection of a list that D selects carries a condition.
-                if (isList && coverage.ConditionalFields.Contains(responseName))
+                // The outside selection of a list that D selects carries a condition or a type condition.
+                if (coverage.ConditionalFields.TryGetValue(responseName, out var conditional)
+                    && (isList
+                        || SelectsConditionalList(selectionSet.Selections, conditional, GetFieldType(type, composite))))
                 {
                     state.MustInline = true;
                 }
@@ -385,6 +387,33 @@ internal static class DeferLowering
             }
 
             state.Pop(mark);
+        }
+
+        private bool SelectsConditionalList(
+            IReadOnlyList<ISelectionNode> items,
+            Coverage conditional,
+            ITypeDefinition? type)
+        {
+            foreach (var item in items)
+            {
+                switch (item)
+                {
+                    case FieldNode { SelectionSet: { } selectionSet } field
+                        when conditional.ConditionalFields.TryGetValue(GetResponseName(field), out var below)
+                            && (IsListField(type, field)
+                                || SelectsConditionalList(selectionSet.Selections, below, GetFieldType(type, field))):
+                        return true;
+
+                    case InlineFragmentNode fragment when !HasDeferDirective(fragment)
+                        && SelectsConditionalList(
+                            fragment.SelectionSet.Selections,
+                            conditional,
+                            GetFragmentType(type, fragment)):
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         private void CreatePart(
@@ -1020,9 +1049,10 @@ internal static class DeferLowering
         public Dictionary<string, CoveredField> Fields { get; } = new(StringComparer.Ordinal);
 
         /// <summary>
-        /// The response names of composite fields that an enclosing selection selects only under a condition.
+        /// The composite fields that an enclosing selection selects only under a condition or for some types, by
+        /// response name, with what that selection selects below each of them.
         /// </summary>
-        public HashSet<string> ConditionalFields { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, Coverage> ConditionalFields { get; } = new(StringComparer.Ordinal);
 
         public static Coverage Create(Scope scope, NamedTypeNode? typeCondition)
         {
@@ -1078,24 +1108,30 @@ internal static class DeferLowering
 
                         break;
 
-                    case FieldNode { SelectionSet: not null } field:
-                        ConditionalFields.Add(field.Alias?.Value ?? field.Name.Value);
+                    case FieldNode { SelectionSet: { } conditionalSet } field:
+                        var conditionalName = field.Alias?.Value ?? field.Name.Value;
+
+                        if (!ConditionalFields.TryGetValue(conditionalName, out var below))
+                        {
+                            below = new Coverage();
+                            ConditionalFields.Add(conditionalName, below);
+                        }
+
+                        below.Collect(conditionalSet.Selections, [], pass, false, false, true);
                         break;
 
                     case InlineFragmentNode fragment
-                        when fragment.TypeCondition is null
-                            || typeConditions.Contains(fragment.TypeCondition.Name.Value):
-                        if (fragment.Directives.Count == 0 || IsOnlyConditional(fragment))
-                        {
-                            Collect(
-                                fragment.SelectionSet.Selections,
-                                typeConditions,
-                                pass,
-                                attachable,
-                                typed || fragment.TypeCondition is not null,
-                                conditional || fragment.Directives.Count > 0);
-                        }
+                        when fragment.Directives.Count == 0 || IsOnlyConditional(fragment):
+                        var applies = fragment.TypeCondition is null
+                            || typeConditions.Contains(fragment.TypeCondition.Name.Value);
 
+                        Collect(
+                            fragment.SelectionSet.Selections,
+                            typeConditions,
+                            pass,
+                            attachable,
+                            typed || fragment.TypeCondition is not null,
+                            conditional || fragment.Directives.Count > 0 || !applies);
                         break;
                 }
             }

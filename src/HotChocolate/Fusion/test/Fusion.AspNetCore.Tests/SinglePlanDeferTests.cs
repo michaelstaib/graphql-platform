@@ -1037,6 +1037,61 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_FetchTheListOnce_When_ATypedFragmentSelectsItBelowAListOfTheInitialPayload()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { product(id: ID!): Product @lookup search: [SearchResult!]! }
+                union SearchResult = Product | Article
+                type Product @key(fields: "id") { id: ID! name: String! }
+                type Article @key(fields: "id") { id: ID! title: String! }
+                """),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                search { ... on Product { name reviews { id } } }
+                ... @defer(label: "d") { search { ... on Product { reviews { rating } } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheListOnce_When_TheObjectAboveItIsSelectedOutsideUnderACondition(bool x)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("B", ReviewKeySource),
+            ("C", ReviewRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                product(id: "1") @include(if: $x) { name reviews { id } }
+                ... @defer(label: "d") { product(id: "1") { reviews { rating } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        MatchRun(run, $"x={x}");
+    }
+
+    [Fact]
     public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
     {
         // arrange
