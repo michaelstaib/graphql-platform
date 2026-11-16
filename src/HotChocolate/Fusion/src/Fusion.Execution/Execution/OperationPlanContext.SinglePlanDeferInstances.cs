@@ -218,6 +218,38 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
+    /// Gets or sets a value that indicates whether the errors that are recorded belong to a failed step.
+    /// </summary>
+    public bool AppliesStepErrors { get; set; }
+
+    /// <summary>
+    /// Determines whether an error of a failed step was recorded for the rows of the instance.
+    /// </summary>
+    public bool HoldsStepError(int instance)
+    {
+        lock (_sync)
+        {
+            if (_groupErrors is null
+                || !_groupErrors.TryGetValue(
+                    CreateKey(_instanceGroups[instance], _instanceAnchors[instance]),
+                    out var errors))
+            {
+                return false;
+            }
+
+            foreach (var error in errors)
+            {
+                if (error.IsStepError)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Records an error that a step reported for no row, for the groups of the step.
     /// </summary>
     public void AddSourceError(IError error, ImmutableArray<int> groups)
@@ -760,6 +792,8 @@ internal sealed class GroupError(IError error)
     public IError Error { get; } = error;
 
     public bool Sent { get; set; }
+
+    public bool IsStepError { get; init; }
 }
 
 /// <summary>

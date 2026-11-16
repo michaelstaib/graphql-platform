@@ -2830,6 +2830,102 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_ReportTheMergeErrorAndTheErrorWithoutAPath_When_TheMergeFailsAtTheDepthLimit()
+    {
+        // arrange
+        const int depth = 33;
+        var chain = string.Concat(Enumerable.Repeat("n { ", depth))
+            + "w"
+            + string.Concat(Enumerable.Repeat(" }", depth));
+        var types = string.Join(
+            "\n",
+            Enumerable.Range(1, 40).Select(i => i == 40
+                ? $"type N{i} {{ v: Int! w: Float! }}"
+                : $"type N{i} {{ n: N{i + 1}! v: Int! w: Float! }}"));
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? AddErrorWithoutPath(text) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! n: N1! }
+                """ + "\n" + types));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ product(id: \"1\") { name ... @defer(label: \"d\") { " + chain + " } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheTransportError_When_AnotherStepOfTheGroupReportsAnErrorOfANullableField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "P:3", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? "this is not json"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """),
+            ("P", """
+                type Query { productByIdP(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float @error }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { x } ... @defer(label: "b") { x price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheTransportErrorWithoutAPath_When_TheSharedFieldWasDeliveredWithAValue()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? "this is not json"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { x } ... @defer(label: "b") { x } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     // The source reports an error without a path in front of its other errors.
     private static string AddErrorWithoutPath(string text)
     {

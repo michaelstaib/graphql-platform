@@ -210,7 +210,7 @@ public sealed partial class CompositeResultDocument
             _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Written);
         }
 
-        var record = new GroupError(error);
+        var record = new GroupError(error) { IsStepError = delivery.AppliesStepErrors };
         var recorded = false;
 
         foreach (var group in resolution.Groups)
@@ -249,6 +249,28 @@ public sealed partial class CompositeResultDocument
                 delivery.AddDeniedError(group.Id, anchor, error);
             }
         }
+    }
+
+    /// <summary>
+    /// Determines whether every delivery group that holds the field of <paramref name="element"/> is one of
+    /// <paramref name="deliveryGroups"/>.
+    /// </summary>
+    internal bool HoldsOnlyRowsOf(CompositeResultElement element, ImmutableArray<int> deliveryGroups)
+    {
+        if (!TryGetDestination(element, out var resolution))
+        {
+            return false;
+        }
+
+        foreach (var group in resolution.Groups)
+        {
+            if (!deliveryGroups.Contains(group.Id))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // The anchor of a group lies as many field segments below the root as the group path has, list items not counted.

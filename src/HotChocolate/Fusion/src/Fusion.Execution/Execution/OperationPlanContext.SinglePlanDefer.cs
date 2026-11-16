@@ -106,9 +106,18 @@ public sealed partial class OperationPlanContext
 
             var errorCount = ErrorCount;
 
-            if (!_resultStore.AddDeliveryErrors(error, groups))
+            state.AppliesStepErrors = true;
+
+            try
             {
-                ExecutionState.CancelProcessing();
+                if (!_resultStore.AddDeliveryErrors(error, groups))
+                {
+                    ExecutionState.CancelProcessing();
+                }
+            }
+            finally
+            {
+                state.AppliesStepErrors = false;
             }
 
             AddSourceErrorsAfter(errorCount, state.GetOwnDeliveryGroups(error.ResultSelectionSet));

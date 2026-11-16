@@ -460,18 +460,21 @@ internal sealed class ValueCompletion
 
             if (!document.AllowsMarkedWrite(fieldResult, selection, deliveryGroups, sourceIsContainer: false))
             {
-                // A merge records the answer for the rows below the value. A failed step records the error.
+                // A merge records the answer for the rows below the value. A failed step records the error, but
+                // only for a row that no other group holds.
                 if (_writeFilterDocument is not null)
                 {
                     RecordDeniedAnswer(fieldResult, error);
-                    continue;
+                }
+                else if (document.HoldsOnlyRowsOf(fieldResult, deliveryGroups))
+                {
+                    var deniedError = ErrorBuilder.FromError(error)
+                        .SetPath(errorPath.Append(responseName))
+                        .Build();
+
+                    document.RecordDeniedError(fieldResult, deliveryGroups, _errorHandler.Handle(deniedError));
                 }
 
-                var deniedError = ErrorBuilder.FromError(error)
-                    .SetPath(errorPath.Append(responseName))
-                    .Build();
-
-                document.RecordDeniedError(fieldResult, deliveryGroups, _errorHandler.Handle(deniedError));
                 continue;
             }
 
