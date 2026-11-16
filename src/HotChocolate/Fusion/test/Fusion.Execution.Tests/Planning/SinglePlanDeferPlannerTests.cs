@@ -1823,6 +1823,255 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         Assert.Null(cause);
     }
 
+    [Fact]
+    public void Plan_Should_PlanThePartThroughTheLookupOfTheItemType_When_TheRootSelectionDeliversTheList()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products { name }
+                ... @defer(label: "top") { products { price } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanOneGroupWithTheStepsOfItsPlaceAndOfItsPart_When_AFragmentHasOwnFieldsAndAPart()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema, ReviewKeySchema, ReviewRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "b") { price reviews { rating } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_ParentTheGroupOfThePart_When_TheFragmentIsNestedInADeferredFragment()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema, ReviewKeySchema, ReviewRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "outer") {
+                        price
+                        ... @defer(label: "inner") { reviews { rating } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_NumberTheGroupsByThePlaceOfTheirFragments_When_AFragmentHasOnlyAPart()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema, ReviewKeySchema, ReviewRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "x") { reviews { rating } }
+                    ... @defer(label: "y") { price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanTheSwitchOfThePart_When_TheFragmentIsSwitchable()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, ReviewKeySchema, ReviewRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($d: Boolean!) {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(if: $d, label: "b") { reviews { rating } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanWithoutDeliveryGroups_When_TheItemTypeOfTheListHasNoLookup()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, ReviewBodySchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "d") { reviews { body } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        Assert.Empty(result.Plan.DeliveryGroups);
+    }
+
+    [Fact]
+    public void Partition_Should_ReadTheGroupsFromTheOperationText_When_TheOperationHasAPart()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema, ReviewKeySchema, ReviewRatingSchema);
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    reviews { id }
+                    ... @defer(label: "x") { reviews { rating } }
+                    ... @defer(label: "y") { price }
+                }
+            }
+            """);
+        var text = result.Plan.Operation.Definition.ToString();
+        var operation = Utf8GraphQLParser.Parse(text).Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var partitioning = DeferPartitioner.Partition(
+            operation,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        Assert.Collection(
+            partitioning.AllDeliveryGroups,
+            x =>
+            {
+                Assert.Equal("x", x.Label);
+                Assert.Equal(0, x.Id);
+                Assert.Equal("$.product", x.Path?.ToString());
+            },
+            y =>
+            {
+                Assert.Equal("y", y.Label);
+                Assert.Equal(1, y.Id);
+                Assert.Equal("$.product", y.Path?.ToString());
+            });
+    }
+
+    private const string ProductListSchema =
+        """
+        # name: a
+        type Query {
+            product(id: ID!): Product @lookup
+            products: [Product!]!
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            name: String!
+        }
+        """;
+
+    private const string ReviewKeySchema =
+        """
+        # name: c
+        type Query {
+            productByIdForReviews(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            reviews: [Review!]!
+        }
+
+        type Review @key(fields: "id") {
+            id: ID! @shareable
+        }
+        """;
+
+    private const string ReviewRatingSchema =
+        """
+        # name: d
+        type Query {
+            reviewById(id: ID!): Review @lookup
+        }
+
+        type Review @key(fields: "id") {
+            id: ID!
+            rating: Int!
+        }
+        """;
+
+    private const string ReviewBodySchema =
+        """
+        # name: c
+        type Query {
+            productByIdForReviews(id: ID!): Product @lookup
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            reviews: [Review!]!
+        }
+
+        type Review {
+            id: ID!
+            body: String!
+        }
+        """;
+
     private const string ProductSchema =
         """
         # name: a
