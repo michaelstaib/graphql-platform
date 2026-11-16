@@ -266,13 +266,14 @@ internal sealed partial class SinglePlanDeliveryState
     /// </summary>
     public ImmutableList<IError> TakeSourceErrors(int groupId, ImmutableList<IError> errors)
     {
+        // The list is created and read on the loop of the delivery only.
+        if (_sourceErrors is null)
+        {
+            return errors;
+        }
+
         lock (_sync)
         {
-            if (_sourceErrors is null)
-            {
-                return errors;
-            }
-
             foreach (var (error, groups) in _sourceErrors)
             {
                 if (error.Sent || !groups.Contains(groupId))

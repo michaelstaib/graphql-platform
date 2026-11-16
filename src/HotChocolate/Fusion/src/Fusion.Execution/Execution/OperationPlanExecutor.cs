@@ -444,9 +444,12 @@ internal static partial class OperationPlanExecutor
             context.ClearWriteFilter();
         }
 
-        context.AddSourceErrorsAfter(
-            errorCount,
-            context.SinglePlanDelivery!.GetOwnDeliveryGroups(merge.ResultSelectionSet));
+        if (context.ErrorCount != errorCount)
+        {
+            context.AddSourceErrorsAfter(
+                errorCount,
+                context.SinglePlanDelivery!.GetOwnDeliveryGroups(merge.ResultSelectionSet));
+        }
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateSinglePlanStream(
