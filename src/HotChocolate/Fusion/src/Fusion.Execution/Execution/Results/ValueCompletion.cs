@@ -840,6 +840,27 @@ internal sealed class ValueCompletion
         }
     }
 
+    /// <summary>
+    /// Stops the <c>null</c> of a failed field before its parent object when the parent is delivered elsewhere than
+    /// the field.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the null stopped and the parent is kept.
+    /// </returns>
+    private bool StopsAtGroupBoundary(CompositeResultElement field, CompositeResultElement parent)
+    {
+        var document = _writeFilterDocument!;
+
+        if (!document.TryGetDestination(field, out var destination)
+            || !document.HasOtherDestination(parent, destination))
+        {
+            return false;
+        }
+
+        PropagateNullValues(field);
+        return true;
+    }
+
     private bool BuildResultForInvalidSource(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
@@ -1760,6 +1781,7 @@ TryCompleteList_MoveNext:
         {
             return TryCompleteMappedObjectProperties(
                 source,
+                target,
                 errorTrie,
                 objectType,
                 depth,
@@ -1824,6 +1846,11 @@ TryCompleteList_MoveNext:
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
                         preparedSelectionSet: null))
                     {
+                        if (_writeFilterDocument is not null && StopsAtGroupBoundary(targetProperty, target))
+                        {
+                            continue;
+                        }
+
                         return false;
                     }
 
@@ -1844,6 +1871,11 @@ TryCompleteList_MoveNext:
                         depth,
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType)))
                     {
+                        if (_writeFilterDocument is not null && StopsAtGroupBoundary(targetProperty, target))
+                        {
+                            continue;
+                        }
+
                         return false;
                     }
 
@@ -1863,6 +1895,11 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
+                if (_writeFilterDocument is not null && StopsAtGroupBoundary(targetProperty, target))
+                {
+                    continue;
+                }
+
                 return false;
             }
         }
@@ -1881,6 +1918,7 @@ TryCompleteList_MoveNext:
     [MethodImpl(MethodImplOptions.NoInlining)]
     private bool TryCompleteMappedObjectProperties(
         SourceResultElementSnapshot source,
+        CompositeResultElement target,
         ErrorTrie? errorTrie,
         IComplexTypeDefinition objectType,
         int depth,
@@ -1962,6 +2000,11 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
+                if (_writeFilterDocument is not null && StopsAtGroupBoundary(targetProperty, target))
+                {
+                    continue;
+                }
+
                 return false;
             }
         }

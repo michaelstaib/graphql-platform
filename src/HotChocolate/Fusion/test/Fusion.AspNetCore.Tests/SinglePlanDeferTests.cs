@@ -2668,6 +2668,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [InlineData("nullItem", true)]
     [InlineData("nullItem", false)]
     [InlineData("nullItemWithError", true)]
+    [InlineData("nullFieldOfItem", true)]
+    [InlineData("nullFieldOfItem", false)]
     public async Task Defer_Should_FailTheGroup_When_ItsAnswerIsNullBelowAListOfTheSiblingGroup(
         string answer,
         bool listFirst)
@@ -2758,6 +2760,74 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchPayloads(run, $"withError={withError}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_KeepTheObjectOfTheSiblingGroup_When_ANonNullFieldOfTheGroupFailsBelowIt(
+        bool objectFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            objectFirst ? ["B:3>", "B:2"] : ["B:2>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? "{\"data\":{\"productById\":{\"author\":{\"bio\":null}}}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"objectFirst={objectFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheThirdGroup_When_ANonNullFieldOfTheSecondGroupFailsBelowTheSharedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "B:3>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? "{\"data\":{\"productById\":{\"author\":{\"bio\":null}}}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") { author { bio } }
+                    ... @defer(label: "c") { author { age } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
     }
 
     // The source reports an error without a path in front of its other errors.
