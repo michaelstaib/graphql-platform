@@ -1,0 +1,102 @@
+operation:
+  - document: |
+      query($c: Boolean!) {
+        item(id: "1") {
+          __typename @fusion__requirement
+          name
+          ... on Priced @defer(label: "o") {
+            id @fusion__requirement
+            ... on Book @include(if: $c) {
+              rating
+              ... @defer(label: "i") {
+                reviews {
+                  body
+                }
+                id @fusion__requirement
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($c: Boolean!) {
+        item(id: "1") {
+          __typename
+          name
+          ... on Book {
+            ... on Book @include(if: $c) {
+              ... {
+                id
+              }
+            }
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - c
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($c: Boolean!, $__fusion_1_id: ID!) {
+        bookById(id: $__fusion_1_id) {
+          ... on Book @include(if: $c) {
+            rating
+          }
+        }
+      }
+    source: $.bookById
+    target: $.item<Priced><Book>
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 0
+    forwardedVariables:
+      - c
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        bookByIdForReviews(id: $__fusion_2_id) {
+          reviews {
+            body
+          }
+        }
+      }
+    source: $.bookByIdForReviews
+    target: $.item<Priced><Book><Book>
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.item
+    label: o
+  - id: 1
+    path: $.item
+    label: i
+    parentId: 0

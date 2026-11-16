@@ -1,0 +1,61 @@
+operation:
+  - document: |
+      {
+        product(id: "1") {
+          name
+          ... @defer {
+            price
+            id @fusion__requirement
+          }
+          ... @defer {
+            price
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          ... {
+            id
+          }
+          ... {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: OperationBatch
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          price
+        }
+      }
+    source: $.productById
+    targets:
+      - $.product
+    batchingGroupId: 4
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+      - 1
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+  - id: 1
+    path: $.product

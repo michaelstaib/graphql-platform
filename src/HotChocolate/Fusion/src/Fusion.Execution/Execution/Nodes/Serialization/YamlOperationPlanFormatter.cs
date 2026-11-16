@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text;
 using HotChocolate.Execution;
 using HotChocolate.Language;
@@ -276,6 +277,7 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
         }
 
         TryWriteConditions(writer, node);
+        WriteDeliveryGroups(node.DeliveryGroups, writer);
 
         if (node.ForwardedVariables.Length > 0)
         {
@@ -426,6 +428,7 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
 
         WriteRequirements(opDef.Requirements, writer);
         WriteConditions(opDef.Conditions, opDef.ConditionAlternatives, writer);
+        WriteDeliveryGroups(opDef.DeliveryGroups, writer);
         WriteForwardedVariables(opDef.ForwardedVariables, writer);
 
         if (opDef.RequiresFileUpload)
@@ -486,6 +489,7 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
 
         WriteRequirements(opDef.Requirements, writer);
         WriteConditions(opDef.Conditions, opDef.ConditionAlternatives, writer);
+        WriteDeliveryGroups(opDef.DeliveryGroups, writer);
         WriteForwardedVariables(opDef.ForwardedVariables, writer);
 
         if (opDef.RequiresFileUpload)
@@ -835,6 +839,24 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
             writer.WriteLine("duration: {0}", trace.Duration.TotalMilliseconds);
             writer.WriteLine("status: {0}", trace.Status.ToString());
         }
+    }
+
+    private static void WriteDeliveryGroups(ImmutableArray<int> deliveryGroups, CodeWriter writer)
+    {
+        if (deliveryGroups.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        writer.WriteLine("deliveryGroups:");
+        writer.Indent();
+
+        foreach (var deliveryGroupId in deliveryGroups)
+        {
+            writer.WriteLine("- {0}", deliveryGroupId);
+        }
+
+        writer.Unindent();
     }
 
     private static void TryWriteConditions(CodeWriter writer, ExecutionNode node)

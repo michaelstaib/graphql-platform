@@ -81,7 +81,7 @@ public class VariableMergingBenchmark : FusionBenchmarkBase
     public void Setup()
     {
         _schema = CreateFusionSchema();
-        var documentRewriter = new DocumentRewriter(_schema);
+        var documentRewriter = new DocumentRewriter(_schema, mergeAcrossDefer: true);
         var operationDefinition = documentRewriter
             .RewriteDocument(
                 Utf8GraphQLParser.Parse(

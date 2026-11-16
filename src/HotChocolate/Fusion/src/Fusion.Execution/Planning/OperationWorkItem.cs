@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types.Metadata;
 
@@ -20,6 +21,12 @@ internal sealed record OperationWorkItem(
     /// re-enters the schema a selection came from, so this stays <c>false</c> for every other flow.
     /// </summary>
     public bool AllowSourceSchemaReentry { get; init; }
+
+    /// <summary>
+    /// Gets the ids of the delivery groups whose <c>@defer</c> fragments this work item plans,
+    /// or an empty array when it belongs to the initial response.
+    /// </summary>
+    public ImmutableArray<int> DeliveryGroups { get; init; } = [];
 
     public override int EstimatedDepth
         => Kind is OperationWorkItemKind.Root

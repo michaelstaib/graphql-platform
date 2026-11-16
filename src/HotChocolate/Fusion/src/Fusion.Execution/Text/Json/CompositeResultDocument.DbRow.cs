@@ -41,7 +41,7 @@ public sealed partial class CompositeResultDocument
         // 29 bits, either Location or NumberOfRows, depending on TokenType/Flags
         private readonly int _locationOrRows;
 
-        // 15 bits SourceDocumentId + 4 bits TokenType + 13 reserved
+        // 15 bits SourceDocumentId + 4 bits TokenType + 13 bits property marks
         private readonly int _sourceAndType;
 
         public DbRow(
@@ -138,6 +138,12 @@ public sealed partial class CompositeResultDocument
         public int SourceDocumentId => _sourceAndType & 0x7FFF;
 
         /// <summary>
+        /// The delivery marks of a property row: <see cref="PropertyMarks.Held"/>,
+        /// <see cref="PropertyMarks.Delivered"/> and the id of the delivery group that claimed the row.
+        /// </summary>
+        public int DeliveryMarks => (_sourceAndType >>> PropertyMarks.Shift) & PropertyMarks.Mask;
+
+        /// <summary>
         /// Packed cursor value of the parent element, used for navigation and null propagation.
         /// </summary>
         /// <remarks>
@@ -183,6 +189,44 @@ public sealed partial class CompositeResultDocument
         /// True for primitive JSON values (strings, numbers, booleans, null).
         /// </summary>
         public bool IsSimpleValue => TokenType is >= ElementTokenType.PropertyName and <= ElementTokenType.Null;
+    }
+
+    /// <summary>
+    /// The layout of the delivery marks that sit in the free bits of the fifth int of a property row.
+    /// </summary>
+    internal static class PropertyMarks
+    {
+        public const int Shift = 19;
+        public const int Mask = 0x1FFF;
+
+        /// <summary>
+        /// The row resolves to delivery groups and is not part of the initial payload.
+        /// </summary>
+        public const int Held = 1;
+
+        /// <summary>
+        /// A payload claimed the row.
+        /// </summary>
+        public const int Delivered = 2;
+
+        /// <summary>
+        /// A marked step wrote a result into the row, also a null or a null with an error.
+        /// </summary>
+        public const int Written = 0x1000;
+
+        public const int ClaimantShift = 2;
+        public const int ClaimantMask = 0x3FF;
+
+        public static int Claim(int marks, int deliveryGroupId)
+            => marks | Delivered | ((deliveryGroupId & ClaimantMask) << ClaimantShift);
+
+        /// <summary>
+        /// The claimant of a row that a payload sent and that no group claims any more.
+        /// </summary>
+        public const int Retired = Delivered | (ClaimantMask << ClaimantShift);
+
+        public static int GetClaimant(int marks)
+            => (marks >>> ClaimantShift) & ClaimantMask;
     }
 
     internal enum OperationReferenceType : byte

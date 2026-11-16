@@ -118,6 +118,12 @@ internal abstract class OperationDefinition : IOperationPlanNode
     public ReadOnlySpan<ExecutionNodeCondition[]> ConditionAlternatives => _conditionAlternatives;
 
     /// <summary>
+    /// Gets the ids of the delivery groups this operation belongs to, or an empty array
+    /// when it belongs to the initial response.
+    /// </summary>
+    public ImmutableArray<int> DeliveryGroups { get; init; } = [];
+
+    /// <summary>
     /// Gets whether this operation contains one or more variables that reference
     /// the Upload scalar.
     /// </summary>

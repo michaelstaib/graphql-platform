@@ -141,6 +141,45 @@ internal sealed class ExecutionState
         }
     }
 
+    /// <summary>
+    /// Keeps a node that is in the backlog from starting until <see cref="ReleaseNode"/> is called,
+    /// by adding one dependency that no other node completes.
+    /// </summary>
+    internal void HoldNode(ExecutionNode node)
+    {
+        if (!IsInBacklog(node.Id))
+        {
+            return;
+        }
+
+        _remainingDependencies[node.Id]++;
+        _ready.Remove(node);
+    }
+
+    /// <summary>
+    /// Removes the dependency that <see cref="HoldNode"/> added. The node starts when its other
+    /// dependencies are done.
+    /// </summary>
+    internal void ReleaseNode(ExecutionNode node)
+    {
+        if (!IsInBacklog(node.Id))
+        {
+            return;
+        }
+
+        var remaining = _remainingDependencies[node.Id];
+
+        if (remaining == 1)
+        {
+            _remainingDependencies[node.Id] = 0;
+            _ready.Add(node);
+        }
+        else if (remaining > 1)
+        {
+            _remainingDependencies[node.Id] = remaining - 1;
+        }
+    }
+
     public void Reset()
     {
         _stack.Clear();

@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Converters;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Planning.Partitioners;
 using HotChocolate.Fusion.Policies;
@@ -29,6 +30,7 @@ public sealed partial class OperationPlanner
     private readonly SelectionSetByTypePartitioner _selectionSetByTypePartitioner;
     private readonly NodeFieldSelectionSetPartitioner _nodeFieldSelectionSetPartitioner;
     private readonly SourceSchemaNodeCandidateResolver _sourceSchemaNodeCandidateResolver;
+    private readonly DocumentRewriter? _loweredDocumentRewriter;
     private readonly OperationPlannerOptions _options;
     private readonly IPolicyResolver _policyResolver;
     private readonly FrozenSet<string>? _protectedFieldNames;
@@ -62,6 +64,14 @@ public sealed partial class OperationPlanner
         _sourceSchemaNodeCandidateResolver = new SourceSchemaNodeCandidateResolver(schema);
         _options = options;
         _policyResolver = policyResolver;
+
+        if (options.EnableSinglePlanDefer)
+        {
+            _loweredDocumentRewriter = new DocumentRewriter(
+                schema,
+                mergeAcrossDefer: false,
+                removeStaticallyExcludedSelections: true);
+        }
 
         if (schema.Features.Get<FusionPolicyUsage>() is { IsUsed: true })
         {
@@ -121,6 +131,70 @@ public sealed partial class OperationPlanner
         // so that if the caller passed in an already canceled token we don't do any unnecessary work.
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (_loweredDocumentRewriter is not null
+            && _options.EnableDefer
+            && operationDefinition.Operation is not OperationType.Subscription
+            && DeferOperationRewriter.HasDeferDirective(operationDefinition))
+        {
+            OperationPlan? singlePlan;
+            string? fallbackCause;
+
+            try
+            {
+                singlePlan = TryCreatePlan(
+                    id,
+                    hash,
+                    shortHash,
+                    operationDefinition,
+                    singlePlanDefer: true,
+                    out fallbackCause,
+                    cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                singlePlan = null;
+                fallbackCause = ex.Message;
+            }
+
+            if (singlePlan is not null)
+            {
+                return singlePlan;
+            }
+
+            SinglePlanDeferFallback?.Invoke(id, fallbackCause!);
+            operationDefinition = LowerWithEveryFragmentInlined(operationDefinition);
+        }
+
+        return TryCreatePlan(
+            id,
+            hash,
+            shortHash,
+            operationDefinition,
+            singlePlanDefer: false,
+            out _,
+            cancellationToken)!;
+    }
+
+    /// <summary>
+    /// Occurs when an operation planned with <see cref="OperationPlannerOptions.EnableSinglePlanDefer"/>
+    /// is planned with every <c>@defer</c> inlined instead. The arguments are the operation id and the cause.
+    /// </summary>
+    internal event Action<string, string>? SinglePlanDeferFallback;
+
+    private OperationDefinitionNode LowerWithEveryFragmentInlined(OperationDefinitionNode operation)
+        => NormalizeLowered(operation.WithSelectionSet(StripDeferFromSelectionSet(operation.SelectionSet)));
+
+    private OperationPlan? TryCreatePlan(
+        string id,
+        string hash,
+        string shortHash,
+        OperationDefinitionNode operationDefinition,
+        bool singlePlanDefer,
+        out string? fallbackCause,
+        CancellationToken cancellationToken)
+    {
+        fallbackCause = null;
+
         var eventSource = PlannerEventSource.Log;
         var eventSourceEnabled = eventSource.IsEnabled();
         var operationType = operationDefinition.Operation.ToString();
@@ -164,8 +238,20 @@ public sealed partial class OperationPlanner
             DeferSplitResult? deferSplit = null;
             DeferPartitioningResult? partitioning = null;
             var mainOperationDefinition = operationDefinition;
+            var singlePlanRules = false;
 
-            if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
+            if (singlePlanDefer)
+            {
+                mainOperationDefinition = LowerForSinglePlanDefer(operationDefinition);
+                partitioning = DeferPartitioner.Partition(
+                    mainOperationDefinition,
+                    new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions));
+                deliveryGroups = partitioning.AllDeliveryGroups;
+
+                // The rules apply only to a lowered operation that still has a delivery group.
+                singlePlanRules = !deliveryGroups.IsEmpty;
+            }
+            else if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
             {
                 // The partitioner walks the original AST once and hands every
                 // @defer fragment a canonical DeliveryGroup instance (with Id,
@@ -198,6 +284,17 @@ public sealed partial class OperationPlanner
                 OperationType.Subscription => CreateSubscriptionPlanBase(mainOperationDefinition, shortHash, index),
                 _ => throw new ArgumentOutOfRangeException()
             };
+
+            if (singlePlanRules)
+            {
+                if (!TryCreateDeferredFragmentLookup(partitioning!, out var deferredFragments))
+                {
+                    fallbackCause = "Two @defer fragments share one directive.";
+                    return null;
+                }
+
+                node = node with { Backlog = node.Backlog.WithDeferredFragments(deferredFragments) };
+            }
 
             var internalOperationDefinition = mainOperationDefinition;
             ImmutableList<PlanStep> planSteps = [];
@@ -253,6 +350,12 @@ public sealed partial class OperationPlanner
 
                     if (!plan.HasValue)
                     {
+                        if (singlePlanDefer)
+                        {
+                            fallbackCause = "No possible plan was found.";
+                            return null;
+                        }
+
                         throw new InvalidOperationException("No possible plan was found.");
                     }
 
@@ -326,8 +429,25 @@ public sealed partial class OperationPlanner
                 }
             }
 
+            if (singlePlanDefer
+                && !TryValidateDeliveryGroupDependencies(planSteps, deliveryGroups, out fallbackCause))
+            {
+                return null;
+            }
+
             // Use the latest root operation definition after deferred planning.
-            var operation = _operationCompiler.Compile(id, hash, shortHash, internalOperationDefinition);
+            var operation = _operationCompiler.Compile(
+                id,
+                hash,
+                shortHash,
+                internalOperationDefinition,
+                mergeAcrossDefer: !singlePlanDefer);
+
+            if (singlePlanDefer
+                && !TryValidateCompiledDeliveryGroups(operation, deliveryGroups, out fallbackCause))
+            {
+                return null;
+            }
 
             if (deferContextGraph is not null)
             {
@@ -351,7 +471,14 @@ public sealed partial class OperationPlanner
                 expandedNodes,
                 planSteps.NextId(),
                 policyContext,
+                singlePlanRules,
                 cancellationToken);
+
+            if (singlePlanDefer
+                && !TryValidateDeliveryGroupNodes(operationPlan, deliveryGroups, partitioning!, out fallbackCause))
+            {
+                return null;
+            }
 
             if (eventSourceEnabled)
             {
@@ -368,7 +495,8 @@ public sealed partial class OperationPlanner
         }
         catch (Exception ex)
         {
-            if (eventSourceEnabled)
+            // A failed single defer plan attempt falls back and is not reported as a failed plan.
+            if (eventSourceEnabled && !(singlePlanDefer && ex is not OperationCanceledException))
             {
                 var elapsed = Stopwatch.GetElapsedTime(startedAt);
                 eventSource.PlanError(
@@ -380,6 +508,253 @@ public sealed partial class OperationPlanner
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Verifies that every step that depends on a step of a delivery group belongs to that group or to a
+    /// group nested in it.
+    /// </summary>
+    internal static bool TryValidateDeliveryGroupDependencies(
+        ImmutableList<PlanStep> steps,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        out string? cause)
+    {
+        if (!deliveryGroups.IsDefaultOrEmpty && deliveryGroups.Length > DeliveryGroup.MaxCount)
+        {
+            cause = $"The operation has more than {DeliveryGroup.MaxCount} delivery groups.";
+            return false;
+        }
+
+        foreach (var step in steps)
+        {
+            if (step is not OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: false } provider)
+            {
+                continue;
+            }
+
+            foreach (var dependentId in provider.Dependents)
+            {
+                if (steps.ById(dependentId) is OperationPlanStep dependent
+                    && !CoversDeliveryGroups(dependent.DeliveryGroups, provider.DeliveryGroups, deliveryGroups))
+                {
+                    cause = $"Step {dependent.Id} depends on step {provider.Id} of another delivery group.";
+                    return false;
+                }
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Verifies on the nodes of <paramref name="plan"/> that no node depends on a node of a delivery group
+    /// it does not belong to, and that every delivery group whose fragment selects a field has a node.
+    /// </summary>
+    internal static bool TryValidateDeliveryGroupNodes(
+        OperationPlan plan,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        DeferPartitioningResult partitioning,
+        out string? cause)
+    {
+        var groupsWithNodes = new HashSet<int>();
+
+        foreach (var node in plan.AllNodes)
+        {
+            if (node is OperationBatchExecutionNode batch)
+            {
+                foreach (var operation in batch.Operations)
+                {
+                    if (!TryValidateDeliveryGroupNode(
+                        operation,
+                        operation.DeliveryGroups,
+                        deliveryGroups,
+                        groupsWithNodes,
+                        out cause))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!TryValidateDeliveryGroupNode(
+                node,
+                GetDeliveryGroups(node),
+                deliveryGroups,
+                groupsWithNodes,
+                out cause))
+            {
+                return false;
+            }
+        }
+
+        foreach (var (_, deliveryGroup) in partitioning.ByFragment)
+        {
+            if (!groupsWithNodes.Contains(deliveryGroup.Id))
+            {
+                cause = $"Delivery group {deliveryGroup.Id} has no step.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static bool TryValidateDeliveryGroupNode(
+        IOperationPlanNode node,
+        ImmutableArray<int> nodeGroups,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        HashSet<int> groupsWithNodes,
+        out string? cause)
+    {
+        groupsWithNodes.UnionWith(nodeGroups);
+
+        foreach (var dependency in node.Dependencies)
+        {
+            if (!CoversDeliveryGroups(nodeGroups, GetDeliveryGroups(dependency), deliveryGroups))
+            {
+                cause = $"Node {node.Id} depends on node {dependency.Id} of another delivery group.";
+                return false;
+            }
+        }
+
+        foreach (var dependency in node.OptionalDependencies)
+        {
+            if (!CoversDeliveryGroups(nodeGroups, GetDeliveryGroups(dependency), deliveryGroups))
+            {
+                cause = $"Node {node.Id} depends on node {dependency.Id} of another delivery group.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static ImmutableArray<int> GetDeliveryGroups(IOperationPlanNode node)
+    {
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                return operation.DeliveryGroups;
+
+            case OperationDefinition definition:
+                return definition.DeliveryGroups;
+
+            case OperationBatchExecutionNode batch:
+                var groups = new HashSet<int>();
+
+                foreach (var operation in batch.Operations)
+                {
+                    groups.UnionWith(operation.DeliveryGroups);
+                }
+
+                return [.. groups.Order()];
+
+            default:
+                return [];
+        }
+    }
+
+    // A provider without groups covers every consumer. A provider with groups covers a consumer when one of
+    // its groups is a group of the consumer or an ancestor of one.
+    private static bool CoversDeliveryGroups(
+        ImmutableArray<int> consumerGroups,
+        ImmutableArray<int> providerGroups,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (providerGroups.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        if (consumerGroups.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        foreach (var consumerGroup in consumerGroups)
+        {
+            for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
+            {
+                if (providerGroups.Contains(group.Id))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Verifies that the compiled operation has the delivery groups that the steps were planned with.
+    /// </summary>
+    internal bool TryValidateCompiledDeliveryGroups(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        out string? cause)
+    {
+        var compiled = DeferPartitioner.Partition(
+            operation.Definition,
+            new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions)).AllDeliveryGroups;
+
+        if (compiled.Length != deliveryGroups.Length)
+        {
+            cause = $"The compiled operation has {compiled.Length} delivery groups, the planned one has "
+                + $"{deliveryGroups.Length}.";
+            return false;
+        }
+
+        for (var i = 0; i < compiled.Length; i++)
+        {
+            var planned = deliveryGroups[i];
+            var actual = compiled[i];
+
+            if (planned.Id != actual.Id
+                || !Equals(planned.Path, actual.Path)
+                || !string.Equals(planned.Label, actual.Label, StringComparison.Ordinal)
+                || !string.Equals(planned.IfVariable, actual.IfVariable, StringComparison.Ordinal)
+                || planned.Parent?.Id != actual.Parent?.Id)
+            {
+                cause = $"Delivery group {planned.Id} differs between the planned and the compiled operation.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static bool TryCreateDeferredFragmentLookup(
+        DeferPartitioningResult partitioning,
+        [NotNullWhen(true)] out Dictionary<DirectiveNode, int>? deferredFragments)
+    {
+        deferredFragments = new Dictionary<DirectiveNode, int>(ReferenceEqualityComparer.Instance);
+
+        foreach (var (fragment, deliveryGroup) in partitioning.ByFragment)
+        {
+            foreach (var directive in fragment.Directives)
+            {
+                if (directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal)
+                    && !deferredFragments.TryAdd(directive, deliveryGroup.Id))
+                {
+                    deferredFragments = null;
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private OperationDefinitionNode LowerForSinglePlanDefer(OperationDefinitionNode operationDefinition)
+        => NormalizeLowered(DeferLowering.Lower(operationDefinition, _schema));
+
+    private OperationDefinitionNode NormalizeLowered(OperationDefinitionNode lowered)
+    {
+        var document = _loweredDocumentRewriter!.RewriteDocument(new DocumentNode([lowered]));
+        return (OperationDefinitionNode)document.Definitions[0];
     }
 
     /// <summary>
@@ -1053,6 +1428,7 @@ public sealed partial class OperationPlanner
             workItem.EstimatedDepth,
             backlog,
             workItem.Conditions,
+            workItem.DeliveryGroups,
             workItem.AllowSourceSchemaReentry,
             workItem.SourceSchemaNodePolicy,
             consumerStep: null,
@@ -1109,7 +1485,8 @@ public sealed partial class OperationPlanner
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
             // At a lookup entry root a sourceExternal field can only echo the key the lookup
             // was entered with; root work items keep today's permissive behavior.
-            EntryKeyCoverage = lookup?.Requirements
+            EntryKeyCoverage = lookup?.Requirements,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
@@ -1139,6 +1516,8 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            workItem.DeliveryGroups,
+            workItem.Conditions,
             dependents: workItem.Dependents,
             allowSourceSchemaReentry: isEventStreamRoot,
             sourceSchemaNodePolicy: workItem.SourceSchemaNodePolicy is null
@@ -1149,6 +1528,8 @@ public sealed partial class OperationPlanner
             new StepConsumer(stepId),
             workItem.Dependents,
             stepDepth,
+            workItem.DeliveryGroups,
+            workItem.Conditions,
             workItem.SourceSchemaNodePolicy is null
                 ? null
                 : SourceSchemaNodePlanningPolicy.Descendant);
@@ -1218,7 +1599,8 @@ public sealed partial class OperationPlanner
             Conditions = workItem.Conditions,
             Target = workItem.SelectionSet.Path,
             Source = source,
-            Lookup = lookup
+            Lookup = lookup,
+            DeliveryGroups = workItem.DeliveryGroups
         };
 
         var costState = AddOperationStepCostState(current, stepId, stepDepth);
@@ -1262,6 +1644,7 @@ public sealed partial class OperationPlanner
         int lookupStepDepth,
         Backlog backlog,
         ExecutionNodeCondition[]? conditions,
+        ImmutableArray<int> deliveryGroups,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy,
         OperationPlanStep? consumerStep,
@@ -1397,6 +1780,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(step.Id),
                     [lookupStepId],
                     GetOperationStepDepth(current, step.Id),
+                    deliveryGroups,
+                    conditions ?? [],
                     descendantPolicy);
 
                 if (!unresolvable.IsEmpty)
@@ -1412,6 +1797,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, step.Id),
+                        deliveryGroups,
+                        conditions ?? [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1457,6 +1844,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(ancestorMatch.Step.Id),
                     [lookupStepId],
                     GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                    deliveryGroups,
+                    conditions ?? [],
                     descendantPolicy);
 
                 if (!unresolvable.IsEmpty)
@@ -1472,6 +1861,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                        deliveryGroups,
+                        conditions ?? [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1496,6 +1887,7 @@ public sealed partial class OperationPlanner
                 ImmutableHashSet<int>.Empty.Add(lookupStepId),
                 lookupStepDepth,
                 conditions ?? [],
+                deliveryGroups,
                 allowSourceSchemaReentry,
                 sourceSchemaNodePolicy);
         }
@@ -1747,6 +2139,8 @@ public sealed partial class OperationPlanner
                 workItem.EstimatedDepth,
                 workItem.Selection,
                 workItem.Dependents,
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 current,
                 index,
                 ref backlog,
@@ -1860,6 +2254,7 @@ public sealed partial class OperationPlanner
                 workItem.EstimatedDepth,
                 backlog,
                 workItem.Conditions,
+                workItem.DeliveryGroups,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy,
                 currentStep,
@@ -1925,6 +2320,7 @@ public sealed partial class OperationPlanner
                 ImmutableHashSet<int>.Empty.Add(stepId),
                 stepDepth,
                 workItem.Conditions,
+                workItem.DeliveryGroups,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy);
         }
@@ -1981,6 +2377,8 @@ public sealed partial class OperationPlanner
                 stepDepth,
                 workItem.Selection,
                 workItem.Dependents,
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 current,
                 indexBuilder,
                 ref backlog,
@@ -2118,7 +2516,8 @@ public sealed partial class OperationPlanner
             Conditions = workItem.Conditions,
             Target = workItem.Selection.Path,
             Source = source,
-            Lookup = lookup
+            Lookup = lookup,
+            DeliveryGroups = workItem.DeliveryGroups
         };
 
         var costState = AddOperationStepCostState(current, stepId, stepDepth);
@@ -2173,6 +2572,7 @@ public sealed partial class OperationPlanner
                     workItem.Selection.Field.DeclaringType.Name,
                     StringComparison.Ordinal)
                 && ConditionsEqual(candidate.Conditions, workItem.Conditions)
+                && candidate.DeliveryGroups.SequenceEqual(workItem.DeliveryGroups)
                 && !IsOrDependsOnAny(candidate, workItem.Dependents, current.Steps))
             {
                 step = candidate;
@@ -2245,7 +2645,8 @@ public sealed partial class OperationPlanner
             SelectionSet = workItem.SelectionSet,
             SelectionSetIndex = index,
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
-            EntryKeyCoverage = lookup.Requirements
+            EntryKeyCoverage = lookup.Requirements,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
@@ -2283,12 +2684,16 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            deliveryGroups: [],
+            conditions: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
             new StepConsumer(stepId),
             workItem.Dependents,
             stepDepth,
+            deliveryGroups: [],
+            conditions: [],
             descendantPolicy);
 
         var resolvableSelections = resolvable.Selections;
@@ -2681,6 +3086,8 @@ public sealed partial class OperationPlanner
         int stepDepth,
         FieldSelection selection,
         ImmutableHashSet<int> dependents,
+        ImmutableArray<int> deliveryGroups,
+        ExecutionNodeCondition[] conditions,
         PlanNode current,
         SelectionSetIndexBuilder index,
         ref Backlog backlog,
@@ -2711,7 +3118,8 @@ public sealed partial class OperationPlanner
             SchemaName = current.SchemaName,
             SelectionSet = selectionSet,
             SelectionSetIndex = index,
-            TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null
+            TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         var (resolvable, unresolvable, fieldsWithRequirements, _) = _partitioner.Partition(input);
@@ -2722,12 +3130,16 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            deliveryGroups,
+            conditions,
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
             new StepConsumer(stepId),
             dependents,
             stepDepth,
+            deliveryGroups,
+            conditions,
             descendantPolicy);
         return resolvable;
     }
@@ -2750,6 +3162,7 @@ public sealed partial class OperationPlanner
         ImmutableHashSet<int> dependents,
         int parentDepth,
         ExecutionNodeCondition[] conditions,
+        ImmutableArray<int> deliveryGroups,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy)
     {
@@ -2797,7 +3210,8 @@ public sealed partial class OperationPlanner
                         ParentDepth = parentDepth,
                         Conditions = conditions,
                         AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                        SourceSchemaNodePolicy = descendantPolicy
+                        SourceSchemaNodePolicy = descendantPolicy,
+                        DeliveryGroups = deliveryGroups
                     });
                 continue;
             }
@@ -2823,7 +3237,8 @@ public sealed partial class OperationPlanner
                     ParentDepth = parentDepth,
                     Conditions = conditions,
                     AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                    SourceSchemaNodePolicy = descendantPolicy
+                    SourceSchemaNodePolicy = descendantPolicy,
+                    DeliveryGroups = deliveryGroups
                 });
         }
 
@@ -2964,6 +3379,8 @@ public sealed partial class OperationPlanner
                 new StepConsumer(step.Id),
                 [dependentStepId],
                 GetOperationStepDepth(current, step.Id),
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 workItem.SourceSchemaNodePolicy is null
                     ? null
                     : SourceSchemaNodePlanningPolicy.Descendant);
@@ -2993,7 +3410,8 @@ public sealed partial class OperationPlanner
                             // resolve the parts this step could not inline.
                             Dependents = ImmutableHashSet<int>.Empty.Add(dependentStepId),
                             ParentDepth = GetOperationStepDepth(current, step.Id),
-                            Conditions = entry.Conditions,
+                            Conditions = backlog.InheritConditions(workItem.Conditions, entry.Conditions),
+                            DeliveryGroups = workItem.DeliveryGroups,
                             SourceSchemaNodePolicy = workItem.SourceSchemaNodePolicy is null
                                 ? null
                                 : SourceSchemaNodePlanningPolicy.Descendant
@@ -3049,6 +3467,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(ancestorMatch.Step.Id),
                     [dependentStepId],
                     GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                    workItem.DeliveryGroups,
+                    workItem.Conditions,
                     workItem.SourceSchemaNodePolicy is null
                         ? null
                         : SourceSchemaNodePlanningPolicy.Descendant);
@@ -3072,7 +3492,8 @@ public sealed partial class OperationPlanner
                             {
                                 Dependents = ImmutableHashSet<int>.Empty.Add(dependentStepId),
                                 ParentDepth = GetOperationStepDepth(current, ancestorMatch.Step.Id),
-                                Conditions = entry.Conditions,
+                                Conditions = backlog.InheritConditions(workItem.Conditions, entry.Conditions),
+                                DeliveryGroups = workItem.DeliveryGroups,
                                 SourceSchemaNodePolicy = workItem.SourceSchemaNodePolicy is null
                                     ? null
                                     : SourceSchemaNodePlanningPolicy.Descendant
@@ -3201,7 +3622,8 @@ public sealed partial class OperationPlanner
                             collidingSelectionSet,
                             selectionSetType,
                             path),
-                        conditions));
+                        conditions,
+                        DeliveryGroup: null));
 
                 if (selectionsToInline is not { Count: > 0 })
                 {

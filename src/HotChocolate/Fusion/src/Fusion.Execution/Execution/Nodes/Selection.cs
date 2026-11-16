@@ -96,6 +96,15 @@ public sealed class Selection : ISelection
             _flags |= Flags.HasPolicies;
         }
 
+        foreach (var syntaxNode in syntaxNodes)
+        {
+            if (syntaxNode.DeliveryGroup is not null)
+            {
+                _flags |= Flags.HasDeliveryGroupNode;
+                break;
+            }
+        }
+
         var type = field.Type;
         _type = type;
 
@@ -211,6 +220,12 @@ public sealed class Selection : ISelection
     /// Gets a value indicating whether the selection's field type is non-nullable.
     /// </summary>
     internal bool IsNonNull => (_flags & Flags.NonNull) == Flags.NonNull;
+
+    /// <summary>
+    /// Gets a value indicating whether a syntax node of this selection was collected under a delivery group, so
+    /// that the selection can be delivered with a group for some request.
+    /// </summary>
+    internal bool HasDeliveryGroupNode => (_flags & Flags.HasDeliveryGroupNode) == Flags.HasDeliveryGroupNode;
 
     /// <summary>
     /// Gets a value indicating whether the field of this selection carries a policy requirement.
@@ -755,6 +770,136 @@ nextItem:
         return found;
     }
 
+    /// <summary>
+    /// Resolves where this selection is delivered for a request from the include condition and
+    /// defer condition flags.
+    /// </summary>
+    /// <param name="includeFlags">The include condition flags of the request.</param>
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
+    /// <returns>
+    /// <see cref="DeliveryKind.Initial"/> when the selection is part of the initial result,
+    /// <see cref="DeliveryKind.Absent"/> when it is not selected, otherwise the outermost delivery
+    /// groups that deliver it.
+    /// </returns>
+    internal DeliveryResolution ResolveDelivery(ConditionFlags includeFlags, ConditionFlags deferFlags)
+    {
+        var nodes = _syntaxNodes;
+        var deferWord0 = deferFlags.Word0;
+        var deferOverflow = deferFlags.Overflow;
+        var skipInternal = (_flags & Flags.Internal) == 0;
+        DeliveryGroup? single = null;
+        DeliveryGroup[]? set = null;
+        var count = 0;
+
+        for (var i = 0; i < nodes.Length; i++)
+        {
+            var node = nodes[i];
+
+            if ((skipInternal && OperationCompiler.IsInternalField(node.Node)) || !node.IsIncluded(includeFlags))
+            {
+                continue;
+            }
+
+            var group = node.DeliveryGroup is null
+                ? null
+                : ResolveActiveAncestor(node.DeliveryGroup, deferWord0, deferOverflow);
+
+            if (group is null)
+            {
+                return DeliveryResolution.Initial;
+            }
+
+            if (count == 0)
+            {
+                single = group;
+                count = 1;
+                continue;
+            }
+
+            if (set is null)
+            {
+                if (ReferenceEquals(single, group))
+                {
+                    continue;
+                }
+
+                set = new DeliveryGroup[nodes.Length];
+                set[0] = single!;
+            }
+            else if (ContainsGroup(set, count, group))
+            {
+                continue;
+            }
+
+            set[count++] = group;
+        }
+
+        if (count == 0)
+        {
+            return DeliveryResolution.Absent;
+        }
+
+        if (set is null)
+        {
+            return DeliveryResolution.FromGroups([single!]);
+        }
+
+        // A group is dropped when one of its ancestors delivers the selection too.
+        var kept = 0;
+
+        for (var i = 0; i < count; i++)
+        {
+            if (!HasAncestorInSet(set, count, set[i]))
+            {
+                kept++;
+            }
+        }
+
+        if (kept == set.Length)
+        {
+            return DeliveryResolution.FromGroups(set);
+        }
+
+        var outermost = new DeliveryGroup[kept];
+        var written = 0;
+
+        for (var i = 0; i < count; i++)
+        {
+            if (!HasAncestorInSet(set, count, set[i]))
+            {
+                outermost[written++] = set[i];
+            }
+        }
+
+        return DeliveryResolution.FromGroups(outermost);
+    }
+
+    private static bool HasAncestorInSet(DeliveryGroup[] set, int count, DeliveryGroup group)
+    {
+        for (var ancestor = group.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ContainsGroup(set, count, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsGroup(DeliveryGroup[] set, int count, DeliveryGroup group)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            if (ReferenceEquals(set[i], group))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // Returns the nearest active delivery group in the @defer parent chain.
     // If none are active, the field occurrence belongs to the initial result.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -809,6 +954,69 @@ nextItem:
         NonNullListElement = 64,
         RequiresWideIncludeFlags = 128,
         RequiresWideDeferFlags = 256,
-        HasPolicies = 512
+        HasPolicies = 512,
+        HasDeliveryGroupNode = 1024
     }
+}
+
+/// <summary>
+/// Describes where a selection is delivered for a request.
+/// </summary>
+internal enum DeliveryKind
+{
+    /// <summary>
+    /// The selection is part of the initial result.
+    /// </summary>
+    Initial,
+
+    /// <summary>
+    /// The selection is not selected for the request.
+    /// </summary>
+    Absent,
+
+    /// <summary>
+    /// The selection is delivered with one or more delivery groups.
+    /// </summary>
+    Groups
+}
+
+/// <summary>
+/// The delivery of a selection for a request.
+/// </summary>
+internal readonly struct DeliveryResolution
+{
+    private readonly DeliveryGroup[]? _groups;
+
+    private DeliveryResolution(DeliveryKind kind, DeliveryGroup[]? groups)
+    {
+        Kind = kind;
+        _groups = groups;
+    }
+
+    /// <summary>
+    /// Gets a resolution for a selection that is part of the initial result.
+    /// </summary>
+    public static DeliveryResolution Initial => new(DeliveryKind.Initial, null);
+
+    /// <summary>
+    /// Gets a resolution for a selection that is not selected for the request.
+    /// </summary>
+    public static DeliveryResolution Absent => new(DeliveryKind.Absent, null);
+
+    /// <summary>
+    /// Gets the kind of the delivery.
+    /// </summary>
+    public DeliveryKind Kind { get; }
+
+    /// <summary>
+    /// Gets the delivery groups that deliver the selection, or an empty span when
+    /// <see cref="Kind"/> is not <see cref="DeliveryKind.Groups"/>.
+    /// </summary>
+    public ReadOnlySpan<DeliveryGroup> Groups => _groups;
+
+    /// <summary>
+    /// Creates a resolution for a selection that is delivered with <paramref name="groups"/>.
+    /// </summary>
+    public static DeliveryResolution FromGroups(DeliveryGroup[] groups)
+        => new(DeliveryKind.Groups, groups);
 }

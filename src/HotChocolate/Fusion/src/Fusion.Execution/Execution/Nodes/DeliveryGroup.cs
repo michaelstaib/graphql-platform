@@ -27,6 +27,11 @@ public sealed record DeliveryGroup(
     int DeferConditionIndex)
 {
     /// <summary>
+    /// The highest number of delivery groups a plan can carry.
+    /// </summary>
+    internal const int MaxCount = 1023;
+
+    /// <summary>
     /// A plan-stable numeric identifier for this delivery group.
     /// </summary>
     public int Id { get; init; } = -1;

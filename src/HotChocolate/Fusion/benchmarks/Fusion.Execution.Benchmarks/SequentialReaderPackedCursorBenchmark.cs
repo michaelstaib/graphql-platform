@@ -90,7 +90,7 @@ public class SequentialReaderPackedCursorBenchmark : FusionBenchmarkBase
     public void Setup()
     {
         var schema = CreateFusionSchema();
-        var documentRewriter = new DocumentRewriter(schema);
+        var documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
 
         // The products.nodes selection set has 9 direct fields; the dimension
         // selection set has 2. Both compile from one operation.

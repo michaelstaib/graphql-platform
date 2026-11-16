@@ -8,8 +8,20 @@ using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Rewriters;
 
+/// <summary>
+/// Inlines fragment spreads and merges the selections of an operation document.
+/// </summary>
+/// <param name="schema">The schema the documents are rewritten against.</param>
+/// <param name="mergeAcrossDefer">
+/// <c>true</c> merges a selection inside a <c>@defer</c> fragment with the same selection outside of it.
+/// <c>false</c> merges it only with selections of the same fragment and keeps every <c>@defer</c> where it is.
+/// </param>
+/// <param name="removeStaticallyExcludedSelections">
+/// <c>true</c> removes selections that a literal <c>@skip</c> or <c>@include</c> excludes.
+/// </param>
 public sealed partial class DocumentRewriter(
     FusionSchemaDefinition schema,
+    bool mergeAcrossDefer,
     bool removeStaticallyExcludedSelections = false)
 {
     private static readonly FieldNode s_typeNameField =
@@ -249,10 +261,20 @@ public sealed partial class DocumentRewriter(
         CollectSelections(selectionSet, fragmentContext);
     }
 
-    private static Context? GetOrAddContextForField(Context context, FieldNode fieldNode, ITypeDefinition? fieldType)
+    private Context? GetOrAddContextForField(Context context, FieldNode fieldNode, ITypeDefinition? fieldType)
     {
         if (context.IsDeferContext)
         {
+            if (!mergeAcrossDefer)
+            {
+                if (!context.HasField(fieldNode, out var deferFieldContext))
+                {
+                    deferFieldContext = context.AddField(fieldNode, fieldType);
+                }
+
+                return deferFieldContext;
+            }
+
             // Walk the full ancestor chain (through defer/conditional scopes, up to and
             // including the nearest non-scope ancestor) and check whether any of them
             // already contains the field.
@@ -400,13 +422,23 @@ public sealed partial class DocumentRewriter(
         }
     }
 
-    private static Context GetOrAddContextForFragment(
+    private Context GetOrAddContextForFragment(
         Context context,
         InlineFragmentNode inlineFragmentNode,
         ITypeDefinition typeCondition)
     {
         if (context.IsDeferContext)
         {
+            if (!mergeAcrossDefer)
+            {
+                if (!context.HasFragment(inlineFragmentNode, out var deferFragmentContext))
+                {
+                    deferFragmentContext = context.AddFragment(inlineFragmentNode, typeCondition);
+                }
+
+                return deferFragmentContext;
+            }
+
             var ancestor = context.Parent;
             while (ancestor is not null)
             {
@@ -562,7 +594,7 @@ public sealed partial class DocumentRewriter(
         return targetContext;
     }
 
-    private static void MergeContexts(Context source, Context target)
+    private void MergeContexts(Context source, Context target)
     {
         if (source.Conditionals is not null)
         {

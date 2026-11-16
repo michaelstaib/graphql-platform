@@ -1,0 +1,180 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!, $p: Boolean!, $q: Boolean!) {
+        product(id: "1") {
+          name
+          ... @skip(if: $a) {
+            id @fusion__requirement
+            price @include(if: $p)
+            rating @include(if: $q)
+          }
+          ... @include(if: $a) {
+            ... @defer(if: $a, label: "x") {
+              id @fusion__requirement
+              price @include(if: $p)
+              rating @include(if: $q)
+            }
+          }
+          ... @skip(if: $b) {
+            id @fusion__requirement
+            price @include(if: $p)
+            rating @include(if: $q)
+          }
+          ... @include(if: $b) {
+            ... @defer(if: $b, label: "y") {
+              id @fusion__requirement
+              price @include(if: $p)
+              rating @include(if: $q)
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!, $b: Boolean!) {
+        product(id: "1") {
+          name
+          ... @skip(if: $a) {
+            id
+          }
+          ... @include(if: $a) {
+            ... {
+              id
+            }
+          }
+          ... @skip(if: $b) {
+            id
+          }
+          ... @include(if: $b) {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    forwardedVariables:
+      - a
+      - b
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($p: Boolean!, $q: Boolean!, $__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          price @include(if: $p)
+          rating @include(if: $q)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    conditionAlternatives:
+      -
+        - variable: $p
+          passingValue: true
+      -
+        - variable: $q
+          passingValue: true
+    deliveryGroups:
+      - 1
+    forwardedVariables:
+      - p
+      - q
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($p: Boolean!, $q: Boolean!, $__fusion_2_id: ID!) {
+        productById(id: $__fusion_2_id) {
+          price @include(if: $p)
+          rating @include(if: $q)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditionAlternatives:
+      -
+        - variable: $a
+          passingValue: false
+        - variable: $p
+          passingValue: true
+      -
+        - variable: $a
+          passingValue: false
+        - variable: $q
+          passingValue: true
+      -
+        - variable: $b
+          passingValue: false
+        - variable: $p
+          passingValue: true
+      -
+        - variable: $b
+          passingValue: false
+        - variable: $q
+          passingValue: true
+    forwardedVariables:
+      - p
+      - q
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($p: Boolean!, $q: Boolean!, $__fusion_3_id: ID!) {
+        productById(id: $__fusion_3_id) {
+          price @include(if: $p)
+          rating @include(if: $q)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    conditionAlternatives:
+      -
+        - variable: $p
+          passingValue: true
+      -
+        - variable: $q
+          passingValue: true
+    deliveryGroups:
+      - 0
+    forwardedVariables:
+      - p
+      - q
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: x
+    ifVariable: $a
+  - id: 1
+    path: $.product
+    label: y
+    ifVariable: $b

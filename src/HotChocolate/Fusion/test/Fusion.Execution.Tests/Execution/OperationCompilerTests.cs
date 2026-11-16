@@ -580,7 +580,7 @@ public class OperationCompilerTests : FusionTestBase
 
         var document = Utf8GraphQLParser.Parse(sourceText);
         var schema = CreateStreamSchema();
-        var rewritten = new DocumentRewriter(schema).RewriteDocument(document);
+        var rewritten = new DocumentRewriter(schema, mergeAcrossDefer: true).RewriteDocument(document);
         var operationDefinition = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
         var booleanType = schema.Types.GetType<IScalarTypeDefinition>("Boolean");
         var variableValues = new VariableValueCollection(

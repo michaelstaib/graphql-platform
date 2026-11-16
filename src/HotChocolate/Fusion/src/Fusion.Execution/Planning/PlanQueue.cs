@@ -235,6 +235,12 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
         string toSchema,
         double resolutionCost)
     {
+        // A work item of a deferred fragment is resolved only through a direct lookup of its own type.
+        if (!workItem.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
         foreach (var (lookupThroughPathWorkItem, cost, index) in PlannerExtensions.GetPossibleLookupsThroughPath(
             planNodeTemplate,
             workItem,

@@ -48,7 +48,7 @@ public class CorpusPlanningBenchmark
         sw.Stop();
         Console.WriteLine($"[setup] FusionSchemaDefinition build: {sw.Elapsed.TotalMilliseconds:F1} ms");
 
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
             new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
         var compiler = new OperationCompiler(schema, pool);

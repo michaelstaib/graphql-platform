@@ -1020,7 +1020,7 @@ public class SelectionSetByTypePartitionerTests : FusionTestBase
         FusionSchemaDefinition schema,
         DocumentNode document)
     {
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operation = rewriter.RewriteDocument(document).Definitions
             .OfType<OperationDefinitionNode>()
             .Single();

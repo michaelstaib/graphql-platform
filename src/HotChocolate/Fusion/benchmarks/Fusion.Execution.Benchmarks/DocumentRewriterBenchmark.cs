@@ -26,7 +26,7 @@ public class DocumentRewriterBenchmark : FusionBenchmarkBase
 
         var schema = CreateFusionSchema();
 
-        _documentRewriter = new DocumentRewriter(schema);
+        _documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
     }
 
     [Benchmark]
