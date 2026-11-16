@@ -1,0 +1,234 @@
+title: Execute_Should_KeepLiteral_When_LiteralContainsVariable
+request:
+  document: |
+    query GetProducts($prefix: String, $skipReviews: Boolean!) {
+      products(first: 2, filter: { namePrefix: $prefix }) {
+        name
+        reviews(first: 1) @skip(if: $skipReviews) {
+          body
+        }
+      }
+    }
+  variables: |
+    {
+      "prefix": "Ta",
+      "skipReviews": false
+    }
+response:
+  body: |
+    {
+      "data": {
+        "products": [
+          {
+            "name": "Table",
+            "reviews": [
+              {
+                "body": "Review 1 of product 1"
+              }
+            ]
+          },
+          {
+            "name": "Tablet",
+            "reviews": [
+              {
+                "body": "Review 1 of product 2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+sourceSchemas:
+  - name: products-api
+    schema: |
+      schema {
+        query: Query
+        mutation: Mutation
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup
+        products(first: Int!, filter: ProductFilterInput, tags: [String!]): [Product!]!
+      }
+
+      type Mutation {
+        renameProduct(input: RenameProductInput!): Product!
+      }
+
+      type Product @key(fields: "id") {
+        weight(unit: WeightUnit!): Float!
+        id: ID!
+        name: String!
+      }
+
+      input ProductFilterInput {
+        namePrefix: String
+      }
+
+      input RenameProductInput {
+        id: ID!
+        name: String!
+      }
+
+      enum WeightUnit {
+        KG
+        LB
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query GetProducts_bf9bf5a9_1($prefix: String, $__fusion_literal_0: Int!) {
+              products(first: $__fusion_literal_0, filter: { namePrefix: $prefix }) {
+                name
+                id
+              }
+            }
+          variables: |
+            {
+              "prefix": "Ta",
+              "__fusion_literal_0": 2
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "products": [
+                    {
+                      "name": "Table",
+                      "id": "1"
+                    },
+                    {
+                      "name": "Tablet",
+                      "id": "2"
+                    }
+                  ]
+                }
+              }
+  - name: reviews-api
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        reviews(first: Int!): [Review!]!
+        id: ID!
+      }
+
+      type Review {
+        body: String!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query GetProducts_bf9bf5a9_2($__fusion_literal_1: Int!, $__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                reviews(first: $__fusion_literal_1) {
+                  body
+                }
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_literal_1": 1,
+                "__fusion_1_id": "1"
+              },
+              {
+                "__fusion_literal_1": 1,
+                "__fusion_1_id": "2"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "reviews": [
+                      {
+                        "body": "Review 1 of product 1"
+                      }
+                    ]
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "reviews": [
+                      {
+                        "body": "Review 1 of product 2"
+                      }
+                    ]
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query GetProducts(
+          $prefix: String
+          $skipReviews: Boolean!
+          $__fusion_literal_0: Int!
+          $__fusion_literal_1: Int!
+        ) {
+          products(first: $__fusion_literal_0, filter: { namePrefix: $prefix }) {
+            name
+            id @fusion__requirement
+            reviews(first: $__fusion_literal_1) @skip(if: $skipReviews) {
+              body
+            }
+          }
+        }
+      name: GetProducts
+      hash: bf9bf5a9ab41586f3139eca4e827f46f.literals
+      searchSpace: 1
+      expandedNodes: 2
+  nodes:
+    - id: 1
+      type: Operation
+      schema: products-api
+      operation: |
+        query GetProducts_bf9bf5a9_1($prefix: String, $__fusion_literal_0: Int!) {
+          products(first: $__fusion_literal_0, filter: { namePrefix: $prefix }) {
+            name
+            id
+          }
+        }
+      forwardedVariables:
+        - prefix
+        - __fusion_literal_0
+    - id: 2
+      type: Operation
+      schema: reviews-api
+      operation: |
+        query GetProducts_bf9bf5a9_2($__fusion_literal_1: Int!, $__fusion_1_id: ID!) {
+          productById(id: $__fusion_1_id) {
+            reviews(first: $__fusion_literal_1) {
+              body
+            }
+          }
+        }
+      source: $.productById
+      target: $.products
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $skipReviews
+          passingValue: false
+      forwardedVariables:
+        - __fusion_literal_1
+      dependencies:
+        - id: 1

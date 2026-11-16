@@ -604,6 +604,16 @@ internal sealed class FusionRequestExecutorManager
         services.AddSingleton(
             static sp =>
             {
+                var schema = sp.GetRequiredService<ISchemaDefinition>();
+                return new ArgumentLiteralExtractor(
+                    schema,
+                    sp.GetRequiredService<IDocumentHashProvider>(),
+                    schema.GetOptions().OperationExecutionPlanCacheSize);
+            });
+
+        services.AddSingleton(
+            static sp =>
+            {
                 var requestOptions = sp.GetRequiredService<FusionRequestOptions>();
                 return new OperationCompiler(
                     sp.GetRequiredService<FusionSchemaDefinition>(),

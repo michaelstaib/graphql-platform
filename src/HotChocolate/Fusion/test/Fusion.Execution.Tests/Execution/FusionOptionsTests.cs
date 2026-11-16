@@ -48,7 +48,8 @@ public class FusionOptionsTests : FusionTestBase
             OperationDocumentCacheSize = 1024,
             EnableDefer = false,
             EnableObjectDeprecation = true,
-            EnableEntityReuse = false
+            EnableEntityReuse = false,
+            EnableArgumentLiteralExtraction = true
         };
 
         // act
@@ -64,6 +65,7 @@ public class FusionOptionsTests : FusionTestBase
               "OperationDocumentCacheSize": 1024,
               "PathSegmentLocalPoolCapacity": 64,
               "EnableEntityReuse": false,
+              "EnableArgumentLiteralExtraction": true,
               "LazyInitialization": false,
               "NodeIdSerializerFormat": "Base64",
               "ApplySerializeAsToScalars": false,

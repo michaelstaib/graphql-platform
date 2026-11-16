@@ -11,18 +11,26 @@ internal sealed class OperationPlanCacheMiddleware
 {
     private readonly Cache<OperationPlan> _cache;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
+    private readonly ArgumentLiteralExtractor? _argumentLiteralExtractor;
     private readonly ConcurrentDictionary<string, Lazy<TaskCompletionSource<OperationPlan>>> _inFlightPlans =
         new(StringComparer.Ordinal);
 
-    private OperationPlanCacheMiddleware(Cache<OperationPlan> cache, IFusionExecutionDiagnosticEvents diagnosticEvents)
+    private OperationPlanCacheMiddleware(
+        Cache<OperationPlan> cache,
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        ArgumentLiteralExtractor? argumentLiteralExtractor)
     {
         _cache = cache;
         _diagnosticEvents = diagnosticEvents;
+        _argumentLiteralExtractor = argumentLiteralExtractor;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
     {
-        var operationId = context.GetOperationId();
+        // Operations that differ only in the extracted argument literals share one operation id.
+        var operationId = _argumentLiteralExtractor is null
+            ? context.GetOperationId()
+            : _argumentLiteralExtractor.Extract(context);
 
         if (_cache.TryGet(operationId, out var plan))
         {
@@ -157,7 +165,10 @@ internal sealed class OperationPlanCacheMiddleware
             {
                 var cache = fc.SchemaServices.GetRequiredService<Cache<OperationPlan>>();
                 var diagnosticEvents = fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
-                var middleware = new OperationPlanCacheMiddleware(cache, diagnosticEvents);
+                var argumentLiteralExtractor = fc.Schema.GetOptions().EnableArgumentLiteralExtraction
+                    ? fc.SchemaServices.GetRequiredService<ArgumentLiteralExtractor>()
+                    : null;
+                var middleware = new OperationPlanCacheMiddleware(cache, diagnosticEvents, argumentLiteralExtractor);
                 return requestContext => middleware.InvokeAsync(requestContext, next);
             },
             WellKnownRequestMiddleware.OperationPlanCacheMiddleware);

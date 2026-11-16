@@ -1,0 +1,244 @@
+title: Execute_Should_DeliverDeferredFragment_When_DeferredFieldHasArgumentLiteral
+request:
+  document: |
+    query GetProduct {
+      productById(id: "1") {
+        name
+        ... @defer(label: "reviews") {
+          reviews(first: 2) {
+            body
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 2,
+    "initial": {
+      "data": {
+        "productById": {
+          "name": "Table"
+        }
+      }
+    },
+    "pending": [
+      {
+        "id": "0",
+        "path": [
+          "productById"
+        ],
+        "label": "reviews"
+      }
+    ],
+    "incremental": [
+      {
+        "id": "0",
+        "path": [
+          "productById"
+        ],
+        "data": {
+          "reviews": [
+            {
+              "body": "Review 1 of product 1"
+            },
+            {
+              "body": "Review 2 of product 1"
+            }
+          ]
+        }
+      }
+    ],
+    "completed": [
+      {
+        "id": "0"
+      }
+    ],
+    "final": {
+      "data": {
+        "productById": {
+          "name": "Table",
+          "reviews": [
+            {
+              "body": "Review 1 of product 1"
+            },
+            {
+              "body": "Review 2 of product 1"
+            }
+          ]
+        }
+      }
+    }
+  }
+sourceSchemas:
+  - name: products-api
+    schema: |
+      schema {
+        query: Query
+        mutation: Mutation
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup
+        products(first: Int!, filter: ProductFilterInput, tags: [String!]): [Product!]!
+      }
+
+      type Mutation {
+        renameProduct(input: RenameProductInput!): Product!
+      }
+
+      type Product @key(fields: "id") {
+        weight(unit: WeightUnit!): Float!
+        id: ID!
+        name: String!
+      }
+
+      input ProductFilterInput {
+        namePrefix: String
+      }
+
+      input RenameProductInput {
+        id: ID!
+        name: String!
+      }
+
+      enum WeightUnit {
+        KG
+        LB
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query GetProduct_b3bc1720_1($__fusion_literal_0: ID!) {
+              productById(id: $__fusion_literal_0) {
+                name
+                id
+              }
+            }
+          variables: |
+            {
+              "__fusion_literal_0": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "name": "Table",
+                    "id": "1"
+                  }
+                }
+              }
+  - name: reviews-api
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        reviews(first: Int!): [Review!]!
+        id: ID!
+      }
+
+      type Review {
+        body: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query GetProduct_defer_1($__fusion_literal_1: Int!, $__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                reviews(first: $__fusion_literal_1) {
+                  body
+                }
+              }
+            }
+          variables: |
+            {
+              "__fusion_literal_1": 2,
+              "__fusion_1_id": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "reviews": [
+                      {
+                        "body": "Review 1 of product 1"
+                      },
+                      {
+                        "body": "Review 2 of product 1"
+                      }
+                    ]
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query GetProduct($__fusion_literal_0: ID!, $__fusion_literal_1: Int!) {
+          productById(id: $__fusion_literal_0) {
+            name
+            id @fusion__requirement
+          }
+        }
+      name: GetProduct
+      hash: b3bc1720ddce997031f79b7c16a26151.literals
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: products-api
+      operation: |
+        query GetProduct_b3bc1720_1($__fusion_literal_0: ID!) {
+          productById(id: $__fusion_literal_0) {
+            name
+            id
+          }
+        }
+      forwardedVariables:
+        - __fusion_literal_0
+  deliveryGroups:
+    - id: 0
+      path: $.productById
+      label: reviews
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: reviews-api
+          operation: |
+            query GetProduct_defer_1($__fusion_literal_1: Int!, $__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                reviews(first: $__fusion_literal_1) {
+                  body
+                }
+              }
+            }
+          source: $.productById
+          target: $.productById
+          requirements:
+            - name: __fusion_1_id
+              selectionMap: >-
+                id
+          forwardedVariables:
+            - __fusion_literal_1
+          dependencies:
+            - parentNodeId: 1
