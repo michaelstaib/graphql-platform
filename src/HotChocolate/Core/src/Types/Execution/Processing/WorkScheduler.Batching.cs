@@ -53,6 +53,11 @@ internal sealed partial class WorkScheduler
     {
         AssertLockHeld();
 
+        if (!_countsPaths)
+        {
+            return;
+        }
+
         ref var count = ref CollectionsMarshal.GetValueRefOrAddDefault(_activePaths, path, out _);
         count++;
     }
@@ -64,6 +69,11 @@ internal sealed partial class WorkScheduler
     private void DecrementPathCountUnsafe(SelectionPath path)
     {
         AssertLockHeld();
+
+        if (!_countsPaths)
+        {
+            return;
+        }
 
         ref var count = ref CollectionsMarshal.GetValueRefOrNullRef(_activePaths, path);
 
