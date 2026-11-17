@@ -3,7 +3,7 @@ operation:
       query($v: Boolean!) {
         products {
           name
-          ... @defer(label: "top", __group: 3, __parent: -1, __levels: 1) {
+          ... @defer(label: "top", __group: 0, __parent: -1, __levels: 1) {
             price
             id @fusion__requirement
           }
@@ -78,7 +78,7 @@ nodes:
       - variable: $v
         passingValue: true
     deliveryGroups:
-      - 0
+      - 1
     dependencies:
       - id: 1
   - id: 3
@@ -100,7 +100,7 @@ nodes:
       - variable: $v
         passingValue: true
     deliveryGroups:
-      - 1
+      - 2
     dependencies:
       - id: 1
   - id: 4
@@ -140,19 +140,19 @@ nodes:
         selectionMap: >-
           id
     deliveryGroups:
-      - 2
+      - 0
     dependencies:
       - id: 1
 deliveryGroups:
   - id: 0
+    path: $
+    label: top
+  - id: 1
     path: $.product
     label: outer
     ifVariable: $v
-  - id: 1
+  - id: 2
     path: $.product
     label: inner
     ifVariable: $v
-    parentId: 0
-  - id: 2
-    path: $
-    label: top
+    parentId: 1

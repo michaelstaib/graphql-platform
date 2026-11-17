@@ -35,6 +35,166 @@ internal static class DeferLowering
         return operation.WithSelectionSet(new SelectionSetNode(lowerer.Finish(selections)));
     }
 
+    /// <summary>
+    /// Numbers the delivery groups of a lowered and normalized operation densely in the order of their first
+    /// <c>@defer</c> fragments, a parent before its children.
+    /// </summary>
+    /// <param name="operation">The lowered and normalized operation.</param>
+    /// <returns>
+    /// The operation with the new numbers, or <paramref name="operation"/> when its numbers are already in order.
+    /// </returns>
+    public static OperationDefinitionNode Renumber(OperationDefinitionNode operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var order = new List<int>();
+        var parents = new Dictionary<int, int>();
+        CollectGroups(operation.SelectionSet.Selections, order, parents);
+
+        var numbers = new Dictionary<int, int>(order.Count);
+
+        foreach (var group in order)
+        {
+            AssignNumber(group, parents, numbers);
+        }
+
+        var unchanged = true;
+
+        foreach (var (before, after) in numbers)
+        {
+            unchanged &= before == after;
+        }
+
+        if (unchanged)
+        {
+            return operation;
+        }
+
+        var selections = RenumberList(operation.SelectionSet.Selections, numbers);
+        return operation.WithSelectionSet(new SelectionSetNode(selections));
+    }
+
+    private static void AssignNumber(int group, Dictionary<int, int> parents, Dictionary<int, int> numbers)
+    {
+        if (numbers.ContainsKey(group))
+        {
+            return;
+        }
+
+        if (parents.TryGetValue(group, out var parent) && parent >= 0 && parents.ContainsKey(parent))
+        {
+            AssignNumber(parent, parents, numbers);
+        }
+
+        numbers.Add(group, numbers.Count);
+    }
+
+    private static void CollectGroups(
+        IReadOnlyList<ISelectionNode> items,
+        List<int> order,
+        Dictionary<int, int> parents)
+    {
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case FieldNode { SelectionSet: { } selectionSet }:
+                    CollectGroups(selectionSet.Selections, order, parents);
+                    break;
+
+                case InlineFragmentNode fragment:
+                    foreach (var directive in fragment.Directives)
+                    {
+                        if (IsDeferDirective(directive)
+                            && TryGetInt(directive, DocumentRewriter.DeferArguments.Group, out var group)
+                            && TryGetInt(directive, DocumentRewriter.DeferArguments.Parent, out var parent)
+                            && parents.TryAdd(group, parent))
+                        {
+                            order.Add(group);
+                        }
+                    }
+
+                    CollectGroups(fragment.SelectionSet.Selections, order, parents);
+                    break;
+            }
+        }
+    }
+
+    private static bool TryGetInt(DirectiveNode directive, string name, out int value)
+    {
+        foreach (var argument in directive.Arguments)
+        {
+            if (argument.Name.Value.Equals(name, StringComparison.Ordinal) && argument.Value is IntValueNode number)
+            {
+                value = number.ToInt32();
+                return true;
+            }
+        }
+
+        value = 0;
+        return false;
+    }
+
+    private static List<ISelectionNode> RenumberList(
+        IReadOnlyList<ISelectionNode> items,
+        Dictionary<int, int> numbers)
+    {
+        var result = new List<ISelectionNode>(items.Count);
+
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case FieldNode { SelectionSet: { } selectionSet } field:
+                    var children = RenumberList(selectionSet.Selections, numbers);
+                    result.Add(field.WithSelectionSet(new SelectionSetNode(children)));
+                    break;
+
+                case InlineFragmentNode fragment:
+                    var directives = new List<DirectiveNode>(fragment.Directives.Count);
+
+                    foreach (var directive in fragment.Directives)
+                    {
+                        directives.Add(IsDeferDirective(directive) ? RenumberDirective(directive, numbers) : directive);
+                    }
+
+                    var content = RenumberList(fragment.SelectionSet.Selections, numbers);
+                    result.Add(fragment.WithDirectives(directives).WithSelectionSet(new SelectionSetNode(content)));
+                    break;
+
+                default:
+                    result.Add(item);
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private static DirectiveNode RenumberDirective(DirectiveNode directive, Dictionary<int, int> numbers)
+    {
+        var arguments = new List<ArgumentNode>(directive.Arguments.Count);
+
+        foreach (var argument in directive.Arguments)
+        {
+            if (argument.Name.Value is DocumentRewriter.DeferArguments.Group or DocumentRewriter.DeferArguments.Parent
+                && argument.Value is IntValueNode number
+                && numbers.TryGetValue(number.ToInt32(), out var renumbered))
+            {
+                arguments.Add(new ArgumentNode(argument.Name.Value, new IntValueNode(renumbered)));
+            }
+            else
+            {
+                arguments.Add(argument);
+            }
+        }
+
+        return new DirectiveNode(directive.Name.Value, arguments.ToArray());
+    }
+
+    private static bool IsDeferDirective(DirectiveNode directive)
+        => directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal);
+
     private sealed class Lowerer(FusionSchemaDefinition schema, OperationType operationType)
     {
         private readonly Dictionary<InlineFragmentNode, Site> _sites = new(ReferenceEqualityComparer.Instance);
@@ -811,9 +971,6 @@ internal static class DeferLowering
 
             return false;
         }
-
-        private static bool IsDeferDirective(DirectiveNode directive)
-            => directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal);
     }
 
     /// <summary>

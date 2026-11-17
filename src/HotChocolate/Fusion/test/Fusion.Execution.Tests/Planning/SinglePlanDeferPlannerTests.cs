@@ -2023,6 +2023,65 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_NumberTheGroupsInTheOrderOfTheNormalizedOperation_When_AnInlinedFragmentIsMerged()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                product(id: "1") { name }
+                ... @defer(if: $v, label: "d1") { product(id: "1") { price } }
+                ... @defer(if: $v, label: "d2") { product(id: "1") { ... @defer(label: "n2") { rating } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        DescribeGroupNumbers(result.Plan).MatchInlineSnapshots(
+        [
+            "id 0 n2 __group 0",
+            "id 1 d1 __group 1"
+        ]);
+    }
+
+    [Fact]
+    public void Plan_Should_CarryTheNumbersOfTheGroupsAsTheirIds_When_TheNormalizerRemovesANumberedCopy()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                products { name }
+                product(id: "1") {
+                    name
+                    ... @defer(if: $v, label: "outer") {
+                        price
+                        ... @defer(if: $v, label: "inner") { rating }
+                    }
+                }
+                ... @defer(label: "top") { products { price } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        DescribeGroupNumbers(result.Plan).MatchInlineSnapshots(
+        [
+            "id 0 top __group 0",
+            "id 1 outer __group 1",
+            "id 2 inner __group 2"
+        ]);
+    }
+
+    [Fact]
     public void Partition_Should_ReadTheGroupsFromTheOperationText_When_TheOperationHasAPart()
     {
         // arrange
@@ -2716,6 +2775,21 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
 
     private static string Format(OperationPlan plan)
         => new YamlOperationPlanFormatter().Format(plan);
+
+    private static string[] DescribeGroupNumbers(OperationPlan plan)
+    {
+        var numbers = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (Match match in DeferGroupNumber().Matches(plan.Operation.Definition.ToString()))
+        {
+            numbers[match.Groups["label"].Value] = match.Groups["number"].Value;
+        }
+
+        return [.. plan.DeliveryGroups.Select(g => $"id {g.Id} {g.Label} __group {numbers[g.Label!]}")];
+    }
+
+    [GeneratedRegex(@"label: ""(?<label>\w+)"", __group: (?<number>\d+)")]
+    private static partial Regex DeferGroupNumber();
 
     [GeneratedRegex(@"@defer(\([^)]*\))?")]
     private static partial Regex DeferDirective();

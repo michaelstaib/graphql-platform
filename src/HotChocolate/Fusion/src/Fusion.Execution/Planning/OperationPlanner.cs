@@ -763,7 +763,7 @@ public sealed partial class OperationPlanner
     }
 
     private OperationDefinitionNode LowerForSinglePlanDefer(OperationDefinitionNode operationDefinition)
-        => NormalizeLowered(DeferLowering.Lower(operationDefinition, _schema));
+        => DeferLowering.Renumber(NormalizeLowered(DeferLowering.Lower(operationDefinition, _schema)));
 
     private OperationDefinitionNode NormalizeLowered(OperationDefinitionNode lowered)
     {
