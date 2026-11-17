@@ -88,7 +88,7 @@ internal sealed class TimeoutMiddleware
             (core, next) =>
             {
                 var optionsAccessor = core.SchemaServices.GetRequiredService<IRequestExecutorOptionsAccessor>();
-                var timeProvider = core.SchemaServices.GetService<TimeProvider>() ?? TimeProvider.System;
+                var timeProvider = core.SchemaServices.GetRequiredService<TimeProvider>();
                 var middleware = new TimeoutMiddleware(next, optionsAccessor, timeProvider);
                 return context => middleware.InvokeAsync(context);
             },

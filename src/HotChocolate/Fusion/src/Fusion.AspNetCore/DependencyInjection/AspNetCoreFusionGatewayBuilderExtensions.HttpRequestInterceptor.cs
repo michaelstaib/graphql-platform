@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using HotChocolate.AspNetCore;
 using HotChocolate.AspNetCore.Formatters;
-using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Transport.Formatters;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -184,7 +183,7 @@ public static partial class AspNetCoreFusionGatewayBuilderExtensions
                                 Indented = indented
                             }
                         },
-                        sp.GetRequiredService<ITimeProvider>(),
+                        sp.GetRequiredService<TimeProvider>(),
                         incrementalDeliveryFormat));
             });
     }
@@ -222,7 +221,7 @@ public static partial class AspNetCoreFusionGatewayBuilderExtensions
                 s.AddSingleton<IHttpResponseFormatter>(
                     sp => DefaultHttpResponseFormatter.Create(
                         options,
-                        sp.GetRequiredService<ITimeProvider>(),
+                        sp.GetRequiredService<TimeProvider>(),
                         incrementalDeliveryFormat));
             });
     }
