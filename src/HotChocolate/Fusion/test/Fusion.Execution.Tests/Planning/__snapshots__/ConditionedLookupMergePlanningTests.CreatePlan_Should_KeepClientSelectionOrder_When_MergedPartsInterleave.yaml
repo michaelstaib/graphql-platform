@@ -1,0 +1,55 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user {
+          first: total
+          third: bonus
+          id @fusion__requirement
+          ... @include(if: $a) {
+            second: total
+            rating
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!) {
+        user {
+          ... @include(if: $a) {
+            __typename
+          }
+          id
+        }
+      }
+    forwardedVariables:
+      - a
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($a: Boolean!, $__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          first: total
+          third: bonus
+          ... @include(if: $a) {
+            second: total
+            rating
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 1

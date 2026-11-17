@@ -120,6 +120,12 @@ internal sealed record PlanNode
 
     public EventStreamDirective? EventStreamDirective { get; init; }
 
+    /// <summary>
+    /// Indicates whether the planner merges the lookups of sibling fragments that differ only in
+    /// their conditions. The main operation of a deferred request does not.
+    /// </summary>
+    public bool MergeConditionedLookups { get; init; } = true;
+
     public double PathCost
         => (MaxDepth * Options.DepthWeight)
             + (OperationStepCount * Options.OperationWeight)

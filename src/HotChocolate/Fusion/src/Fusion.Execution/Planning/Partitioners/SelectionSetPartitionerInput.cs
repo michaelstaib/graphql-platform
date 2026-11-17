@@ -12,6 +12,12 @@ internal readonly ref struct SelectionSetPartitionerInput
     public bool TreatSourceExternalAsUnresolvable { get; init; }
 
     /// <summary>
+    /// Keeps the unresolvable parts of sibling fragments that differ in their conditions as
+    /// separate entries instead of merging them into one.
+    /// </summary>
+    public bool KeepConditionedEntriesSeparate { get; init; }
+
+    /// <summary>
     /// When partitioning a lookup entry root, limits <c>sourceExternal</c> fields to those
     /// included in the entering lookup key. Set to <c>null</c> to disable this constraint.
     /// </summary>
