@@ -1326,6 +1326,71 @@ public sealed class FetchResultStoreTests : FusionTestBase
     }
 
     [Fact]
+    public void ImportVariableValues_Should_InitializeIntermediateLists_When_ImportedPathEndsBelowListOfListItem()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: test
+            type Query {
+              matrix: [[Item!]!]!
+            }
+
+            type Item {
+              id: ID!
+              related: Related!
+            }
+
+            type Related {
+              id: ID!
+              name: String
+            }
+            """);
+        var sourcePlan = PlanOperation(schema, "{ matrix { related { id } } }");
+        var targetPlan = PlanOperation(schema, "{ matrix { related { id name } } }");
+        var sourceMatrix = sourcePlan.Operation.RootSelectionSet.Selections[0];
+        var sourceRelated = sourceMatrix.GetSelectionSet()!.Selections[0];
+
+        using var resultArena = new MemoryArena();
+        using var source = new FetchResultStore();
+        source.Initialize(
+            resultArena,
+            schema,
+            DefaultErrorHandler.Default,
+            sourcePlan.Operation,
+            ErrorHandlingMode.Propagate,
+            includeFlags: default,
+            deferFlags: default,
+            pathSegmentLocalPoolCapacity: 16);
+        using var target = new FetchResultStore();
+        target.Initialize(
+            resultArena,
+            schema,
+            DefaultErrorHandler.Default,
+            targetPlan.Operation,
+            ErrorHandlingMode.Propagate,
+            includeFlags: default,
+            deferFlags: default,
+            pathSegmentLocalPoolCapacity: 16);
+
+        var values = CreateVariableValues(
+            source,
+            Path(sourceMatrix.Id, ~1, ~0, sourceRelated.Id),
+            Field("__fusion_1_id", new StringValueNode("2")));
+
+        // act
+        target.ImportVariableValues([values], sourcePlan.Operation);
+
+        // assert
+        var matrix = target.Result.Data.GetProperty("matrix");
+        Assert.Equal(2, matrix.GetArrayLength());
+        Assert.Equal(JsonValueKind.Undefined, matrix[0].ValueKind);
+        Assert.Equal(JsonValueKind.Array, matrix[1].ValueKind);
+        Assert.Equal(1, matrix[1].GetArrayLength());
+        Assert.Equal(JsonValueKind.Object, matrix[1][0].ValueKind);
+    }
+
+    [Fact]
     public void ImportVariableValues_Should_InitializeIntermediateObjects_When_ImportedPathEndsBelowRootObject()
     {
         // arrange
