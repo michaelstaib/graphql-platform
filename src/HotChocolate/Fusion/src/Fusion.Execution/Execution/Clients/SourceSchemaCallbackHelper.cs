@@ -26,12 +26,12 @@ internal static class SourceSchemaCallbackHelper
         ExecutionNode node,
         HttpSourceSchemaClientConfiguration configuration)
     {
-        if (configuration.OnBeforeSend is null && configuration.OnAfterReceive is null)
+        if (CreateState(context, node, configuration) is not { } state)
         {
             return;
         }
 
-        request.State = new RequestCallbackState(context, node, configuration);
+        request.State = state;
 
         if (configuration.OnBeforeSend is not null)
         {
@@ -44,5 +44,27 @@ internal static class SourceSchemaCallbackHelper
             request.OnMessageReceived += static (_, responseMessage, state) =>
                 state.Configuration.OnAfterReceive!.Invoke(state.Context, state.Node, responseMessage);
         }
+    }
+
+    /// <summary>
+    /// Creates the state that the transport-level request hooks receive.
+    /// </summary>
+    /// <param name="context">The current operation plan execution context.</param>
+    /// <param name="node">The execution node that produced the request.</param>
+    /// <param name="configuration">The transport configuration providing the callbacks.</param>
+    /// <returns>
+    /// The hook state, or <see langword="null"/> when the configuration has no request hooks.
+    /// </returns>
+    public static RequestCallbackState? CreateState(
+        OperationPlanContext context,
+        ExecutionNode node,
+        HttpSourceSchemaClientConfiguration configuration)
+    {
+        if (configuration.OnBeforeSend is null && configuration.OnAfterReceive is null)
+        {
+            return null;
+        }
+
+        return new RequestCallbackState(context, node, configuration);
     }
 }
