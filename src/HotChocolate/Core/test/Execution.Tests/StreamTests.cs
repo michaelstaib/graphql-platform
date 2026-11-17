@@ -1651,8 +1651,10 @@ public class StreamTests
         await MoveNextOrThrowAsync(enumerator);
 
         var batch = enumerator.Current;
-        var held = batch.Incremental.OfType<IncrementalListResult>().Single().Items.Single();
-        var element = (ResultElement)held.Element;
+        var items = batch.Incremental.OfType<IncrementalListResult>().Single().Items;
+        var document = (ResultDocument)items.Value;
+        var element = document.Data.GetProperty("gatedItems")[0];
+        var pathWhileHeld = element.Path.Print();
         var propertyCountWhileHeld = element.GetPropertyCount();
 
         // act
@@ -1662,7 +1664,7 @@ public class StreamTests
         await stream.DisposeAsync();
 
         // assert
-        Assert.Equal(1, held.Index);
+        Assert.Equal("gatedItems[1]", pathWhileHeld);
         Assert.Equal(1, propertyCountWhileHeld);
         Assert.Throws<ObjectDisposedException>(() => element.GetPropertyCount());
     }

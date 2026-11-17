@@ -1,5 +1,8 @@
-using HotChocolate.Types;
+using System.Text;
+using System.Text.Json;
+using HotChocolate.Buffers;
 using HotChocolate.Execution;
+using HotChocolate.Types;
 
 namespace HotChocolate.Text.Json;
 
@@ -146,5 +149,92 @@ public class ResultDocumentListRootTests
               true
             ]
             """);
+    }
+
+    [Fact]
+    public void ListRoot_Should_ReturnTheListElement_When_DocumentHasListRoot()
+    {
+        // arrange
+        var operation = StreamBatchDocumentFactory.CreateOperation();
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 3,
+            characterCount: 0);
+
+        // act
+        var list = document.ListRoot;
+
+        // assert
+        Assert.Equal(document.Data.GetProperty("films").Cursor, list.Cursor);
+        Assert.Equal(3, list.GetArrayLength());
+    }
+
+    [Fact]
+    public void WriteDataTo_Should_WriteOnlyTheList_When_DocumentHasListRoot()
+    {
+        // arrange
+        var operation = StreamBatchDocumentFactory.CreateOperation();
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 2,
+            characterCount: 2);
+        using var buffer = new PooledArrayWriter();
+        var writer = new JsonWriter(buffer, new JsonWriterOptions { Indented = false });
+
+        // act
+        document.WriteDataTo(writer);
+
+        // assert
+        Encoding.UTF8.GetString(buffer.WrittenSpan).MatchInlineSnapshot(
+            """
+            [{"title":"film","characters":["character","character"]},{"title":"film","characters":["character","character"]}]
+            """);
+    }
+
+    [Fact]
+    public void WriteDataTo_Should_WriteNull_When_ListIsNull()
+    {
+        // arrange
+        var operation = StreamBatchDocumentFactory.CreateOperation();
+        using var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 3,
+            characterCount: 0);
+        document.ListRoot.SetNullValue();
+        using var buffer = new PooledArrayWriter();
+        var writer = new JsonWriter(buffer, new JsonWriterOptions { Indented = false });
+
+        // act
+        document.WriteDataTo(writer);
+
+        // assert
+        Encoding.UTF8.GetString(buffer.WrittenSpan).MatchInlineSnapshot("null");
+    }
+
+    [Fact]
+    public async Task Dispose_Should_ReleaseTheDocument_When_OwningOperationResultIsDisposed()
+    {
+        // arrange
+        var operation = StreamBatchDocumentFactory.CreateOperation();
+        var document = StreamBatchDocumentFactory.Create(
+            operation,
+            startIndex: 5,
+            itemCount: 3,
+            characterCount: 0);
+        var result = new OperationResult(
+            new OperationResultData(
+                document,
+                isValueNull: false,
+                document,
+                document));
+
+        // act
+        await result.DisposeAsync();
+
+        // assert
+        Assert.Throws<ObjectDisposedException>(() => document.Data.GetPropertyCount());
     }
 }
