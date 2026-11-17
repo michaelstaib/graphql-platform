@@ -34,13 +34,19 @@ internal sealed class DeferTask : ExecutionTask
             {
                 var selection = field.AssertSelection();
                 var task =
-                    deferContext.CreateResolverTask(
+                    ResolverTaskFactory.CreateOrRegisterTopLevelTask(
+                        deferContext,
                         _parent,
                         selection,
                         field.Value,
                         _scopedContext,
                         _executionBranchId,
                         _deferUsage);
+
+                if (task is null)
+                {
+                    continue;
+                }
 
                 task.JoinExecutionGroup(_groupScope);
 
