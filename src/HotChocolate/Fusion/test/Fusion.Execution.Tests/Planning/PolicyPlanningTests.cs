@@ -824,8 +824,8 @@ public class PolicyPlanningTests : FusionTestBase
                     $__fusion_policy_3: Boolean!
                   ) {
                     product {
-                      price @skip(if: $__fusion_policy_2)
-                      name @include(if: $__fusion_policy_1) @skip(if: $__fusion_policy_3)
+                      name @include(if: $__fusion_policy_1) @skip(if: $__fusion_policy_2)
+                      price @skip(if: $__fusion_policy_3)
                     }
                   }
                 forwardedVariables:

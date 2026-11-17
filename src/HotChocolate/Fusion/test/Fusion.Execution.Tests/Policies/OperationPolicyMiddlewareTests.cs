@@ -726,10 +726,10 @@ public class OperationPolicyMiddlewareTests : PolicyExecutionTestBase
     [InlineData(false, 1, """
         {
           "data": {
+            "guarded": "g",
             "product": {
               "id": "1"
-            },
-            "guarded": "g"
+            }
           }
         }
         """)]

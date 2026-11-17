@@ -242,7 +242,6 @@ operationPlan:
           abstractTypes {
             __typename @fusion__requirement
             upvotes
-            id @fusion__requirement
             ... on Discussion {
               score
             }
@@ -251,6 +250,7 @@ operationPlan:
                 score
               }
             }
+            id @fusion__requirement
           }
         }
       hash: 7ac0102f4d4a34ffb1114490ed2379a8

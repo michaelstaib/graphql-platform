@@ -17,7 +17,7 @@ public sealed partial class DocumentRewriter
         ITypeDefinition mutationType,
         Dictionary<string, FragmentDefinitionNode> fragmentLookup)
     {
-        var context = new Context(null, null, null, mutationType, null, null, fragmentLookup);
+        var context = new Context(null, null, null, mutationType, null, null, new RewriteState(fragmentLookup));
         var occurrences = new List<MutationFieldOccurrence>();
 
         // Root fragments that carry a @defer or another executable directive keep the general rewrite.
@@ -519,7 +519,7 @@ public sealed partial class DocumentRewriter
 
         if (fieldNode.SelectionSet is not null)
         {
-            var context = new Context(null, null, null, mutationType, null, null, fragmentLookup);
+            var context = new Context(null, null, null, mutationType, null, null, new RewriteState(fragmentLookup));
             var fieldContext = context.AddField(fieldNode, occurrence.FieldType);
 
             if (fieldContext is null)

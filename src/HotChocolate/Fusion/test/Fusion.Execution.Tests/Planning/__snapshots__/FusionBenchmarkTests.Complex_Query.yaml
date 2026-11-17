@@ -25,7 +25,6 @@ operation:
                 }
                 ... @skip(if: $level4) {
                   ... @include(if: $level5) {
-                    id @fusion__requirement
                     reviews(first: 10) @skip(if: $level6) {
                       pageInfo {
                         hasNextPage
@@ -49,6 +48,7 @@ operation:
                         }
                       }
                     }
+                    id @fusion__requirement
                   }
                 }
               }
@@ -109,7 +109,6 @@ operation:
           ... on Product {
             name
             price
-            id @fusion__requirement
             reviews(first: 3) @include(if: $includeReviews) {
               nodes {
                 id
@@ -153,6 +152,7 @@ operation:
                 }
               }
             }
+            id @fusion__requirement
           }
           ... on Article {
             content
