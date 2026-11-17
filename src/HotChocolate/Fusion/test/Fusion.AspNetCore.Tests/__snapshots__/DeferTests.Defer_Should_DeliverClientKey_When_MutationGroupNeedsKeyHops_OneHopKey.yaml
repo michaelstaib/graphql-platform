@@ -1,0 +1,287 @@
+title: Defer_Should_DeliverClientKey_When_MutationGroupNeedsKeyHops
+request:
+  document: |
+    mutation {
+      create {
+        user {
+          ... @defer {
+            id
+            total
+          }
+        }
+      }
+    }
+stableResponseStream: |
+  {
+    "kind": "stable-stream",
+    "payloadCount": 2,
+    "initial": {
+      "data": {
+        "create": {
+          "user": {}
+        }
+      }
+    },
+    "pending": [
+      {
+        "id": "0",
+        "path": [
+          "create",
+          "user"
+        ]
+      }
+    ],
+    "incremental": [
+      {
+        "id": "0",
+        "path": [
+          "create",
+          "user"
+        ],
+        "data": {
+          "id": "1",
+          "total": 42
+        }
+      }
+    ],
+    "completed": [
+      {
+        "id": "0"
+      }
+    ],
+    "final": {
+      "data": {
+        "create": {
+          "user": {
+            "id": "1",
+            "total": 42
+          }
+        }
+      }
+    }
+  }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+        mutation: Mutation
+      }
+
+      type Query {
+        current: Current!
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type Mutation {
+        create: Current!
+      }
+
+      type Current {
+        users: [User!]!
+        user: User!
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            mutation Op_0a06c14b_1 {
+              create {
+                user {
+                  id
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "create": {
+                    "user": {
+                      "id": "1"
+                    }
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userBySku(sku: String!): User @lookup @internal
+      }
+
+      type User @key(fields: "sku") {
+        sku: String! @shareable
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_2($__fusion_1_sku: String!) {
+              userBySku(sku: $__fusion_1_sku) {
+                total
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_sku": "sku-1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "userBySku": {
+                    "total": 42
+                  }
+                }
+              }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        sku: String! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_defer_3($__fusion_2_id: ID!) {
+              userById(id: $__fusion_2_id) {
+                sku
+                id
+              }
+            }
+          variables: |
+            {
+              "__fusion_2_id": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "sku": "sku-1",
+                    "id": "1"
+                  }
+                }
+              }
+  - name: E
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+  - name: F
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: ID!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: ID!
+        rank: Int!
+      }
+operationPlan:
+  operation:
+    - document: |
+        mutation {
+          create {
+            user {
+              __typename @fusion__empty
+              id @fusion__requirement
+            }
+          }
+        }
+      hash: 0a06c14b0a637f9e5a680ea52bce0d2b
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        mutation Op_0a06c14b_1 {
+          create {
+            user {
+              id
+            }
+          }
+        }
+  deliveryGroups:
+    - id: 0
+      path: $.create.user
+  incrementalPlans:
+    - deliveryGroupIds:
+        - 0
+      parentNodeId: 1
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+      nodes:
+        - id: 1
+          type: Operation
+          schema: B
+          operation: |
+            query Op_defer_2($__fusion_1_sku: String!) {
+              userBySku(sku: $__fusion_1_sku) {
+                total
+              }
+            }
+          source: $.userBySku
+          target: $.create.user
+          requirements:
+            - name: __fusion_1_sku
+              selectionMap: >-
+                sku
+          dependencies:
+            - id: 2
+        - id: 2
+          type: Operation
+          schema: C
+          operation: |
+            query Op_defer_3($__fusion_2_id: ID!) {
+              userById(id: $__fusion_2_id) {
+                sku
+                id
+              }
+            }
+          source: $.userById
+          target: $.create.user
+          requirements:
+            - name: __fusion_2_id
+              selectionMap: >-
+                id
+          dependencies:
+            - parentNodeId: 1
