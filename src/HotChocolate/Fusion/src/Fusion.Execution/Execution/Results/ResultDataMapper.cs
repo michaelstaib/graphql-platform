@@ -358,6 +358,13 @@ internal static class ResultDataMapper
                 return fieldResult;
             }
 
+            // A field that no source schema delivered, for example because its fetch failed
+            // for this entity, leaves the path unresolved instead of invalid.
+            if (fieldResultValueKind is JsonValueKind.Undefined)
+            {
+                return default;
+            }
+
             if (currentSegment.TypeName is not null)
             {
                 if (fieldResultValueKind is not JsonValueKind.Object)
