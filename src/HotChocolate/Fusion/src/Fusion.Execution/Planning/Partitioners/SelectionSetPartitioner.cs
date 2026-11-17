@@ -230,7 +230,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         resolvableSelections ??= [.. selectionSetNode.Selections];
 
-        if (isAbstractType && !isInterfaceObjectContext && !resolvableSelections.Any(IsTypeNameSelection))
+        if (isAbstractType && !isInterfaceObjectContext && !resolvableSelections.Any(IsUnconditionalTypeNameSelection))
         {
             resolvableSelections = [
                 new FieldNode(IntrospectionFieldNames.TypeName),
@@ -366,15 +366,26 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return copy;
         }
 
-        static bool IsTypeNameSelection(ISelectionNode selection)
+        static bool IsUnconditionalTypeNameSelection(ISelectionNode selection)
         {
-            if (selection is FieldNode field)
+            if (selection is not FieldNode field
+                || field.Alias is not null
+                || !field.Name.Value.Equals(IntrospectionFieldNames.TypeName))
             {
-                return field.Name.Value.Equals(IntrospectionFieldNames.TypeName)
-                    && field.Alias is null;
+                return false;
             }
 
-            return false;
+            // Only the internal markers are allowed, @skip and @include make the field conditional.
+            foreach (var directive in field.Directives)
+            {
+                if (!directive.Name.Value.Equals("fusion__requirement", StringComparison.Ordinal)
+                    && !directive.Name.Value.Equals("fusion__empty", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 

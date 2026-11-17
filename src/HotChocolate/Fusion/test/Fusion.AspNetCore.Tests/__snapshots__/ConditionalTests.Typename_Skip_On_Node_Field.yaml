@@ -1,0 +1,112 @@
+title: Typename_Skip_On_Node_Field
+request:
+  document: |
+    query testQuery($skip: Boolean!) {
+      node(id: "Q2F0OjE=") {
+        __typename @skip(if: $skip)
+      }
+    }
+  variables: |
+    {
+      "skip": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "node": {}
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        node(id: ID!): Node @lookup @shareable
+      }
+
+      type Cat implements Node @key(fields: "id") {
+        id: ID!
+        name: String!
+      }
+
+      interface Node {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_93452e63_2($skip: Boolean!) {
+              node(id: "Q2F0OjE=") {
+                __typename
+                __typename @skip(if: $skip)
+              }
+            }
+          variables: |
+            {
+              "skip": true
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "node": {
+                    "__typename": "Cat"
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        node(id: ID!): Node @lookup @shareable
+      }
+
+      type Cat implements Node @key(fields: "id") {
+        id: ID!
+        age: Int!
+      }
+
+      interface Node {
+        id: ID!
+      }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($skip: Boolean!) {
+          node(id: "Q2F0OjE=") {
+            __typename @fusion__requirement
+            __typename @skip(if: $skip)
+          }
+        }
+      name: testQuery
+      hash: ce10fae1e193295cd5f9285f6925c8d3
+      searchSpace: 1
+      expandedNodes: 1
+  nodes:
+    - id: 1
+      type: Node
+      idValue: "Q2F0OjE="
+      responseName: node
+      fallback: 2
+    - id: 2
+      type: Operation
+      operation: |
+        query testQuery_93452e63_2($skip: Boolean!) {
+          node(id: "Q2F0OjE=") {
+            __typename
+            __typename @skip(if: $skip)
+          }
+        }
+      forwardedVariables:
+        - skip
+      dependencies:
+        - id: 1
