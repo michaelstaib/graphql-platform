@@ -291,8 +291,9 @@ internal static class DeferLowering
                 group,
                 true);
 
-            // The collected nested fragments are inlined, and the attempt runs once more without collecting.
-            if (state.NestedToInline is { Count: > 0 } nested)
+            // The collected nested fragments are inlined, and the attempt repeats until it collects none that is
+            // not inlined yet.
+            while (state.NestedToInline is { Count: > 0 } nested && !_inlined.IsSupersetOf(nested))
             {
                 _inlined.UnionWith(nested);
                 (attempt, content, coverage, state) = AttemptDeferred(
@@ -301,7 +302,7 @@ internal static class DeferLowering
                     fragmentType,
                     scope,
                     group,
-                    false);
+                    true);
             }
 
             // The decision reads the content that is left after the pruning of the deferred copy.

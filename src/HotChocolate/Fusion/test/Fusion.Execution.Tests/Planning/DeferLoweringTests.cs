@@ -3338,6 +3338,165 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineBothNestedFragments_When_OneOnlyWrapsTheOneThatSelectsAConditionalList()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "m") {
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheInnerFragment_When_AFragmentOnlyWrapsItAndItSelectsOnlyALeaf()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "m") {
+                            ... @defer(label: "i") {
+                                nick
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    ... @defer(label: "i", __group: 0, __parent: -1) {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineTheWrappingFragment_When_ItHasAnOwnFieldBesideTheNestedFragmentWithTheList()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "m") {
+                            nick
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    nick
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
