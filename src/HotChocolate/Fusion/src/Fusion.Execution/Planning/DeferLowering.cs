@@ -636,7 +636,14 @@ internal static class DeferLowering
                         }
                         else if (coverage.ConditionalFields.TryGetValue(responseName, out var conditional))
                         {
-                            found |= isList || SelectsConditionalList(selectionSet.Selections, conditional, fieldType);
+                            var belowConditional = CollectNestedToInline(
+                                selectionSet.Selections,
+                                conditional,
+                                fieldType,
+                                toInline);
+                            found |= isList
+                                || belowConditional
+                                || SelectsConditionalList(selectionSet.Selections, conditional, fieldType);
                         }
 
                         break;

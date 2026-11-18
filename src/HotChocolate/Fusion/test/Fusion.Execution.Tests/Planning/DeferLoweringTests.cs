@@ -3106,6 +3106,238 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineTheNestedFragment_When_AnObjectLiesBetweenItAndAConditionalOutsideSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    friends {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        friends {
+                            email
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                friends {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  friends {
+                    email
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheNestedFragment_When_ItSelectsOnlyALeafBelowAConditionalOutsideSelectionObject()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    friends {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        friends {
+                            email
+                            ... @defer(label: "i") {
+                                nick
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                friends {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  friends {
+                    email
+                    ... @defer(label: "i", __group: 0, __parent: -1) {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheNestedFragment_When_ItSelectsAListTheConditionalOutsideSelectionLacks()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    friends {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        friends {
+                            email
+                            ... @defer(label: "i") {
+                                profiles { bio }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                friends {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  friends {
+                    email
+                    ... @defer(label: "i", __group: 0, __parent: -1) {
+                      profiles {
+                        bio
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOnlyTheListFragment_When_TwoNestedFragmentsLieBelowAnObjectOfAConditionalSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    friends {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        friends {
+                            email
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                            ... @defer(label: "j") {
+                                nick
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                friends {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  friends {
+                    email
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                    ... @defer(label: "j", __group: 0, __parent: -1) {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
