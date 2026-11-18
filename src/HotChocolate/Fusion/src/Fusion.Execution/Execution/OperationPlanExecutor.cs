@@ -742,10 +742,9 @@ internal static partial class OperationPlanExecutor
             hasNext);
     }
 
-    // The errors of a failed instance are the errors recorded for its rows, then the errors its steps reported for
-    // rows that already held a result, else the errors of its failed steps unless a failed step recorded an error
-    // for a row, then the errors its steps reported for no row. The errors that no group owns follow, and without
-    // any error the instance carries the error of the exception of a failed step.
+    // An instance that a step failure failed carries the errors its steps reported for rows that already held a
+    // result, else the errors of its failed steps unless a row holds a step error. An instance that failed for
+    // another reason carries only the errors of its rows.
     private static ImmutableList<IError> TakeFailureErrors(
         SinglePlanDeliveryState state,
         int instance,
@@ -754,11 +753,13 @@ internal static partial class OperationPlanExecutor
         var group = state.GetInstanceGroup(instance);
         var errors = state.TakeGroupErrors(instance, includeSent: true) ?? [];
 
-        if (state.GetDeniedErrors(instance) is { } denied)
+        if (state.IsFailedByStep(instance) && state.GetDeniedErrors(instance) is { } denied)
         {
             errors = errors.AddRange(denied);
         }
-        else if (!state.HoldsStepError(instance) && state.GetStepErrors(group) is { } stepErrors)
+        else if (state.IsFailedByStep(instance)
+            && !state.HoldsStepError(instance)
+            && state.GetStepErrors(group) is { } stepErrors)
         {
             errors = errors.AddRange(stepErrors);
         }

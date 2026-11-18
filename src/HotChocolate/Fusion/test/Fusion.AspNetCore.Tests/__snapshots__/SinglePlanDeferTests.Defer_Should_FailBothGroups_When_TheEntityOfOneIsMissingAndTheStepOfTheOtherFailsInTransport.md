@@ -21,7 +21,7 @@
 ## Payload 4
 
 ```json
-{"completed":[{"id":"1","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}}]},{"id":"2","errors":[{"message":"Unexpected Execution Error"},{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
+{"completed":[{"id":"1","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}}]},{"id":"2","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
 ```
 
 ## Requests

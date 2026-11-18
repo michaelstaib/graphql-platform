@@ -4280,6 +4280,301 @@ public partial class SinglePlanDeferTests : FusionTestBase
         }
         """;
 
+    [Fact]
+    public async Task Defer_Should_ReportOnlyTheNullError_When_AnotherOperationOfTheBatchThatFeedsItsLookupHasNoResult()
+    {
+        // arrange
+        // the batch of B answers the author of product and has no result for the author of topProduct
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "C:5>", "C:4"],
+            (schema, body, text) => schema switch
+            {
+                "B" when StepId().Matches(body).Any(m => m.Groups[1].Value == "2")
+                    => string.Join("\n", text.Split('\n').Where(line => !line.Contains("\"requestIndex\":0"))),
+                "C" when StepId().Match(body).Groups[1].Value == "4"
+                    => NickValue().Replace(text, "\"nick\":null"),
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", BatchProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, BatchQuery, []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
+        Defer_Should_FailTheNestedFragments_When_TheBatchThatFeedsTheirLookupsFailsAfterTheParentsRowWasSent()
+    {
+        // arrange
+        // t sends the author id, then the batch of B that feeds the lookups of bio and nick fails in transport
+        var gateway = await CreateGatewayAsync(
+            ["B:6>", "B:2"],
+            rewrite: null,
+            failingSchema: null,
+            configure: null,
+            ("A", BatchProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+        _gate!.FailingStep = "B:3";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "t") { author { id } }
+                    ... @defer {
+                        ... @include(if: true) { author { ... @defer(label: "bio") { bio } } }
+                        ... @include(if: true) { author { ... @defer(label: "nick") { nick } } }
+                    }
+                }
+                topProduct {
+                    name
+                    ... @defer { author { id } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullWithTheErrors_When_TheStepsOfTwoNullableFieldsFailInTransport()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["P:2", "R:3"],
+            (schema, _, text) => schema is "P" or "R" ? "this is not json" : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("P", """
+                type Query { productByIdP(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! cost: Float }
+                """),
+            ("R", """
+                type Query { productByIdR(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! stars: Int }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "b") { cost stars } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
+        Defer_Should_SendNullWithTheError_When_TheErrorModeIsNullAndBothStepsFailAfterTheSharedFieldWasDelivered()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "P:3", "B:2"],
+            (schema, body, text) => schema == "P" || (schema == "B" && StepId().Match(body).Groups[1].Value == "2")
+                ? "this is not json"
+                : text,
+            failingSchema: null,
+            configure: builder => builder.ModifyRequestOptions(
+                o => o.DefaultErrorHandlingMode = HotChocolate.Language.ErrorHandlingMode.Null),
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { x } ... @defer(label: "b") { x price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheKey_When_TheStepOfTheFragmentFailsInTransportAndTheKeyWasAlreadyFetched()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["A:2"],
+            (schema, body, text) => schema == "A" && StepId().Match(body).Groups[1].Value == "2"
+                ? "this is not json"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { id } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullForTheNullableParent_When_TheStepOfItsNonNullFieldFailsInTransport()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "C:3"],
+            (schema, _, text) => schema == "C" ? "this is not json" : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! author: Author }
+                type Author @key(fields: "id") { id: ID! }
+                """),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "g") { author { id bio } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
+        Defer_Should_ReportOnlyTheNullError_When_AnotherStepFailsInTransportAfterTheSharedFieldWasDelivered()
+    {
+        // arrange
+        // a sends x, then the step P:3 answers null for the non-null price before the step B:2 fails in transport
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "P:3", "B:2"],
+            (schema, body, text) => schema switch
+            {
+                "B" when StepId().Match(body).Groups[1].Value == "2" => "this is not json",
+                "P" => PriceValue().Replace(text, "\"price\":null"),
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { x } ... @defer(label: "b") { x price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportOnlyTheNullError_When_AStepFailsInTransportForAFieldThatAlreadyHoldsAValue()
+    {
+        // arrange
+        // the step B:7 writes x for the lookup of c and P answers null for the non-null price, then the step B:2
+        // of g fails in transport for x after t completed
+        var gateway = await CreateGatewayAsync(
+            ["B:7", "P:3", "P:6", "P:8", "B:2@2"],
+            (schema, body, text) => schema switch
+            {
+                "B" when StepId().Match(body).Groups[1].Value == "2" => "this is not json",
+                "P" => PriceValue().Replace(text, "\"price\":null"),
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("P", SharedPriceSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! x: String! }
+                """),
+            ("C", """
+                type Query { productByIdC(id: ID!): Product @lookup }
+                type Product @key(fields: "id") {
+                    id: ID!
+                    total(price: Float @require(field: "price"), x: String @require(field: "x")): String!
+                }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "t") { price }
+                    ... @defer(label: "g") { price x ... @defer(label: "c") { total } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [GeneratedRegex("\"nick\":\"[^\"]*\"")]
+    private static partial Regex NickValue();
+
+    private const string BatchProductSource =
+        """
+        type Query { product(id: ID!): Product @lookup topProduct: Product }
+        type Product @key(fields: "id") { id: ID! name: String! }
+        """;
+
+    private const string BatchQuery =
+        """
+        {
+            product(id: "1") {
+                name
+                ... @defer {
+                    ... @include(if: true) { author { ... @defer(label: "bio") { bio } } }
+                    ... @include(if: true) { author { ... @defer(label: "nick") { nick } } }
+                }
+            }
+            topProduct {
+                name
+                ... @defer { author { id } }
+            }
+        }
+        """;
+
     private const string SharedPriceSource =
         """
         type Query { productByIdP(id: ID!): Product @lookup }
