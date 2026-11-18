@@ -541,6 +541,12 @@ internal static partial class OperationPlanExecutor
                 yield return CreateSinglePlanHaltedPayload(context, state, fault);
             }
 
+            if (!hasNext && executionState.HasActiveNodes())
+            {
+                // The last payload is written, so the steps that still run are cancelled.
+                await executionCts.CancelAsync();
+            }
+
             await DrainActiveNodesAsync(plan, executionState);
             requestArena.Seal();
             completed = true;

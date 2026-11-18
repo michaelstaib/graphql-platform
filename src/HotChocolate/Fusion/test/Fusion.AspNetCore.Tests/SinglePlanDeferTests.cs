@@ -911,6 +911,106 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run, $"topStepFirst={topStepFirst}");
     }
 
+    [Fact]
+    public async Task Defer_Should_EndWithTheLastPayload_When_TheStepOfADroppedFragmentFailsAfterIt()
+    {
+        // arrange
+        // the rating goes out under top, so inner is dropped and its step fails after the last payload
+        var gateway = await CreateProductReviewGatewayAsync("B:2", "C:3>", "B:4>", "C:5");
+        _gate!.FailingStep = "C:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "top") { products { reviews { rating } } }
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews { id ... @defer(label: "inner") { rating } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(3, run.Payloads.Count);
+        MatchPayloadShapes(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CancelTheStepOfADroppedFragment_When_TheSourceNeverAnswersAfterTheLastPayload()
+    {
+        // arrange
+        // the rating goes out under top, so inner is dropped and the source never answers its step
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "C:3>", "B:4>", "C:5"],
+            rewrite: null,
+            failingSchema: null,
+            stalledSchema: "C",
+            configure: null,
+            s_productReviewSources);
+        _gate!.StalledStep = "C:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "top") { products { reviews { rating } } }
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews { id ... @defer(label: "inner") { rating } }
+                    }
+                }
+            }
+            """,
+            []).WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(["C:5"], _gate.CancelledSteps);
+        MatchPayloadShapes(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_AnnounceTheNestedFragment_When_ItsStepAnswersNothingAfterTheOuterOneSendsTheAuthor(
+        bool nullableBio)
+    {
+        // arrange
+        // the source of the bio answers every lookup with null
+        var gateway = await CreateGatewayAsync(
+            ["B:2>", "C:3"],
+            rewrite: (schema, _, text) => schema == "C"
+                ? "{\"variableIndex\":0,\"data\":{\"authorById\":null}}\n"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", nullableBio ? AuthorNullableBioSource : AuthorBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id ... @defer(label: "c") { bio } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"nullableBio={nullableBio}");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -4244,6 +4344,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Author @key(fields: "id") { id: ID! bio: String! nick: String! }
         """;
 
+    private const string AuthorNullableBioSource =
+        """
+        type Query { authorById(id: ID!): Author @lookup }
+        type Author @key(fields: "id") { id: ID! bio: String }
+        """;
+
     private const string WeightSource =
         """
         type Query { productById(id: ID!): Product @lookup }
@@ -4300,22 +4406,25 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Review { body: String! }
         """;
 
+    private static readonly (string Name, string Sdl)[] s_productReviewSources =
+    [
+        ("A", """
+            type Query { products: [Product!]! }
+            type Product @key(fields: "id") { id: ID! @shareable }
+            """),
+        ("B", """
+            type Query { productById(id: ID!): Product @lookup }
+            type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
+            type Review @key(fields: "id") { id: ID! @shareable }
+            """),
+        ("C", """
+            type Query { reviewById(id: ID!): Review @lookup }
+            type Review @key(fields: "id") { id: ID! rating: Int! }
+            """)
+    ];
+
     private Task<Gateway> CreateProductReviewGatewayAsync(params string[] releaseOrder)
-        => CreateGatewayAsync(
-            releaseOrder,
-            ("A", """
-                type Query { products: [Product!]! }
-                type Product @key(fields: "id") { id: ID! @shareable }
-                """),
-            ("B", """
-                type Query { productById(id: ID!): Product @lookup }
-                type Product @key(fields: "id") { id: ID! reviews: [Review!]! }
-                type Review @key(fields: "id") { id: ID! @shareable }
-                """),
-            ("C", """
-                type Query { reviewById(id: ID!): Review @lookup }
-                type Review @key(fields: "id") { id: ID! rating: Int! }
-                """));
+        => CreateGatewayAsync(releaseOrder, s_productReviewSources);
 
     private Task<Gateway> CreateProductGatewayAsync(params string[] releaseOrder)
         => CreateGatewayAsync(releaseOrder, ("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));
@@ -4334,12 +4443,32 @@ public partial class SinglePlanDeferTests : FusionTestBase
         string? failingSchema,
         Action<IFusionGatewayBuilder>? configure,
         params (string Name, string Sdl)[] sources)
+        => CreateGatewayAsync(releaseOrder, rewrite, failingSchema, stalledSchema: null, configure, sources);
+
+    // The requests to the stalled schema see the cancellation token of the gateway, and the step of the gate that
+    // is marked as stalled is never answered. The rewrite and the failing schema do not apply to the stalled schema.
+    private Task<Gateway> CreateGatewayAsync(
+        string[] releaseOrder,
+        Func<string, string, string, string>? rewrite,
+        string? failingSchema,
+        string? stalledSchema,
+        Action<IFusionGatewayBuilder>? configure,
+        params (string Name, string Sdl)[] sources)
     {
         var gate = _gate = new ResponseGate(releaseOrder);
         var servers = new List<(string, TestServer)>();
 
         foreach (var (name, sdl) in sources)
         {
+            if (name == stalledSchema)
+            {
+                var stalling = new StallingHandler(gate, name);
+                var stalledServer = CreateSourceSchema(name, sdl, httpClient: new HttpClient(stalling));
+                stalling.InnerHandler = stalledServer.CreateHandler();
+                servers.Add((name, stalledServer));
+                continue;
+            }
+
             HttpMessageInvoker? invoker = null;
             var server = CreateSourceSchema(
                 name,
@@ -4350,7 +4479,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
                     var body = await request.Content.ReadAsStringAsync();
                     await gate.EnterAsync(name, body);
 
-                    if (name == failingSchema)
+                    if (name == failingSchema || gate.Fails(name, body))
                     {
                         return new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError);
                     }
@@ -4416,6 +4545,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         private readonly object _sync = new();
         private readonly List<(int Count, TaskCompletionSource Signal)> _payloadWaiters = [];
         private readonly List<string> _events = [];
+        private readonly List<string> _cancelled = [];
         private int _payloads;
 
         public ResponseGate(string[] order)
@@ -4431,6 +4561,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
         }
 
         public volatile bool Enabled = true;
+
+        // The step ("schema:id") that fails in transport, and the step whose request is never answered.
+        public volatile string? FailingStep;
+        public volatile string? StalledStep;
+
+        // The steps whose request the gateway cancelled while the source had not answered it.
+        public IReadOnlyList<string> CancelledSteps
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return [.. _cancelled];
+                }
+            }
+        }
 
         // The arrival of a request and the completion of a step in the order they happened.
         public IReadOnlyList<string> Events
@@ -4485,6 +4631,24 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 _payloadsAtRelease[index] = _payloads;
             }
         }
+
+        public bool Fails(string schema, string body) => IsStep(FailingStep, schema, body);
+
+        public bool Stalls(string schema, string body) => IsStep(StalledStep, schema, body);
+
+        public void StepCancelled(string schema, string body)
+        {
+            lock (_sync)
+            {
+                foreach (var id in StepId().Matches(body).Select(m => m.Groups[1].Value))
+                {
+                    _cancelled.Add($"{schema}:{id}");
+                }
+            }
+        }
+
+        private static bool IsStep(string? step, string schema, string body)
+            => step is not null && StepId().Matches(body).Any(m => $"{schema}:{m.Groups[1].Value}" == step);
 
         public void AssertEveryStepRan()
         {
@@ -4546,6 +4710,34 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     [GeneratedRegex(@"Op_[0-9a-f]+_(\d+)")]
     private static partial Regex StepId();
+
+    // Answers the requests like the source does, except for the stalled step, which waits until the gateway cancels it.
+    private sealed class StallingHandler(ResponseGate gate, string schema) : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await request.Content!.LoadIntoBufferAsync();
+            var body = await request.Content.ReadAsStringAsync(cancellationToken);
+            await gate.EnterAsync(schema, body);
+
+            if (gate.Stalls(schema, body))
+            {
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    gate.StepCancelled(schema, body);
+                    throw;
+                }
+            }
+
+            return await base.SendAsync(request, cancellationToken);
+        }
+    }
 
     private sealed class StepDoneListener(ResponseGate gate) : FusionExecutionDiagnosticEventListener
     {

@@ -15,13 +15,7 @@
 ## Payload 3
 
 ```json
-{"pending":[{"id":"4","path":["products",0,"reviews",0],"label":"inner"},{"id":"5","path":["products",0,"reviews",1],"label":"inner"},{"id":"6","path":["products",0,"reviews",2],"label":"inner"},{"id":"7","path":["products",1,"reviews",0],"label":"inner"},{"id":"8","path":["products",1,"reviews",1],"label":"inner"},{"id":"9","path":["products",1,"reviews",2],"label":"inner"},{"id":"10","path":["products",2,"reviews",0],"label":"inner"},{"id":"11","path":["products",2,"reviews",1],"label":"inner"},{"id":"12","path":["products",2,"reviews",2],"label":"inner"}],"incremental":[{"id":"0","subPath":["reviews",0],"data":{"id":"s"}},{"id":"0","subPath":["reviews",1],"data":{"id":"s"}},{"id":"0","subPath":["reviews",2],"data":{"id":"s"}},{"id":"1","subPath":["reviews",0],"data":{"id":"s"}},{"id":"1","subPath":["reviews",1],"data":{"id":"s"}},{"id":"1","subPath":["reviews",2],"data":{"id":"s"}},{"id":"2","subPath":["reviews",0],"data":{"id":"s"}},{"id":"2","subPath":["reviews",1],"data":{"id":"s"}},{"id":"2","subPath":["reviews",2],"data":{"id":"s"}}],"completed":[{"id":"0"},{"id":"1"},{"id":"2"}],"hasNext":true}
-```
-
-## Payload 4
-
-```json
-{"completed":[{"id":"4"},{"id":"5"},{"id":"6"},{"id":"7"},{"id":"8"},{"id":"9"},{"id":"10"},{"id":"11"},{"id":"12"}],"hasNext":false}
+{"incremental":[{"id":"0","subPath":["reviews",0],"data":{"id":"s"}},{"id":"0","subPath":["reviews",1],"data":{"id":"s"}},{"id":"0","subPath":["reviews",2],"data":{"id":"s"}},{"id":"1","subPath":["reviews",0],"data":{"id":"s"}},{"id":"1","subPath":["reviews",1],"data":{"id":"s"}},{"id":"1","subPath":["reviews",2],"data":{"id":"s"}},{"id":"2","subPath":["reviews",0],"data":{"id":"s"}},{"id":"2","subPath":["reviews",1],"data":{"id":"s"}},{"id":"2","subPath":["reviews",2],"data":{"id":"s"}}],"completed":[{"id":"0"},{"id":"1"},{"id":"2"}],"hasNext":false}
 ```
 
 ## Requests

@@ -779,19 +779,93 @@ internal sealed partial class SinglePlanDeliveryState
             {
                 var anchor = _found[i];
 
-                if (anchor.Honored)
+                if (anchor.Honored && !HasNothingLeftToSend(document, groupId, anchor.Cursor))
                 {
                     var instance = AddInstance(groupId, anchor.Cursor, anchor.Path!);
                     pending.Add(CreatePending(instance));
                 }
                 else
                 {
-                    // The enclosed groups of an instance that is not honored stand in its place.
+                    // The enclosed groups of an instance that is not honored or has nothing left to send stand in its
+                    // place.
                     Discover(document, groupId, anchor.Cursor, anchor.Path!, pending);
                 }
             }
 
             _found.RemoveRange(start, _found.Count - start);
+        }
+    }
+
+    // No row at or below the anchor object is unsent and no error is left to report for the instance.
+    private bool HasNothingLeftToSend(
+        CompositeResultDocument document,
+        int groupId,
+        CompositeResultDocument.Cursor anchor)
+    {
+        if (IsGroupFailed(groupId)
+            || _stepErrors?[groupId] is { Count: > 0 }
+            || HoldsDeniedAnswer(groupId)
+            || HoldsErrorToReport(groupId, anchor))
+        {
+            return false;
+        }
+
+        return !document.HasUnsentRows(groupId, anchor);
+    }
+
+    private bool HoldsDeniedAnswer(int groupId)
+    {
+        if (_deniedAnswers is null)
+        {
+            return false;
+        }
+
+        foreach (var answer in _deniedAnswers)
+        {
+            if (answer.Groups.Contains(groupId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool HoldsErrorToReport(int groupId, CompositeResultDocument.Cursor anchor)
+    {
+        lock (_sync)
+        {
+            var key = CreateKey(groupId, anchor);
+
+            if (_failedAnchors?.Contains(key) is true
+                || _deniedErrors?.ContainsKey(key) is true)
+            {
+                return true;
+            }
+
+            if (_groupErrors is not null && _groupErrors.TryGetValue(key, out var errors))
+            {
+                foreach (var error in errors)
+                {
+                    if (!error.Sent)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (_sourceErrors is not null)
+            {
+                foreach (var (error, groups) in _sourceErrors)
+                {
+                    if (!error.Sent && groups.Contains(groupId))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 

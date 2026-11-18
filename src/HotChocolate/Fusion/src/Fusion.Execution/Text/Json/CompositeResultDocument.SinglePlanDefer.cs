@@ -723,6 +723,86 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
+    /// Determines whether a row at or below the anchor object that resolves to the group is held back and was
+    /// not sent in a payload.
+    /// </summary>
+    internal bool HasUnsentRows(int groupId, Cursor anchor)
+    {
+        _delivery!.AssertLoopNotRunningElsewhere();
+
+        return HasUnsentRows(anchor, _metaDb.Get(anchor), groupId);
+    }
+
+    private bool HasUnsentRows(Cursor cursor, DbRow row, int groupId)
+    {
+        if (!IsContainer(ref cursor, ref row))
+        {
+            return false;
+        }
+
+        if (row.TokenType is ElementTokenType.StartArray)
+        {
+            var length = row.SizeOrLength;
+
+            for (var i = 0; i < length; i++)
+            {
+                var elementCursor = cursor.AddRows(i + 1);
+
+                if (HasUnsentRows(elementCursor, _metaDb.Get(elementCursor), groupId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        var count = row.SizeOrLength;
+
+        for (var i = 0; i < count; i++)
+        {
+            var propertyCursor = cursor.AddRows((i * 2) + 1);
+            var property = _metaDb.Get(propertyCursor);
+            var flags = property.Flags;
+
+            if ((flags & ElementFlags.IsInternal) == ElementFlags.IsInternal)
+            {
+                continue;
+            }
+
+            var marks = property.DeliveryMarks;
+
+            if ((marks & PropertyMarks.Held) == 0)
+            {
+                if ((flags & ElementFlags.IsExcluded) == ElementFlags.IsExcluded)
+                {
+                    continue;
+                }
+            }
+            else if ((marks & PropertyMarks.Delivered) == 0)
+            {
+                var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+
+                if (SinglePlanDeliveryState.Contains(resolution, groupId))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            var valueCursor = propertyCursor.AddRows(1);
+
+            if (HasUnsentRows(valueCursor, _metaDb.Get(valueCursor), groupId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Finds the objects of the client data that the group applies to below the scope object. An object is
     /// honored when its selection set holds a selection that resolves to the group, and objects that are not
     /// honored are only listed when <paramref name="keepUnhonored"/> is set.
