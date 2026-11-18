@@ -1995,6 +1995,64 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_PlanTheListAsAPartOfTheOuterGroup_When_TheNestedFragmentSelectsAListOfTheOutsideSelection()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema, ReviewKeySchema, ReviewRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products { name reviews { id } }
+                ... @defer(label: "o") {
+                    products {
+                        price
+                        ... @defer(label: "i") { reviews { rating } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepBothGroups_When_TheNestedFragmentSelectsNoListOfTheOutsideSelection()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products { name }
+                ... @defer(label: "o") {
+                    products {
+                        price
+                        ... @defer(label: "i") { rating }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        result.Plan.DeliveryGroups
+            .Select(g => $"{g.Id} {g.Label} {g.Path} parent {g.Parent?.Id}")
+            .MatchInlineSnapshots(
+            [
+                "0 o $ parent ",
+                "1 i $.products parent 0"
+            ]);
+    }
+
+    [Fact]
     public void Plan_Should_KeepTheGroupOfThePartAtItsPlace_When_TheNormalizerRemovesANumberedCopy()
     {
         // arrange

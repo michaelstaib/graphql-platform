@@ -198,6 +198,7 @@ internal static class DeferLowering
     private sealed class Lowerer(FusionSchemaDefinition schema, OperationType operationType)
     {
         private readonly Dictionary<InlineFragmentNode, Site> _sites = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<InlineFragmentNode> _inlined = new(ReferenceEqualityComparer.Instance);
 
         public List<ISelectionNode> LowerPass(IReadOnlyList<ISelectionNode> items, Scope scope)
         {
@@ -248,7 +249,8 @@ internal static class DeferLowering
                 return;
             }
 
-            if (DeferCondition.TryCreate(fragment, out var condition)
+            if (!_inlined.Contains(fragment)
+                && DeferCondition.TryCreate(fragment, out var condition)
                 && TryLowerDeferred(fragment, condition, fragmentType, scope, result))
             {
                 return;
@@ -272,13 +274,26 @@ internal static class DeferLowering
         {
             var items = fragment.SelectionSet.Selections;
             var group = new DeferGroup(scope.Group);
+            var (attempt, content, coverage, state) = AttemptDeferred(
+                fragment,
+                condition,
+                fragmentType,
+                scope,
+                group,
+                true);
 
-            // The content is lowered first, so a nested fragment that was inlined is part of it.
-            var attempt = scope.EnterDeferred(fragmentType, fragment, items, group);
-            var lowered = LowerPass(items, attempt);
-            var coverage = Coverage.Create(scope, fragment.TypeCondition);
-            var state = new PruneState(fragment, group, condition.IfVariableName);
-            var content = Prune(lowered, coverage, fragmentType, 0, false, state);
+            // The collected nested fragments are inlined, and the attempt runs once more without collecting.
+            if (state.NestedToInline is { Count: > 0 } nested)
+            {
+                _inlined.UnionWith(nested);
+                (attempt, content, coverage, state) = AttemptDeferred(
+                    fragment,
+                    condition,
+                    fragmentType,
+                    scope,
+                    group,
+                    false);
+            }
 
             // The decision reads the content that is left after the pruning of the deferred copy.
             if (ShouldInline(content, fragmentType, coverage, scope, state))
@@ -297,7 +312,7 @@ internal static class DeferLowering
             {
                 // The deferred copy drops the leaf fields that an enclosing selection at the same place selects.
                 var (copy, deferred) = CreateDeferredCopy(fragment, condition, content);
-                _sites[deferred] = new Site(group, 0);
+                _sites[deferred] = new Site(group, 0) { Origin = fragment };
                 result.Add(copy);
             }
             else
@@ -311,6 +326,25 @@ internal static class DeferLowering
             scope.Sink.AddRange(attempt.Sink);
             scope.Sink.AddRange(state.Parts);
             return true;
+        }
+
+        private DeferAttempt AttemptDeferred(
+            InlineFragmentNode fragment,
+            DeferCondition condition,
+            ITypeDefinition? fragmentType,
+            Scope scope,
+            DeferGroup group,
+            bool collectNested)
+        {
+            var items = fragment.SelectionSet.Selections;
+
+            // The content is lowered first, so a nested fragment that was inlined is part of it.
+            var attempt = scope.EnterDeferred(fragmentType, fragment, items, group);
+            var lowered = LowerPass(items, attempt);
+            var coverage = Coverage.Create(scope, fragment.TypeCondition);
+            var state = new PruneState(fragment, group, condition.IfVariableName, collectNested);
+            var content = Prune(lowered, coverage, fragmentType, 0, false, state);
+            return new DeferAttempt(attempt, content, coverage, state);
         }
 
         private bool ShouldInline(
@@ -469,6 +503,14 @@ internal static class DeferLowering
                         result.Add(marker);
                         break;
 
+                    // Collects the nested fragments below a covered field that select a list of the outside selection.
+                    case InlineFragmentNode nested when depth > 0
+                        && state.NestedToInline is { } toInline
+                        && HasDeferDirective(nested):
+                        CollectNestedToInline(nested, coverage, type, toInline);
+                        result.Add(nested);
+                        break;
+
                     case InlineFragmentNode fragment when !HasDeferDirective(fragment):
                         var mark = state.Push(fragment.Directives);
                         var content = Prune(
@@ -547,6 +589,70 @@ internal static class DeferLowering
             }
 
             state.Pop(mark);
+        }
+
+        private bool CollectNestedToInline(
+            IReadOnlyList<ISelectionNode> items,
+            Coverage coverage,
+            ITypeDefinition? type,
+            List<InlineFragmentNode> toInline)
+        {
+            var found = false;
+
+            foreach (var item in items)
+            {
+                switch (item)
+                {
+                    case FieldNode { SelectionSet: { } selectionSet } field:
+                        var responseName = GetResponseName(field);
+                        var isList = IsListField(type, field);
+                        var fieldType = GetFieldType(type, field);
+
+                        if (coverage.Fields.TryGetValue(responseName, out var covered))
+                        {
+                            var below = CollectNestedToInline(
+                                selectionSet.Selections,
+                                covered.Child,
+                                fieldType,
+                                toInline);
+                            found |= isList || below;
+                        }
+                        else if (coverage.ConditionalFields.TryGetValue(responseName, out var conditional))
+                        {
+                            found |= isList || SelectsConditionalList(selectionSet.Selections, conditional, fieldType);
+                        }
+
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        found |= CollectNestedToInline(fragment, coverage, type, toInline);
+                        break;
+                }
+            }
+
+            return found;
+        }
+
+        private bool CollectNestedToInline(
+            InlineFragmentNode fragment,
+            Coverage coverage,
+            ITypeDefinition? type,
+            List<InlineFragmentNode> toInline)
+        {
+            var selects = CollectNestedToInline(
+                fragment.SelectionSet.Selections,
+                coverage,
+                GetFragmentType(type, fragment),
+                toInline);
+
+            if (selects
+                && _sites.TryGetValue(fragment, out var site)
+                && site is { Levels: 0, IsMarker: false, Origin: { } origin })
+            {
+                toInline.Add(origin);
+            }
+
+            return selects;
         }
 
         private bool SelectsConditionalList(
@@ -977,7 +1083,11 @@ internal static class DeferLowering
     /// The state of the pruning of one deferred fragment: the parts that it cuts off, the conditions between
     /// the fragment and the current field, and whether it must be inlined.
     /// </summary>
-    private sealed class PruneState(InlineFragmentNode fragment, DeferGroup group, string? switchVariable)
+    private sealed class PruneState(
+        InlineFragmentNode fragment,
+        DeferGroup group,
+        string? switchVariable,
+        bool collectNested)
     {
         public InlineFragmentNode Fragment { get; } = fragment;
 
@@ -988,6 +1098,11 @@ internal static class DeferLowering
         public List<PendingPart> Parts { get; } = [];
 
         public List<DirectiveNode> Conditions { get; } = [];
+
+        /// <summary>
+        /// The nested fragments that must be inlined, or <c>null</c> when the pruning does not collect them.
+        /// </summary>
+        public List<InlineFragmentNode>? NestedToInline { get; } = collectNested ? [] : null;
 
         public int Unsupported { get; private set; }
 
@@ -1043,12 +1158,24 @@ internal static class DeferLowering
 
     /// <summary>
     /// The group of a deferred fragment in the lowered operation, the field levels between a part and the
-    /// place of its fragment, and whether the fragment only marks that place.
+    /// place of its fragment, whether the fragment only marks that place, and the fragment of the operation
+    /// that it was lowered from.
     /// </summary>
     private sealed record Site(DeferGroup Group, int Levels)
     {
         public bool IsMarker { get; init; }
+
+        public InlineFragmentNode? Origin { get; init; }
     }
+
+    /// <summary>
+    /// One lowering and pruning of the content of a deferred fragment.
+    /// </summary>
+    private sealed record DeferAttempt(
+        Scope Scope,
+        List<ISelectionNode> Content,
+        Coverage Coverage,
+        PruneState State);
 
     /// <summary>
     /// One lowering of a selection list: the lowered field of every composite field, by the field it was

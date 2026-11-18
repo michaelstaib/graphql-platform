@@ -2914,6 +2914,102 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineTheNestedFragment_When_ItSelectsAListOfTheOutsideSelectionBelowACoveredField()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                users {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "i") {
+                            friends { total }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              users {
+                name
+                friends {
+                  id
+                  ... @defer(label: "o", __group: 0, __parent: -1, __levels: 2) {
+                    total
+                  }
+                }
+                ... @defer(label: "o", __group: 0, __parent: -1, __levels: 1) {
+                  email
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineTheEnclosingFragments_When_AFragmentBelowThemSelectsAListOfTheOutsideSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query {
+                users {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "i") {
+                            nick
+                            ... @defer(label: "k") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              users {
+                name
+                friends {
+                  id
+                  ... @defer(label: "o", __group: 0, __parent: -1, __levels: 2) {
+                    total
+                  }
+                }
+                ... @defer(label: "o", __group: 0, __parent: -1, __levels: 1) {
+                  email
+                  ... {
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
