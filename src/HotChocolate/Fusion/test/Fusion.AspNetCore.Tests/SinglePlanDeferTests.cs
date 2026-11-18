@@ -1652,6 +1652,60 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheListOnce_When_ANestedFragmentSelectsAListOfAConditionalOutsideSelection(
+        bool x)
+    {
+        // arrange
+        var listRequests = 0;
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) =>
+            {
+                if (schema == "B" && body.Contains("reviews"))
+                {
+                    Interlocked.Increment(ref listRequests);
+                }
+
+                return text;
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float! reviews: [Review!]! }
+                type Review @key(fields: "id") { id: ID! @shareable }
+                """),
+            ("C", """
+                type Query { reviewById(id: ID!): Review @lookup }
+                type Review @key(fields: "id") { id: ID! stars: Int! }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                products @include(if: $x) { name reviews { id } }
+                ... @defer(label: "o") {
+                    products {
+                        price
+                        ... @defer(label: "i") { reviews { stars } }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        // The deferred run and its plain twin ask for the list once each.
+        Assert.Equal(2, listRequests);
+        MatchRun(run, $"x={x}");
+    }
+
     [Fact]
     public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
     {

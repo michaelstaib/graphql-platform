@@ -563,11 +563,19 @@ internal static class DeferLowering
             if (!coverage.Fields.TryGetValue(responseName, out var covered))
             {
                 // The outside selection of a list that D selects carries a condition or a type condition.
-                if (coverage.ConditionalFields.TryGetValue(responseName, out var conditional)
-                    && (isList
-                        || SelectsConditionalList(selectionSet.Selections, conditional, GetFieldType(type, composite))))
+                if (coverage.ConditionalFields.TryGetValue(responseName, out var conditional))
                 {
-                    state.MustInline = true;
+                    var conditionalType = GetFieldType(type, composite);
+
+                    if (isList || SelectsConditionalList(selectionSet.Selections, conditional, conditionalType))
+                    {
+                        state.MustInline = true;
+
+                        if (state.NestedToInline is { } toInline)
+                        {
+                            CollectNestedToInline(selectionSet.Selections, conditional, conditionalType, toInline);
+                        }
+                    }
                 }
 
                 result.Add(composite);

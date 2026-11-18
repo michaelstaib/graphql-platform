@@ -3010,6 +3010,102 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineTheNestedFragment_When_ItSelectsAListOfAConditionalOutsideSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "i") {
+                            friends { total }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    friends {
+                      total
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheNestedFragment_When_ItSelectsOnlyALeafBelowAConditionalOutsideSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "i") {
+                            nick
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... @defer(label: "i", __group: 0, __parent: -1) {
+                    nick
+                  }
+                }
+              }
+            }
+            """);
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
