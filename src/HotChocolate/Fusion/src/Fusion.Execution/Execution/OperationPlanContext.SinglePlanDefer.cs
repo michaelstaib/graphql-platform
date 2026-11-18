@@ -595,8 +595,9 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Decides which marked steps run for this request and which delivery groups are honored.
-    /// A step is needed when one of its top level fields resolves to one of its groups, or when a step that
-    /// depends on it is needed. A group is honored when it is active and a needed step delivers a field to it.
+    /// A step is needed when one of its top level fields resolves to one of its groups, or when a needed step or
+    /// a needed operation of a batch depends on it. A group is honored when it is active and a needed step
+    /// delivers a field to it.
     /// </summary>
     public void ComputeNeeded()
     {
@@ -642,10 +643,48 @@ internal sealed partial class SinglePlanDeliveryState
                         changed = true;
                     }
                 }
+
+                if (node is OperationBatchExecutionNode batch)
+                {
+                    foreach (var definition in batch.Operations)
+                    {
+                        if (Needed[definition.Id] && MarkNeededDependencies(definition))
+                        {
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
 
         ComputeEffectiveChildren();
+    }
+
+    // Marks the steps and operations that the operation takes a key from as needed. Returns whether a flag changed.
+    private bool MarkNeededDependencies(OperationDefinition definition)
+    {
+        var marked = false;
+
+        foreach (var dependency in definition.Dependencies)
+        {
+            var dependencyNode = Plan.GetExecutionNode(dependency);
+
+            if (Needed[dependency.Id] && Needed[dependencyNode.Id])
+            {
+                continue;
+            }
+
+            if (GetDeliveryGroups(dependencyNode).IsDefaultOrEmpty)
+            {
+                continue;
+            }
+
+            Needed[dependency.Id] = true;
+            Needed[dependencyNode.Id] = true;
+            marked = true;
+        }
+
+        return marked;
     }
 
     private bool NeedsAnyGroup(ExecutionNode node, ImmutableArray<int> groups, out List<int> honored)
@@ -659,8 +698,13 @@ internal sealed partial class SinglePlanDeliveryState
                 break;
 
             case OperationBatchExecutionNode batch:
+                List<int>? own = null;
+
                 foreach (var definition in batch.Operations)
                 {
+                    own ??= [];
+                    own.Clear();
+
                     switch (definition)
                     {
                         case SingleOperationDefinition single:
@@ -668,16 +712,32 @@ internal sealed partial class SinglePlanDeliveryState
                                 single.Target,
                                 single.ResultSelectionSet,
                                 definition.DeliveryGroups,
-                                honored);
+                                own);
                             break;
 
                         case BatchOperationDefinition many:
                             foreach (var target in many.Targets)
                             {
-                                CollectHonored(target, many.ResultSelectionSet, definition.DeliveryGroups, honored);
+                                CollectHonored(target, many.ResultSelectionSet, definition.DeliveryGroups, own);
                             }
 
                             break;
+                    }
+
+                    if (own.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    // An operation that delivers to an active group of its own is needed itself.
+                    Needed[definition.Id] = true;
+
+                    foreach (var group in own)
+                    {
+                        if (!honored.Contains(group))
+                        {
+                            honored.Add(group);
+                        }
                     }
                 }
 

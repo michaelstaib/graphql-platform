@@ -393,6 +393,200 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(false, false)]
+    public async Task Defer_Should_DeliverBothNestedFragments_When_AnotherSwitchedFragmentSelectsTheAuthor(
+        bool a,
+        bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a) { author { ... @defer { bio } ... @defer { nick } } }
+                    ... @defer(if: $b) { author { ... @defer { bio } } }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        MatchRun(run, $"a={a}, b={b}");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_DeliverBothNestedFragments_When_AnotherSwitchedFragmentSelectsTheAuthorOfAList(
+        bool a,
+        bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                products {
+                    name
+                    ... @defer(if: $a) { author { ... @defer { bio } ... @defer { nick } } }
+                    ... @defer(if: $b) { author { ... @defer { bio } } }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        MatchRun(run, $"a={a}, b={b}");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_DeliverBothNestedFragments_When_TheSwitchedFragmentsAreLabelled(bool a, bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            a && b ? ["B:8>", "B:6"] : [],
+            ("A", ProductListSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(if: $a, label: "p") { author { ... @defer { bio } ... @defer { nick } } }
+                    ... @defer(if: $b, label: "q") { author { ... @defer { bio } } }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        MatchRun(run, $"a={a}, b={b}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverBothNestedFragments_When_AnIncludedFieldSelectsTheAuthor(bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductListSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer { author { ... @defer { bio } ... @defer { nick } } }
+                    author @include(if: $b) { id }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["b"] = b });
+
+        // assert
+        MatchRun(run, $"b={b}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_NotSendTheKeyLookup_When_TheOperationThatTakesTheKeyIsNotNeeded(bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            b ? [] : ["B:7>", "D:4"],
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource),
+            ("D", EditorKeySource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($b: Boolean!) {
+                first: product(id: "1") {
+                    name
+                    ... @defer { author { ... @defer { bio } } }
+                    author @include(if: $b) { id }
+                }
+                second: product(id: "2") {
+                    name
+                    ... @defer { editor { ... @defer { nick } } }
+                    editor @include(if: $b) { nick }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["b"] = b });
+
+        // assert
+        MatchRun(run, $"b={b}");
+        Assert.Equal(1, run.Deferred.Requests["D"]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheMergedLookupOfTwoTargets_When_ItTakesItsKeysFromOneStep(bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", AuthorAndEditorKeySource),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer { author { bio } editor { bio } }
+                    author @include(if: $b) { id }
+                    editor @include(if: $b) { id }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["b"] = b });
+
+        // assert
+        MatchRun(run, $"b={b}");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
     public async Task Defer_Should_SendOneRequestPerSchema_When_MergedLookupsOfSwitchedFragmentsShareABatch(
         bool a,
         bool b)
@@ -4021,6 +4215,20 @@ public partial class SinglePlanDeferTests : FusionTestBase
         """
         type Query { productById(id: ID!): Product @lookup }
         type Product @key(fields: "id") { id: ID! author: Author! }
+        type Author @key(fields: "id") { id: ID! }
+        """;
+
+    private const string EditorKeySource =
+        """
+        type Query { productByIdForEditor(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! editor: Author! }
+        type Author @key(fields: "id") { id: ID! }
+        """;
+
+    private const string AuthorAndEditorKeySource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! author: Author! editor: Author! }
         type Author @key(fields: "id") { id: ID! }
         """;
 
