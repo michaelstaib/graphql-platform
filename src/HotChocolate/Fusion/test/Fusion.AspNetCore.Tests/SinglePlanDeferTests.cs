@@ -3758,16 +3758,17 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_ReportTheTransportErrorWithoutAPath_When_TheSharedFieldWasDeliveredWithAValue()
+    public async Task Defer_Should_CompleteWithoutAnError_When_TheStepFailsInTransportAfterTheSharedFieldWasDelivered()
     {
         // arrange
+        var transportErrors = new List<string>();
         var gateway = await CreateGatewayAsync(
             ["B:3>", "B:2"],
             (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
                 ? "this is not json"
                 : text,
             failingSchema: null,
-            configure: null,
+            configure: builder => builder.AddDiagnosticEventListener(_ => new TransportErrorListener(transportErrors)),
             ("A", ProductSource),
             ("B", """
                 type Query { productById(id: ID!): Product @lookup }
@@ -3783,8 +3784,216 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
+        Assert.Equal(["B:2"], transportErrors);
         MatchPayloads(run);
     }
+
+    [Fact]
+    public async Task Defer_Should_SendTheEntityErrorOnce_When_UnlabelledSiblingsShareTheStepAndOneFailsOnAnotherField()
+    {
+        // arrange
+        // The steps are B:5 for a, B:2 for both unlabelled fragments and P:4 for the price of the first one.
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "P:4", "B:2"],
+            (schema, body, text) => schema switch
+            {
+                "P" => PriceValue().Replace(text, "\"price\":null"),
+                "B" when StepId().Match(body).Groups[1].Value == "2" => FailedEntity,
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer { author { note } price }
+                    ... @defer { author { note } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNoError_When_TheStepOfADroppedFragmentFailsBeforeTheLastFragmentCompletes()
+    {
+        // arrange
+        // the rating goes out under top, so inner is dropped and its step C:6 fails before last completes
+        var transportErrors = new List<string>();
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "C:4>", "B:5>", "C:6", "D:2"],
+            rewrite: null,
+            failingSchema: null,
+            configure: builder => builder.AddDiagnosticEventListener(_ => new TransportErrorListener(transportErrors)),
+            [
+                .. s_productReviewSources,
+                ("D", """
+                    type Query { productByIdD(id: ID!): Product @lookup }
+                    type Product @key(fields: "id") { id: ID! title: String! }
+                    """)
+            ]);
+        _gate!.FailingStep = "C:6";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                ... @defer(label: "top") { products { reviews { rating } } }
+                products {
+                    id
+                    ... @defer(label: "outer") {
+                        reviews { id ... @defer(label: "inner") { rating } }
+                    }
+                }
+                ... @defer(label: "last") { products { title } }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(["C:6"], transportErrors);
+        MatchPayloadShapes(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotAnnounceTheNestedFragment_When_ItsOnlyFieldWasSentBeforeItsStepFailed()
+    {
+        // arrange
+        // b sends the bio, then the step C:6 of c fails before the price lets a complete
+        var transportErrors = new List<string>();
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "C:3>", "B:4", "C:6", "P:5"],
+            rewrite: null,
+            failingSchema: null,
+            configure: builder => builder.AddDiagnosticEventListener(_ => new TransportErrorListener(transportErrors)),
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource),
+            ("P", SharedPriceSource));
+        _gate!.FailingStep = "C:6";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id ... @defer(label: "c") { bio } } price }
+                    ... @defer(label: "b") { author { bio } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(["C:6"], transportErrors);
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_AnnounceTheNestedFragment_When_ItsSourceReportsAnErrorAfterItsRowsWereSent()
+    {
+        // arrange
+        // t sends the bio, then the step of g reports an error without a path before p completes
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "B:3", "P:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? AddErrorWithoutPath(text)
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, SentBioQuery, []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_AnnounceTheNestedFragment_When_ItsEntityIsMissingAfterItsRowsWereSent()
+    {
+        // arrange
+        // t sends the bio, then the step of g answers a missing entity before p completes
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "B:3", "P:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? MissingEntity
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, SentBioQuery, []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteWithTheError_When_TheStepFailsAndLeavesARowWithoutAResult()
+    {
+        // arrange
+        // t sends the bio, then the step of g fails in transport before p completes, and g also selects the note
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "B:3", "P:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? "this is not json"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "t") { author { bio } }
+                    ... @defer(label: "p") { price ... @defer(label: "g") { author { bio note } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string SentBioQuery =
+        """
+        {
+            product(id: "1") {
+                name
+                ... @defer(label: "t") { author { bio } }
+                ... @defer(label: "p") { price ... @defer(label: "g") { author { bio } } }
+            }
+        }
+        """;
 
     private const string SharedPriceSource =
         """
@@ -4790,6 +4999,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
             }
 
             return await base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    // Records the steps ("schema:id") whose request failed in transport.
+    private sealed class TransportErrorListener(List<string> steps) : FusionExecutionDiagnosticEventListener
+    {
+        public override void SourceSchemaTransportError(
+            OperationPlanContext context,
+            ExecutionNode node,
+            string schemaName,
+            Exception error)
+        {
+            lock (steps)
+            {
+                steps.Add($"{schemaName}:{node.Id}");
+            }
         }
     }
 

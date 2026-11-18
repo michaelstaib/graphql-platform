@@ -1,4 +1,4 @@
-# Defer_Should_ReportTheTransportErrorWithoutAPath_When_TheSharedFieldWasDeliveredWithAValue
+# Defer_Should_CompleteWithoutAnError_When_TheStepFailsInTransportAfterTheSharedFieldWasDelivered
 
 ## Payload 1
 
@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"completed":[{"id":"1","errors":[{"message":"Unexpected Execution Error"}]}],"hasNext":false}
+{"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

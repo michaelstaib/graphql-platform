@@ -40,10 +40,12 @@ internal sealed partial class SinglePlanDeliveryState
     private HashSet<long>? _failedAnchors;
     private List<GroupError>? _takenPayload;
     private List<IError>?[]? _stepErrors;
+    private CompositeResultDocument? _payloadDocument;
     private List<SourceError>? _sourceErrors;
     private Dictionary<long, List<IError>>? _deniedErrors;
     private List<DeniedAnswer>? _deniedAnswers;
     private List<CompositeResultElement>? _unwrittenRows;
+    private List<CompositeResultElement>? _unwrittenOtherRows;
     private ValueCompletion? _completion;
 
     /// <summary>
@@ -73,9 +75,16 @@ internal sealed partial class SinglePlanDeliveryState
     public bool IsFailed(int instance) => (_instanceFlags[instance] & FailedFlag) != 0;
 
     /// <summary>
-    /// Marks an instance as failed.
+    /// Marks an instance as failed because a step of its group failed, unless the instance has nothing left to
+    /// send.
     /// </summary>
-    public void MarkFailed(int instance) => _instanceFlags[instance] |= FailedFlag;
+    public void MarkFailed(int instance)
+    {
+        if (!HasNothingLeftToSend(_payloadDocument!, _instanceGroups[instance], _instanceAnchors[instance]))
+        {
+            _instanceFlags[instance] |= FailedFlag;
+        }
+    }
 
     /// <summary>
     /// Marks the instance of a group at an anchor object as failed, also when it is announced later.
@@ -89,7 +98,7 @@ internal sealed partial class SinglePlanDeliveryState
 
         if (_instanceCount > 0 && TryGetInstance(groupId, anchor, out var instance))
         {
-            MarkFailed(instance);
+            _instanceFlags[instance] |= FailedFlag;
         }
     }
 
@@ -416,7 +425,7 @@ internal sealed partial class SinglePlanDeliveryState
 
             if (failed)
             {
-                if (rows.Count > 0)
+                if (rows.Count > 0 && !IsSentByOpenInstance(document, answer, rows[0], instance))
                 {
                     // The error has the path of the row when no group outside the answer holds the row.
                     var error = _completion!.AddUnwrittenFieldError(
@@ -439,6 +448,44 @@ internal sealed partial class SinglePlanDeliveryState
                 }
             }
         }
+    }
+
+    // Another open instance that has not failed sends the row of the answer together with its error.
+    private bool IsSentByOpenInstance(
+        CompositeResultDocument document,
+        DeniedAnswer answer,
+        CompositeResultElement row,
+        int instance)
+    {
+        var others = _unwrittenOtherRows ??= [];
+
+        for (var other = 0; other < _instanceCount; other++)
+        {
+            if (other == instance
+                || (_instanceFlags[other] & (DoneFlag | FailedFlag)) != 0
+                || !answer.Groups.Contains(_instanceGroups[other]))
+            {
+                continue;
+            }
+
+            others.Clear();
+            document.FindUnwrittenRows(
+                answer.Container,
+                _instanceGroups[other],
+                _instanceAnchors[other],
+                settledOnly: false,
+                others);
+
+            foreach (var candidate in others)
+            {
+                if (candidate.Cursor.Value == row.Cursor.Value)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -639,6 +686,7 @@ internal sealed partial class SinglePlanDeliveryState
     /// </summary>
     public void BeginPayload(CompositeResultDocument document)
     {
+        _payloadDocument = document;
         document.RetireClaims(_crossClaims.AsSpan(0, _crossClaimCount));
         _crossClaimCount = 0;
         _crossRoots?.Clear();
@@ -802,10 +850,7 @@ internal sealed partial class SinglePlanDeliveryState
         int groupId,
         CompositeResultDocument.Cursor anchor)
     {
-        if (IsGroupFailed(groupId)
-            || _stepErrors?[groupId] is { Count: > 0 }
-            || HoldsDeniedAnswer(groupId)
-            || HoldsErrorToReport(groupId, anchor))
+        if (HoldsDeniedAnswer(groupId) || HoldsErrorToReport(groupId, anchor))
         {
             return false;
         }
