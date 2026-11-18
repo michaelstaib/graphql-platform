@@ -794,7 +794,7 @@ nextItem:
         {
             var node = nodes[i];
 
-            if ((skipInternal && OperationCompiler.IsInternalField(node.Node)) || !node.IsIncluded(includeFlags))
+            if ((skipInternal && OperationCompiler.IsInternal(node.Node)) || !node.IsIncluded(includeFlags))
             {
                 continue;
             }
