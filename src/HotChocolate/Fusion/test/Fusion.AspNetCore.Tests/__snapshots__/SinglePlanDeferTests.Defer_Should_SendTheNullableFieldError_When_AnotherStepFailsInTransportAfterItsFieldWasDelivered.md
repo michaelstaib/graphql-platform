@@ -1,4 +1,4 @@
-# Defer_Should_ReportTheTransportError_When_AnotherStepOfTheGroupReportsAnErrorOfANullableField
+# Defer_Should_SendTheNullableFieldError_When_AnotherStepFailsInTransportAfterItsFieldWasDelivered
 
 ## Payload 1
 
@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"completed":[{"id":"1","errors":[{"message":"Unexpected Execution Error"},{"message":"Unexpected Execution Error","path":["product","price"]}]}],"hasNext":false}
+{"incremental":[{"id":"1","errors":[{"message":"Unexpected Execution Error","path":["product","price"]}],"data":{"price":null}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests

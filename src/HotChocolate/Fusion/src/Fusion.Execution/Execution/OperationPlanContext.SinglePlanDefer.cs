@@ -104,6 +104,7 @@ public sealed partial class OperationPlanContext
             var groups = state.GetDeliveryGroups(error.ResultSelectionSet);
 
             state.AddStepError(error.Error, groups);
+            state.AddDependentStepError(error.Error, error.ResultSelectionSet);
 
             var errorCount = ErrorCount;
 

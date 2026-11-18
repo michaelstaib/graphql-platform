@@ -40,6 +40,7 @@ internal sealed partial class SinglePlanDeliveryState
     private HashSet<long>? _failedAnchors;
     private List<GroupError>? _takenPayload;
     private List<IError>?[]? _stepErrors;
+    private bool[]? _dependencyFailed;
     private CompositeResultDocument? _payloadDocument;
     private List<SourceError>? _sourceErrors;
     private Dictionary<long, List<IError>>? _deniedErrors;
@@ -75,15 +76,76 @@ internal sealed partial class SinglePlanDeliveryState
     public bool IsFailed(int instance) => (_instanceFlags[instance] & FailedFlag) != 0;
 
     /// <summary>
-    /// Marks an instance as failed because a step of its group failed, unless the instance has nothing left to
-    /// send.
+    /// Marks an instance of a group with a failed step as failed when the failure left a row of the instance
+    /// without a result or reported an error for a row of the instance. Otherwise the instance stays open or
+    /// completes without errors.
     /// </summary>
     public void MarkFailed(int instance)
     {
-        if (!HasNothingLeftToSend(_payloadDocument!, _instanceGroups[instance], _instanceAnchors[instance]))
+        var groupId = _instanceGroups[instance];
+        var anchor = _instanceAnchors[instance];
+
+        if (HoldsStepFailure(groupId, anchor)
+            || HoldsRowWithoutResult(groupId, anchor)
+            || (FailedWhileMerging(groupId) && _payloadDocument!.HasUnsentRows(groupId, anchor)))
         {
             _instanceFlags[instance] |= FailedFlag;
         }
+    }
+
+    // A failed step reported an error for a row of the instance that held a result, or recorded an error as the
+    // result of a row of the instance that no payload sent yet.
+    private bool HoldsStepFailure(int groupId, CompositeResultDocument.Cursor anchor)
+    {
+        lock (_sync)
+        {
+            var key = CreateKey(groupId, anchor);
+
+            if (_deniedErrors?.ContainsKey(key) is true)
+            {
+                return true;
+            }
+
+            if (_groupErrors is not null && _groupErrors.TryGetValue(key, out var errors))
+            {
+                foreach (var error in errors)
+                {
+                    if (error.IsStepError && !error.Sent)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+    }
+
+    // A row of the group at or below the anchor object holds no result and no step can write it any more.
+    private bool HoldsRowWithoutResult(int groupId, CompositeResultDocument.Cursor anchor)
+    {
+        var rows = _unwrittenOtherRows ??= [];
+
+        rows.Clear();
+        _payloadDocument!.FindUnwrittenRows(anchor, groupId, anchor, settledOnly: true, rows);
+
+        var found = rows.Count > 0;
+        rows.Clear();
+        return found;
+    }
+
+    // A step of the group failed while its answer was merged.
+    private bool FailedWhileMerging(int groupId)
+    {
+        foreach (var node in NodesByGroup[groupId])
+        {
+            if (Failed[node.Id] && FailureExceptions[node.Id] is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -512,6 +574,78 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
+    /// Records the error of a failed step for the groups of the steps that require it, directly or through other
+    /// steps.
+    /// </summary>
+    public void AddDependentStepError(IError error, ResultSelectionSet resultSelectionSet)
+    {
+        foreach (var node in _markedNodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode operation
+                    when ReferenceEquals(operation.ResultSelectionSet, resultSelectionSet):
+                    AddDependentStepError(error, operation);
+                    return;
+
+                case OperationBatchExecutionNode batch:
+                    foreach (var definition in batch.Operations)
+                    {
+                        if (ReferenceEquals(definition.ResultSelectionSet, resultSelectionSet))
+                        {
+                            AddDependentStepError(error, definition);
+                            AddDependentStepError(error, batch);
+                            return;
+                        }
+                    }
+
+                    break;
+            }
+        }
+    }
+
+    private void AddDependentStepError(IError error, IOperationPlanNode failed)
+    {
+        foreach (var dependent in failed.Dependents)
+        {
+            if (!Requires(dependent, failed))
+            {
+                continue;
+            }
+
+            var groups = dependent is OperationDefinition definition
+                ? definition.DeliveryGroups
+                : GetDeliveryGroups(Plan.GetExecutionNode(dependent));
+
+            if (!groups.IsDefaultOrEmpty)
+            {
+                AddStepError(error, groups);
+                _dependencyFailed ??= new bool[_groupsById.Length];
+
+                foreach (var group in groups)
+                {
+                    _dependencyFailed[group] = true;
+                }
+            }
+
+            AddDependentStepError(error, dependent);
+        }
+    }
+
+    private static bool Requires(IOperationPlanNode dependent, IOperationPlanNode dependency)
+    {
+        foreach (var required in dependent.Dependencies)
+        {
+            if (required.Id == dependency.Id)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Gets the errors that the failed steps of the group reported, or <c>null</c> when there are none.
     /// </summary>
     public ImmutableList<IError>? GetStepErrors(int groupId)
@@ -586,7 +720,7 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Determines whether every step that carries the group is done, skipped or failed, and whether one of
-    /// them failed.
+    /// them failed or requires a step that failed.
     /// </summary>
     public bool IsGroupSettled(int groupId, ExecutionState executionState, out bool failed)
     {
@@ -605,6 +739,11 @@ internal sealed partial class SinglePlanDeliveryState
                         status = 3;
                         break;
                     }
+                }
+
+                if (status == 2 && _dependencyFailed?[groupId] is true)
+                {
+                    status = 3;
                 }
             }
         }
@@ -850,30 +989,12 @@ internal sealed partial class SinglePlanDeliveryState
         int groupId,
         CompositeResultDocument.Cursor anchor)
     {
-        if (HoldsDeniedAnswer(groupId) || HoldsErrorToReport(groupId, anchor))
+        if (HoldsErrorToReport(groupId, anchor))
         {
             return false;
         }
 
         return !document.HasUnsentRows(groupId, anchor);
-    }
-
-    private bool HoldsDeniedAnswer(int groupId)
-    {
-        if (_deniedAnswers is null)
-        {
-            return false;
-        }
-
-        foreach (var answer in _deniedAnswers)
-        {
-            if (answer.Groups.Contains(groupId))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private bool HoldsErrorToReport(int groupId, CompositeResultDocument.Cursor anchor)

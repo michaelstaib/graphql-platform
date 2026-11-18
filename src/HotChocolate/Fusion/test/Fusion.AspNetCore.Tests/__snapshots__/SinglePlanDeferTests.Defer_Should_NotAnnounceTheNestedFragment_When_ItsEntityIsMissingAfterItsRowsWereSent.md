@@ -1,4 +1,4 @@
-# Defer_Should_AnnounceTheNestedFragment_When_ItsEntityIsMissingAfterItsRowsWereSent
+# Defer_Should_NotAnnounceTheNestedFragment_When_ItsEntityIsMissingAfterItsRowsWereSent
 
 ## Payload 1
 
@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"pending":[{"id":"2","path":["product"],"label":"g"}],"incremental":[{"id":"1","data":{"price":123.456}}],"completed":[{"id":"1"},{"id":"2"}],"hasNext":false}
+{"incremental":[{"id":"1","data":{"price":123.456}}],"completed":[{"id":"1"}],"hasNext":false}
 ```
 
 ## Requests
