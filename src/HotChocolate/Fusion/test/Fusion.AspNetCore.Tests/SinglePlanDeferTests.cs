@@ -1950,6 +1950,105 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run, $"x={x}");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheListOnce_When_AnObjectBelowAConditionalFieldHoldsTheNestedFragment(bool x)
+    {
+        // arrange
+        var (gateway, listRequests) = await CreateReviewListGatewayAsync(ShelfTopSource);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                shelf @include(if: $x) { top { name reviews { id } } }
+                ... @defer(label: "o") {
+                    shelf {
+                        top {
+                            price
+                            ... @defer(label: "i") { reviews { stars } }
+                        }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        // The deferred run and its plain twin ask for the list once each.
+        Assert.Equal(2, listRequests());
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        MatchRun(run, $"x={x}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheListOnce_When_AConditionalFieldOfARootFieldHoldsTheNestedFragment(bool x)
+    {
+        // arrange
+        var (gateway, listRequests) = await CreateReviewListGatewayAsync(ShelfTopSource);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                product(id: "1") @include(if: $x) { related { name reviews { id } } }
+                ... @defer(label: "o") {
+                    product(id: "1") {
+                        related {
+                            price
+                            ... @defer(label: "i") { reviews { stars } }
+                        }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        // The deferred run and its plain twin ask for the list once each.
+        Assert.Equal(2, listRequests());
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        MatchRun(run, $"x={x}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheListOnce_When_TheConditionalFieldIsBelowAFieldThatIsAlwaysSelected(bool x)
+    {
+        // arrange
+        var (gateway, listRequests) = await CreateReviewListGatewayAsync(ShelfTopSource);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                shelf { id top @include(if: $x) { name reviews { id } } }
+                ... @defer(label: "o") {
+                    shelf {
+                        top {
+                            price
+                            ... @defer(label: "i") { reviews { stars } }
+                        }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        // The deferred run and its plain twin ask for the list once each.
+        Assert.Equal(2, listRequests());
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        MatchRun(run, $"x={x}");
+    }
+
     [Fact]
     public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
     {
@@ -7013,6 +7112,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Product @key(fields: "id") { id: ID! name: String! }
         """;
 
+    private const string ShelfTopSource =
+        """
+        type Query { product(id: ID!): Product @lookup shelf: Shelf }
+        type Shelf { id: ID! top: Product! items: [Product!]! }
+        type Product @key(fields: "id") { id: ID! name: String! related: Product }
+        """;
+
     private const string ProductTwoKeysSource =
         """
         type Query {
@@ -7067,6 +7173,37 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     private Task<Gateway> CreateProductReviewGatewayAsync(params string[] releaseOrder)
         => CreateGatewayAsync(releaseOrder, s_productReviewSources);
+
+    // The second member of the result returns the number of requests to the source schema B so far that select the
+    // reviews.
+    private async Task<(Gateway Gateway, Func<int> ListRequests)> CreateReviewListGatewayAsync(string sourceA)
+    {
+        var count = 0;
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) =>
+            {
+                if (schema == "B" && body.Contains("reviews"))
+                {
+                    Interlocked.Increment(ref count);
+                }
+
+                return text;
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", sourceA),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float! reviews: [Review!]! }
+                type Review @key(fields: "id") { id: ID! @shareable }
+                """),
+            ("C", """
+                type Query { reviewById(id: ID!): Review @lookup }
+                type Review @key(fields: "id") { id: ID! stars: Int! }
+                """));
+        return (gateway, () => Volatile.Read(ref count));
+    }
 
     private Task<Gateway> CreateProductGatewayAsync(params string[] releaseOrder)
         => CreateGatewayAsync(releaseOrder, ("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));

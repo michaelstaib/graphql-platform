@@ -31,6 +31,7 @@ public class DeferLoweringTests : FusionTestBase
             profile: Profile!
             profiles: [Profile!]!
             friends: [User!]!
+            manager: User
         }
 
         type Profile {
@@ -3486,6 +3487,291 @@ public class DeferLoweringTests : FusionTestBase
                   ... {
                     nick
                     ... {
+                      friends {
+                        total
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineTheFragments_When_TheNestedFragmentSelectsAListBelowAConditionalOutsideObject()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    manager {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        manager {
+                            email
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                manager {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  manager {
+                    email
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineTheFragments_When_TheConditionalOutsideFieldLiesBelowAFieldThatIsAlwaysSelected()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") {
+                    id
+                    manager @include(if: $x) {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        manager {
+                            email
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") {
+                id
+                manager @include(if: $x) {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  manager {
+                    email
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineOnlyTheListFragment_When_TwoNestedFragmentsLieBelowAConditionalOutsideObject()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    manager {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        manager {
+                            email
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                            ... @defer(label: "j") {
+                                nick
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                manager {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... {
+                user(id: "1") {
+                  manager {
+                    email
+                    ... {
+                      friends {
+                        total
+                      }
+                    }
+                    ... @defer(label: "j", __group: 0, __parent: -1) {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheNestedFragment_When_ItSelectsOnlyALeafBelowAnObjectOfAConditionalOutsideSelection()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    manager {
+                        name
+                        friends { id }
+                    }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        manager {
+                            email
+                            ... @defer(label: "i") {
+                                nick
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                manager {
+                  name
+                  friends {
+                    id
+                  }
+                }
+              }
+              ... @defer(label: "o", __group: 0, __parent: -1) {
+                user(id: "1") {
+                  manager {
+                    email
+                    ... @defer(label: "i", __group: 1, __parent: 0) {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheNestedFragment_When_TheConditionalOutsideSelectionBelowAnObjectLacksItsList()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                user(id: "1") @include(if: $x) {
+                    manager { name }
+                }
+                ... @defer(label: "o") {
+                    user(id: "1") {
+                        manager {
+                            email
+                            ... @defer(label: "i") {
+                                friends { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              user(id: "1") @include(if: $x) {
+                manager {
+                  name
+                }
+              }
+              ... @defer(label: "o", __group: 0, __parent: -1) {
+                user(id: "1") {
+                  manager {
+                    email
+                    ... @defer(label: "i", __group: 1, __parent: 0) {
                       friends {
                         total
                       }

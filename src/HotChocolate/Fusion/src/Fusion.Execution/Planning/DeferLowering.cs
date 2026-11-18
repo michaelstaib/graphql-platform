@@ -566,12 +566,11 @@ internal static class DeferLowering
                     if (isList || SelectsConditionalList(selectionSet.Selections, conditional, conditionalType))
                     {
                         state.MustInline = true;
-                        CollectNestedToInline(
-                            selectionSet.Selections,
-                            conditional,
-                            conditionalType,
-                            state.NestedToInline);
                     }
+
+                    // A nested deferred fragment that selects a list of the outside selection is inlined, whether
+                    // or not the enclosing fragment selects that list itself.
+                    CollectNestedToInline(selectionSet.Selections, conditional, conditionalType, state.NestedToInline);
                 }
 
                 result.Add(composite);
