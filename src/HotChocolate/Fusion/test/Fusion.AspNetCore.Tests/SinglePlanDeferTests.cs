@@ -2180,7 +2180,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
-            keyStepFirst ? ["A:3", "B:2"] : ["B:2", "A:3"],
+            keyStepFirst ? ["A:3", "B:2"] : ["B:2>", "A:3"],
             ("A", ProductListSource),
             ("B", PriceSource),
             ("C", ReviewsSource));
