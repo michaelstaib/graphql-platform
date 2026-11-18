@@ -20,6 +20,7 @@ public sealed partial class OperationPlanner
 {
     private const string UploadScalarName = "Upload";
     private const string DynamicSchemaNameMarker = "__dynamic__";
+    private const string UnlabelledBatchMark = "unlabelled";
 
     /// <summary>
     /// Converts the planner's intermediate plan steps into a final execution plan
@@ -1776,25 +1777,15 @@ public sealed partial class OperationPlanner
         return primary.Id;
     }
 
-    // Checks that the groups share one parent and path without a label and that the members hold equal conditions.
+    // Checks that the groups are unlabelled siblings and that the members hold equal conditions.
     private static bool AreUnlabelledSiblingsWithEqualConditions(
         ExecutionPlanBuildContext ctx,
         List<OperationExecutionNode> group,
         ImmutableArray<int> deliveryGroups)
     {
-        var site = ctx.DeliveryGroups[deliveryGroups[0]];
-
-        foreach (var id in deliveryGroups)
+        if (!TryGetUnlabelledSite(ctx, deliveryGroups, out _))
         {
-            var sibling = ctx.DeliveryGroups[id];
-
-            if (sibling.Label is not null
-                || sibling.Path is null
-                || sibling.Parent?.Id != site.Parent?.Id
-                || !sibling.Path.Equals(site.Path))
-            {
-                return false;
-            }
+            return false;
         }
 
         var conditions = FormatCanonicalConditions(group[0].Conditions);
@@ -2030,7 +2021,7 @@ public sealed partial class OperationPlanner
                 schemaKey,
                 depth,
                 GetSerialScope(serialScopes, node.Id),
-                FormatMergeMark(ctx, node.DeliveryGroups));
+                FormatBatchMark(ctx, node.DeliveryGroups));
 
             if (!batchGroups.TryGetValue(key, out var group))
             {
@@ -2093,6 +2084,10 @@ public sealed partial class OperationPlanner
             perOperationDependencies[batchNode] = memberDependencies;
         }
 
+        Debug.Assert(
+            AreDependenciesOnBatchedGroupStepsCovered(ctx, originalDependencies),
+            "A dependency on a step of a batch must name a member of one batch whose conditions the dependent holds.");
+
         // Remove consumed merge results so the caller knows which ones still
         // need to be wrapped as standalone batch nodes.
         foreach (var id in consumedMergeIds)
@@ -2101,6 +2096,127 @@ public sealed partial class OperationPlanner
         }
 
         return perOperationDependencies;
+    }
+
+    // Checks that every dependency on a batched step of a delivery group names a member of one batch
+    // and that the dependent holds the conditions of that member.
+    private static bool AreDependenciesOnBatchedGroupStepsCovered(
+        ExecutionPlanBuildContext ctx,
+        Dictionary<int, int[]> originalDependencies)
+    {
+        if (ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        var members = new Dictionary<int, OperationDefinition>();
+
+        foreach (var node in ctx.ExecutionNodes.Values)
+        {
+            if (node is not OperationBatchExecutionNode batch)
+            {
+                continue;
+            }
+
+            foreach (var operation in batch.Operations)
+            {
+                if (!members.TryAdd(operation.Id, operation))
+                {
+                    return false;
+                }
+            }
+        }
+
+        foreach (var (dependentId, dependencyIds) in originalDependencies)
+        {
+            foreach (var dependencyId in dependencyIds)
+            {
+                if (!members.TryGetValue(dependencyId, out var member) || member.DeliveryGroups.IsDefaultOrEmpty)
+                {
+                    continue;
+                }
+
+                ExecutionNodeCondition[] conditions;
+                ExecutionNodeCondition[][] alternatives;
+
+                if (members.TryGetValue(dependentId, out var dependentMember))
+                {
+                    conditions = dependentMember.Conditions.ToArray();
+                    alternatives = dependentMember.ConditionAlternatives.ToArray();
+                }
+                else if (ctx.ExecutionNodes.TryGetValue(dependentId, out var step)
+                    && step is OperationExecutionNode dependent)
+                {
+                    conditions = dependent.Conditions.ToArray();
+                    alternatives = dependent.ConditionAlternatives.ToArray();
+                }
+                else
+                {
+                    continue;
+                }
+
+                foreach (var condition in member.Conditions)
+                {
+                    if (Array.IndexOf(conditions, condition) < 0)
+                    {
+                        return false;
+                    }
+                }
+
+                if (member.ConditionAlternatives.Length == 0)
+                {
+                    continue;
+                }
+
+                if (alternatives.Length == 0)
+                {
+                    if (!HoldsAlternative(conditions, [], member.ConditionAlternatives))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                foreach (var alternative in alternatives)
+                {
+                    if (!HoldsAlternative(conditions, alternative, member.ConditionAlternatives))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // Checks that the two condition sets together contain every condition of one of the alternatives.
+    private static bool HoldsAlternative(
+        ExecutionNodeCondition[] conditions,
+        ExecutionNodeCondition[] alternative,
+        ReadOnlySpan<ExecutionNodeCondition[]> alternatives)
+    {
+        foreach (var candidate in alternatives)
+        {
+            var holds = true;
+
+            foreach (var condition in candidate)
+            {
+                if (Array.IndexOf(conditions, condition) < 0 && Array.IndexOf(alternative, condition) < 0)
+                {
+                    holds = false;
+                    break;
+                }
+            }
+
+            if (holds)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2941,13 +3057,30 @@ public sealed partial class OperationPlanner
 
     // Names the groups of a mark. Unlabelled groups with the same parent and path share one name.
     private static string FormatMergeMark(ExecutionPlanBuildContext ctx, ImmutableArray<int> deliveryGroups)
+        => TryGetUnlabelledSite(ctx, deliveryGroups, out var site)
+            ? $"unlabelled:{site.Parent?.Id}:{site.Path}"
+            : FormatDeliveryGroups(deliveryGroups);
+
+    // Names the groups of a batch key. Every unlabelled group shares one name, whatever its parent and path.
+    private static string FormatBatchMark(ExecutionPlanBuildContext ctx, ImmutableArray<int> deliveryGroups)
+        => TryGetUnlabelledSite(ctx, deliveryGroups, out _)
+            ? UnlabelledBatchMark
+            : FormatDeliveryGroups(deliveryGroups);
+
+    // Checks that the groups are unlabelled and share one parent and path, and returns the first of them.
+    private static bool TryGetUnlabelledSite(
+        ExecutionPlanBuildContext ctx,
+        ImmutableArray<int> deliveryGroups,
+        [NotNullWhen(true)] out DeliveryGroup? site)
     {
+        site = null;
+
         if (deliveryGroups.IsDefaultOrEmpty || ctx.DeliveryGroups.IsDefaultOrEmpty)
         {
-            return FormatDeliveryGroups(deliveryGroups);
+            return false;
         }
 
-        var site = ctx.DeliveryGroups[deliveryGroups[0]];
+        var first = ctx.DeliveryGroups[deliveryGroups[0]];
 
         foreach (var id in deliveryGroups)
         {
@@ -2955,14 +3088,15 @@ public sealed partial class OperationPlanner
 
             if (group.Label is not null
                 || group.Path is null
-                || group.Parent?.Id != site.Parent?.Id
-                || !group.Path.Equals(site.Path))
+                || group.Parent?.Id != first.Parent?.Id
+                || !group.Path.Equals(first.Path))
             {
-                return FormatDeliveryGroups(deliveryGroups);
+                return false;
             }
         }
 
-        return $"unlabelled:{site.Parent?.Id}:{site.Path}";
+        site = first;
+        return true;
     }
 
     /// <summary>

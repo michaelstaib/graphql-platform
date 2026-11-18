@@ -554,6 +554,109 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_BatchTheLookups_When_UnlabelledFragmentsSitAtAnAbstractAndAConcreteAnchor()
+    {
+        // arrange
+        var schema = ComposeSchema(ItemListSchema, PricedBookSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                items { id ...F }
+                book(id: "1") { id ...F }
+            }
+
+            fragment F on Book {
+                ... @defer { rating }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_BatchTheInnerLookups_When_NestedUnlabelledFragmentsHaveDifferentParents()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { author { ... @defer { bio } } }
+                    ... @defer { author { ... @defer { nick } } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_NotFallBack_When_MergedLookupsOfSwitchedFragmentsShareABatchWithAnotherLookup()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductPairSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer {
+                        ... @include(if: $a) { author { ... @defer { bio } } }
+                        ... @include(if: $b) { author { ... @defer { nick } } }
+                    }
+                }
+                topProduct {
+                    name
+                    ... @defer { author { id } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheLookupsApart_When_LabelledFragmentsSitAtDifferentPaths()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, AuthorAndEditorSchema, AuthorBioAndNickSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    author { ... @defer(label: "a") { bio } }
+                    editor { ... @defer(label: "e") { bio } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MergeTheRequirementStepsOfBothSiblings_When_UnlabelledSiblingsFetchTheSameRequireField()
     {
         // arrange
@@ -2879,6 +2982,41 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         }
 
         type Book implements Item @key(fields: "id") {
+            id: ID!
+            name: String!
+        }
+        """;
+
+    private const string ItemListSchema =
+        """
+        # name: a
+        type Query {
+            items: [Item!]!
+            book(id: ID!): Book @lookup
+        }
+
+        interface Item {
+            id: ID!
+        }
+
+        type Book implements Item @key(fields: "id") {
+            id: ID!
+        }
+
+        type Movie implements Item {
+            id: ID!
+        }
+        """;
+
+    private const string ProductPairSchema =
+        """
+        # name: a
+        type Query {
+            product(id: ID!): Product @lookup
+            topProduct: Product
+        }
+
+        type Product @key(fields: "id") {
             id: ID!
             name: String!
         }

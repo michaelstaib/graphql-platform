@@ -342,6 +342,46 @@ nodes:
           upc
     dependencies:
       - id: 1
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_5_upc: String!) {
+        productByUpcB(upc: $__fusion_5_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 11
+    requirements:
+      - name: __fusion_5_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 9
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_9($__fusion_10_upc: String!) {
+        productByUpcB(upc: $__fusion_10_upc) {
+          price(cur: "USD")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 11
+    requirements:
+      - name: __fusion_10_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
   - id: 4
     type: Operation
     schema: a
@@ -353,6 +393,7 @@ nodes:
       }
     source: $.productByUpc
     target: $.products
+    batchingGroupId: 12
     requirements:
       - name: __fusion_3_price
         selectionMap: >-
@@ -365,25 +406,6 @@ nodes:
     dependencies:
       - id: 1
       - id: 5
-  - id: 5
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_5($__fusion_5_upc: String!) {
-        productByUpcB(upc: $__fusion_5_upc) {
-          price(cur: "EUR")
-        }
-      }
-    source: $.productByUpcB
-    target: $.products
-    requirements:
-      - name: __fusion_5_upc
-        selectionMap: >-
-          upc
-    deliveryGroups:
-      - 0
-    dependencies:
-      - id: 1
   - id: 8
     type: Operation
     schema: a
@@ -395,6 +417,7 @@ nodes:
       }
     source: $.productByUpc
     target: $.products
+    batchingGroupId: 12
     requirements:
       - name: __fusion_8_price
         selectionMap: >-
@@ -407,25 +430,6 @@ nodes:
     dependencies:
       - id: 1
       - id: 9
-  - id: 9
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_9($__fusion_10_upc: String!) {
-        productByUpcB(upc: $__fusion_10_upc) {
-          price(cur: "USD")
-        }
-      }
-    source: $.productByUpcB
-    target: $.products
-    requirements:
-      - name: __fusion_10_upc
-        selectionMap: >-
-          upc
-    deliveryGroups:
-      - 1
-    dependencies:
-      - id: 1
 deliveryGroups:
   - id: 0
     path: $.products

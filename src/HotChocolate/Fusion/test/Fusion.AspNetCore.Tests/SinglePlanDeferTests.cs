@@ -295,9 +295,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_DeliverBothNestedFragments_When_UnlabelledSiblingsShareTheOuterStep()
     {
         // arrange
-        // the response of the shared outer lookup reaches the gateway first, then each nested lookup answers.
+        // the response of the shared outer lookup reaches the gateway first, then the shared nested lookup answers.
         var gateway = await CreateGatewayAsync(
-            ["B:2>", "C:3", "C:5"],
+            ["B:2>", "C:3"],
             ("A", ProductSource),
             ("B", AuthorKeySource),
             ("C", AuthorBioSource));
@@ -318,7 +318,148 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchRun(run);
-        Assert.True(run.Deferred.Requests.Values.Sum() <= 4, run.Deferred.RequestSummary);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendOneRequest_When_UnlabelledFragmentsSitAtAnAbstractAndAConcreteAnchor()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query {
+                    items: [Item!]! @returns(types: ["Book", "Movie", "Book"])
+                    book(id: ID!): Book @lookup
+                }
+                interface Item { id: ID! }
+                type Book implements Item @key(fields: "id") { id: ID! }
+                type Movie implements Item { id: ID! }
+                """),
+            ("B", """
+                type Query { bookById(id: ID!): Book @lookup }
+                type Book @key(fields: "id") { id: ID! rating: Int! }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                items { id ...F }
+                book(id: "1") { id ...F }
+            }
+
+            fragment F on Book {
+                ... @defer { rating }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendOneRequest_When_NestedUnlabelledFragmentsHaveDifferentParents()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { author { ... @defer { bio } } }
+                    ... @defer { author { ... @defer { nick } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_SendOneRequestPerSchema_When_MergedLookupsOfSwitchedFragmentsShareABatch(
+        bool a,
+        bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { product(id: ID!): Product @lookup topProduct: Product }
+                type Product @key(fields: "id") { id: ID! name: String! }
+                """),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioAndNickSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer {
+                        ... @include(if: $a) { author { ... @defer { bio } } }
+                        ... @include(if: $b) { author { ... @defer { nick } } }
+                    }
+                }
+                topProduct {
+                    name
+                    ... @defer { author { id } }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        MatchRun(run, $"a={a}, b={b}");
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendOuterDataBeforeInnerData_When_TheLookupsOfAnOuterAndAnInnerGroupShareARequest()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { products: [Product!]! productByUpc(upc: String!): Product @lookup }
+                type Product @key(fields: "upc") {
+                    upc: String!
+                    eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+                    usd(price: Int @require(field: "price(cur: \"USD\")")): Int
+                }
+                """),
+            ("B", """
+                type Query { productByUpcB(upc: String!): Product @lookup }
+                type Product @key(fields: "upc") { upc: String! price(cur: String): Int }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { upc ... @defer { eur ... @defer { usd } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, compareValues: false);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
     }
 
     [Theory]
@@ -3887,6 +4028,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
         """
         type Query { authorById(id: ID!): Author @lookup }
         type Author @key(fields: "id") { id: ID! bio: String! }
+        """;
+
+    private const string AuthorBioAndNickSource =
+        """
+        type Query { authorById(id: ID!): Author @lookup }
+        type Author @key(fields: "id") { id: ID! bio: String! nick: String! }
         """;
 
     private const string WeightSource =

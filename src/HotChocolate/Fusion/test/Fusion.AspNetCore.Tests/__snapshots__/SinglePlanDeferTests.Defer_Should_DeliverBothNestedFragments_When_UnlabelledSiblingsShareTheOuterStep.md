@@ -15,18 +15,12 @@
 ## Payload 3
 
 ```json
-{"incremental":[{"id":"3","data":{"bio":"s"}}],"completed":[{"id":"3"}],"hasNext":true}
-```
-
-## Payload 4
-
-```json
-{"completed":[{"id":"2"}],"hasNext":false}
+{"incremental":[{"id":"2","data":{"bio":"s"}}],"completed":[{"id":"2"},{"id":"3"}],"hasNext":false}
 ```
 
 ## Requests
 
 ```text
-deferred: A=1, B=1, C=2
+deferred: A=1, B=1, C=1
 plain twin: A=1, B=1, C=1
 ```

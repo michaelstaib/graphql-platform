@@ -53,6 +53,7 @@ nodes:
       }
     source: $.authorById
     target: $.product.author
+    batchingGroupId: 6
     requirements:
       - name: __fusion_2_id
         selectionMap: >-
@@ -60,7 +61,7 @@ nodes:
     deliveryGroups:
       - 3
     dependencies:
-      - id: 6
+      - id: 2
   - id: 5
     type: Operation
     schema: c
@@ -72,6 +73,7 @@ nodes:
       }
     source: $.authorById
     target: $.product.author
+    batchingGroupId: 6
     requirements:
       - name: __fusion_4_id
         selectionMap: >-
@@ -79,7 +81,7 @@ nodes:
     deliveryGroups:
       - 1
     dependencies:
-      - id: 6
+      - id: 2
   - id: 2
     type: OperationBatch
     schema: b
@@ -96,7 +98,7 @@ nodes:
     source: $.productById
     targets:
       - $.product
-    batchingGroupId: 6
+    batchingGroupId: 7
     requirements:
       - name: __fusion_1_id
         selectionMap: >-

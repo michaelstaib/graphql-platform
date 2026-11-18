@@ -69,6 +69,7 @@ nodes:
       }
     source: $.authorById
     target: $.product.editor
+    batchingGroupId: 5
     requirements:
       - name: __fusion_2_id
         selectionMap: >-
@@ -88,6 +89,7 @@ nodes:
       }
     source: $.authorById
     target: $.product.author
+    batchingGroupId: 5
     requirements:
       - name: __fusion_3_id
         selectionMap: >-
