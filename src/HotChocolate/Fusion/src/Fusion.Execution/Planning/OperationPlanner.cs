@@ -1485,10 +1485,26 @@ public sealed partial class OperationPlanner
         var isEventStreamRoot = workItem.Kind is OperationWorkItemKind.Root
             && current.EventStreamDirective is not null;
 
+        // The leaves of a marked lookup that a step without delivery groups already fetches as the key of the
+        // lookup are left out. The step that fetches them writes the rows and the delivery group sends them.
+        var parentLeaves = lookup is null
+            ? null
+            : GetLeavesFetchedByParentStep(workItem, lookup, current, backlog, stepId);
+        var selectionSet = workItem.SelectionSet;
+        var unfilteredIndex = index;
+
+        if (parentLeaves is not null)
+        {
+            selectionSet = selectionSet with { Node = RemoveSelections(selectionSet.Node, parentLeaves) };
+            var filteredIndex = index.ToBuilder();
+            filteredIndex.Register(workItem.SelectionSet.Id, selectionSet.Node);
+            index = filteredIndex;
+        }
+
         var input = new SelectionSetPartitionerInput
         {
             SchemaName = current.SchemaName,
-            SelectionSet = workItem.SelectionSet,
+            SelectionSet = selectionSet,
             SelectionSetIndex = index,
             PruneUnprovidedAbstractBranches = isEventStreamRoot,
             ProvidedSelectionSet = isEventStreamRoot
@@ -1504,6 +1520,23 @@ public sealed partial class OperationPlanner
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
+
+        var planNoStep = false;
+
+        if (parentLeaves is not null && resolvable is { Selections.Count: 0 })
+        {
+            planNoStep = fieldsWithRequirements.IsEmpty
+                && workItem.Dependents.IsEmpty
+                && !backlog.HasWorkItemWithDependent(stepId)
+                && KeepsAnotherStep(workItem, unresolvable, current);
+
+            if (!planNoStep)
+            {
+                // The group would lose its only step, so the step keeps its leaves.
+                (resolvable, unresolvable, fieldsWithRequirements, index) = _partitioner.Partition(
+                    input with { SelectionSet = workItem.SelectionSet, SelectionSetIndex = unfilteredIndex });
+            }
+        }
 
         if (resolvable is not { Selections.Count: > 0 }
             && workItem.SourceSchemaNodePolicy is not null
@@ -1547,6 +1580,23 @@ public sealed partial class OperationPlanner
             workItem.SourceSchemaNodePolicy is null
                 ? null
                 : SourceSchemaNodePlanningPolicy.Descendant);
+
+        if (planNoStep)
+        {
+            possiblePlans.EnqueueBranches(
+                current with
+                {
+                    Steps = RemoveDependent(current.Steps, stepId),
+                    SelectionSetIndex = index,
+                    Backlog = backlog,
+                    RemainingCost = PlannerCostEstimator.EstimateRemainingCost(
+                        current.Options,
+                        current.MaxDepth,
+                        current.OpsPerLevel,
+                        backlog.Cost)
+                });
+            return;
+        }
 
         // Lookups are always queries. Root work items can also be rewritten to the query root
         // when walking shared paths (for example the viewer convention in mutations).
@@ -1646,6 +1696,172 @@ public sealed partial class OperationPlanner
         };
 
         possiblePlans.EnqueueBranches(next);
+    }
+
+    // Returns the leaves of a marked lookup work item that the key of the lookup selects in a step without
+    // delivery groups, or null when there are none.
+    private static List<FieldNode>? GetLeavesFetchedByParentStep(
+        OperationWorkItem workItem,
+        Lookup lookup,
+        PlanNode current,
+        Backlog backlog,
+        int lookupStepId)
+    {
+        if (backlog.DeferredFragments is null
+            || workItem.DeliveryGroups.IsDefaultOrEmpty
+            || workItem.Conditions.Length > 0
+            || workItem.SourceSchemaNodePolicy is not null
+            || workItem.SelectionSet.Type.Kind is not TypeKind.Object)
+        {
+            return null;
+        }
+
+        List<FieldNode>? leaves = null;
+
+        foreach (var selection in workItem.SelectionSet.Node.Selections)
+        {
+            if (selection is FieldNode { SelectionSet: null } leaf
+                && IsKeyFetchedByParentStep(leaf, workItem.SelectionSet.Path, lookup, current, lookupStepId))
+            {
+                leaves ??= [];
+                leaves.Add(leaf);
+            }
+        }
+
+        return leaves;
+    }
+
+    private static bool IsKeyFetchedByParentStep(
+        FieldNode leaf,
+        SelectionPath path,
+        Lookup lookup,
+        PlanNode current,
+        int lookupStepId)
+    {
+        foreach (var selection in lookup.Requirements.Selections)
+        {
+            if (selection is not FieldNode key || !FieldContains(key, leaf))
+            {
+                continue;
+            }
+
+            foreach (var step in current.Steps)
+            {
+                if (step is OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: true, Conditions.Length: 0 } parent
+                    && parent.Dependents.Contains(lookupStepId)
+                    && parent.Target.IsParentOfOrSame(path)
+                    && SelectsFieldAtPath(
+                        parent.Definition.SelectionSet,
+                        path.RelativeTo(parent.Target),
+                        pathIndex: 0,
+                        key))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SelectsFieldAtPath(
+        SelectionSetNode current,
+        SelectionPath path,
+        int pathIndex,
+        FieldNode required)
+    {
+        foreach (var selection in current.Selections)
+        {
+            if (selection is InlineFragmentNode { TypeCondition: null } wrapper
+                && wrapper.Directives.All(d => d.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+                && SelectsFieldAtPath(wrapper.SelectionSet, path, pathIndex, required))
+            {
+                return true;
+            }
+
+            if (pathIndex == path.Length)
+            {
+                if (selection is FieldNode field && FieldContains(required, field))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            var segment = path[pathIndex];
+
+            if (segment.Kind is SelectionPathSegmentKind.Field
+                && selection is FieldNode { SelectionSet: { } child, Directives.Count: 0 } parentField
+                && (parentField.Alias?.Value ?? parentField.Name.Value).Equals(segment.Name, StringComparison.Ordinal)
+                && SelectsFieldAtPath(child, path, pathIndex + 1, required))
+            {
+                return true;
+            }
+
+            if (segment.Kind is SelectionPathSegmentKind.InlineFragment
+                && selection is InlineFragmentNode { TypeCondition: { } condition, Directives.Count: 0 } fragment
+                && condition.Name.Value.Equals(segment.Name, StringComparison.Ordinal)
+                && SelectsFieldAtPath(fragment.SelectionSet, path, pathIndex + 1, required))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static SelectionSetNode RemoveSelections(SelectionSetNode selectionSet, List<FieldNode> fields)
+    {
+        var selections = new List<ISelectionNode>(selectionSet.Selections.Count);
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is not FieldNode field || !fields.Contains(field))
+            {
+                selections.Add(selection);
+            }
+        }
+
+        return selectionSet.WithSelections(selections);
+    }
+
+    private static bool KeepsAnotherStep(
+        OperationWorkItem workItem,
+        ImmutableStack<ConditionedSelectionSet> unresolvable,
+        PlanNode current)
+    {
+        foreach (var entry in unresolvable)
+        {
+            if (entry.DeliveryGroup is null)
+            {
+                return true;
+            }
+        }
+
+        foreach (var step in current.Steps)
+        {
+            if (step is OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: false } marked
+                && marked.DeliveryGroups.Any(workItem.DeliveryGroups.Contains))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ImmutableList<PlanStep> RemoveDependent(ImmutableList<PlanStep> steps, int stepId)
+    {
+        for (var i = 0; i < steps.Count; i++)
+        {
+            if (steps[i] is OperationPlanStep step && step.Dependents.Contains(stepId))
+            {
+                steps = steps.SetItem(i, step with { Dependents = step.Dependents.Remove(stepId) });
+            }
+        }
+
+        return steps;
     }
 
     private bool IsQueryRootSelection(SelectionSet selectionSet)

@@ -55,6 +55,23 @@ internal readonly struct Backlog(
     }
 
     /// <summary>
+    /// Determines whether a work item of the backlog has the step with the id <paramref name="stepId"/>
+    /// as a dependent.
+    /// </summary>
+    public bool HasWorkItemWithDependent(int stepId)
+    {
+        foreach (var workItem in _items)
+        {
+            if (workItem.Dependents.Contains(stepId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Maps the <c>@defer</c> directive of a fragment to the id of its delivery group, or <c>null</c> when
     /// the operation is not planned with marked steps.
     /// </summary>

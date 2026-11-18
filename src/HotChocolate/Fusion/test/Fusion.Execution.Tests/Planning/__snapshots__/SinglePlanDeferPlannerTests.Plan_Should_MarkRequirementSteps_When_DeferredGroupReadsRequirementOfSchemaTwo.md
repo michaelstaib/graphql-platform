@@ -58,7 +58,6 @@ nodes:
     operation: |
       query Op_123456789101112_3($__fusion_2_id: Int!) {
         userByIdB(id: $__fusion_2_id) {
-          id
           sku
         }
       }

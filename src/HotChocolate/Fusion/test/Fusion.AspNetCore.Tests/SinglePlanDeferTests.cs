@@ -215,6 +215,29 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendTheKeyInTheGroup_When_TheOnlyGroupSelectsTheKeyAndFieldsOfBothSchemas()
+    {
+        // arrange
+        var gateway = await CreateProductGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    ... @defer { id name price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        // The mocked source schema answers the lookup of name with a value that differs from the root field.
+        MatchRun(run, compareValues: false);
+    }
+
+    [Fact]
     public async Task Defer_Should_SendTheFieldOnceWithTwoPendingIds_When_UnlabelledSiblingsSelectTheSameField()
     {
         // arrange
@@ -1572,6 +1595,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
+        Assert.Equal(run.Twin.Requests, run.Deferred.Requests);
         MatchRun(run);
     }
 

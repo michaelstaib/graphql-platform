@@ -2367,6 +2367,75 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         cause.MatchInlineSnapshot("A @defer fragment carries no group number while another one does.");
     }
 
+    [Fact]
+    public void Plan_Should_PlanNoMarkedStepForTheKey_When_TheGroupSelectsTheKeyOfItsLookup()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "d") { id price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanNoMarkedStepForTheKey_When_TheOnlyGroupSelectsTheKeyAndFieldsOfBothSchemas()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    ... @defer { id name price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheOnlyStepOfTheGroup_When_TheGroupSelectsOnlyTheKeyOfTheLookupOfAnotherGroup()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "d") { id }
+                    ... @defer(label: "e") { price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
     private const string ProductListSchema =
         """
         # name: a
