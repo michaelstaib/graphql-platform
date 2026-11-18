@@ -1486,7 +1486,7 @@ public sealed partial class OperationPlanner
             && current.EventStreamDirective is not null;
 
         // The leaves of a marked lookup that a step without delivery groups already fetches as the key of the
-        // lookup are left out. The step that fetches them writes the rows and the delivery group sends them.
+        // lookup are left out of the work item.
         var parentLeaves = lookup is null
             ? null
             : GetLeavesFetchedByParentStep(workItem, lookup, current, backlog, stepId);
@@ -1773,7 +1773,7 @@ public sealed partial class OperationPlanner
         foreach (var selection in current.Selections)
         {
             if (selection is InlineFragmentNode { TypeCondition: null } wrapper
-                && wrapper.Directives.All(d => d.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+                && HasOnlyDeferDirectives(wrapper.Directives)
                 && SelectsFieldAtPath(wrapper.SelectionSet, path, pathIndex, required))
             {
                 return true;
@@ -1809,6 +1809,19 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+    }
+
+    private static bool HasOnlyDeferDirectives(IReadOnlyList<DirectiveNode> directives)
+    {
+        foreach (var directive in directives)
+        {
+            if (!directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static SelectionSetNode RemoveSelections(SelectionSetNode selectionSet, List<FieldNode> fields)

@@ -218,7 +218,14 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendTheKeyInTheGroup_When_TheOnlyGroupSelectsTheKeyAndFieldsOfBothSchemas()
     {
         // arrange
-        var gateway = await CreateProductGatewayAsync();
+        var gateway = await CreateGatewayAsync(
+            [],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource),
+            ("C", ReviewsSource));
 
         // act
         var run = await RunWithTwinAsync(
@@ -233,8 +240,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        // The mocked source schema answers the lookup of name with a value that differs from the root field.
-        MatchRun(run, compareValues: false);
+        MatchRun(run);
     }
 
     [Fact]
@@ -1597,6 +1603,63 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // assert
         Assert.Equal(run.Twin.Requests, run.Deferred.Requests);
         MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheKeyInTheGroupOfEveryItem_When_TheLookupOfTheGroupUsesAnotherKey()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductTwoKeysSource),
+            ("B", ProductBySkuSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "d") { id price } } }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(run.Twin.Requests, run.Deferred.Requests);
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheKeyInBothGroups_When_TheLookupOfOneGroupUsesAnotherKey(bool priceGroupFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            priceGroupFirst ? ["B:3>", "A:2"] : ["A:2>", "B:3"],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductTwoKeysSource),
+            ("B", ProductBySkuSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                products {
+                    name
+                    ... @defer(label: "d") { id price }
+                    ... @defer(label: "e") { id }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run, $"priceGroupFirst={priceGroupFirst}");
     }
 
     [Fact]
@@ -3847,6 +3910,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Product @key(fields: "id") { id: ID! name: String! }
         """;
 
+    private const string ProductTwoKeysSource =
+        """
+        type Query {
+            product(id: ID!): Product @lookup
+            productBySkuA(sku: String!): Product @lookup
+            products: [Product!]!
+        }
+        type Product @key(fields: "id") @key(fields: "sku") { id: ID! sku: String! name: String! }
+        """;
+
+    private const string ProductBySkuSource =
+        """
+        type Query { productBySku(sku: String!): Product @lookup }
+        type Product @key(fields: "sku") { sku: String! price: Float! }
+        """;
+
     private const string ProductSource =
         """
         type Query { product(id: ID!): Product @lookup }
@@ -3957,6 +4036,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 configure?.Invoke(builder);
             });
     }
+
+    // A source schema answers every lookup of a product with the same name.
+    private static string NormalizeName(string schema, string body, string text)
+        => ProductNameValue().Replace(text, "\"name\":\"s\"");
+
+    [GeneratedRegex("\"name\":\"[^\"]*\"")]
+    private static partial Regex ProductNameValue();
 
     private ResponseGate? _gate;
 

@@ -2436,6 +2436,53 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_PlanNoMarkedStepForTheKey_When_TheLookupOfTheGroupUsesAnotherKey()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductTwoKeysSchema, ProductBySkuSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products {
+                    name
+                    ... @defer(label: "d") { id price }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheOnlyStepOfTheOtherGroup_When_TheLookupOfTheGroupUsesAnotherKey()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductTwoKeysSchema, ProductBySkuSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                products {
+                    name
+                    ... @defer(label: "d") { id price }
+                    ... @defer(label: "e") { id }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
     private const string ProductListSchema =
         """
         # name: a
@@ -2539,6 +2586,22 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
 
         type Review {
             body: String!
+        }
+        """;
+
+    private const string ProductTwoKeysSchema =
+        """
+        # name: a
+        type Query {
+            product(id: ID!): Product @lookup
+            productBySkuA(sku: String!): Product @lookup
+            products: [Product!]!
+        }
+
+        type Product @key(fields: "id") @key(fields: "sku") {
+            id: ID!
+            sku: String!
+            name: String!
         }
         """;
 
