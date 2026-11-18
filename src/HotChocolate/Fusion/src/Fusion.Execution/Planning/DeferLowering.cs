@@ -288,21 +288,19 @@ internal static class DeferLowering
                 condition,
                 fragmentType,
                 scope,
-                group,
-                true);
+                group);
 
             // The collected nested fragments are inlined, and the attempt repeats until it collects none that is
             // not inlined yet.
-            while (state.NestedToInline is { Count: > 0 } nested && !_inlined.IsSupersetOf(nested))
+            while (!_inlined.IsSupersetOf(state.NestedToInline))
             {
-                _inlined.UnionWith(nested);
+                _inlined.UnionWith(state.NestedToInline);
                 (attempt, content, coverage, state) = AttemptDeferred(
                     fragment,
                     condition,
                     fragmentType,
                     scope,
-                    group,
-                    true);
+                    group);
             }
 
             // The decision reads the content that is left after the pruning of the deferred copy.
@@ -343,8 +341,7 @@ internal static class DeferLowering
             DeferCondition condition,
             ITypeDefinition? fragmentType,
             Scope scope,
-            DeferGroup group,
-            bool collectNested)
+            DeferGroup group)
         {
             var items = fragment.SelectionSet.Selections;
 
@@ -352,7 +349,7 @@ internal static class DeferLowering
             var attempt = scope.EnterDeferred(fragmentType, fragment, items, group);
             var lowered = LowerPass(items, attempt);
             var coverage = Coverage.Create(scope, fragment.TypeCondition);
-            var state = new PruneState(fragment, group, condition.IfVariableName, collectNested);
+            var state = new PruneState(fragment, group, condition.IfVariableName);
             var content = Prune(lowered, coverage, fragmentType, 0, false, state);
             return new DeferAttempt(attempt, content, coverage, state);
         }
@@ -514,10 +511,8 @@ internal static class DeferLowering
                         break;
 
                     // Collects the nested fragments below a covered field that select a list of the outside selection.
-                    case InlineFragmentNode nested when depth > 0
-                        && state.NestedToInline is { } toInline
-                        && HasDeferDirective(nested):
-                        CollectNestedToInline(nested, coverage, type, toInline);
+                    case InlineFragmentNode nested when depth > 0 && HasDeferDirective(nested):
+                        CollectNestedToInline(nested, coverage, type, state.NestedToInline);
                         result.Add(nested);
                         break;
 
@@ -571,11 +566,11 @@ internal static class DeferLowering
                     if (isList || SelectsConditionalList(selectionSet.Selections, conditional, conditionalType))
                     {
                         state.MustInline = true;
-
-                        if (state.NestedToInline is { } toInline)
-                        {
-                            CollectNestedToInline(selectionSet.Selections, conditional, conditionalType, toInline);
-                        }
+                        CollectNestedToInline(
+                            selectionSet.Selections,
+                            conditional,
+                            conditionalType,
+                            state.NestedToInline);
                     }
                 }
 
@@ -1111,8 +1106,7 @@ internal static class DeferLowering
     private sealed class PruneState(
         InlineFragmentNode fragment,
         DeferGroup group,
-        string? switchVariable,
-        bool collectNested)
+        string? switchVariable)
     {
         public InlineFragmentNode Fragment { get; } = fragment;
 
@@ -1125,9 +1119,9 @@ internal static class DeferLowering
         public List<DirectiveNode> Conditions { get; } = [];
 
         /// <summary>
-        /// The nested fragments that must be inlined, or <c>null</c> when the pruning does not collect them.
+        /// The nested fragments that must be inlined.
         /// </summary>
-        public List<InlineFragmentNode>? NestedToInline { get; } = collectNested ? [] : null;
+        public List<InlineFragmentNode> NestedToInline { get; } = [];
 
         public int Unsupported { get; private set; }
 
