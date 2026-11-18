@@ -41,7 +41,8 @@ internal static class DeferLowering
     /// </summary>
     /// <param name="operation">The lowered and normalized operation.</param>
     /// <returns>
-    /// The operation with the new numbers, or <paramref name="operation"/> when its numbers are already in order.
+    /// The operation with the new numbers, or <paramref name="operation"/> when its numbers are already in order or
+    /// a parent number names no group.
     /// </returns>
     public static OperationDefinitionNode Renumber(OperationDefinitionNode operation)
     {
@@ -50,6 +51,14 @@ internal static class DeferLowering
         var order = new List<int>();
         var parents = new Dictionary<int, int>();
         CollectGroups(operation.SelectionSet.Selections, order, parents);
+
+        foreach (var parent in parents.Values)
+        {
+            if (parent >= 0 && !parents.ContainsKey(parent))
+            {
+                return operation;
+            }
+        }
 
         var numbers = new Dictionary<int, int>(order.Count);
 

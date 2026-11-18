@@ -2261,6 +2261,32 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Partition_Should_ReportANumberingError_When_TheParentNamesNoGroupAfterRenumbering()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductListSchema, PriceSchema);
+        var operation = Utf8GraphQLParser.Parse(
+            """
+            {
+                a: product(id: "1") { name ... @defer(label: "p", __group: 1, __parent: -1) { price } }
+                b: product(id: "2") { name ... @defer(label: "q", __group: 2, __parent: -1) { rating } }
+                c: product(id: "3") { name ... @defer(label: "c", __group: 3, __parent: 0) { price } }
+            }
+            """).Definitions.OfType<OperationDefinitionNode>().Single();
+
+        // act
+        var renumbered = DeferLowering.Renumber(operation);
+        var partitioning = DeferPartitioner.Partition(
+            renumbered,
+            new DeferConditionCollection(CreateCompiler(schema).MaxAllowedDeferConditions));
+
+        // assert
+        Assert.Same(operation, renumbered);
+        partitioning.NumberingError.MatchInlineSnapshot(
+            "The parent 0 of delivery group 3 is not the number of a group.");
+    }
+
+    [Fact]
     public void Partition_Should_ReportANumberingError_When_TheLevelsExceedThePathOfTheFragment()
     {
         // arrange
