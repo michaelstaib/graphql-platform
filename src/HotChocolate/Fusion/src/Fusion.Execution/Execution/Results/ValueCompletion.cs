@@ -29,6 +29,7 @@ internal sealed class ValueCompletion
     private CompositeResultDocument? _writeFilterDocument;
     private ImmutableArray<int> _writeFilterGroups;
     private bool _stoppedAtGroupBoundary;
+    private CompositeResultElement? _nullLeavingGroups;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
@@ -55,6 +56,7 @@ internal sealed class ValueCompletion
         _errorHandler = errorHandler;
         _errorHandlingMode = errorHandlingMode;
         _propagateNullValues = errorHandlingMode is not ErrorHandlingMode.Null;
+        _nullLeavingGroups = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -825,7 +827,10 @@ internal sealed class ValueCompletion
     {
         _stoppedAtGroupBoundary = false;
 
-        return _store.Result.TryGetDestination(result, out var destination)
+        var leavesGroups = IsAtOrBelow(_nullLeavingGroups, result);
+        _nullLeavingGroups = null;
+
+        return !leavesGroups && _store.Result.TryGetDestination(result, out var destination)
             ? PropagateNullValuesInGroups(result, destination)
             : PropagateNullValues(result);
     }
@@ -946,23 +951,192 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Stops the <c>null</c> of a failed field before its parent object when the parent is delivered elsewhere than
-    /// the field.
+    /// the field. The null of a step without delivery groups does not stop when a step that delivers outside the
+    /// groups of the field reads the field as a key or a requirement.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the null stopped and the parent is kept.
     /// </returns>
-    private bool StopsAtGroupBoundary<TMode>(CompositeResultElement field, CompositeResultElement parent)
+    private bool StopsAtGroupBoundary<TMode>(
+        CompositeResultElement field,
+        Selection selection,
+        CompositeResultElement parent)
         where TMode : struct, IMode
     {
         var document = _store.Result;
 
         if (!document.TryGetDestination(field, out var destination)
-            || !document.HasOtherDestination(parent, destination))
+            || !document.HasOtherDestination(parent, destination)
+            || (!TMode.IsFiltered && IsReadOutsideGroups(document.Delivery!, selection, destination)))
         {
             return false;
         }
 
         PropagateNullValues<TMode>(field);
+        return true;
+    }
+
+    // A step delivers outside the groups when it has no delivery group, or one that is neither one of the groups
+    // nor nested in one of them.
+    private static bool IsReadOutsideGroups(
+        SinglePlanDeliveryState delivery,
+        Selection selection,
+        DeliveryResolution groups)
+    {
+        if (!delivery.IsKeyOrRequirement(selection))
+        {
+            return false;
+        }
+
+        var plan = delivery.Plan;
+        var readers = ImmutableArray.CreateBuilder<ExecutionNode>();
+
+        foreach (var node in plan.AllNodes)
+        {
+            if (DeliversOutsideGroups(delivery, node, groups))
+            {
+                readers.Add(node);
+            }
+        }
+
+        return SinglePlanDeliveryState
+            .CollectKeyAndRequirementSelectionIds(plan.Operation, readers.ToImmutable())
+            .Contains(selection.Id);
+    }
+
+    private static bool DeliversOutsideGroups(
+        SinglePlanDeliveryState delivery,
+        ExecutionNode node,
+        DeliveryResolution groups)
+    {
+        var plan = delivery.Plan;
+
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                return !IsSkipped(delivery, operation.Conditions, operation.ConditionAlternatives)
+                    && !IsWithinGroups(plan, operation.DeliveryGroups, groups);
+
+            case OperationBatchExecutionNode batch:
+                foreach (var definition in batch.Operations)
+                {
+                    if (!IsSkipped(delivery, definition.Conditions, definition.ConditionAlternatives)
+                        && !IsWithinGroups(plan, definition.DeliveryGroups, groups))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    // A step is skipped when a condition on the if variable of a delivery group fails, or when each of its
+    // alternatives holds such a condition.
+    private static bool IsSkipped(
+        SinglePlanDeliveryState delivery,
+        ReadOnlySpan<ExecutionNodeCondition> conditions,
+        ReadOnlySpan<ExecutionNodeCondition[]> alternatives)
+    {
+        if (AnyFails(delivery, conditions))
+        {
+            return true;
+        }
+
+        foreach (var alternative in alternatives)
+        {
+            if (!AnyFails(delivery, alternative))
+            {
+                return false;
+            }
+        }
+
+        return !alternatives.IsEmpty;
+    }
+
+    private static bool AnyFails(SinglePlanDeliveryState delivery, ReadOnlySpan<ExecutionNodeCondition> conditions)
+    {
+        foreach (var condition in conditions)
+        {
+            foreach (var group in delivery.Plan.DeliveryGroups)
+            {
+                if (group.IfVariable == condition.VariableName
+                    && delivery.ActiveGroups.IsSet(group.Id) != condition.PassingValue)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsWithinGroups(OperationPlan plan, ImmutableArray<int> groupIds, DeliveryResolution groups)
+    {
+        if (groupIds.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        foreach (var group in plan.DeliveryGroups)
+        {
+            if (!groupIds.Contains(group.Id))
+            {
+                continue;
+            }
+
+            var current = group;
+
+            while (current is not null && !SinglePlanDeliveryState.Contains(groups, current.Id))
+            {
+                current = current.Parent;
+            }
+
+            if (current is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Before the initial payload exists, the null of a field that a step outside the groups of the field reads
+    // stops at no group boundary. The field is remembered, and its error belongs to the initial payload.
+    private bool LeavesGroups(CompositeResultElement field, Selection selection)
+    {
+        var document = _store.Result;
+        var delivery = document.Delivery!;
+
+        _nullLeavingGroups = delivery.InstanceCount == 0
+            && document.TryGetDestination(field, out var groups)
+            && IsReadOutsideGroups(delivery, selection, groups)
+                ? field
+                : null;
+
+        return _nullLeavingGroups is not null;
+    }
+
+    private static bool IsAtOrBelow(CompositeResultElement? element, CompositeResultElement ancestor)
+    {
+        if (element is not { } current)
+        {
+            return false;
+        }
+
+        while (current.Cursor.Value != ancestor.Cursor.Value)
+        {
+            if (current.Cursor.IsZero)
+            {
+                return false;
+            }
+
+            current = current.Parent;
+        }
+
         return true;
     }
 
@@ -1398,7 +1572,14 @@ internal sealed class ValueCompletion
 
             error = _errorHandler.Handle(error);
 
-            AddError<TMode>(error, target);
+            if (TMode.HasDelivery && !TMode.IsFiltered && _propagateNullValues && LeavesGroups(target, selection))
+            {
+                _store.AddError(error);
+            }
+            else
+            {
+                AddError<TMode>(error, target);
+            }
 
             return !_propagateNullValues;
         }
@@ -1975,7 +2156,7 @@ TryCompleteList_MoveNext:
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
                         preparedSelectionSet: null))
                     {
-                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
                         {
                             continue;
                         }
@@ -2000,7 +2181,7 @@ TryCompleteList_MoveNext:
                         depth,
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType)))
                     {
-                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
                         {
                             continue;
                         }
@@ -2024,7 +2205,7 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
-                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
                 {
                     continue;
                 }
@@ -2130,7 +2311,7 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
-                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
                 {
                     continue;
                 }

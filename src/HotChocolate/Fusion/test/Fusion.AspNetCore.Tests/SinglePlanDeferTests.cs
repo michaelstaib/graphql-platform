@@ -2476,7 +2476,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
-            innerFirst ? ["B:3", "B:2"] : ["B:2", "B:3"],
+            innerFirst ? ["B:3", "B:2"] : ["B:2>", "B:3"],
             ("A", ProductListSource),
             ("B", PriceSource),
             ("C", ReviewsSource));
@@ -2846,6 +2846,361 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_CompleteTheGroupWithTheNonNullError_When_AnObjectItRequiresHoldsANull()
+    {
+        // arrange
+        // the parent step reads package.weight for shipping, which only the fragment selects
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstWeight,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductPackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { package { weight height } shipping } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheGroupWithTheNonNullError_When_AListItRequiresHoldsANull()
+    {
+        // arrange
+        // the parent step reads the weight of each parcel for total, which only the fragment selects
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstWeight,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductPackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { parcels { weight height } total } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheGroupWithTheNonNullError_When_TheKeyIsNullAndAFieldIsRenamed()
+    {
+        // arrange
+        // Book.size and Pen.size differ in nullability, so the gateway renames size in the request to A
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ItemSource),
+            ("B", BookPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                item(id: "1") {
+                    __typename
+                    ... on Book { size title }
+                    ... on Pen { size title }
+                    ... on Book @defer(label: "d") { id price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheOuterGroupWithTheNonNullError_When_ANestedGroupReadsTheNullKeyToo()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "o") { id price ... @defer(label: "i") { rating } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialFieldRequiresTheNullField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstWeight,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductWeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { weight } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialFieldRequiresANullInADeferredObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstWeight,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductPackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialLookupReadsTheNullKey()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name price ... @defer(label: "d") { id rating } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialLookupReadsTheNullKeyOfOneItem()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name price ... @defer(label: "d") { id rating } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_ASiblingGroupReadsTheNullKey()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "a") { id } ... @defer(label: "b") { price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_TheOuterGroupReadsTheNullKeyOfANestedGroup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "o") { price ... @defer(label: "i") { id rating } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_ASiblingGroupRequiresANullInASharedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstWeight,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductPackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { package { weight height } }
+                    ... @defer(label: "b") { package { height } shipping }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialFieldRequiresANullFieldOfALookup()
+    {
+        // arrange
+        // the weight comes from a lookup of the initial payload, and only the fragment selects it
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) => schema is "B" ? WeightValue().Replace(text, "\"weight\":null") : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", WeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { weight } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheGroupWithTheNonNullError_When_TheKeyIsNullAndTheIfVariableIsTrue()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            query($v: Boolean!) { product(id: "1") { name ... @defer(if: $v, label: "d") { id price } } }
+            """,
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheErrorOnce_When_AnInitialFieldRequiresTheNullFieldAndNullsStay()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstWeight,
+            failingSchema: null,
+            configure: builder => builder.ModifyRequestOptions(
+                o => o.DefaultErrorHandlingMode = HotChocolate.Language.ErrorHandlingMode.Null),
+            ("A", ProductWeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { weight } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     // The source schema A answers null for the first id and the same name for every product.
     private static string NullTheFirstId(string schema, string body, string text)
         => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)
@@ -2860,6 +3215,41 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     [GeneratedRegex("\"sku\":\"[^\"]*\"")]
     private static partial Regex ProductSku();
+
+    // The source schema A answers null for the first weight.
+    private static string NullTheFirstWeight(string schema, string body, string text)
+        => schema is "A" ? WeightValue().Replace(text, "\"weight\":null", 1) : text;
+
+    private const string ProductPackageSource =
+        """
+        type Query { product(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! name: String! package: Package! parcels: [Package!]! }
+        type Package { weight: Float! height: Float! }
+        """;
+
+    private const string PackageShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(weight: Float! @require(field: "package.weight")): Float!
+            total(weights: [Float!]! @require(field: "parcels[weight]")): Float!
+        }
+        """;
+
+    private const string ItemSource =
+        """
+        type Query { item(id: ID!): Item book(id: ID!): Book @lookup }
+        interface Item { id: ID! }
+        type Book implements Item @key(fields: "id") { id: ID! size: Int! @shareable title: String! }
+        type Pen implements Item { id: ID! size: Int title: String! }
+        """;
+
+    private const string BookPriceSource =
+        """
+        type Query { bookById(id: ID!): Book @lookup }
+        type Book @key(fields: "id") { id: ID! price: Float! size: Int @shareable }
+        """;
 
     [Fact]
     public async Task Defer_Should_AnnounceOneIdPerItem_When_TheAnchorIsInsideNestedLists()
