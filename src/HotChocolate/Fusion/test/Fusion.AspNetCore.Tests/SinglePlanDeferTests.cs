@@ -4594,7 +4594,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_NotAnnounceTheNestedFragment_When_ItsParentsRequestFailsAfterTheNestedRequestAnswered()
+    public async Task Defer_Should_NotAnnounceTheNestedFragment_When_ItsParentFailsAfterTheNestedRequestAnswered()
     {
         // arrange
         var gateway = await CreateGatewayAsync(
