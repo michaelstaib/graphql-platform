@@ -657,44 +657,6 @@ internal sealed partial class SinglePlanDeliveryState
     private bool Counts(DependencyError error)
         => Failed[error.Source] && _executionState.IsNodeSkipped(error.Dependent);
 
-    // The step, or an operation of the batch, was skipped for a failed step that it requires.
-    private bool IsSkippedForFailedStep(int groupId, ExecutionNode node)
-    {
-        if (_dependencyErrors?[groupId] is { } dependencyErrors)
-        {
-            foreach (var dependencyError in dependencyErrors)
-            {
-                if (Counts(dependencyError) && IsStepOrOperationOf(node, dependencyError.Dependent))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsStepOrOperationOf(ExecutionNode node, int id)
-    {
-        if (node.Id == id)
-        {
-            return true;
-        }
-
-        if (node is OperationBatchExecutionNode batch)
-        {
-            foreach (var definition in batch.Operations)
-            {
-                if (definition.Id == id)
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
     private bool HoldsDependencyFailure(int groupId)
     {
         if (_dependencyErrors?[groupId] is { } dependencyErrors)

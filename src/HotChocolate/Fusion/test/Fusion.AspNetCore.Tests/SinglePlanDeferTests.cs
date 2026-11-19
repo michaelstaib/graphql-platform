@@ -5396,7 +5396,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_CompleteWithTheNonNullError_When_TheStepOfTheSiblingLeavesTheKeyToo()
+    public async Task Defer_Should_WaitForTheStepOfTheSiblingAndCompleteWithTheNonNullError_When_BothStepsLeaveTheKey()
     {
         // arrange
         // the step of p (B:5) and the step that fetches the key for q (B:3) answer the author without its key

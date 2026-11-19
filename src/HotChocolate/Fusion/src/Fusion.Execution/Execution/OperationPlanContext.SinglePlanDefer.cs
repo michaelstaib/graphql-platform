@@ -467,8 +467,8 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Determines whether a step that is not settled can still write the row of <paramref name="selection"/>: a
-    /// step of the groups of the row, or another step whose answer can hold the row as a key, as a requirement or
-    /// as the object of a group nested in them.
+    /// step of the groups of the row, another step whose answer can hold the row as a key or as a requirement, or
+    /// a step of a group nested in a group of the row whose answer can hold the row as an object.
     /// </summary>
     public bool HasOpenWriter(Selection selection, DeliveryResolution resolution)
     {
@@ -514,6 +514,44 @@ internal sealed partial class SinglePlanDeliveryState
                 && (Failed[node.Id] || IsSkippedForFailedStep(groupId, node)))
             {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The step, or an operation of the batch, was skipped for a failed step that it requires.
+    private bool IsSkippedForFailedStep(int groupId, ExecutionNode node)
+    {
+        if (_dependencyErrors?[groupId] is { } dependencyErrors)
+        {
+            foreach (var dependencyError in dependencyErrors)
+            {
+                if (Counts(dependencyError) && IsStepOrOperationOf(node, dependencyError.Dependent))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsStepOrOperationOf(ExecutionNode node, int id)
+    {
+        if (node.Id == id)
+        {
+            return true;
+        }
+
+        if (node is OperationBatchExecutionNode batch)
+        {
+            foreach (var definition in batch.Operations)
+            {
+                if (definition.Id == id)
+                {
+                    return true;
+                }
             }
         }
 

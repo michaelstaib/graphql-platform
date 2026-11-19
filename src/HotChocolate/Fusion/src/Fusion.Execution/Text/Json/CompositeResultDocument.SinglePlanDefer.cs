@@ -566,7 +566,7 @@ public sealed partial class CompositeResultDocument
         var delivery = _delivery!;
         delivery.AssertOnLoop();
 
-        // The anchor object itself has no object at its own depth above it.
+        // The container is the anchor itself or lies below it.
         return (container.Value == anchor.Value
                 || (TryGetObjectAtDepth(container, delivery.AnchorDepths[groupId], out var found)
                     && found.Value == anchor.Value))
