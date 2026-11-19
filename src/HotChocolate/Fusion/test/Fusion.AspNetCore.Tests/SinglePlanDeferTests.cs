@@ -1355,7 +1355,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Defer_Should_DeliverTheFieldsOfTheFragment_When_AFalseConditionSwitchesOffItsOnlyStep(bool c)
+    public async Task Defer_Should_DeliverTheFieldsOfTheFragment_When_AConditionDecidesWhetherItsOnlyStepRuns(bool c)
     {
         // arrange
         var gateway = await CreateGatewayAsync(("A", ProductSource), ("B", PriceSource));
@@ -1380,7 +1380,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Defer_Should_DeliverTheFieldOfEveryRow_When_ASkipSwitchesOffTheOnlyStepOfTheFragment(bool s)
+    public async Task Defer_Should_DeliverTheFieldsOfEveryRow_When_ASkipDecidesWhetherTheOnlyStepRuns(bool s)
     {
         // arrange
         var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource));
@@ -1400,6 +1400,66 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchRun(run, $"s={s}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverBothFragments_When_AConditionDecidesWhetherTheOnlyStepOfTheOuterRuns(bool c)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            c ? ["B:2>", "B:3"] : [],
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        id
+                        rating @include(if: $c)
+                        ... @defer(label: "i") { price }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = c });
+
+        // assert
+        MatchRun(run, $"c={c}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheFieldsOfTheFragment_When_NoStepOfItsOwnFetchesThem(bool d)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($d: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "o") {
+                        id
+                        ... @defer(label: "i", if: $d) { rating }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["d"] = d });
+
+        // assert
+        MatchRun(run, $"d={d}");
     }
 
     [Fact]
