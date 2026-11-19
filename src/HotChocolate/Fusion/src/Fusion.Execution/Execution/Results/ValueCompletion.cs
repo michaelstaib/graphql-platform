@@ -452,7 +452,10 @@ internal sealed class ValueCompletion
 
             if (TMode.HasDelivery && IsLeftOutsideGroups(fieldResult, selection))
             {
-                if (!ApplyFieldErrorOutsideGroups(fieldResult, selection, error, errorPath.Append(responseName)))
+                // The failure is the result of the row, so that no step of a delivery group writes it later.
+                _store.Result.MarkWritten(fieldResult);
+
+                if (!ApplyFieldError<PlainMode>(fieldResult, selection, error, errorPath.Append(responseName)))
                 {
                     return false;
                 }
@@ -467,24 +470,6 @@ internal sealed class ValueCompletion
         }
 
         return true;
-    }
-
-    // Reports the error with the initial payload and propagates the null as it does without delivery groups.
-    private bool ApplyFieldErrorOutsideGroups(
-        CompositeResultElement fieldResult,
-        Selection selection,
-        IError error,
-        Path path)
-    {
-        var errorWithPath = ErrorBuilder.FromError(error)
-            .SetPath(path)
-            .Build();
-
-        _store.AddError(_errorHandler.Handle(errorWithPath));
-
-        return _errorHandlingMode is not ErrorHandlingMode.Propagate
-            || !selection.IsNonNull
-            || !PropagateNullValues(fieldResult);
     }
 
     /// <summary>

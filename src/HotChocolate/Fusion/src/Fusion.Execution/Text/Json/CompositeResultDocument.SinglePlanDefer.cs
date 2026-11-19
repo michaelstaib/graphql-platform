@@ -204,12 +204,7 @@ public sealed partial class CompositeResultDocument
         }
 
         // A row with an error holds a result, so that no later step writes it and reports its error again.
-        var propertyCursor = element.Cursor.AddRows(-1);
-
-        if (_metaDb.Get(propertyCursor).TokenType is ElementTokenType.PropertyName)
-        {
-            _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Written);
-        }
+        MarkWritten(element);
 
         var record = new GroupError(error) { IsStepError = delivery.AppliesStepErrors };
         var recorded = false;
@@ -224,6 +219,19 @@ public sealed partial class CompositeResultDocument
         }
 
         return recorded;
+    }
+
+    /// <summary>
+    /// Marks the row of a field as holding a result, so that no later step writes it. A list item is not marked.
+    /// </summary>
+    internal void MarkWritten(CompositeResultElement element)
+    {
+        var propertyCursor = element.Cursor.AddRows(-1);
+
+        if (_metaDb.Get(propertyCursor).TokenType is ElementTokenType.PropertyName)
+        {
+            _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Written);
+        }
     }
 
     /// <summary>

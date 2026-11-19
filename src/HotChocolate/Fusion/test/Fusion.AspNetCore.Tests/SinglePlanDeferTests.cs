@@ -3491,6 +3491,168 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_ReportTheErrorOnce_When_ALookupFailsAndAnInitialFieldRequiresItsRowsAndNullsStay()
+    {
+        // arrange
+        // every request to B fails, and shipping of the initial payload requires package.weight from B
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: builder => builder.ModifyRequestOptions(
+                o => o.DefaultErrorHandlingMode = HotChocolate.Language.ErrorHandlingMode.Null),
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportEachErrorOnce_When_ALookupFailsAndEveryItemRequiresItsRowsAndNullsStay()
+    {
+        // arrange
+        // every request to B fails, and shipping of every item of the initial payload requires package.weight from B
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: builder => builder.ModifyRequestOptions(
+                o => o.DefaultErrorHandlingMode = HotChocolate.Language.ErrorHandlingMode.Null),
+            ("A", ProductListSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullForTheFailedField_When_OnlyTheLookupOfTheRequirementFailsAndNullsStay()
+    {
+        // arrange
+        // step 4 answers package.weight for shipping of the initial payload, step 5 answers the package of the fragment
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: null,
+            configure: builder => builder.ModifyRequestOptions(
+                o => o.DefaultErrorHandlingMode = HotChocolate.Language.ErrorHandlingMode.Null),
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+        _gate!.FailingStep = "B:4";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheErrorOnce_When_ALookupFailsAndAnInitialFieldRequiresItsNullableField()
+    {
+        // arrange
+        // every request to W fails, and shipping of the initial payload requires the nullable weight from W
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "W",
+            configure: null,
+            ("A", ProductSource),
+            ("W", NullableWeightSource),
+            ("S", NullableShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { weight } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullForTheFailedField_When_OnlyTheLookupOfTheNullableRequirementFails()
+    {
+        // arrange
+        // step 4 answers the weight for shipping of the initial payload, step 5 answers the weight of the fragment
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("W", NullableWeightSource),
+            ("S", NullableShippingSource));
+        _gate!.FailingStep = "W:4";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { weight } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheError_When_OnlyTheLookupOfTheFragmentFails()
+    {
+        // arrange
+        // step 4 answers package.weight for shipping of the initial payload, step 5 answers the package of the fragment
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+        _gate!.FailingStep = "B:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_FailTheFragmentWithOnlyItsError_When_ANullableItemTookTheNullOfARequirement()
     {
         // arrange
@@ -3963,6 +4125,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Product @key(fields: "id") { id: ID! name: String! weight: Float @error }
         """;
 
+    private const string NullableWeightSource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! weight: Float }
+        """;
+
     private const string NullableShippingSource =
         """
         type Query { productByIdForShipping(id: ID!): Product @lookup }
@@ -4246,10 +4414,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             failingSchema: null,
             configure: null,
             ("A", ProductSource),
-            ("W", """
-                type Query { productById(id: ID!): Product @lookup }
-                type Product @key(fields: "id") { id: ID! weight: Float }
-                """),
+            ("W", NullableWeightSource),
             ("S", NullableShippingSource));
 
         // act
