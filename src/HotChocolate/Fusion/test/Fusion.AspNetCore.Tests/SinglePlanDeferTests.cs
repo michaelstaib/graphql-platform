@@ -3387,6 +3387,110 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_ALookupFailsAndAnInitialFieldRequiresItsRows()
+    {
+        // arrange
+        // every request to B fails, and shipping of the initial payload requires package.weight from B
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_ALookupFailsAndEveryItemRequiresItsRows()
+    {
+        // arrange
+        // every request to B fails, and shipping of every item of the initial payload requires package.weight from B
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheError_When_TheLookupFailsAndOnlyTheFragmentRequiresItsRows()
+    {
+        // arrange
+        // every request to B fails, and shipping requires package.weight inside the fragment that selects the package
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { package { height } shipping } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheError_When_TheNullFieldIsNoRequirementOfAnInitialField()
+    {
+        // arrange
+        // shipping of the initial payload requires package.weight, and B answers null for the height of the package
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) => schema is "B" ? HeightValue().Replace(text, "\"height\":null") : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_FailTheFragmentWithOnlyItsError_When_ANullableItemTookTheNullOfARequirement()
     {
         // arrange
@@ -7489,7 +7593,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
             Assert.True(
                 Canonical(twinData) == Canonical(deferredData),
-                "Expected " + Twin.Data.ToJsonString() + Environment.NewLine
+                "Expected " + Canonical(Twin.Data) + Environment.NewLine
                 + "Actual   " + string.Join(Environment.NewLine, Deferred.Payloads));
             Assert.Equal(Twin.Errors, Deferred.Errors);
             Assert.Empty(Deferred.Problems);

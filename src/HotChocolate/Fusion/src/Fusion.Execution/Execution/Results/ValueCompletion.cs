@@ -450,6 +450,16 @@ internal sealed class ValueCompletion
 
             var selection = fieldResult.AssertSelection();
 
+            if (TMode.HasDelivery && IsLeftOutsideGroups(fieldResult, selection))
+            {
+                if (!ApplyFieldErrorOutsideGroups(fieldResult, selection, error, errorPath.Append(responseName)))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
             if (!ApplyFieldError<TMode>(fieldResult, selection, error, errorPath.Append(responseName)))
             {
                 return false;
@@ -457,6 +467,24 @@ internal sealed class ValueCompletion
         }
 
         return true;
+    }
+
+    // Reports the error with the initial payload and propagates the null as it does without delivery groups.
+    private bool ApplyFieldErrorOutsideGroups(
+        CompositeResultElement fieldResult,
+        Selection selection,
+        IError error,
+        Path path)
+    {
+        var errorWithPath = ErrorBuilder.FromError(error)
+            .SetPath(path)
+            .Build();
+
+        _store.AddError(_errorHandler.Handle(errorWithPath));
+
+        return _errorHandlingMode is not ErrorHandlingMode.Propagate
+            || !selection.IsNonNull
+            || !PropagateNullValues(fieldResult);
     }
 
     /// <summary>
@@ -1111,20 +1139,24 @@ internal sealed class ValueCompletion
         return true;
     }
 
-    // Determines whether the null of the failed field propagates as it does without delivery groups. It does before
-    // the initial payload exists, when no delivery group holds the field back or a step outside its groups reads it.
+    // Remembers the failed field when its null propagates as it does without delivery groups.
     private bool LeavesGroups(CompositeResultElement field, Selection selection)
+    {
+        _nullLeavingGroups = IsLeftOutsideGroups(field, selection) ? field : null;
+
+        return _nullLeavingGroups is not null;
+    }
+
+    // Determines whether the failure of the field is handled as it is without delivery groups. That holds before the
+    // initial payload exists, when no delivery group holds the field back or a step outside its groups reads it.
+    private bool IsLeftOutsideGroups(CompositeResultElement field, Selection selection)
     {
         var document = _store.Result;
         var delivery = document.Delivery!;
 
-        _nullLeavingGroups = delivery.InstanceCount == 0
+        return delivery.InstanceCount == 0
             && (!document.TryGetDestination(field, out var groups)
-                || IsReadOutsideGroups(delivery, selection, groups))
-                ? field
-                : null;
-
-        return _nullLeavingGroups is not null;
+                || IsReadOutsideGroups(delivery, selection, groups));
     }
 
     private static bool IsAtOrBelow(CompositeResultElement? element, CompositeResultElement ancestor)
