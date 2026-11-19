@@ -4034,6 +4034,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
         type Author { id: ID! bio: String! age: Int! note: String }
         """;
 
+    private const string SharedAuthorTagsSource =
+        """
+        type Query { productById(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! author: Author }
+        type Author { id: ID! tags: [String] age: Int! }
+        """;
+
     private const string SharedAuthorListSource =
         """
         type Query { productById(id: ID!): Product @lookup }
@@ -4397,18 +4404,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // act
         var run = await RunWithTwinAsync(
             gateway,
-            """
-            {
-                product(id: "1") {
-                    name
-                    ... @defer(label: "a") { author { id } }
-                    ... @defer(label: "b") {
-                        author { bio }
-                        ... @defer(label: "x") { author { bio age } }
-                    }
-                }
-            }
-            """,
+            NestedAnswerQuery,
             []);
 
         // assert
@@ -4555,14 +4551,38 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // act
         var run = await RunWithTwinAsync(
             gateway,
+            NestedAnswerQuery,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepTheListOfTheEnclosingFragment_When_TheNestedRequestAnswersFirstWithAValueForIt()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? text.Replace("\"author\":{", "\"author\":{\"tags\":[\"other\"],", StringComparison.Ordinal)
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorTagsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
             """
             {
                 product(id: "1") {
                     name
                     ... @defer(label: "a") { author { id } }
                     ... @defer(label: "b") {
-                        author { bio }
-                        ... @defer(label: "x") { author { bio age } }
+                        author { tags }
+                        ... @defer(label: "x") { author { tags age } }
                     }
                 }
             }
@@ -4574,7 +4594,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_CompleteTheParentWithItsError_When_ItsRequestFailsAfterTheNestedRequestAnswered()
+    public async Task Defer_Should_NotAnnounceTheNestedFragment_When_ItsParentsRequestFailsAfterTheNestedRequestAnswered()
     {
         // arrange
         var gateway = await CreateGatewayAsync(
@@ -4618,7 +4638,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         var run = await RunNestedAnswerAsync(nestedFirst, answer);
 
         // assert
-        MatchNestedAnswer(run);
+        MatchNestedAnswer(run, nestedFirst);
     }
 
     [Theory]
@@ -4632,7 +4652,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         var run = await RunNestedAnswerAsync(nestedFirst, FailedEntity);
 
         // assert
-        MatchNestedAnswer(run);
+        MatchNestedAnswer(run, nestedFirst);
     }
 
     [Theory]
@@ -4643,20 +4663,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // act
         // the nested request answers before or after the request of its parent
-        var run = await RunNestedAnswerAsync(nestedFirst, "{\"data\":{\"productById\":null}}");
+        var run = await RunNestedAnswerAsync(nestedFirst, MissingEntity);
 
         // assert
-        MatchNestedAnswer(run);
+        MatchNestedAnswer(run, nestedFirst);
     }
 
-    private static void MatchNestedAnswer(Run run)
+    private static void MatchNestedAnswer(Run run, bool nestedFirst)
     {
-        Assert.Empty(run.Problems);
-
+        // both orders deliver the same merged data and errors
         var snapshot = Snapshot.Create();
         snapshot.Add(Canonical(run.Data), "Merged data", "json");
         snapshot.Add(run.Errors, "Errors", "json");
         snapshot.MatchMarkdownSnapshot();
+
+        // each order delivers its own payloads
+        MatchPayloads(run, $"nestedFirst={nestedFirst}");
     }
 
     // The request of the nested fragment x (B:3) answers with the given text, either before or after the request of
