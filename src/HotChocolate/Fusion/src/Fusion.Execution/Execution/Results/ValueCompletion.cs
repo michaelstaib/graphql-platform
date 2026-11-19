@@ -102,6 +102,7 @@ internal sealed class ValueCompletion
         _errorHandlingMode = default;
         _propagateNullValues = false;
         _mode = CompletionMode.Plain;
+        _nullLeavingGroups = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -978,8 +979,7 @@ internal sealed class ValueCompletion
         return true;
     }
 
-    // A step delivers outside the groups when it has no delivery group, or one that is neither one of the groups
-    // nor nested in one of them.
+    // Determines whether a step that delivers outside the groups reads the selection as a key or a requirement.
     private static bool IsReadOutsideGroups(
         SinglePlanDeliveryState delivery,
         Selection selection,
@@ -1006,6 +1006,8 @@ internal sealed class ValueCompletion
             .Contains(selection.Id);
     }
 
+    // Determines whether the step delivers outside the groups: it has no delivery group, or one that is neither
+    // one of the groups nor nested in one of them. A step that a defer condition switches off delivers nothing.
     private static bool DeliversOutsideGroups(
         SinglePlanDeliveryState delivery,
         ExecutionNode node,
@@ -1016,13 +1018,13 @@ internal sealed class ValueCompletion
         switch (node)
         {
             case OperationExecutionNode operation:
-                return !IsSkipped(delivery, operation.Conditions, operation.ConditionAlternatives)
+                return !FailsDeferCondition(delivery, operation.Conditions, operation.ConditionAlternatives)
                     && !IsWithinGroups(plan, operation.DeliveryGroups, groups);
 
             case OperationBatchExecutionNode batch:
                 foreach (var definition in batch.Operations)
                 {
-                    if (!IsSkipped(delivery, definition.Conditions, definition.ConditionAlternatives)
+                    if (!FailsDeferCondition(delivery, definition.Conditions, definition.ConditionAlternatives)
                         && !IsWithinGroups(plan, definition.DeliveryGroups, groups))
                     {
                         return true;
@@ -1036,9 +1038,9 @@ internal sealed class ValueCompletion
         }
     }
 
-    // A step is skipped when a condition on the if variable of a delivery group fails, or when each of its
-    // alternatives holds such a condition.
-    private static bool IsSkipped(
+    // Determines whether a condition on the if variable of a delivery group switches the step off, the other
+    // conditions of the step are not evaluated.
+    private static bool FailsDeferCondition(
         SinglePlanDeliveryState delivery,
         ReadOnlySpan<ExecutionNodeCondition> conditions,
         ReadOnlySpan<ExecutionNodeCondition[]> alternatives)
@@ -1106,16 +1108,16 @@ internal sealed class ValueCompletion
         return true;
     }
 
-    // Before the initial payload exists, the null of a field that a step outside the groups of the field reads
-    // stops at no group boundary. The field is remembered, and its error belongs to the initial payload.
+    // Determines whether the null of the failed field propagates as it does without delivery groups. It does before
+    // the initial payload exists, when no delivery group holds the field back or a step outside its groups reads it.
     private bool LeavesGroups(CompositeResultElement field, Selection selection)
     {
         var document = _store.Result;
         var delivery = document.Delivery!;
 
         _nullLeavingGroups = delivery.InstanceCount == 0
-            && document.TryGetDestination(field, out var groups)
-            && IsReadOutsideGroups(delivery, selection, groups)
+            && (!document.TryGetDestination(field, out var groups)
+                || IsReadOutsideGroups(delivery, selection, groups))
                 ? field
                 : null;
 
@@ -1817,6 +1819,12 @@ internal sealed class ValueCompletion
                 if (isNonNull)
                 {
                     return false;
+                }
+
+                // The item takes the null, so no field below it leaves its groups any more.
+                if (TMode.HasDelivery)
+                {
+                    _nullLeavingGroups = null;
                 }
 
                 targetElement.SetNullValue();

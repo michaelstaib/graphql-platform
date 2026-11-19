@@ -3201,6 +3201,89 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialFieldRequiresANullInAnObjectOfALookup()
+    {
+        // arrange
+        // a lookup of the initial payload answers package.weight for shipping, the client selects no weight
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) => schema is "B" ? WeightValue().Replace(text, "\"weight\":null") : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResultWithTheError_When_AnInitialFieldRequiresANullInAnObjectOfOneItem()
+    {
+        // arrange
+        // a lookup of the initial payload answers package.weight for shipping, and null for the first item
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) => schema is "B" ? WeightValue().Replace(text, "\"weight\":null", 1) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PackageSource),
+            ("C", PackageShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name shipping ... @defer(label: "d") { package { height } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithOnlyItsError_When_ANullableItemTookTheNullOfARequirement()
+    {
+        // arrange
+        // the first part becomes null for its weight, which shipping requires, and B answers null for the height
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) => schema is "B"
+                ? HeightValue().Replace(WeightValue().Replace(text, "\"weight\":null", 1), "\"height\":null")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackagePartsSource),
+            ("C", PartsShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height parts { weight } } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [GeneratedRegex("\"height\":[^,}]*")]
+    private static partial Regex HeightValue();
+
     // The source schema A answers null for the first id and the same name for every product.
     private static string NullTheFirstId(string schema, string body, string text)
         => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)
@@ -3234,6 +3317,30 @@ public partial class SinglePlanDeferTests : FusionTestBase
             id: ID!
             shipping(weight: Float! @require(field: "package.weight")): Float!
             total(weights: [Float!]! @require(field: "parcels[weight]")): Float!
+        }
+        """;
+
+    private const string PackageSource =
+        """
+        type Query { productByIdForPackage(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! package: Package! parcels: [Package!]! }
+        type Package { weight: Float! height: Float! }
+        """;
+
+    private const string PackagePartsSource =
+        """
+        type Query { productByIdForPackage(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! package: Package! }
+        type Package { height: Float! parts: [Part]! }
+        type Part { weight: Float! }
+        """;
+
+    private const string PartsShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(weights: [Float]! @require(field: "package.parts[weight]")): Float!
         }
         """;
 
