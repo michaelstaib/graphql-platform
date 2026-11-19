@@ -148,6 +148,7 @@ internal sealed partial class SinglePlanDeliveryState
         = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentQueue<DeliveryError> _errors = new();
     private readonly ExecutionState _executionState;
+    private Dictionary<int, List<ExecutionNode>>? _writers;
     private volatile bool _queuesErrors;
 #if DEBUG
     private int _loopThreadId;
@@ -176,7 +177,6 @@ internal sealed partial class SinglePlanDeliveryState
         _groupsById = new DeliveryGroup[groupCount];
         _anchorDepths = new int[groupCount];
         _groupStatus = new byte[groupCount];
-        _sharesRows = new bool[groupCount];
 
         foreach (var group in plan.DeliveryGroups)
         {
@@ -453,14 +453,6 @@ internal sealed partial class SinglePlanDeliveryState
             {
                 resolution = selection.ResolveDelivery(IncludeFlags, DeferFlags);
                 _resolutions.Add(selection.Id, resolution);
-
-                if (resolution.Groups.Length > 1)
-                {
-                    foreach (var group in resolution.Groups)
-                    {
-                        _sharesRows[group.Id] = true;
-                    }
-                }
             }
 
             return resolution;
@@ -472,6 +464,161 @@ internal sealed partial class SinglePlanDeliveryState
     /// </summary>
     public bool IsKeyOrRequirement(Selection selection)
         => Plan.KeyAndRequirementSelectionIds.Contains(selection.Id);
+
+    /// <summary>
+    /// Determines whether a step that is not settled can still write the row of <paramref name="selection"/>: a
+    /// step of the groups of the row, or another step whose answer can hold the row as a key, as a requirement or
+    /// as the object of a group nested in them.
+    /// </summary>
+    public bool HasOpenWriter(Selection selection, DeliveryResolution resolution)
+    {
+        if (!AreGroupsSettled(resolution))
+        {
+            return true;
+        }
+
+        var isKeyOrRequirement = IsKeyOrRequirement(selection);
+
+        if ((!isKeyOrRequirement && selection.IsLeaf) || !TryGetWriters(selection, out var writers))
+        {
+            return false;
+        }
+
+        foreach (var node in writers)
+        {
+            if (!Finished[node.Id]
+                && !_executionState.IsNodeSkipped(node.Id)
+                && (isKeyOrRequirement || IsNestedIn(resolution, GetDeliveryGroups(node))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether a failed step of the group left the row of <paramref name="selection"/>: a step whose
+    /// answer can hold the row failed, or was skipped for a failed step that it requires.
+    /// </summary>
+    public bool IsLeftByFailedStep(Selection selection, int groupId)
+    {
+        if (!TryGetWriters(selection, out var writers))
+        {
+            return false;
+        }
+
+        foreach (var node in writers)
+        {
+            if (GetDeliveryGroups(node).Contains(groupId)
+                && (Failed[node.Id] || IsSkippedForFailedStep(groupId, node)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Gets the marked steps whose answer can hold the row of the selection. A field without a child result
+    // selection set can hold every selection below it.
+    private bool TryGetWriters(Selection selection, [NotNullWhen(true)] out List<ExecutionNode>? writers)
+    {
+        if (_writers is null)
+        {
+            _writers = [];
+
+            foreach (var node in _markedNodes)
+            {
+                switch (node)
+                {
+                    case OperationExecutionNode operation:
+                        AddWriters(node, operation.Target, operation.ResultSelectionSet);
+                        break;
+
+                    case OperationBatchExecutionNode batch:
+                        foreach (var definition in batch.Operations)
+                        {
+                            switch (definition)
+                            {
+                                case SingleOperationDefinition single:
+                                    AddWriters(node, single.Target, single.ResultSelectionSet);
+                                    break;
+
+                                case BatchOperationDefinition many:
+                                    foreach (var target in many.Targets)
+                                    {
+                                        AddWriters(node, target, many.ResultSelectionSet);
+                                    }
+
+                                    break;
+                            }
+                        }
+
+                        break;
+                }
+            }
+        }
+
+        return _writers.TryGetValue(selection.Id, out writers);
+    }
+
+    private void AddWriters(ExecutionNode node, SelectionPath target, ResultSelectionSet resultSelectionSet)
+    {
+        foreach (var selectionSet in GetTargetSelectionSets(target))
+        {
+            AddWriters(node, selectionSet, resultSelectionSet);
+        }
+    }
+
+    private void AddWriters(ExecutionNode node, SelectionSet selectionSet, ResultSelectionSet? resultSelectionSet)
+    {
+        if (resultSelectionSet is null)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                AddWriter(node, selection, child: null);
+            }
+
+            return;
+        }
+
+        foreach (var written in resultSelectionSet.Selections)
+        {
+            if (selectionSet.TryGetSelection(written.ResponseName, out var selection))
+            {
+                AddWriter(node, selection, written.Child);
+            }
+        }
+
+        foreach (var fragment in resultSelectionSet.Fragments)
+        {
+            AddWriters(node, selectionSet, fragment.Body);
+        }
+    }
+
+    private void AddWriter(ExecutionNode node, Selection selection, ResultSelectionSet? child)
+    {
+        if (!_writers!.TryGetValue(selection.Id, out var writers))
+        {
+            writers = _writers[selection.Id] = [];
+        }
+
+        if (!writers.Contains(node))
+        {
+            writers.Add(node);
+        }
+
+        if (selection.IsLeaf)
+        {
+            return;
+        }
+
+        foreach (var type in Plan.Operation.GetPossibleTypes(selection))
+        {
+            AddWriters(node, Plan.Operation.GetSelectionSet(selection, type), child);
+        }
+    }
 
     /// <summary>
     /// Collects the ids of the selections that a step of the plan can read as a key or a requirement.

@@ -553,9 +553,10 @@ public sealed partial class CompositeResultDocument
     /// <summary>
     /// Lists the rows at and below <paramref name="container"/> that the group holds and that no step wrote, when
     /// the container lies below <paramref name="anchor"/>. With <paramref name="settledOnly"/>, a row that a step
-    /// of one of its groups can still write is left out.
+    /// that is not settled can still write is left out.
     /// </summary>
-    internal void FindUnwrittenRows(
+    /// <returns><c>true</c> when a row was left out.</returns>
+    internal bool FindUnwrittenRows(
         Cursor container,
         int groupId,
         Cursor anchor,
@@ -565,15 +566,15 @@ public sealed partial class CompositeResultDocument
         var delivery = _delivery!;
         delivery.AssertOnLoop();
 
-        if (TryGetObjectAtDepth(container, delivery.AnchorDepths[groupId], out var found)
-            && found.Value == anchor.Value)
-        {
-            FindUnwrittenRows(container, _metaDb.Get(container), groupId, settledOnly, rows);
-        }
+        // The anchor object itself has no object at its own depth above it.
+        return (container.Value == anchor.Value
+                || (TryGetObjectAtDepth(container, delivery.AnchorDepths[groupId], out var found)
+                    && found.Value == anchor.Value))
+            && FindUnwrittenRows(container, _metaDb.Get(container), groupId, settledOnly, rows);
     }
 
-    // A row that holds no result completes as a null once its groups are settled.
-    private void FindUnwrittenRows(
+    // A row that holds no result completes by its type once no step can write it any more.
+    private bool FindUnwrittenRows(
         Cursor cursor,
         DbRow row,
         int groupId,
@@ -582,8 +583,10 @@ public sealed partial class CompositeResultDocument
     {
         if (!IsContainer(ref cursor, ref row))
         {
-            return;
+            return false;
         }
+
+        var open = false;
 
         if (row.TokenType is ElementTokenType.StartArray)
         {
@@ -593,10 +596,10 @@ public sealed partial class CompositeResultDocument
             {
                 var elementCursor = cursor.AddRows(i + 1);
 
-                FindUnwrittenRows(elementCursor, _metaDb.Get(elementCursor), groupId, settledOnly, rows);
+                open |= FindUnwrittenRows(elementCursor, _metaDb.Get(elementCursor), groupId, settledOnly, rows);
             }
 
-            return;
+            return open;
         }
 
         var count = row.SizeOrLength;
@@ -620,10 +623,19 @@ public sealed partial class CompositeResultDocument
                 && valueRow.TokenType is ElementTokenType.None
                 && (valueRow.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated)
             {
-                var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+                var selection = _operation.GetSelectionById(property.OperationReferenceId);
+                var resolution = _delivery!.Resolve(selection);
 
-                if (SinglePlanDeliveryState.Contains(resolution, groupId)
-                    && (!settledOnly || _delivery.AreGroupsSettled(resolution)))
+                if (!SinglePlanDeliveryState.Contains(resolution, groupId))
+                {
+                    continue;
+                }
+
+                if (settledOnly && _delivery.HasOpenWriter(selection, resolution))
+                {
+                    open = true;
+                }
+                else
                 {
                     rows.Add(new CompositeResultElement(this, valueCursor));
                 }
@@ -631,13 +643,15 @@ public sealed partial class CompositeResultDocument
                 continue;
             }
 
-            FindUnwrittenRows(valueCursor, valueRow, groupId, settledOnly, rows);
+            open |= FindUnwrittenRows(valueCursor, valueRow, groupId, settledOnly, rows);
         }
+
+        return open;
     }
 
     /// <summary>
     /// Determines whether a row at or below the anchor object of <paramref name="instance"/> holds no result while
-    /// a step of a group that holds the row can still write it.
+    /// a step that is not settled can still write it.
     /// </summary>
     internal bool HasOpenRows(int instance)
     {
@@ -701,9 +715,11 @@ public sealed partial class CompositeResultDocument
                 && valueRow.TokenType is ElementTokenType.None
                 && (valueRow.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated)
             {
-                var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+                var selection = _operation.GetSelectionById(property.OperationReferenceId);
+                var resolution = _delivery!.Resolve(selection);
 
-                if (SinglePlanDeliveryState.Contains(resolution, groupId) && !_delivery.AreGroupsSettled(resolution))
+                if (SinglePlanDeliveryState.Contains(resolution, groupId)
+                    && _delivery.HasOpenWriter(selection, resolution))
                 {
                     return true;
                 }

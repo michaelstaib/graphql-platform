@@ -5241,9 +5241,10 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_CompleteTheSiblingWithTheNonNullError_When_TheRequirementOfItsStepIsNull()
     {
         // arrange
-        // the step of a answers a null weight and the step of b that requires it is skipped
+        // the step that fetches the weight for b (B:4) answers null, so that the step of shipping is skipped, and the
+        // step of a (B:5) answers null after b completed
         var gateway = await CreateGatewayAsync(
-            [],
+            ["B:4>", "B:5"],
             (schema, _, text) => schema == "B" ? WeightValue().Replace(text, "\"weight\":null") : text,
             failingSchema: null,
             configure: null,
@@ -5266,17 +5267,17 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        Assert.Empty(run.Problems);
-        MatchMergedAnswer(run);
+        MatchPayloads(run);
     }
 
     [Fact]
     public async Task Defer_Should_CompleteTheSiblingWithTheNonNullError_When_TheRequirementBelowASharedObjectIsNull()
     {
         // arrange
-        // the step of a answers a null code for the related product and the step of b that requires it is skipped
+        // the step that fetches the code of the related product for b (A:2) answers null, so that the step of shipping
+        // is skipped, and the step of a (A:4) answers null after b completed
         var gateway = await CreateGatewayAsync(
-            [],
+            ["A:2>", "A:4"],
             (schema, _, text) => schema == "A" ? RelatedCode().Replace(text, "\"code\":null") : text,
             failingSchema: null,
             configure: null,
@@ -5298,8 +5299,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        Assert.Empty(run.Problems);
-        MatchMergedAnswer(run);
+        MatchPayloads(run);
     }
 
     private const string RelatedProductSource =
@@ -5347,6 +5347,323 @@ public partial class SinglePlanDeferTests : FusionTestBase
                     ... @defer(label: "g") { author { id ... @defer(label: "c") { bio } } }
                 }
             }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task
+        Defer_Should_WaitForTheStepOfTheSibling_When_ItsOwnStepLeavesTheKeyThatTheSiblingAlsoFetches(bool nested)
+    {
+        // arrange
+        // the step of p (B:5) answers the author without its key, r completes, then the step that fetches the key for
+        // q (B:3) answers it
+        var gateway = await CreateGatewayAsync(
+            ["B:5", "P:2>", "B:3"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "5"
+                ? EntityId().Replace(text, string.Empty)
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource),
+            ("P", SharedPriceSource));
+        var nestedFragment = nested ? " ... @defer(label: \"c\") { bio }" : string.Empty;
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            $$"""
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "p") { author { id{{nestedFragment}} } }
+                    ... @defer(label: "q") { author { bio } }
+                    ... @defer(label: "r") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"nested={nested}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteWithTheNonNullError_When_TheStepOfTheSiblingLeavesTheKeyToo()
+    {
+        // arrange
+        // the step of p (B:5) and the step that fetches the key for q (B:3) answer the author without its key
+        var gateway = await CreateGatewayAsync(
+            ["B:5", "P:2>", "B:3"],
+            (schema, _, text) => schema == "B" ? EntityId().Replace(text, string.Empty) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "p") { author { id } }
+                    ... @defer(label: "q") { author { bio } }
+                    ... @defer(label: "r") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
+        Defer_Should_WaitForTheStepOfTheSibling_When_ItsOwnStepLeavesTheRequirementThatTheSiblingAlsoFetches()
+    {
+        // arrange
+        // the step of a (B:6) answers without the weight, r completes, then the step that fetches the weight for b
+        // (B:5) answers it
+        var gateway = await CreateGatewayAsync(
+            ["B:6", "P:2>", "B:5"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "6"
+                ? WeightValue().Replace(text, string.Empty)
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", WeightSource),
+            ("C", ShippingSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { weight }
+                    ... @defer(label: "b") { shipping }
+                    ... @defer(label: "r") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
+        Defer_Should_WaitForTheStepOfTheNestedFragment_When_ItsOwnStepLeavesTheObjectThatTheNestedStepAlsoFetches()
+    {
+        // arrange
+        // the step of b (B:3) answers without the author, d completes, then the step of x (B:4) answers the author
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "P:2>", "B:4"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? "{\"data\":{\"productById\":{}}}"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource),
+            ("P", SharedPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "b") {
+                        author { note }
+                        ... @defer(label: "x") { author { note age } }
+                    }
+                    ... @defer(label: "d") { price }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task
+        Defer_Should_CompleteTheRowWithoutTheStepError_When_AnotherStepFailsAndItsLookupIsSkippedForAMissingKey(
+            bool nullable)
+    {
+        // arrange
+        // B answers the author without its key, so that the lookup of bio is skipped, then the step of price fails
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "P:3"],
+            (schema, _, text) => schema switch
+            {
+                "B" => EntityId().Replace(text, string.Empty),
+                "P" => "this is not json",
+                _ => text
+            },
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", nullable ? AuthorNullableBioSource : AuthorBioSource),
+            ("P", """
+                type Query { productByIdP(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! price: Float }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "g") { price author { bio } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"nullable={nullable}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task
+        Defer_Should_CompleteTheRowByItsType_When_TheFragmentIsAtTheRootAndItsLookupIsSkippedForAMissingKey(
+            bool nullable)
+    {
+        // arrange
+        // B answers the author without its key and the lookup of bio is skipped
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? EntityId().Replace(text, string.Empty) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", nullable ? AuthorNullableBioSource : AuthorBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") { name }
+                ... @defer(label: "o") { product(id: "1") { author { bio } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"nullable={nullable}");
+    }
+
+    [Theory]
+    [InlineData("NullableObject", "author: Author")]
+    [InlineData("NullableItem", "authors: [Author]!")]
+    [InlineData("NonNullItem", "authors: [Author!]!")]
+    [InlineData("NullableList", "authors: [Author!]")]
+    public async Task
+        Defer_Should_PropagateTheNullToTheNextNullablePosition_When_TheLookupBelowItIsSkippedForAMissingKey(
+            string position,
+            string field)
+    {
+        // arrange
+        // B answers the first author without its key and the lookup of its non-null bio is skipped
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? EntityId().Replace(text, string.Empty, 1) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", $$"""
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! {{field}} }
+                type Author @key(fields: "id") { id: ID! }
+                """),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            $$"""
+            { product(id: "1") { name ... @defer(label: "a") { {{field.Split(':')[0]}} { bio } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, position);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailOnlyTheFragmentOfTheItem_When_TheLookupOfOneListItemIsSkippedForAMissingKey()
+    {
+        // arrange
+        // B answers the first author without its key and the lookup of its non-null bio is skipped
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? EntityId().Replace(text, string.Empty, 1) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! authors: [Author]! }
+                type Author @key(fields: "id") { id: ID! }
+                """),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name authors { ... @defer(label: "a") { bio } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
+        Defer_Should_FailOnlyTheFragmentOfTheProduct_When_TheLookupBelowOneProductIsSkippedForAMissingKey()
+    {
+        // arrange
+        // B answers the author of the first product without its key and the lookup of its non-null bio is skipped
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? EntityId().Replace(text, string.Empty, 1) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "a") { author { bio } } } }
             """,
             []);
 

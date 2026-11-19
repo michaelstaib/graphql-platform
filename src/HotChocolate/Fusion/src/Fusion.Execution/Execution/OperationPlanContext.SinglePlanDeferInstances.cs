@@ -15,7 +15,6 @@ internal sealed partial class SinglePlanDeliveryState
 
     private readonly DeliveryGroup[] _groupsById;
     private readonly byte[] _groupStatus;
-    private readonly bool[] _sharesRows;
     private readonly int[] _anchorDepths;
     private readonly Dictionary<long, bool> _selectionSetHoldsGroup = [];
     private readonly List<int> _donePayload = [];
@@ -79,7 +78,7 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Marks an instance of a group with a failed step as failed when a step failed while its answer was merged and
-    /// the instance has unsent rows. Otherwise the instance stays open or completes without errors.
+    /// the instance has unsent rows. Otherwise the rows of the instance are completed by their type.
     /// </summary>
     public void MarkFailed(int instance)
     {
@@ -157,28 +156,6 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Determines whether the group holds a resolved row together with another group while a step of some group
-    /// is not settled.
-    /// </summary>
-    public bool CanShareOpenRows(int groupId, ExecutionState executionState)
-    {
-        if (!_sharesRows[groupId])
-        {
-            return false;
-        }
-
-        for (var group = 0; group < _groupStatus.Length; group++)
-        {
-            if (!IsGroupSettled(group, executionState, out _))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -481,27 +458,34 @@ internal sealed partial class SinglePlanDeliveryState
     /// <summary>
     /// Completes the selected rows of the instance that no step wrote and no open step can still write by their
     /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
-    /// <c>null</c> reaches the anchor, and the error of a failed step of the group stands for the non-null error.
+    /// <c>null</c> reaches the anchor, and a row that a failed step of the group left carries the error of the step.
     /// </summary>
-    public void CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
+    /// <returns><c>true</c> when an open step can still write a row of the instance.</returns>
+    public bool CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
     {
         var group = _instanceGroups[instance];
         var anchor = _instanceAnchors[instance];
         var rows = _unwrittenRows ??= [];
 
         rows.Clear();
-        document.FindUnwrittenRows(anchor, group, anchor, settledOnly: true, rows);
+
+        var open = document.FindUnwrittenRows(anchor, group, anchor, settledOnly: true, rows);
 
         if (rows.Count == 0)
         {
-            return;
+            return open;
         }
 
         var error = groupFailed ? GetStepErrors(group)?[0] ?? CreateFailureError(group) : null;
 
         foreach (var row in rows)
         {
-            _completion!.CompleteUnwrittenField(row, row.AssertSelection(), error);
+            var selection = row.AssertSelection();
+
+            _completion!.CompleteUnwrittenField(
+                row,
+                selection,
+                error is not null && IsLeftByFailedStep(selection, group) ? error : null);
 
             if (IsFailed(instance))
             {
@@ -510,6 +494,7 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         rows.Clear();
+        return open;
     }
 
     // Another open instance that has not failed sends the row of the answer together with its error.
@@ -671,6 +656,44 @@ internal sealed partial class SinglePlanDeliveryState
     // The step that reported the error failed and the step of the group that requires it was skipped for it.
     private bool Counts(DependencyError error)
         => Failed[error.Source] && _executionState.IsNodeSkipped(error.Dependent);
+
+    // The step, or an operation of the batch, was skipped for a failed step that it requires.
+    private bool IsSkippedForFailedStep(int groupId, ExecutionNode node)
+    {
+        if (_dependencyErrors?[groupId] is { } dependencyErrors)
+        {
+            foreach (var dependencyError in dependencyErrors)
+            {
+                if (Counts(dependencyError) && IsStepOrOperationOf(node, dependencyError.Dependent))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsStepOrOperationOf(ExecutionNode node, int id)
+    {
+        if (node.Id == id)
+        {
+            return true;
+        }
+
+        if (node is OperationBatchExecutionNode batch)
+        {
+            foreach (var definition in batch.Operations)
+            {
+                if (definition.Id == id)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     private bool HoldsDependencyFailure(int groupId)
     {
