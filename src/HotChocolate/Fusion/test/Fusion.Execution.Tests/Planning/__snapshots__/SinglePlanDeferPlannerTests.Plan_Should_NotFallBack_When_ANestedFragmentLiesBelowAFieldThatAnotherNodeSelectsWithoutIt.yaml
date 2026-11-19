@@ -1,0 +1,72 @@
+operation:
+  - document: |
+      {
+        shelf {
+          id
+        }
+        ... @defer(label: "outer", __group: 0, __parent: -1) {
+          shelf {
+            top {
+              ... @defer(label: "inner", __group: 1, __parent: 0) {
+                price
+                id @fusion__requirement
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        shelf {
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2 {
+        shelf {
+          top {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    deliveryGroups:
+      - 0
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.shelf.top
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+deliveryGroups:
+  - id: 0
+    path: $
+    label: outer
+  - id: 1
+    path: $.shelf.top
+    label: inner
+    parentId: 0

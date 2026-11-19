@@ -2643,6 +2643,52 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_NotFallBack_When_ANestedFragmentLiesBelowAFieldThatAnotherNodeSelectsWithoutIt()
+    {
+        // arrange
+        var schema = ComposeSchema(ShelfSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                shelf { id }
+                ... @defer(label: "outer") {
+                    shelf {
+                        top {
+                            ... @defer(label: "inner") { price }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    private const string ShelfSchema =
+        """
+        # name: a
+        type Query {
+            product(id: ID!): Product @lookup
+            shelf: Shelf
+        }
+
+        type Shelf {
+            id: ID!
+            top: Product!
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            name: String!
+        }
+        """;
+
     private const string ProductListSchema =
         """
         # name: a

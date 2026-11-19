@@ -1839,6 +1839,34 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run, $"x={x}");
     }
 
+    [Fact]
+    public async Task Defer_Should_DeliverTheNestedFragmentSeparately_When_AnotherNodeSelectsTheParentFieldWithoutIt()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ShelfTopSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                shelf { id }
+                ... @defer(label: "outer") {
+                    shelf {
+                        top {
+                            ... @defer(label: "inner") { price }
+                        }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Equal(2, run.Deferred.PendingCount);
+        MatchRun(run);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

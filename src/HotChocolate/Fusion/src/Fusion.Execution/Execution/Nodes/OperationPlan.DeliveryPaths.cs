@@ -90,116 +90,20 @@ public sealed partial record OperationPlan
         Operation operation,
         SelectionPath selectionPath)
     {
-        var path = Path.Root;
-        var pendingFieldCount = 0;
-        var currentSelectionSet = operation.Definition.SelectionSet;
-        IOutputTypeDefinition currentType = operation.RootType;
+        var resolver = new DeliveryPathResolver(operation.Schema, selectionPath);
 
-        for (var i = 0; i < selectionPath.Length; i++)
+        if (resolver.TryResolve(
+            0,
+            operation.Definition.SelectionSet,
+            operation.RootType,
+            Path.Root,
+            0,
+            out var deliveryPath))
         {
-            var segment = selectionPath[i];
-
-            if (segment.Kind is SelectionPathSegmentKind.Root)
-            {
-                continue;
-            }
-
-            if (segment.Kind is SelectionPathSegmentKind.InlineFragment)
-            {
-                if (!TryFindInlineFragment(currentSelectionSet, segment.Name, out var inlineFragment)
-                    || !operation.Schema.Types.TryGetType<IOutputTypeDefinition>(segment.Name, out var fragmentType))
-                {
-                    throw ThrowHelper.DeliveryPathSegmentNotFound(segment.Name);
-                }
-
-                currentSelectionSet = inlineFragment.SelectionSet;
-                currentType = fragmentType;
-                continue;
-            }
-
-            if (!TryFindField(
-                operation.Schema,
-                currentSelectionSet,
-                currentType,
-                segment.Name,
-                out var fieldNode,
-                out var field))
-            {
-                throw ThrowHelper.DeliveryPathSegmentNotFound(segment.Name);
-            }
-
-            path = path.Append(fieldNode.Alias?.Value ?? fieldNode.Name.Value);
-            pendingFieldCount++;
-
-            if (field.Type.IsListType())
-            {
-                break;
-            }
-
-            currentSelectionSet = fieldNode.SelectionSet
-                ?? throw ThrowHelper.DeliveryPathSelectionSetMissing(segment.Name);
-            currentType = field.Type.NamedType<IOutputTypeDefinition>();
+            return deliveryPath;
         }
 
-        return new DeliveryPath(path, pendingFieldCount);
-    }
-
-    private static bool TryFindField(
-        ISchemaDefinition schema,
-        SelectionSetNode selectionSet,
-        IOutputTypeDefinition typeContext,
-        string responseName,
-        out FieldNode fieldNode,
-        out IOutputFieldDefinition field)
-    {
-        foreach (var selection in selectionSet.Selections)
-        {
-            if (selection is FieldNode candidate
-                && (candidate.Alias?.Value ?? candidate.Name.Value) == responseName
-                && typeContext is IComplexTypeDefinition complexType
-                && complexType.Fields.TryGetField(candidate.Name.Value, out var resolvedField)
-                && resolvedField is not null)
-            {
-                fieldNode = candidate;
-                field = resolvedField;
-                return true;
-            }
-
-            if (selection is InlineFragmentNode inlineFragment)
-            {
-                IOutputTypeDefinition fragmentType;
-                if (inlineFragment.TypeCondition?.Name.Value is not { } typeName)
-                {
-                    fragmentType = typeContext;
-                }
-                else if (schema.Types.TryGetType<IOutputTypeDefinition>(
-                    typeName,
-                    out var resolvedType)
-                    && resolvedType is not null)
-                {
-                    fragmentType = resolvedType;
-                }
-                else
-                {
-                    continue;
-                }
-
-                if (TryFindField(
-                    schema,
-                    inlineFragment.SelectionSet,
-                    fragmentType,
-                    responseName,
-                    out fieldNode,
-                    out field))
-                {
-                    return true;
-                }
-            }
-        }
-
-        fieldNode = null!;
-        field = null!;
-        return false;
+        throw ThrowHelper.DeliveryPathSegmentNotFound(resolver.UnresolvedSegmentName);
     }
 
     private static bool TryFindInlineFragment(
@@ -228,6 +132,133 @@ public sealed partial record OperationPlan
 
         inlineFragment = null!;
         return false;
+    }
+
+    private struct DeliveryPathResolver(ISchemaDefinition schema, SelectionPath selectionPath)
+    {
+        private int _unresolvedIndex;
+
+        public readonly string UnresolvedSegmentName => selectionPath[_unresolvedIndex].Name;
+
+        public bool TryResolve(
+            int index,
+            SelectionSetNode selectionSet,
+            IOutputTypeDefinition typeContext,
+            Path path,
+            int pendingFieldCount,
+            out DeliveryPath deliveryPath)
+        {
+            for (; index < selectionPath.Length; index++)
+            {
+                var segment = selectionPath[index];
+
+                if (segment.Kind is SelectionPathSegmentKind.Root)
+                {
+                    continue;
+                }
+
+                if (segment.Kind is SelectionPathSegmentKind.InlineFragment)
+                {
+                    if (!TryFindInlineFragment(selectionSet, segment.Name, out var inlineFragment)
+                        || !schema.Types.TryGetType<IOutputTypeDefinition>(segment.Name, out var fragmentType))
+                    {
+                        _unresolvedIndex = Math.Max(_unresolvedIndex, index);
+                        deliveryPath = default;
+                        return false;
+                    }
+
+                    selectionSet = inlineFragment.SelectionSet;
+                    typeContext = fragmentType;
+                    continue;
+                }
+
+                if (TryResolveField(index, selectionSet, typeContext, path, pendingFieldCount, out deliveryPath))
+                {
+                    return true;
+                }
+
+                _unresolvedIndex = Math.Max(_unresolvedIndex, index);
+                return false;
+            }
+
+            deliveryPath = new DeliveryPath(path, pendingFieldCount);
+            return true;
+        }
+
+        private bool TryResolveField(
+            int index,
+            SelectionSetNode selectionSet,
+            IOutputTypeDefinition typeContext,
+            Path path,
+            int pendingFieldCount,
+            out DeliveryPath deliveryPath)
+        {
+            var responseName = selectionPath[index].Name;
+
+            foreach (var selection in selectionSet.Selections)
+            {
+                if (selection is FieldNode candidate
+                    && (candidate.Alias?.Value ?? candidate.Name.Value) == responseName
+                    && typeContext is IComplexTypeDefinition complexType
+                    && complexType.Fields.TryGetField(candidate.Name.Value, out var field)
+                    && field is not null)
+                {
+                    var fieldPath = path.Append(responseName);
+
+                    if (field.Type.IsListType())
+                    {
+                        deliveryPath = new DeliveryPath(fieldPath, pendingFieldCount + 1);
+                        return true;
+                    }
+
+                    var childSelectionSet = candidate.SelectionSet
+                        ?? throw ThrowHelper.DeliveryPathSelectionSetMissing(responseName);
+
+                    if (TryResolve(
+                        index + 1,
+                        childSelectionSet,
+                        field.Type.NamedType<IOutputTypeDefinition>(),
+                        fieldPath,
+                        pendingFieldCount + 1,
+                        out deliveryPath))
+                    {
+                        return true;
+                    }
+                }
+
+                if (selection is InlineFragmentNode inlineFragment)
+                {
+                    IOutputTypeDefinition fragmentType;
+                    if (inlineFragment.TypeCondition?.Name.Value is not { } typeName)
+                    {
+                        fragmentType = typeContext;
+                    }
+                    else if (schema.Types.TryGetType<IOutputTypeDefinition>(typeName, out var resolvedType)
+                        && resolvedType is not null)
+                    {
+                        fragmentType = resolvedType;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (TryResolveField(
+                        index,
+                        inlineFragment.SelectionSet,
+                        fragmentType,
+                        path,
+                        pendingFieldCount,
+                        out deliveryPath))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            deliveryPath = default;
+            return false;
+        }
     }
 
     internal readonly record struct DeliveryPath(Path PendingPath, int PendingFieldCount);

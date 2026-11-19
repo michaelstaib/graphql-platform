@@ -2,8 +2,10 @@ using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Types;
+using HotChocolate.Language;
 using Microsoft.Extensions.ObjectPool;
 
 namespace HotChocolate.Fusion.Execution;
@@ -110,6 +112,43 @@ public class OperationPlanDeliveryPathTests : FusionTestBase
     }
 
     [Fact]
+    public void Create_Should_ResolvePath_When_OnlyTheSecondNodeOfAResponseNameHoldsTheNextSegment()
+    {
+        // arrange
+        var path = SelectionPath.Root.AppendField("user").AppendField("profile");
+
+        // act
+        var plan = CreatePlan(
+            "{ user(id: \"1\") { name } ... @defer { user(id: \"1\") { profile { bio } } } }",
+            path);
+
+        // assert
+        Describe(plan.GetDeliveryPath(0)).MatchInlineSnapshot("user.profile (2)");
+    }
+
+    [Fact]
+    public void Create_Should_ResolvePath_When_TwoNodesLieBelowTheTypeConditionsOfAnAbstractParent()
+    {
+        // arrange
+        var path = SelectionPath.Root.AppendField("actor").AppendField("owner").AppendField("profile");
+
+        // act
+        var plan = CreatePlan(
+            """
+            {
+                actor {
+                    ... on Admin { owner { name } }
+                    ... on Member { owner { profile { bio } } }
+                }
+            }
+            """,
+            path);
+
+        // assert
+        Describe(plan.GetDeliveryPath(0)).MatchInlineSnapshot("actor.owner.profile (3)");
+    }
+
+    [Fact]
     public void GetDeliveryPath_Should_RejectUnknownGroup_When_PlanHasNoIncrementalParts()
     {
         // arrange
@@ -128,12 +167,28 @@ public class OperationPlanDeliveryPathTests : FusionTestBase
             .Select(group => group.Id)
             .Distinct()
             .Order()
-            .Select(id =>
-            {
-                var path = plan.GetDeliveryPath(id);
-                return $"{id}: {path.PendingPath} ({path.PendingFieldCount})";
-            })
+            .Select(id => $"{id}: {Describe(plan.GetDeliveryPath(id))}")
             .ToArray();
+
+    private static string Describe(OperationPlan.DeliveryPath path)
+        => $"{path.PendingPath} ({path.PendingFieldCount})";
+
+    private static OperationPlan CreatePlan(string operationText, SelectionPath path)
+    {
+        var schema = CreateSchema();
+        var document = Utf8GraphQLParser.Parse(operationText);
+        var rewritten = new DocumentRewriter(schema, mergeAcrossDefer: false)
+            .RewriteDocument(document, operationName: null);
+        var definition = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
+        var compiler = new OperationCompiler(
+            schema,
+            new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
+                new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>()));
+        var operation = compiler.Compile("1", "1", "1", definition, mergeAcrossDefer: false);
+        var group = new DeliveryGroup(null, null, 0) { Id = 0, Path = path };
+
+        return OperationPlan.Create(operation, [], [], [group], default, PolicyPlan.Empty, 0, 0);
+    }
 
     private static OperationPlan CreatePlan(string shape)
         => PlanOperation(CreateSchema(), shape switch
@@ -154,6 +209,19 @@ public class OperationPlanDeliveryPathTests : FusionTestBase
                 a: String
                 user(id: ID!): User @lookup
                 users: [User!]!
+                actor: Actor
+            }
+
+            interface Actor {
+                owner: User!
+            }
+
+            type Admin implements Actor {
+                owner: User!
+            }
+
+            type Member implements Actor {
+                owner: User!
             }
 
             type User @key(fields: "id") {
