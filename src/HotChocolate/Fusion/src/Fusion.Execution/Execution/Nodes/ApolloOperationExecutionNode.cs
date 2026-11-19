@@ -226,12 +226,11 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             return reusedCount > 0 ? ExecutionStatus.Success : ExecutionStatus.Skipped;
         }
 
-        var variables = representation.ToVariableValues();
         var schemaName = _schemaName;
 
         // The combined representations object must be the request's single
         // variable set so the request is routed as a single operation. The
-        // per-entity variable value sets are only used for error attribution.
+        // per-entity variable value sets are only created for error attribution.
         var requestVariables = ImmutableArray.Create(
             new VariableValues(CompactPath.Root, representation.Value));
         context.TrackVariableValueSets(this, requestVariables);
@@ -288,7 +287,7 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             diagnosticEvents.SourceSchemaTransportError(context, this, schemaName, exception);
             results.DisposeResults();
 
-            context.AddErrors(exception, variables, _resultSelectionSet);
+            context.AddErrors(exception, representation.ToVariableValues(), _resultSelectionSet);
             return ExecutionStatus.Failed;
         }
 
@@ -306,7 +305,6 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
                     schemaName,
                     s_entitiesSource,
                     _resultSelectionSet,
-                    variables,
                     representation,
                     result,
                     hasSomeErrors);
@@ -341,7 +339,7 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             }
 
             diagnosticEvents.SourceSchemaStoreError(context, this, schemaName, exception);
-            context.AddErrors(exception, variables, _resultSelectionSet);
+            context.AddErrors(exception, representation.ToVariableValues(), _resultSelectionSet);
             return ExecutionStatus.Failed;
         }
 
