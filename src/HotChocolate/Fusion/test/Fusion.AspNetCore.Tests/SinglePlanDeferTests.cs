@@ -4310,6 +4310,32 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     [Fact]
     public async Task
+        Defer_Should_SendNullForTheFields_When_AnOperationOfTheBatchHasNoResultAndTheirLookupsAreSkippedForAMissingKey()
+    {
+        // arrange
+        // the batch of B has no result for topProduct and answers the author of product without its key
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, body, text) => schema == "B" && StepId().Matches(body).Any(m => m.Groups[1].Value == "2")
+                ? AuthorValue().Replace(
+                    string.Join("\n", text.Split('\n').Where(line => !line.Contains("\"requestIndex\":0"))),
+                    "\"author\":{}")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", BatchProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorNullableBioAndNickSource));
+
+        // act
+        var run = await RunDeferredAsync(gateway, BatchQuery, []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task
         Defer_Should_FailTheNestedFragments_When_TheBatchThatFeedsTheirLookupsFailsAfterTheParentsRowWasSent()
     {
         // arrange
@@ -4505,8 +4531,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_ReportOnlyTheNullError_When_AStepFailsInTransportForAFieldThatAlreadyHoldsAValue()
     {
         // arrange
-        // the step B:7 writes x for the lookup of c and P answers null for the non-null price, then the step B:2
-        // of g fails in transport for x after t completed
+        // B:7 writes x and P answers null, then g's step B:2 fails for x after t completed
         var gateway = await CreateGatewayAsync(
             ["B:7", "P:3", "P:6", "P:8", "B:2@2"],
             (schema, body, text) => schema switch
@@ -4551,6 +4576,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     [GeneratedRegex("\"nick\":\"[^\"]*\"")]
     private static partial Regex NickValue();
+
+    [GeneratedRegex("\"author\":\\{\"id\":\"[^\"]*\"\\}")]
+    private static partial Regex AuthorValue();
 
     private const string BatchProductSource =
         """
@@ -5213,6 +5241,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
         """
         type Query { authorById(id: ID!): Author @lookup }
         type Author @key(fields: "id") { id: ID! bio: String }
+        """;
+
+    private const string AuthorNullableBioAndNickSource =
+        """
+        type Query { authorById(id: ID!): Author @lookup }
+        type Author @key(fields: "id") { id: ID! bio: String nick: String }
         """;
 
     private const string WeightSource =

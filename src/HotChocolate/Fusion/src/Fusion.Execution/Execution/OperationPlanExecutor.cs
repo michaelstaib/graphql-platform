@@ -742,9 +742,10 @@ internal static partial class OperationPlanExecutor
             hasNext);
     }
 
-    // An instance that a step failure failed carries the errors its steps reported for rows that already held a
-    // result, else the errors of its failed steps unless a row holds a step error. An instance that failed for
-    // another reason carries only the errors of its rows.
+    // A failed instance carries the errors of its rows, then, when a step failure failed it, the errors its steps
+    // reported for rows that already held a result or else the errors of its failed steps unless a row holds a step
+    // error. The errors its steps reported for no row and the errors without a group follow, and an instance
+    // without any error carries the error of the exception of a failed step of its group.
     private static ImmutableList<IError> TakeFailureErrors(
         SinglePlanDeliveryState state,
         int instance,
