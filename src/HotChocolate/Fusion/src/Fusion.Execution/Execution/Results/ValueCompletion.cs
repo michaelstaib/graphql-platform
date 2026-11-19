@@ -954,7 +954,7 @@ internal sealed class ValueCompletion
     private bool StopsAtGroupBoundary<TMode>(CompositeResultElement field, CompositeResultElement parent)
         where TMode : struct, IMode
     {
-        var document = _writeFilterDocument!;
+        var document = _store.Result;
 
         if (!document.TryGetDestination(field, out var destination)
             || !document.HasOtherDestination(parent, destination))
@@ -1975,7 +1975,7 @@ TryCompleteList_MoveNext:
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
                         preparedSelectionSet: null))
                     {
-                        if (TMode.IsFiltered && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
                         {
                             continue;
                         }
@@ -2000,7 +2000,7 @@ TryCompleteList_MoveNext:
                         depth,
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType)))
                     {
-                        if (TMode.IsFiltered && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
                         {
                             continue;
                         }
@@ -2024,7 +2024,7 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
-                if (TMode.IsFiltered && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
                 {
                     continue;
                 }
@@ -2130,7 +2130,7 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
-                if (TMode.IsFiltered && StopsAtGroupBoundary<TMode>(targetProperty, target))
+                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, target))
                 {
                     continue;
                 }

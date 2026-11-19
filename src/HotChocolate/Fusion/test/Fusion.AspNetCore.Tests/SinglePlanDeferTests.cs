@@ -2775,6 +2775,93 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_CompleteTheGroupWithTheNonNullError_When_TheParentStepAnswersNullForTheKey()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name ... @defer(label: "d") { id price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailOnlyTheInstanceOfTheNullKeyItem_When_TheParentStepAnswersNullForTheKeyOfOneItem()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstId,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "d") { id price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailOnlyTheInstanceOfTheNullKeyItem_When_TheNullKeyIsNotSelectedByTheClient()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheFirstSku,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductTwoKeysSource),
+            ("B", ProductBySkuSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { products { name ... @defer(label: "d") { id price } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    // The source schema A answers null for the first id and the same name for every product.
+    private static string NullTheFirstId(string schema, string body, string text)
+        => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)
+            ? NormalizeName(schema, body, EntityId().Replace(text, "\"id\":null", 1))
+            : text;
+
+    // The source schema A answers null for the first sku and the same name for every product.
+    private static string NullTheFirstSku(string schema, string body, string text)
+        => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)
+            ? NormalizeName(schema, body, ProductSku().Replace(text, "\"sku\":null", 1))
+            : text;
+
+    [GeneratedRegex("\"sku\":\"[^\"]*\"")]
+    private static partial Regex ProductSku();
+
+    [Fact]
     public async Task Defer_Should_AnnounceOneIdPerItem_When_TheAnchorIsInsideNestedLists()
     {
         // arrange
