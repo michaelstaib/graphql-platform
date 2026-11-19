@@ -666,7 +666,7 @@ internal static class DeferLowering
 
             if (selects
                 && _sites.TryGetValue(fragment, out var site)
-                && site is { Levels: 0, IsMarker: false, Origin: { } origin })
+                && site is { IsMarker: false, Origin: { } origin })
             {
                 toInline.Add(origin);
             }
@@ -736,7 +736,7 @@ internal static class DeferLowering
             conditions.AddRange(state.Conditions);
 
             var core = new InlineFragmentNode(null, null, coreDirectives, new SelectionSetNode(content));
-            _sites[core] = new Site(state.Group, levels);
+            _sites[core] = new Site(state.Group, levels) { Origin = fragment };
             var outermost = core;
 
             for (var i = conditions.Count - 1; i >= 0; i--)

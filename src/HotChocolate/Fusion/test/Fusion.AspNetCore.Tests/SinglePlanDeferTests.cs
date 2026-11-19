@@ -2049,6 +2049,73 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run, $"x={x}");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheListOnce_When_AFragmentWrapsTheNestedFragmentBelowAnObject(bool x)
+    {
+        // arrange
+        var (gateway, listRequests) = await CreateReviewListGatewayAsync(ShelfSource);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($x: Boolean!) {
+                shelf @include(if: $x) { items { name reviews { id } } }
+                ... @defer(label: "o") {
+                    shelf {
+                        items { price }
+                        ... @defer(label: "m") {
+                            items {
+                                ... @defer(label: "i") { reviews { stars } }
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["x"] = x });
+
+        // assert
+        // The deferred run and its plain twin ask for the list once each.
+        Assert.Equal(2, listRequests());
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        MatchRun(run, $"x={x}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_FetchTheListOnce_When_AFragmentWrapsTheNestedFragmentBelowAnObjectWithoutACondition()
+    {
+        // arrange
+        var (gateway, listRequests) = await CreateReviewListGatewayAsync(ShelfSource);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                shelf { items { name reviews { id } } }
+                ... @defer(label: "o") {
+                    shelf {
+                        items { price }
+                        ... @defer(label: "m") {
+                            items {
+                                ... @defer(label: "i") { reviews { stars } }
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        // The deferred run and its plain twin ask for the list once each.
+        Assert.Equal(2, listRequests());
+        MatchRun(run);
+    }
+
     [Fact]
     public async Task Defer_Should_FetchTheReviewsOnceAndTheRatingOncePerGroup_When_TwoGroupsSelectTheSameList()
     {
@@ -7115,7 +7182,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private const string ShelfTopSource =
         """
         type Query { product(id: ID!): Product @lookup shelf: Shelf }
-        type Shelf { id: ID! top: Product! items: [Product!]! }
+        type Shelf { id: ID! top: Product! }
         type Product @key(fields: "id") { id: ID! name: String! related: Product }
         """;
 
