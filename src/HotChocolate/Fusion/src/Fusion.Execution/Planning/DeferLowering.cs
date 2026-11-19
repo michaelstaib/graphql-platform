@@ -212,7 +212,14 @@ internal static class DeferLowering
         public List<ISelectionNode> LowerPass(IReadOnlyList<ISelectionNode> items, Scope scope)
         {
             var lowered = LowerList(items, scope);
-            return AttachParts(lowered, scope.Pass, scope.Sink);
+            var attached = AttachParts(lowered, scope.Pass, scope.Sink, out var any);
+
+            if (any)
+            {
+                scope.Sink.RemoveAll(part => part.Target == scope.Pass);
+            }
+
+            return attached;
         }
 
         private List<ISelectionNode> LowerList(IReadOnlyList<ISelectionNode> items, Scope scope)
@@ -283,31 +290,28 @@ internal static class DeferLowering
         {
             var items = fragment.SelectionSet.Selections;
             var group = new DeferGroup(scope.Group);
-            var (attempt, content, coverage, state) = AttemptDeferred(
-                fragment,
-                condition,
-                fragmentType,
-                scope,
-                group);
+            var attempt = AttemptDeferred(fragment, condition, fragmentType, scope, group);
 
             // The collected nested fragments are inlined, and the attempt repeats until it collects none that is
             // not inlined yet.
-            while (!_inlined.IsSupersetOf(state.NestedToInline))
+            while (!_inlined.IsSupersetOf(attempt.State.NestedToInline))
             {
-                _inlined.UnionWith(state.NestedToInline);
-                (attempt, content, coverage, state) = AttemptDeferred(
-                    fragment,
-                    condition,
-                    fragmentType,
-                    scope,
-                    group);
+                _inlined.UnionWith(attempt.State.NestedToInline);
+                attempt = AttemptDeferred(fragment, condition, fragmentType, scope, group);
             }
 
+            var content = attempt.Content;
+            var state = attempt.State;
+
             // The decision reads the content that is left after the pruning of the deferred copy.
-            if (ShouldInline(content, fragmentType, coverage, scope, state))
+            if (ShouldInline(content, fragmentType, attempt.Coverage, scope, state))
             {
-                return false;
+                result.Add(Adopt(fragment, group, attempt, scope));
+                return true;
             }
+
+            // The parts that the attempt attached are consumed.
+            attempt.Scope.Sink.RemoveAll(part => part.Target == attempt.Scope.Pass);
 
             if (condition.IfVariableName is { } variableName)
             {
@@ -331,7 +335,7 @@ internal static class DeferLowering
                 result.Add(marker);
             }
 
-            scope.Sink.AddRange(attempt.Sink);
+            scope.Sink.AddRange(attempt.Scope.Sink);
             scope.Sink.AddRange(state.Parts);
             return true;
         }
@@ -347,11 +351,34 @@ internal static class DeferLowering
 
             // The content is lowered first, so a nested fragment that was inlined is part of it.
             var attempt = scope.EnterDeferred(fragmentType, fragment, items, group);
-            var lowered = LowerPass(items, attempt);
+            var lowered = LowerList(items, attempt);
+            var attached = AttachParts(lowered, attempt.Pass, attempt.Sink, out _);
             var coverage = Coverage.Create(scope, fragment.TypeCondition);
             var state = new PruneState(fragment, group, condition.IfVariableName);
-            var content = Prune(lowered, coverage, fragmentType, 0, false, state);
-            return new DeferAttempt(attempt, content, coverage, state);
+            var content = Prune(attached, coverage, fragmentType, 0, false, state);
+            return new DeferAttempt(attempt, lowered, content, coverage, state);
+        }
+
+        private static InlineFragmentNode Adopt(
+            InlineFragmentNode fragment,
+            DeferGroup group,
+            DeferAttempt attempt,
+            Scope scope)
+        {
+            // The lowered content of the attempt is the content of the inlined fragment in the enclosing scope.
+            group.IsDissolved = true;
+            scope.Pass.Adopt(attempt.Scope.Pass);
+
+            foreach (var part in attempt.Scope.Sink)
+            {
+                scope.Sink.Add(part.Target == attempt.Scope.Pass ? part with { Target = scope.Pass } : part);
+            }
+
+            return new InlineFragmentNode(
+                null,
+                fragment.TypeCondition,
+                fragment.Directives.Where(static d => !IsDeferDirective(d)).ToArray(),
+                new SelectionSetNode(attempt.Lowered));
         }
 
         private bool ShouldInline(
@@ -754,7 +781,8 @@ internal static class DeferLowering
         private static List<ISelectionNode> AttachParts(
             List<ISelectionNode> items,
             Pass pass,
-            List<PendingPart> sink)
+            List<PendingPart> sink,
+            out bool any)
         {
             Dictionary<FieldNode, List<InlineFragmentNode>>? byOutput = null;
 
@@ -766,7 +794,7 @@ internal static class DeferLowering
                 }
 
                 byOutput ??= new Dictionary<FieldNode, List<InlineFragmentNode>>(ReferenceEqualityComparer.Instance);
-                var output = pass.Outputs[part.Input];
+                var output = pass.GetOutput(part.Input);
 
                 if (!byOutput.TryGetValue(output, out var parts))
                 {
@@ -777,12 +805,13 @@ internal static class DeferLowering
                 parts.Add(part.Fragment);
             }
 
+            any = byOutput is not null;
+
             if (byOutput is null)
             {
                 return items;
             }
 
-            sink.RemoveAll(part => part.Target == pass);
             return Attach(items, byOutput) ?? items;
         }
 
@@ -1165,11 +1194,27 @@ internal static class DeferLowering
 
     /// <summary>
     /// The delivery group of one deferred fragment. The number is assigned in the document order of the places
-    /// where the fragments stand, and a parent always has a lower number than its children.
+    /// where the fragments stand, and a parent always has a lower number than its children. The children of a
+    /// dissolved group belong to the parent of that group.
     /// </summary>
     private sealed class DeferGroup(DeferGroup? parent)
     {
-        public DeferGroup? Parent { get; } = parent;
+        public DeferGroup? Parent
+        {
+            get
+            {
+                var current = parent;
+
+                while (current is { IsDissolved: true })
+                {
+                    current = current.Parent;
+                }
+
+                return current;
+            }
+        }
+
+        public bool IsDissolved { get; set; }
 
         public int Number { get; set; } = -1;
     }
@@ -1191,6 +1236,7 @@ internal static class DeferLowering
     /// </summary>
     private sealed record DeferAttempt(
         Scope Scope,
+        List<ISelectionNode> Lowered,
         List<ISelectionNode> Content,
         Coverage Coverage,
         PruneState State);
@@ -1201,7 +1247,35 @@ internal static class DeferLowering
     /// </summary>
     private sealed class Pass
     {
+        private List<Pass>? _adopted;
+
         public Dictionary<FieldNode, FieldNode> Outputs { get; } = new(ReferenceEqualityComparer.Instance);
+
+        public void Adopt(Pass pass) => (_adopted ??= []).Add(pass);
+
+        public FieldNode GetOutput(FieldNode input)
+            => TryGetOutput(input, out var output) ? output : Outputs[input];
+
+        private bool TryGetOutput(FieldNode input, out FieldNode output)
+        {
+            if (Outputs.TryGetValue(input, out output!))
+            {
+                return true;
+            }
+
+            if (_adopted is not null)
+            {
+                foreach (var pass in _adopted)
+                {
+                    if (pass.TryGetOutput(input, out output!))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
     }
 
     /// <summary>

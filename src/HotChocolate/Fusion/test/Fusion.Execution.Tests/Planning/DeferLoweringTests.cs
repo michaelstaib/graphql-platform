@@ -4001,6 +4001,289 @@ public class DeferLoweringTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public void Lower_Should_InlineTheWrappers_When_AWrapperChainIsNested3LevelsDeep()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "w2") {
+                            ... @defer(label: "w1") {
+                                ... @defer(label: "w0") {
+                                    ... @defer(label: "i") {
+                                        friends { total }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    ... {
+                      ... {
+                        ... {
+                          friends {
+                            total
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_KeepTheLeafFragments_When_EveryLevelOfAChainHasALeafFragment()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "w2") {
+                            ... @defer(label: "w1") {
+                                ... @defer(label: "w0") {
+                                    ... @defer(label: "i") {
+                                        friends { total }
+                                    }
+                                    ... @defer(label: "l0") { nick }
+                                }
+                                ... @defer(label: "l1") { nick }
+                            }
+                            ... @defer(label: "l2") { nick }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    ... {
+                      ... {
+                        ... {
+                          friends {
+                            total
+                          }
+                        }
+                        ... @defer(label: "l0", __group: 0, __parent: -1) {
+                          nick
+                        }
+                      }
+                      ... @defer(label: "l1", __group: 1, __parent: -1) {
+                        nick
+                      }
+                    }
+                    ... @defer(label: "l2", __group: 2, __parent: -1) {
+                      nick
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_InlineTheSiblingPairs_When_SiblingPairsAreNested3LevelsDeep()
+    {
+        // arrange
+        const string operation =
+            """
+            query($x: Boolean!) {
+                users @include(if: $x) {
+                    name
+                    friends { id }
+                }
+                ... @defer(label: "o") {
+                    users {
+                        email
+                        ... @defer(label: "a2") {
+                            ... @defer(label: "a1") {
+                                ... @defer(label: "a0") {
+                                    ... @defer(label: "i") {
+                                        friends { total }
+                                    }
+                                }
+                                ... @defer(label: "b0") {
+                                    ... @defer(label: "c0") { friends { email } }
+                                }
+                            }
+                            ... @defer(label: "b1") {
+                                ... @defer(label: "c1") { friends { email } }
+                            }
+                        }
+                        ... @defer(label: "b2") {
+                            ... @defer(label: "c2") { friends { email } }
+                        }
+                    }
+                }
+            }
+            """;
+
+        // act
+        var lowered = Lower(operation);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            query($x: Boolean!) {
+              users @include(if: $x) {
+                name
+                friends {
+                  id
+                }
+              }
+              ... {
+                users {
+                  email
+                  ... {
+                    ... {
+                      ... {
+                        ... {
+                          friends {
+                            total
+                          }
+                        }
+                      }
+                      ... {
+                        ... {
+                          friends {
+                            email
+                          }
+                        }
+                      }
+                    }
+                    ... {
+                      ... {
+                        friends {
+                          email
+                        }
+                      }
+                    }
+                  }
+                  ... {
+                    ... {
+                      friends {
+                        email
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Theory]
+    [InlineData("wrapper-chain", 66, 0)]
+    [InlineData("leaf-per-level", 66, 64)]
+    [InlineData("sibling-pairs", 194, 0)]
+    public async Task Lower_Should_Complete_When_DeferFragmentsAreNested64LevelsDeep(
+        string shape,
+        int expectedPlainFragments,
+        int expectedDeferredFragments)
+    {
+        // arrange
+        var operation = CreateNestedDefer(shape, 64);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        // act
+        var lowering = Task.Run(() => Lower(operation), cancellationToken);
+        var finished = await Task.WhenAny(lowering, Task.Delay(TimeSpan.FromMinutes(2), cancellationToken));
+
+        // assert
+        Assert.Same(lowering, finished);
+        var lowered = await lowering;
+        Assert.Equal(expectedPlainFragments, CountOccurrences(lowered, "... {"));
+        Assert.Equal(expectedDeferredFragments, CountOccurrences(lowered, "@defer("));
+    }
+
+    private static string CreateNestedDefer(string shape, int depth)
+    {
+        var nested = "... @defer(label: \"i\") { friends { total } }";
+
+        for (var i = 0; i < depth; i++)
+        {
+            nested = shape switch
+            {
+                "wrapper-chain" => $"... @defer(label: \"w{i}\") {{ {nested} }}",
+                "leaf-per-level" =>
+                    $"... @defer(label: \"w{i}\") {{ {nested} ... @defer(label: \"l{i}\") {{ nick }} }}",
+                _ => $"... @defer(label: \"a{i}\") {{ {nested} }} "
+                    + $"... @defer(label: \"b{i}\") {{ ... @defer(label: \"c{i}\") {{ friends {{ email }} }} }}"
+            };
+        }
+
+        return "query($x: Boolean!) { users @include(if: $x) { name friends { id } } "
+            + $"... @defer(label: \"o\") {{ users {{ email {nested} }} }} }}";
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = text.IndexOf(value, StringComparison.Ordinal);
+
+        while (index >= 0)
+        {
+            count++;
+            index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal);
+        }
+
+        return count;
+    }
+
     private static string Lower(string operationText)
     {
         var document = Utf8GraphQLParser.Parse(operationText);
