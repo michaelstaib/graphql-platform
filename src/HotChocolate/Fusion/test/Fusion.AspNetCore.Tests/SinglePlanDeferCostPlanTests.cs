@@ -18,6 +18,7 @@ public class SinglePlanDeferCostPlanTests : FusionTestBase
     private const int ChainDepth = 20;
     private const int WarmUpDepth = 4;
     private static readonly TimeSpan s_costAnalysisBound = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan s_requestBound = TimeSpan.FromSeconds(30);
     private const string CostValuesSchemaText =
         """
         directive @cost(weight: String!)
@@ -69,6 +70,37 @@ public class SinglePlanDeferCostPlanTests : FusionTestBase
             timer.Last < s_costAnalysisBound,
             $"The cost analysis took {timer.Last.TotalMilliseconds:F1} ms, the bound is "
             + $"{s_costAnalysisBound.TotalMilliseconds:F0} ms.");
+    }
+
+    [Theory]
+    [InlineData("@defer(label: \"d\")", "@defer(label: \"e\")", null, null)]
+    [InlineData("@defer(label: \"d\")", "@defer(label: \"e\")", "@defer(label: \"f\")", null)]
+    [InlineData("@defer(if: $v, label: \"d\")", "@defer(label: \"e\")", null, true)]
+    [InlineData("@defer(if: $v, label: \"d\")", "@defer(label: \"e\")", null, false)]
+    public async Task CostAnalysis_Should_MatchTheTwin_When_DeferredFragmentsSelectTheSameChain(
+        string first,
+        string second,
+        string? nested,
+        bool? variable)
+    {
+        // arrange
+        using var server = CreateSourceSchema("A", CreateChainSchema());
+        using var gateway = await CreateGatewayAsync(server, enableSinglePlanDefer: true);
+        var twinQuery = CreateSiblingFragmentsQuery(MaxChainDepth, "", "", nested is null ? null : "");
+        var twin = await ValidateCostAsync(gateway, twinQuery);
+        var variables = variable is null ? null : new Dictionary<string, object?> { ["v"] = variable };
+
+        // act
+        var cost = await Task
+            .Run(() => ValidateCostAsync(
+                gateway,
+                CreateSiblingFragmentsQuery(MaxChainDepth, first, second, nested),
+                variables))
+            .WaitAsync(s_requestBound, TestContext.Current.CancellationToken);
+
+        // assert
+        Assert.Equal(twin, cost);
+        cost.MatchInlineSnapshot("fieldCost: 25, typeCost: 26");
     }
 
     [Fact]
@@ -160,6 +192,21 @@ public class SinglePlanDeferCostPlanTests : FusionTestBase
         var plain = CreateChain(depth, "v");
         var deferred = CreateChain(depth, "w");
         return $"{{ product(id: \"1\") {{ name {plain} ... @defer(label: \"d\") {{ {deferred} }} }} }}";
+    }
+
+    // Two sibling fragments that select the same chain, each with the given directives, and a nested fragment
+    // with the given directives inside the first one when they are not null.
+    private static string CreateSiblingFragmentsQuery(
+        int depth,
+        string firstDirectives,
+        string secondDirectives,
+        string? nestedDirectives)
+    {
+        var chain = CreateChain(depth, "w");
+        var nested = nestedDirectives is null ? "" : $" ... {nestedDirectives} {{ {chain} }}";
+        var variables = firstDirectives.Contains("$v") ? "query($v: Boolean!) " : "";
+        return $"{variables}{{ product(id: \"1\") {{ name ... {firstDirectives} {{ {chain}{nested} }} "
+            + $"... {secondDirectives} {{ {chain} }} }} }}";
     }
 
     private static string CreateChain(int depth, string leaf)
