@@ -367,7 +367,12 @@ internal static class DeferLowering
         {
             // The lowered content of the attempt is the content of the inlined fragment in the enclosing scope.
             group.IsDissolved = true;
-            scope.Pass.Adopt(attempt.Scope.Pass);
+
+            // A field that the enclosing pass lowered before maps to its lowered field in the attempt from here on.
+            foreach (var (input, output) in attempt.Scope.Pass.Outputs)
+            {
+                scope.Pass.Outputs[input] = output;
+            }
 
             foreach (var part in attempt.Scope.Sink)
             {
@@ -794,7 +799,7 @@ internal static class DeferLowering
                 }
 
                 byOutput ??= new Dictionary<FieldNode, List<InlineFragmentNode>>(ReferenceEqualityComparer.Instance);
-                var output = pass.GetOutput(part.Input);
+                var output = pass.Outputs[part.Input];
 
                 if (!byOutput.TryGetValue(output, out var parts))
                 {
@@ -1243,39 +1248,11 @@ internal static class DeferLowering
 
     /// <summary>
     /// One lowering of a selection list: the lowered field of every composite field, by the field it was
-    /// lowered from.
+    /// lowered from. A field that the list holds more than once maps to the field that was lowered last.
     /// </summary>
     private sealed class Pass
     {
-        private List<Pass>? _adopted;
-
         public Dictionary<FieldNode, FieldNode> Outputs { get; } = new(ReferenceEqualityComparer.Instance);
-
-        public void Adopt(Pass pass) => (_adopted ??= []).Add(pass);
-
-        public FieldNode GetOutput(FieldNode input)
-            => TryGetOutput(input, out var output) ? output : Outputs[input];
-
-        private bool TryGetOutput(FieldNode input, out FieldNode output)
-        {
-            if (Outputs.TryGetValue(input, out output!))
-            {
-                return true;
-            }
-
-            if (_adopted is not null)
-            {
-                foreach (var pass in _adopted)
-                {
-                    if (pass.TryGetOutput(input, out output!))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
     }
 
     /// <summary>

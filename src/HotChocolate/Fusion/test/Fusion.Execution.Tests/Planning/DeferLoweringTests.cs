@@ -4005,29 +4005,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineTheWrappers_When_AWrapperChainIsNested3LevelsDeep()
     {
         // arrange
-        const string operation =
-            """
-            query($x: Boolean!) {
-                users @include(if: $x) {
-                    name
-                    friends { id }
-                }
-                ... @defer(label: "o") {
-                    users {
-                        email
-                        ... @defer(label: "w2") {
-                            ... @defer(label: "w1") {
-                                ... @defer(label: "w0") {
-                                    ... @defer(label: "i") {
-                                        friends { total }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            """;
+        var operation = CreateNestedDefer("wrapper-chain", 3);
 
         // act
         var lowered = Lower(operation);
@@ -4066,32 +4044,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_KeepTheLeafFragments_When_EveryLevelOfAChainHasALeafFragment()
     {
         // arrange
-        const string operation =
-            """
-            query($x: Boolean!) {
-                users @include(if: $x) {
-                    name
-                    friends { id }
-                }
-                ... @defer(label: "o") {
-                    users {
-                        email
-                        ... @defer(label: "w2") {
-                            ... @defer(label: "w1") {
-                                ... @defer(label: "w0") {
-                                    ... @defer(label: "i") {
-                                        friends { total }
-                                    }
-                                    ... @defer(label: "l0") { nick }
-                                }
-                                ... @defer(label: "l1") { nick }
-                            }
-                            ... @defer(label: "l2") { nick }
-                        }
-                    }
-                }
-            }
-            """;
+        var operation = CreateNestedDefer("leaf-per-level", 3);
 
         // act
         var lowered = Lower(operation);
@@ -4139,38 +4092,7 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_InlineTheSiblingPairs_When_SiblingPairsAreNested3LevelsDeep()
     {
         // arrange
-        const string operation =
-            """
-            query($x: Boolean!) {
-                users @include(if: $x) {
-                    name
-                    friends { id }
-                }
-                ... @defer(label: "o") {
-                    users {
-                        email
-                        ... @defer(label: "a2") {
-                            ... @defer(label: "a1") {
-                                ... @defer(label: "a0") {
-                                    ... @defer(label: "i") {
-                                        friends { total }
-                                    }
-                                }
-                                ... @defer(label: "b0") {
-                                    ... @defer(label: "c0") { friends { email } }
-                                }
-                            }
-                            ... @defer(label: "b1") {
-                                ... @defer(label: "c1") { friends { email } }
-                            }
-                        }
-                        ... @defer(label: "b2") {
-                            ... @defer(label: "c2") { friends { email } }
-                        }
-                    }
-                }
-            }
-            """;
+        var operation = CreateNestedDefer("sibling-pairs", 3);
 
         // act
         var lowered = Lower(operation);
@@ -4227,27 +4149,143 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Theory]
-    [InlineData("wrapper-chain", 66, 0)]
-    [InlineData("leaf-per-level", 66, 64)]
-    [InlineData("sibling-pairs", 194, 0)]
-    public async Task Lower_Should_Complete_When_DeferFragmentsAreNested64LevelsDeep(
-        string shape,
-        int expectedPlainFragments,
-        int expectedDeferredFragments)
+    [InlineData("wrapper-chain")]
+    [InlineData("leaf-per-level")]
+    [InlineData("sibling-pairs")]
+    public async Task Lower_Should_Complete_When_DeferFragmentsAreNested64LevelsDeep(string shape)
     {
         // arrange
         var operation = CreateNestedDefer(shape, 64);
+        var expected = CreateLoweredNestedDefer(shape, 64);
         var cancellationToken = TestContext.Current.CancellationToken;
 
         // act
-        var lowering = Task.Run(() => Lower(operation), cancellationToken);
-        var finished = await Task.WhenAny(lowering, Task.Delay(TimeSpan.FromMinutes(2), cancellationToken));
+        var lowered = await Task.Run(() => Lower(operation), cancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
 
         // assert
-        Assert.Same(lowering, finished);
-        var lowered = await lowering;
-        Assert.Equal(expectedPlainFragments, CountOccurrences(lowered, "... {"));
-        Assert.Equal(expectedDeferredFragments, CountOccurrences(lowered, "@defer("));
+        Assert.Equal(expected, lowered);
+    }
+
+    [Fact]
+    public void Lower_Should_AttachThePartsToTheFieldLoweredLast_When_TwoTypeFragmentsShareAFieldNode()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            schema { query: Query }
+
+            type Query {
+                feed: [Post]
+                imagePostById(id: ID! @is(field: "id")): ImagePost @lookup @internal
+                textPostById(id: ID! @is(field: "id")): TextPost @lookup @internal
+                userById(id: ID!): User @lookup
+            }
+
+            interface Post {
+                id: ID!
+                author: User!
+            }
+
+            type ImagePost implements Post @key(fields: "id") {
+                id: ID!
+                author: User!
+            }
+
+            type TextPost implements Post @key(fields: "id") {
+                id: ID!
+                author: User!
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                friends: [User!]!
+            }
+            """,
+            """
+            # name: b
+            schema { query: Query }
+
+            type Query {
+                userByIdB(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+            }
+            """);
+        var document = Utf8GraphQLParser.Parse(
+            """
+            query {
+                feed {
+                    author {
+                        friends { id }
+                        ... @defer(label: "outer") {
+                            friends { id }
+                            ... @defer(label: "inner") {
+                                friends { email }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+        var operation = document.Definitions.OfType<OperationDefinitionNode>().First();
+        var feed = (FieldNode)operation.SelectionSet.Selections[0];
+
+        // The field node of the interface stands below one fragment per possible type.
+        var author = feed.SelectionSet!.Selections[0];
+        var fragments = new ISelectionNode[]
+        {
+            new InlineFragmentNode(null, new NamedTypeNode("ImagePost"), [], new SelectionSetNode([author])),
+            new InlineFragmentNode(null, new NamedTypeNode("TextPost"), [], new SelectionSetNode([author]))
+        };
+        var shared = operation.WithSelectionSet(
+            new SelectionSetNode([feed.WithSelectionSet(new SelectionSetNode(fragments))]));
+
+        // act
+        var lowered = DeferLowering.Lower(shared, schema).ToString(indented: true);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              feed {
+                ... on ImagePost {
+                  author {
+                    friends {
+                      id
+                    }
+                    ... {
+                      friends {
+                        id
+                      }
+                    }
+                  }
+                }
+                ... on TextPost {
+                  author {
+                    friends {
+                      id
+                    }
+                    ... {
+                      friends {
+                        id
+                        ... @defer(label: "inner", __group: 0, __parent: -1, __levels: 1) {
+                          email
+                        }
+                        ... @defer(label: "inner", __group: 1, __parent: -1, __levels: 1) {
+                          email
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
     }
 
     private static string CreateNestedDefer(string shape, int depth)
@@ -4270,18 +4308,25 @@ public class DeferLoweringTests : FusionTestBase
             + $"... @defer(label: \"o\") {{ users {{ email {nested} }} }} }}";
     }
 
-    private static int CountOccurrences(string text, string value)
+    private static string CreateLoweredNestedDefer(string shape, int depth)
     {
-        var count = 0;
-        var index = text.IndexOf(value, StringComparison.Ordinal);
+        var nested = "... { friends { total } }";
 
-        while (index >= 0)
+        for (var i = 0; i < depth; i++)
         {
-            count++;
-            index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal);
+            nested = shape switch
+            {
+                "wrapper-chain" => $"... {{ {nested} }}",
+                "leaf-per-level" =>
+                    $"... {{ {nested} ... @defer(label: \"l{i}\", __group: {i}, __parent: -1) {{ nick }} }}",
+                _ => $"... {{ {nested} }} ... {{ ... {{ friends {{ email }} }} }}"
+            };
         }
 
-        return count;
+        var lowered = "query($x: Boolean!) { users @include(if: $x) { name friends { id } } "
+            + $"... {{ users {{ email {nested} }} }} }}";
+
+        return Utf8GraphQLParser.Parse(lowered).Definitions[0].ToString(indented: true);
     }
 
     private static string Lower(string operationText)
