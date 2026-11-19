@@ -2,7 +2,6 @@ using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
-using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
@@ -177,9 +176,7 @@ public class OperationPlanDeliveryPathTests : FusionTestBase
     {
         var schema = CreateSchema();
         var document = Utf8GraphQLParser.Parse(operationText);
-        var rewritten = new DocumentRewriter(schema, mergeAcrossDefer: false)
-            .RewriteDocument(document, operationName: null);
-        var definition = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
+        var definition = document.Definitions.OfType<OperationDefinitionNode>().First();
         var compiler = new OperationCompiler(
             schema,
             new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
