@@ -878,7 +878,7 @@ internal sealed class ValueCompletion
     /// <returns>
     /// <c>false</c>, because the null never propagates up to the root.
     /// </returns>
-    private bool PropagateNullValuesInGroups(CompositeResultElement result, DeliveryResolution destination)
+    private bool PropagateNullValuesInGroups(CompositeResultElement result, SelectionDelivery destination)
     {
         var document = _store.Result;
         var current = result;
@@ -999,7 +999,7 @@ internal sealed class ValueCompletion
     private static bool IsReadOutsideGroups(
         SinglePlanDeliveryState delivery,
         Selection selection,
-        DeliveryResolution groups)
+        SelectionDelivery groups)
     {
         if (!delivery.IsKeyOrRequirement(selection))
         {
@@ -1027,7 +1027,7 @@ internal sealed class ValueCompletion
     private static bool DeliversOutsideGroups(
         SinglePlanDeliveryState delivery,
         ExecutionNode node,
-        DeliveryResolution groups)
+        SelectionDelivery groups)
     {
         var plan = delivery.Plan;
 
@@ -1094,7 +1094,7 @@ internal sealed class ValueCompletion
         return false;
     }
 
-    private static bool IsWithinGroups(OperationPlan plan, ImmutableArray<int> groupIds, DeliveryResolution groups)
+    private static bool IsWithinGroups(OperationPlan plan, ImmutableArray<int> groupIds, SelectionDelivery groups)
     {
         if (groupIds.IsDefaultOrEmpty)
         {

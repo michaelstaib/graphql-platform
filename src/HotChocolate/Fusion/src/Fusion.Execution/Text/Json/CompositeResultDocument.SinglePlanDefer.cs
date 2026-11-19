@@ -31,9 +31,9 @@ public sealed partial class CompositeResultDocument
         {
             var propertyCursor = root.AddRows((index * 2) + 1);
             var flags = _metaDb.GetFlags(propertyCursor);
-            var resolution = delivery.Resolve(selections[index]);
+            var selectionDelivery = delivery.GetDelivery(selections[index]);
 
-            if (resolution.Kind is DeliveryKind.Initial)
+            if (selectionDelivery.Kind is DeliveryKind.Initial)
             {
                 _metaDb.SetFlags(propertyCursor, flags & ~ElementFlags.IsExcluded);
                 continue;
@@ -41,7 +41,7 @@ public sealed partial class CompositeResultDocument
 
             _metaDb.SetFlags(propertyCursor, flags | ElementFlags.IsExcluded);
 
-            if (resolution.Kind is DeliveryKind.Groups)
+            if (selectionDelivery.Kind is DeliveryKind.Deferred)
             {
                 _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Held);
             }
@@ -95,17 +95,17 @@ public sealed partial class CompositeResultDocument
                 && token is ElementTokenType.Reference or ElementTokenType.StartObject or ElementTokenType.StartArray;
         }
 
-        var resolution = _delivery!.Resolve(selection);
+        var delivery = _delivery!.GetDelivery(selection);
 
-        if (resolution.Kind is DeliveryKind.Absent)
+        if (delivery.Kind is DeliveryKind.Absent)
         {
             return true;
         }
 
-        if (resolution.Kind is not DeliveryKind.Groups
-            || !(SinglePlanDeliveryState.Intersects(resolution, deliveryGroups)
+        if (delivery.Kind is not DeliveryKind.Deferred
+            || !(SinglePlanDeliveryState.Intersects(delivery, deliveryGroups)
                 || _delivery.IsKeyOrRequirement(selection)
-                || (sourceIsContainer && !selection.IsLeaf && _delivery.IsNestedIn(resolution, deliveryGroups))))
+                || (sourceIsContainer && !selection.IsLeaf && _delivery.IsNestedIn(delivery, deliveryGroups))))
         {
             return false;
         }
@@ -118,7 +118,7 @@ public sealed partial class CompositeResultDocument
     /// Determines whether the field of <paramref name="element"/> is held back for delivery groups, and gets the
     /// groups. A list item has the groups of its list.
     /// </summary>
-    internal bool TryGetDestination(CompositeResultElement element, out DeliveryResolution resolution)
+    internal bool TryGetDestination(CompositeResultElement element, out SelectionDelivery delivery)
     {
         var current = element.Cursor;
 
@@ -130,7 +130,7 @@ public sealed partial class CompositeResultDocument
             {
                 if ((property.DeliveryMarks & PropertyMarks.Held) != 0)
                 {
-                    resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+                    delivery = _delivery!.GetDelivery(_operation.GetSelectionById(property.OperationReferenceId));
                     return true;
                 }
 
@@ -140,21 +140,21 @@ public sealed partial class CompositeResultDocument
             current = GetLogicalParentCursor(current);
         }
 
-        resolution = default;
+        delivery = default;
         return false;
     }
 
     /// <summary>
     /// Determines whether the destination of <paramref name="element"/> differs from <paramref name="other"/>.
     /// </summary>
-    internal bool HasOtherDestination(CompositeResultElement element, DeliveryResolution other)
+    internal bool HasOtherDestination(CompositeResultElement element, SelectionDelivery other)
     {
-        if (!TryGetDestination(element, out var resolution))
+        if (!TryGetDestination(element, out var delivery))
         {
             return true;
         }
 
-        var groups = resolution.Groups;
+        var groups = delivery.Groups;
         var otherGroups = other.Groups;
 
         if (groups.Length != otherGroups.Length)
@@ -176,7 +176,7 @@ public sealed partial class CompositeResultDocument
     /// <summary>
     /// Fails the instances of the groups of a field at the anchor objects above the field.
     /// </summary>
-    internal void FailGroups(CompositeResultElement field, DeliveryResolution groups)
+    internal void FailGroups(CompositeResultElement field, SelectionDelivery groups)
     {
         var delivery = _delivery!;
 
@@ -198,7 +198,7 @@ public sealed partial class CompositeResultDocument
     {
         var delivery = _delivery;
 
-        if (delivery is null || !TryGetDestination(element, out var resolution))
+        if (delivery is null || !TryGetDestination(element, out var selectionDelivery))
         {
             return false;
         }
@@ -209,7 +209,7 @@ public sealed partial class CompositeResultDocument
         var record = new GroupError(error) { IsStepError = delivery.AppliesStepErrors };
         var recorded = false;
 
-        foreach (var group in resolution.Groups)
+        foreach (var group in selectionDelivery.Groups)
         {
             if (TryGetObjectAtDepth(element.Cursor, delivery.AnchorDepths[group.Id], out var anchor))
             {
@@ -246,12 +246,12 @@ public sealed partial class CompositeResultDocument
     {
         var delivery = _delivery!;
 
-        if (!TryGetDestination(element, out var resolution))
+        if (!TryGetDestination(element, out var selectionDelivery))
         {
             return;
         }
 
-        foreach (var group in resolution.Groups)
+        foreach (var group in selectionDelivery.Groups)
         {
             if (deliveryGroups.Contains(group.Id)
                 && TryGetObjectAtDepth(element.Cursor, delivery.AnchorDepths[group.Id], out var anchor))
@@ -267,12 +267,12 @@ public sealed partial class CompositeResultDocument
     /// </summary>
     internal bool HoldsOnlyRowsOf(CompositeResultElement element, ImmutableArray<int> deliveryGroups)
     {
-        if (!TryGetDestination(element, out var resolution))
+        if (!TryGetDestination(element, out var delivery))
         {
             return false;
         }
 
-        foreach (var group in resolution.Groups)
+        foreach (var group in delivery.Groups)
         {
             if (!deliveryGroups.Contains(group.Id))
             {
@@ -455,11 +455,11 @@ public sealed partial class CompositeResultDocument
                 }
                 else
                 {
-                    var resolution = _delivery!.Resolve(selection);
+                    var delivery = _delivery!.GetDelivery(selection);
 
-                    if (HoldsResult(marks, valueRow, resolution, scratch.Group))
+                    if (HoldsResult(marks, valueRow, delivery, scratch.Group))
                     {
-                        var (carrierGroup, carrierInstance) = ChooseCarrier(scratch, resolution, depth);
+                        var (carrierGroup, carrierInstance) = ChooseCarrier(scratch, delivery, depth);
 
                         _metaDb.OrDeliveryMarks(propertyCursor, PropertyMarks.Claim(0, carrierGroup));
 
@@ -525,14 +525,14 @@ public sealed partial class CompositeResultDocument
     }
 
     // A row that no step wrote holds no result: the payload completes it by its type before it claims the rows.
-    private static bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
-        => SinglePlanDeliveryState.Contains(resolution, groupId)
+    private static bool HoldsResult(int marks, DbRow valueRow, SelectionDelivery delivery, int groupId)
+        => SinglePlanDeliveryState.Contains(delivery, groupId)
             && ((marks & PropertyMarks.Written) != 0 || valueRow.TokenType is not ElementTokenType.None);
 
     // The claiming instance sends the row unless an open instance below it holds the row too.
     private (int Group, int Instance) ChooseCarrier(
         DeliveryClaimScratch scratch,
-        DeliveryResolution resolution,
+        SelectionDelivery selectionDelivery,
         int depth)
     {
         var delivery = _delivery!;
@@ -540,7 +540,7 @@ public sealed partial class CompositeResultDocument
         var instance = scratch.Instance;
         var longest = scratch.BaseDepth;
 
-        foreach (var candidate in resolution.Groups)
+        foreach (var candidate in selectionDelivery.Groups)
         {
             var candidateDepth = delivery.AnchorDepths[candidate.Id];
 
@@ -633,14 +633,14 @@ public sealed partial class CompositeResultDocument
                 && (valueRow.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated)
             {
                 var selection = _operation.GetSelectionById(property.OperationReferenceId);
-                var resolution = _delivery!.Resolve(selection);
+                var delivery = _delivery!.GetDelivery(selection);
 
-                if (!SinglePlanDeliveryState.Contains(resolution, groupId))
+                if (!SinglePlanDeliveryState.Contains(delivery, groupId))
                 {
                     continue;
                 }
 
-                if (settledOnly && _delivery.HasOpenWriter(selection, resolution))
+                if (settledOnly && _delivery.HasOpenWriter(selection, delivery))
                 {
                     open = true;
                 }
@@ -725,10 +725,10 @@ public sealed partial class CompositeResultDocument
                 && (valueRow.Flags & ElementFlags.Invalidated) != ElementFlags.Invalidated)
             {
                 var selection = _operation.GetSelectionById(property.OperationReferenceId);
-                var resolution = _delivery!.Resolve(selection);
+                var delivery = _delivery!.GetDelivery(selection);
 
-                if (SinglePlanDeliveryState.Contains(resolution, groupId)
-                    && _delivery.HasOpenWriter(selection, resolution))
+                if (SinglePlanDeliveryState.Contains(delivery, groupId)
+                    && _delivery.HasOpenWriter(selection, delivery))
                 {
                     return true;
                 }
@@ -804,9 +804,9 @@ public sealed partial class CompositeResultDocument
             }
             else if ((marks & PropertyMarks.Delivered) == 0)
             {
-                var resolution = _delivery!.Resolve(_operation.GetSelectionById(property.OperationReferenceId));
+                var delivery = _delivery!.GetDelivery(_operation.GetSelectionById(property.OperationReferenceId));
 
-                if (SinglePlanDeliveryState.Contains(resolution, groupId))
+                if (SinglePlanDeliveryState.Contains(delivery, groupId))
                 {
                     return true;
                 }

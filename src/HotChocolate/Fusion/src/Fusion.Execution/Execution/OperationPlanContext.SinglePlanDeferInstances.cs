@@ -143,11 +143,11 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
-    /// Determines whether every step of every group of the resolution is done, skipped or failed.
+    /// Determines whether every step of every group of the delivery is done, skipped or failed.
     /// </summary>
-    public bool AreGroupsSettled(DeliveryResolution resolution)
+    public bool AreGroupsSettled(SelectionDelivery delivery)
     {
-        foreach (var group in resolution.Groups)
+        foreach (var group in delivery.Groups)
         {
             if (!IsSettled(group.Id, _executionState))
             {
@@ -910,7 +910,7 @@ internal sealed partial class SinglePlanDeliveryState
                 continue;
             }
 
-            if (Contains(Resolve(selection), groupId))
+            if (Contains(GetDelivery(selection), groupId))
             {
                 return true;
             }

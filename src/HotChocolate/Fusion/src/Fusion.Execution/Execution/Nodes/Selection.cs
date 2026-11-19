@@ -770,7 +770,7 @@ nextItem:
     }
 
     /// <summary>
-    /// Resolves where this selection is delivered for a request from the include condition and
+    /// Gets where this selection is delivered for a request from the include condition and
     /// defer condition flags.
     /// </summary>
     /// <param name="includeFlags">The include condition flags of the request.</param>
@@ -780,7 +780,7 @@ nextItem:
     /// <see cref="DeliveryKind.Absent"/> when it is not selected, otherwise the outermost delivery
     /// groups that deliver it.
     /// </returns>
-    internal DeliveryResolution ResolveDelivery(ConditionFlags includeFlags, ConditionFlags deferFlags)
+    internal SelectionDelivery GetDelivery(ConditionFlags includeFlags, ConditionFlags deferFlags)
     {
         var nodes = _syntaxNodes;
         var deferWord0 = deferFlags.Word0;
@@ -805,7 +805,7 @@ nextItem:
 
             if (group is null)
             {
-                return DeliveryResolution.Initial;
+                return SelectionDelivery.Initial;
             }
 
             if (count == 0)
@@ -835,12 +835,12 @@ nextItem:
 
         if (count == 0)
         {
-            return DeliveryResolution.Absent;
+            return SelectionDelivery.Absent;
         }
 
         if (set is null)
         {
-            return DeliveryResolution.FromGroups([single!]);
+            return SelectionDelivery.FromGroups([single!]);
         }
 
         // A group is dropped when one of its ancestors delivers the selection too.
@@ -856,7 +856,7 @@ nextItem:
 
         if (kept == set.Length)
         {
-            return DeliveryResolution.FromGroups(set);
+            return SelectionDelivery.FromGroups(set);
         }
 
         var outermost = new DeliveryGroup[kept];
@@ -870,7 +870,7 @@ nextItem:
             }
         }
 
-        return DeliveryResolution.FromGroups(outermost);
+        return SelectionDelivery.FromGroups(outermost);
     }
 
     private static bool HasAncestorInSet(DeliveryGroup[] set, int count, DeliveryGroup group)
@@ -976,31 +976,31 @@ internal enum DeliveryKind
     /// <summary>
     /// The selection is delivered with one or more delivery groups.
     /// </summary>
-    Groups
+    Deferred
 }
 
 /// <summary>
 /// The delivery of a selection for a request.
 /// </summary>
-internal readonly struct DeliveryResolution
+internal readonly struct SelectionDelivery
 {
     private readonly DeliveryGroup[]? _groups;
 
-    private DeliveryResolution(DeliveryKind kind, DeliveryGroup[]? groups)
+    private SelectionDelivery(DeliveryKind kind, DeliveryGroup[]? groups)
     {
         Kind = kind;
         _groups = groups;
     }
 
     /// <summary>
-    /// Gets a resolution for a selection that is part of the initial result.
+    /// Gets a delivery for a selection that is part of the initial result.
     /// </summary>
-    public static DeliveryResolution Initial => new(DeliveryKind.Initial, null);
+    public static SelectionDelivery Initial => new(DeliveryKind.Initial, null);
 
     /// <summary>
-    /// Gets a resolution for a selection that is not selected for the request.
+    /// Gets a delivery for a selection that is not selected for the request.
     /// </summary>
-    public static DeliveryResolution Absent => new(DeliveryKind.Absent, null);
+    public static SelectionDelivery Absent => new(DeliveryKind.Absent, null);
 
     /// <summary>
     /// Gets the kind of the delivery.
@@ -1009,13 +1009,13 @@ internal readonly struct DeliveryResolution
 
     /// <summary>
     /// Gets the delivery groups that deliver the selection, or an empty span when
-    /// <see cref="Kind"/> is not <see cref="DeliveryKind.Groups"/>.
+    /// <see cref="Kind"/> is not <see cref="DeliveryKind.Deferred"/>.
     /// </summary>
     public ReadOnlySpan<DeliveryGroup> Groups => _groups;
 
     /// <summary>
-    /// Creates a resolution for a selection that is delivered with <paramref name="groups"/>.
+    /// Creates a delivery for a selection that is delivered with <paramref name="groups"/>.
     /// </summary>
-    public static DeliveryResolution FromGroups(DeliveryGroup[] groups)
-        => new(DeliveryKind.Groups, groups);
+    public static SelectionDelivery FromGroups(DeliveryGroup[] groups)
+        => new(DeliveryKind.Deferred, groups);
 }

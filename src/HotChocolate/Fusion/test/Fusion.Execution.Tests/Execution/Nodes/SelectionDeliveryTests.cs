@@ -45,7 +45,7 @@ public class SelectionDeliveryTests : FusionTestBase
         """);
 
     [Fact]
-    public void ResolveDelivery_Should_DeliverNameInitialAndPriceInGroup_When_IncludeIsTrueAndDeferIsTrue()
+    public void GetDelivery_Should_DeliverNameInitialAndPriceInGroup_When_IncludeIsTrueAndDeferIsTrue()
     {
         // arrange
         var operation = Compile(
@@ -76,7 +76,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_DeliverNameAndPriceInitial_When_IncludeIsTrueAndDeferIsFalse()
+    public void GetDelivery_Should_DeliverNameAndPriceInitial_When_IncludeIsTrueAndDeferIsFalse()
     {
         // arrange
         var operation = Compile(
@@ -107,7 +107,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_DeliverNameAndPriceInGroup_When_IncludeIsFalseAndDeferIsTrue()
+    public void GetDelivery_Should_DeliverNameAndPriceInGroup_When_IncludeIsFalseAndDeferIsTrue()
     {
         // arrange
         var operation = Compile(
@@ -138,7 +138,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_DeliverNameAndPriceInitial_When_IncludeIsFalseAndDeferIsFalse()
+    public void GetDelivery_Should_DeliverNameAndPriceInitial_When_IncludeIsFalseAndDeferIsFalse()
     {
         // arrange
         var operation = Compile(
@@ -169,7 +169,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnAbsent_When_ConditionalSelectionIsExcluded()
+    public void GetDelivery_Should_ReturnAbsent_When_ConditionalSelectionIsExcluded()
     {
         // arrange
         var operation = Compile(
@@ -197,7 +197,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnEnclosingGroup_When_NestedDeferIsDisabled()
+    public void GetDelivery_Should_ReturnEnclosingGroup_When_NestedDeferIsDisabled()
     {
         // arrange
         var operation = Compile(
@@ -227,7 +227,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnInnerGroup_When_NestedDeferIsEnabled()
+    public void GetDelivery_Should_ReturnInnerGroup_When_NestedDeferIsEnabled()
     {
         // arrange
         var operation = Compile(
@@ -257,7 +257,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnBothGroups_When_FieldIsInTwoSiblingGroups()
+    public void GetDelivery_Should_ReturnBothGroups_When_FieldIsInTwoSiblingGroups()
     {
         // arrange
         var operation = Compile(
@@ -288,7 +288,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnInitial_When_OneOfTwoSiblingGroupsIsDisabled()
+    public void GetDelivery_Should_ReturnInitial_When_OneOfTwoSiblingGroupsIsDisabled()
     {
         // arrange
         var operation = Compile(
@@ -319,7 +319,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupB_When_ConditionalNameInGroupCIsSkipped()
+    public void GetDelivery_Should_ReturnGroupB_When_ConditionalNameInGroupCIsSkipped()
     {
         // arrange
         var operation = Compile(
@@ -352,7 +352,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupC_When_ConditionalNameInGroupBIsSkipped()
+    public void GetDelivery_Should_ReturnGroupC_When_ConditionalNameInGroupBIsSkipped()
     {
         // arrange
         var operation = Compile(
@@ -385,7 +385,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnOnlyOuterGroup_When_InnerGroupDeliversFieldToo()
+    public void GetDelivery_Should_ReturnOnlyOuterGroup_When_InnerGroupDeliversFieldToo()
     {
         // arrange
         var operation = Compile(
@@ -420,7 +420,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ResolveEachSwitchOnItsOwn_When_TwentyNineSiblingSwitchesAreMixed()
+    public void GetDelivery_Should_ResolveEachSwitchOnItsOwn_When_TwentyNineSiblingSwitchesAreMixed()
     {
         // arrange
         var operation = Compile(CreateSwitchDocument(29, static i => $"f{i}: price"));
@@ -465,7 +465,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnEveryGroup_When_FieldIsInTwentyNineSiblingGroupsAndAllSwitchesAreOn()
+    public void GetDelivery_Should_ReturnEveryGroup_When_FieldIsInTwentyNineSiblingGroupsAndAllSwitchesAreOn()
     {
         // arrange
         var operation = Compile(CreateSwitchDocument(29, static i => "price"));
@@ -510,7 +510,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnInitial_When_FieldIsInTwentyNineSiblingGroupsAndOneSwitchIsOff()
+    public void GetDelivery_Should_ReturnInitial_When_FieldIsInTwentyNineSiblingGroupsAndOneSwitchIsOff()
     {
         // arrange
         var operation = Compile(CreateSwitchDocument(29, static i => "price"));
@@ -527,7 +527,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ResolveEachSwitchOnItsOwn_When_SeventySiblingSwitchesAreMixed()
+    public void GetDelivery_Should_ResolveEachSwitchOnItsOwn_When_SeventySiblingSwitchesAreMixed()
     {
         // arrange
         var operation = Compile(CreateSwitchDocument(70, static i => $"f{i}: price"));
@@ -551,7 +551,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnInitial_When_FieldIsInSeventySiblingGroupsAndLastSwitchIsOff()
+    public void GetDelivery_Should_ReturnInitial_When_FieldIsInSeventySiblingGroupsAndLastSwitchIsOff()
     {
         // arrange
         var operation = Compile(CreateSwitchDocument(70, static i => "price"));
@@ -570,7 +570,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnOneGroup_When_NestedSwitchableDefersHoldOnlyInnerField()
+    public void GetDelivery_Should_ReturnOneGroup_When_NestedSwitchableDefersHoldOnlyInnerField()
     {
         // arrange
         var operation = Compile(
@@ -601,7 +601,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnOneGroupPerField_When_NestedDefersAreSwitchedByOneVariable()
+    public void GetDelivery_Should_ReturnOneGroupPerField_When_NestedDefersAreSwitchedByOneVariable()
     {
         // arrange
         var operation = Compile(
@@ -631,7 +631,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnOneGroupPerField_When_ThreeSwitchableDefersAreNested()
+    public void GetDelivery_Should_ReturnOneGroupPerField_When_ThreeSwitchableDefersAreNested()
     {
         // arrange
         var operation = Compile(
@@ -670,7 +670,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupOnlyIfBothAreOn_When_IncludeIsOnOtherVariable()
+    public void GetDelivery_Should_ReturnGroupOnlyIfBothAreOn_When_IncludeIsOnOtherVariable()
     {
         // arrange
         var operation = Compile(
@@ -699,7 +699,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupOnlyIfBothAreOn_When_IncludeIsOnOtherVariable_InputIsNotNormalized()
+    public void GetDelivery_Should_ReturnGroupOnlyIfBothAreOn_When_IncludeIsOnOtherVariable_InputIsNotNormalized()
     {
         // arrange
         var operation = CompileNotNormalized(
@@ -728,7 +728,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnGroupOnlyIfVariableIsOn_When_IncludeUsesSameVariable_InputIsNotNormalized()
+    public void GetDelivery_Should_ReturnGroupOnlyIfVariableIsOn_When_IncludeUsesSameVariable_InputIsNotNormalized()
     {
         // arrange
         var operation = CompileNotNormalized(
@@ -755,7 +755,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnOneGroupPerLabel_When_SwitchableDefersAreNested()
+    public void GetDelivery_Should_ReturnOneGroupPerLabel_When_SwitchableDefersAreNested()
     {
         // arrange
         var shapes = new (string Name, string[] Variables, Operation Operation)[]
@@ -904,7 +904,7 @@ public class SelectionDeliveryTests : FusionTestBase
     }
 
     [Fact]
-    public void ResolveDelivery_Should_ReturnOneGroupAtProduct_When_DeferredFragmentRepeatsCompositeField()
+    public void GetDelivery_Should_ReturnOneGroupAtProduct_When_DeferredFragmentRepeatsCompositeField()
     {
         // arrange
         var operation = Compile(
@@ -1004,7 +1004,7 @@ public class SelectionDeliveryTests : FusionTestBase
         foreach (var responseName in responseNames)
         {
             Assert.True(selectionSet.TryGetSelection(responseName, out var selection));
-            lines.Add($"{responseName}: {Format(selection.ResolveDelivery(includeFlags, deferFlags))}");
+            lines.Add($"{responseName}: {Format(selection.GetDelivery(includeFlags, deferFlags))}");
         }
 
         return lines;
@@ -1019,11 +1019,11 @@ public class SelectionDeliveryTests : FusionTestBase
         var deferFlags = operation.CreateDeferConditionFlags(variableValues);
         var selectionSet = operation.RootSelectionSet.Selections[0].GetSelectionSet()!;
         Assert.True(selectionSet.TryGetSelection(responseName, out var selection));
-        var resolution = selection.ResolveDelivery(includeFlags, deferFlags);
+        var delivery = selection.GetDelivery(includeFlags, deferFlags);
 
-        return resolution.Kind is DeliveryKind.Groups
-            ? ToLabels(resolution)
-            : [resolution.Kind.ToString()];
+        return delivery.Kind is DeliveryKind.Deferred
+            ? ToLabels(delivery)
+            : [delivery.Kind.ToString()];
     }
 
     private static List<string> DescribeCombinations(
@@ -1044,7 +1044,7 @@ public class SelectionDeliveryTests : FusionTestBase
             foreach (var responseName in responseNames)
             {
                 Assert.True(selectionSet.TryGetSelection(responseName, out var selection));
-                fields.Add($"{responseName}={Format(selection.ResolveDelivery(includeFlags, deferFlags))}");
+                fields.Add($"{responseName}={Format(selection.GetDelivery(includeFlags, deferFlags))}");
             }
 
             lines.Add($"{FormatCombination(variables, values)}: {string.Join(" ", fields)}");
@@ -1109,15 +1109,15 @@ public class SelectionDeliveryTests : FusionTestBase
     {
         foreach (var selection in selectionSet.Selections)
         {
-            var resolution = selection.ResolveDelivery(includeFlags, deferFlags);
+            var delivery = selection.GetDelivery(includeFlags, deferFlags);
             var fieldPath = path + selection.ResponseName;
 
-            if (resolution.Kind is DeliveryKind.Absent)
+            if (delivery.Kind is DeliveryKind.Absent)
             {
                 continue;
             }
 
-            foreach (var group in resolution.Groups)
+            foreach (var group in delivery.Groups)
             {
                 if (!groups.TryGetValue(group, out var paths))
                 {
@@ -1168,23 +1168,23 @@ public class SelectionDeliveryTests : FusionTestBase
     private static string FormatCombination(string[] variables, Dictionary<string, bool> values)
         => string.Join(" ", variables.Select(t => $"{t}={(values[t] ? "T" : "F")}"));
 
-    private static string Format(DeliveryResolution resolution)
+    private static string Format(SelectionDelivery delivery)
     {
-        if (resolution.Kind is not DeliveryKind.Groups)
+        if (delivery.Kind is not DeliveryKind.Deferred)
         {
-            return resolution.Kind.ToString();
+            return delivery.Kind.ToString();
         }
 
-        return $"Groups({string.Join(", ", ToLabels(resolution))})";
+        return $"Groups({string.Join(", ", ToLabels(delivery))})";
     }
 
-    private static List<string> ToLabels(DeliveryResolution resolution)
+    private static List<string> ToLabels(SelectionDelivery delivery)
     {
-        var labels = new List<string>(resolution.Groups.Length);
+        var labels = new List<string>(delivery.Groups.Length);
 
-        for (var i = 0; i < resolution.Groups.Length; i++)
+        for (var i = 0; i < delivery.Groups.Length; i++)
         {
-            labels.Add(resolution.Groups[i].Label!);
+            labels.Add(delivery.Groups[i].Label!);
         }
 
         return labels;

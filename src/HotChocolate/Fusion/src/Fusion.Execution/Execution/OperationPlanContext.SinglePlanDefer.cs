@@ -137,7 +137,7 @@ public sealed partial class OperationPlanContext
 /// </summary>
 internal sealed partial class SinglePlanDeliveryState
 {
-    private readonly Dictionary<int, DeliveryResolution> _resolutions = [];
+    private readonly Dictionary<int, SelectionDelivery> _deliveries = [];
     private readonly Dictionary<int, DeliveryBlock> _blocks = [];
     private readonly object _sync = new();
     private readonly List<ExecutionNode> _markedNodes = [];
@@ -417,16 +417,16 @@ internal sealed partial class SinglePlanDeliveryState
 
         for (var i = 0; i < selections.Length; i++)
         {
-            var resolution = Resolve(selections[i]);
+            var delivery = GetDelivery(selections[i]);
 
-            if (resolution.Kind is DeliveryKind.Initial)
+            if (delivery.Kind is DeliveryKind.Initial)
             {
                 continue;
             }
 
             excluded.Add((i * 2) + 1);
 
-            if (resolution.Kind is DeliveryKind.Groups)
+            if (delivery.Kind is DeliveryKind.Deferred)
             {
                 held.Add((i * 2) + 1);
             }
@@ -445,17 +445,17 @@ internal sealed partial class SinglePlanDeliveryState
     /// <summary>
     /// Gets where a selection is delivered for this request.
     /// </summary>
-    public DeliveryResolution Resolve(Selection selection)
+    public SelectionDelivery GetDelivery(Selection selection)
     {
         lock (_sync)
         {
-            if (!_resolutions.TryGetValue(selection.Id, out var resolution))
+            if (!_deliveries.TryGetValue(selection.Id, out var delivery))
             {
-                resolution = selection.ResolveDelivery(IncludeFlags, DeferFlags);
-                _resolutions.Add(selection.Id, resolution);
+                delivery = selection.GetDelivery(IncludeFlags, DeferFlags);
+                _deliveries.Add(selection.Id, delivery);
             }
 
-            return resolution;
+            return delivery;
         }
     }
 
@@ -470,9 +470,9 @@ internal sealed partial class SinglePlanDeliveryState
     /// step of the groups of the row, another step whose answer can hold the row as a key or as a requirement, or
     /// a step of a group nested in a group of the row whose answer can hold the row as an object.
     /// </summary>
-    public bool HasOpenWriter(Selection selection, DeliveryResolution resolution)
+    public bool HasOpenWriter(Selection selection, SelectionDelivery delivery)
     {
-        if (!AreGroupsSettled(resolution))
+        if (!AreGroupsSettled(delivery))
         {
             return true;
         }
@@ -488,7 +488,7 @@ internal sealed partial class SinglePlanDeliveryState
         {
             if (!Finished[node.Id]
                 && !_executionState.IsNodeSkipped(node.Id)
-                && (isKeyOrRequirement || IsNestedIn(resolution, GetDeliveryGroups(node))))
+                && (isKeyOrRequirement || IsNestedIn(delivery, GetDeliveryGroups(node))))
             {
                 return true;
             }
@@ -753,9 +753,9 @@ internal sealed partial class SinglePlanDeliveryState
         }
     }
 
-    public static bool Contains(DeliveryResolution resolution, int groupId)
+    public static bool Contains(SelectionDelivery delivery, int groupId)
     {
-        foreach (var group in resolution.Groups)
+        foreach (var group in delivery.Groups)
         {
             if (group.Id == groupId)
             {
@@ -766,9 +766,9 @@ internal sealed partial class SinglePlanDeliveryState
         return false;
     }
 
-    public static bool Intersects(DeliveryResolution resolution, ImmutableArray<int> groupIds)
+    public static bool Intersects(SelectionDelivery delivery, ImmutableArray<int> groupIds)
     {
-        foreach (var group in resolution.Groups)
+        foreach (var group in delivery.Groups)
         {
             if (groupIds.Contains(group.Id))
             {
@@ -781,15 +781,15 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Determines whether a group of <paramref name="groupIds"/> is nested in a group of
-    /// <paramref name="resolution"/>.
+    /// <paramref name="delivery"/>.
     /// </summary>
-    public bool IsNestedIn(DeliveryResolution resolution, ImmutableArray<int> groupIds)
+    public bool IsNestedIn(SelectionDelivery delivery, ImmutableArray<int> groupIds)
     {
         foreach (var groupId in groupIds)
         {
             for (var ancestor = _groupsById[groupId].Parent; ancestor is not null; ancestor = ancestor.Parent)
             {
-                if (Contains(resolution, ancestor.Id))
+                if (Contains(delivery, ancestor.Id))
                 {
                     return true;
                 }
@@ -997,7 +997,7 @@ internal sealed partial class SinglePlanDeliveryState
                 continue;
             }
 
-            foreach (var group in Resolve(field).Groups)
+            foreach (var group in GetDelivery(field).Groups)
             {
                 if (groups.Contains(group.Id) && ActiveGroups.IsSet(group.Id) && !honored.Contains(group.Id))
                 {
@@ -1023,7 +1023,7 @@ internal sealed partial class SinglePlanDeliveryState
         {
             foreach (var child in Plan.Operation.GetSelectionSet(field, type).Selections)
             {
-                foreach (var group in Resolve(child).Groups)
+                foreach (var group in GetDelivery(child).Groups)
                 {
                     if (groups.Contains(group.Id) && ActiveGroups.IsSet(group.Id) && !honored.Contains(group.Id))
                     {
