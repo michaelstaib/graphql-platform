@@ -415,7 +415,7 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Records that a step of <paramref name="groups"/> answered <c>null</c>, an error or a missing entity for a
-    /// value that already held an object or a list.
+    /// value that held an object or a list, or that no step had written yet.
     /// </summary>
     public void AddDeniedAnswer(
         ValueCompletion completion,
@@ -1120,8 +1120,8 @@ internal sealed class GroupError(IError error)
 internal readonly record struct SourceError(GroupError Error, ImmutableArray<int> Groups);
 
 /// <summary>
-/// A value that held an object or a list when a step of the delivery groups answered <c>null</c>, an error or a
-/// missing entity for it.
+/// A value that held an object or a list, or that no step had written yet, when a step of the delivery groups
+/// answered <c>null</c>, an error or a missing entity for it.
 /// </summary>
 internal readonly record struct DeniedAnswer(
     CompositeResultDocument.Cursor Container,

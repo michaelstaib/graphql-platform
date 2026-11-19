@@ -900,12 +900,14 @@ internal sealed class ValueCompletion
     }
 
     /// <summary>
-    /// Records that a step answered <c>null</c>, an error or a missing entity for a value that already holds an
-    /// object or a list.
+    /// Records that a step answered <c>null</c>, an error or a missing entity for a value that holds an object or
+    /// a list, or that no step wrote yet.
     /// </summary>
     private void RecordDeniedAnswer(CompositeResultElement value, IError? error)
     {
-        if (!value.IsNullOrInvalidated && value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+        if (!value.IsNullOrInvalidated
+            && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                || (value.ValueKind is JsonValueKind.Undefined && !value.AssertSelection().IsLeaf)))
         {
             _writeFilterDocument!.Delivery!.AddDeniedAnswer(this, value.Cursor, _writeFilterGroups, error);
         }

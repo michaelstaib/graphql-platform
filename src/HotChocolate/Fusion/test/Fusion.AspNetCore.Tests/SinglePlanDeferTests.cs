@@ -4497,6 +4497,76 @@ public partial class SinglePlanDeferTests : FusionTestBase
         }
         """;
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_CompleteTheNestedFragmentWithTheError_When_ItsRequestAnswersNullForTheObject(
+        bool nestedFirst)
+    {
+        // arrange
+        const string answer = "{\"data\":{\"productById\":{\"author\":null}}}";
+
+        // act
+        // the nested request answers before or after the request of its parent
+        var run = await RunNestedAnswerAsync(nestedFirst, answer);
+
+        // assert
+        MatchNestedAnswer(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_CompleteTheNestedFragmentWithTheError_When_ItsRequestAnswersAnEntityError(
+        bool nestedFirst)
+    {
+        // act
+        // the nested request answers before or after the request of its parent
+        var run = await RunNestedAnswerAsync(nestedFirst, FailedEntity);
+
+        // assert
+        MatchNestedAnswer(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_CompleteTheNestedFragmentWithTheError_When_ItsRequestAnswersAMissingEntity(
+        bool nestedFirst)
+    {
+        // act
+        // the nested request answers before or after the request of its parent
+        var run = await RunNestedAnswerAsync(nestedFirst, "{\"data\":{\"productById\":null}}");
+
+        // assert
+        MatchNestedAnswer(run);
+    }
+
+    private static void MatchNestedAnswer(Run run)
+    {
+        Assert.Empty(run.Problems);
+
+        var snapshot = Snapshot.Create();
+        snapshot.Add(Canonical(run.Data), "Merged data", "json");
+        snapshot.Add(run.Errors, "Errors", "json");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    // The request of the nested fragment x (B:3) answers with the given text, either before or after the request of
+    // its parent b (B:2).
+    private async Task<Run> RunNestedAnswerAsync(bool nestedFirst, string answer)
+    {
+        var gateway = await CreateGatewayAsync(
+            nestedFirst ? ["B:3", "B:2>", "B:4"] : ["B:2>", "B:3", "B:4"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3" ? answer : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        return await RunDeferredAsync(gateway, NestedAnswerQuery, []);
+    }
+
     [Fact]
     public async Task Defer_Should_ReportTheMergeErrorAndTheErrorWithoutAPath_When_TheMergeFailsAtTheDepthLimit()
     {
