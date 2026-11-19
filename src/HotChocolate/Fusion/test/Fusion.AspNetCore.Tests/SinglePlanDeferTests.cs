@@ -1355,6 +1355,79 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task Defer_Should_DeliverTheFieldsOfTheFragment_When_AFalseConditionSwitchesOffItsOnlyStep(bool c)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "d") { id rating @include(if: $c) }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = c });
+
+        // assert
+        MatchRun(run, $"c={c}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheFieldOfEveryRow_When_ASkipSwitchesOffTheOnlyStepOfTheFragment(bool s)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductListSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($s: Boolean!) {
+                products {
+                    name
+                    ... @defer(label: "d") { id rating @skip(if: $s) }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["s"] = s });
+
+        // assert
+        MatchRun(run, $"s={s}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendASinglePlainResult_When_AFalseConditionSwitchesOffEveryFieldOfTheFragment()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(("A", ProductSource), ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "d") { rating @include(if: $c) }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = false });
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task Defer_Should_SendTheValueOfItsOwnStep_When_TheChildStepFetchesTheSameFieldFirst(
         bool childFirst)
     {

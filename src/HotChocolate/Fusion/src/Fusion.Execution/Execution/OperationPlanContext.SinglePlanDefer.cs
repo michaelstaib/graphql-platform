@@ -803,7 +803,7 @@ internal sealed partial class SinglePlanDeliveryState
     /// Decides which marked steps run for this request and which delivery groups are honored.
     /// A step is needed when one of its top level fields resolves to one of its groups, or when a needed step or
     /// a needed operation of a batch depends on it. A group is honored when it is active and a needed step
-    /// delivers a field to it.
+    /// delivers a field to it or a selection of the operation resolves to it.
     /// </summary>
     public void ComputeNeeded()
     {
@@ -863,7 +863,23 @@ internal sealed partial class SinglePlanDeliveryState
             }
         }
 
+        HonorGroupsOfResolvedSelections();
         ComputeEffectiveChildren();
+    }
+
+    // Honors the active groups that a selection of the operation resolves to, also when no step of the group is
+    // needed.
+    private void HonorGroupsOfResolvedSelections()
+    {
+        foreach (var group in Plan.DeliveryGroups)
+        {
+            if (!Honored[group.Id]
+                && ActiveGroups.IsSet(group.Id)
+                && IsHonoredAt(group.Id, Plan.Operation.RootSelectionSet))
+            {
+                Honored[group.Id] = true;
+            }
+        }
     }
 
     // Marks the steps and operations that the operation takes a key from as needed. Returns whether a flag changed.
