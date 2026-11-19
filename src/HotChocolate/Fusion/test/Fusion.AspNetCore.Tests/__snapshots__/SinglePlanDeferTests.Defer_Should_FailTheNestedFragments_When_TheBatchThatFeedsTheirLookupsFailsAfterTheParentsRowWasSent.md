@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"pending":[{"id":"3","path":["product","author"],"label":"bio"},{"id":"4","path":["product","author"],"label":"nick"}],"completed":[{"id":"1"},{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["topProduct","author"]}]},{"id":"3","errors":[{"message":"Unexpected Execution Error"}]},{"id":"4","errors":[{"message":"Unexpected Execution Error"}]}],"hasNext":false}
+{"pending":[{"id":"3","path":["product","author"],"label":"bio"},{"id":"4","path":["product","author"],"label":"nick"}],"completed":[{"id":"1"},{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["topProduct","author"]}]},{"id":"3","errors":[{"message":"Unexpected Execution Error","path":["product","author","bio"]}]},{"id":"4","errors":[{"message":"Unexpected Execution Error","path":["product","author","nick"]}]}],"hasNext":false}
 ```
 
 ## Requests

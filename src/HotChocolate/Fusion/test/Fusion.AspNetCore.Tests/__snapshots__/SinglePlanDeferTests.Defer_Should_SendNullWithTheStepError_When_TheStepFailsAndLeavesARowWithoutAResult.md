@@ -1,4 +1,4 @@
-# Defer_Should_CompleteWithTheError_When_TheStepFailsAndLeavesARowWithoutAResult
+# Defer_Should_SendNullWithTheStepError_When_TheStepFailsAndLeavesARowWithoutAResult
 
 ## Payload 1
 
@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"pending":[{"id":"2","path":["product"],"label":"g"}],"incremental":[{"id":"1","data":{"price":123.456}}],"completed":[{"id":"1"},{"id":"2","errors":[{"message":"Unexpected Execution Error"}]}],"hasNext":false}
+{"pending":[{"id":"2","path":["product"],"label":"g"}],"incremental":[{"id":"1","data":{"price":123.456}},{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["product","author","note"]}],"subPath":["author"],"data":{"note":null}}],"completed":[{"id":"1"},{"id":"2"}],"hasNext":false}
 ```
 
 ## Requests

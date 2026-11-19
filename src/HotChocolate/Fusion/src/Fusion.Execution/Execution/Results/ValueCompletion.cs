@@ -66,7 +66,10 @@ internal sealed class ValueCompletion
     /// the delivery state of the result document.
     /// </summary>
     internal void EnableDelivery()
-        => _mode = CompletionMode.Delivery;
+    {
+        _mode = CompletionMode.Delivery;
+        _store.Result.Delivery!.AttachCompletion(this);
+    }
 
     /// <summary>
     /// Restricts the rows that completions write to the rows that resolve to one of the delivery groups.
@@ -910,7 +913,7 @@ internal sealed class ValueCompletion
             && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
                 || (value.ValueKind is JsonValueKind.Undefined && !value.AssertSelection().IsLeaf)))
         {
-            _writeFilterDocument!.Delivery!.AddDeniedAnswer(this, value.Cursor, _writeFilterGroups, error);
+            _writeFilterDocument!.Delivery!.AddDeniedAnswer(value.Cursor, _writeFilterGroups, error);
         }
     }
 

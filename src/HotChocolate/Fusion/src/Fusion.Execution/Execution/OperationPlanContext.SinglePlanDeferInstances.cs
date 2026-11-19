@@ -78,17 +78,14 @@ internal sealed partial class SinglePlanDeliveryState
     public bool IsFailed(int instance) => (_instanceFlags[instance] & FailedFlag) != 0;
 
     /// <summary>
-    /// Marks an instance of a group with a failed step as failed when the failure left a row of the instance
-    /// without a result, or when a step failed while its answer was merged and the instance has unsent rows.
-    /// Otherwise the instance stays open or completes without errors.
+    /// Marks an instance of a group with a failed step as failed when a step failed while its answer was merged and
+    /// the instance has unsent rows. Otherwise the instance stays open or completes without errors.
     /// </summary>
     public void MarkFailed(int instance)
     {
         var groupId = _instanceGroups[instance];
-        var anchor = _instanceAnchors[instance];
 
-        if (HoldsRowWithoutResult(groupId, anchor)
-            || (FailedWhileMerging(groupId) && _payloadDocument!.HasUnsentRows(groupId, anchor)))
+        if (FailedWhileMerging(groupId) && _payloadDocument!.HasUnsentRows(groupId, _instanceAnchors[instance]))
         {
             _instanceFlags[instance] |= FailedFlag | StepFailedFlag;
         }
@@ -99,19 +96,6 @@ internal sealed partial class SinglePlanDeliveryState
     /// the instance.
     /// </summary>
     public bool IsFailedByStep(int instance) => (_instanceFlags[instance] & StepFailedFlag) != 0;
-
-    // A row of the group at or below the anchor object holds no result and no step can write it any more.
-    private bool HoldsRowWithoutResult(int groupId, CompositeResultDocument.Cursor anchor)
-    {
-        var rows = _unwrittenOtherRows ??= [];
-
-        rows.Clear();
-        _payloadDocument!.FindUnwrittenRows(anchor, groupId, anchor, settledOnly: true, rows);
-
-        var found = rows.Count > 0;
-        rows.Clear();
-        return found;
-    }
 
     // A step of the group failed while its answer was merged.
     private bool FailedWhileMerging(int groupId)
@@ -418,14 +402,12 @@ internal sealed partial class SinglePlanDeliveryState
     /// value that held an object or a list, or that no step had written yet.
     /// </summary>
     public void AddDeniedAnswer(
-        ValueCompletion completion,
         CompositeResultDocument.Cursor container,
         ImmutableArray<int> groups,
         IError? error)
     {
         AssertOnLoop();
 
-        _completion = completion;
         (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error));
     }
 
@@ -489,6 +471,45 @@ internal sealed partial class SinglePlanDeliveryState
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Sets the completion that completes the rows that no step wrote.
+    /// </summary>
+    public void AttachCompletion(ValueCompletion completion) => _completion = completion;
+
+    /// <summary>
+    /// Completes the selected rows of the instance that no step wrote and no open step can still write by their
+    /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
+    /// <c>null</c> reaches the anchor, and the error of a failed step of the group stands for the non-null error.
+    /// </summary>
+    public void CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
+    {
+        var group = _instanceGroups[instance];
+        var anchor = _instanceAnchors[instance];
+        var rows = _unwrittenRows ??= [];
+
+        rows.Clear();
+        document.FindUnwrittenRows(anchor, group, anchor, settledOnly: true, rows);
+
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        var error = groupFailed ? GetStepErrors(group)?[0] ?? CreateFailureError(group) : null;
+
+        foreach (var row in rows)
+        {
+            _completion!.CompleteUnwrittenField(row, row.AssertSelection(), error);
+
+            if (IsFailed(instance))
+            {
+                break;
+            }
+        }
+
+        rows.Clear();
     }
 
     // Another open instance that has not failed sends the row of the answer together with its error.

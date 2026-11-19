@@ -4672,13 +4672,18 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private static void MatchNestedAnswer(Run run, bool nestedFirst)
     {
         // both orders deliver the same merged data and errors
+        MatchMergedAnswer(run);
+
+        // each order delivers its own payloads
+        MatchPayloads(run, $"nestedFirst={nestedFirst}");
+    }
+
+    private static void MatchMergedAnswer(Run run)
+    {
         var snapshot = Snapshot.Create();
         snapshot.Add(Canonical(run.Data), "Merged data", "json");
         snapshot.Add(run.Errors, "Errors", "json");
         snapshot.MatchMarkdownSnapshot();
-
-        // each order delivers its own payloads
-        MatchPayloads(run, $"nestedFirst={nestedFirst}");
     }
 
     // The request of the nested fragment x (B:3) answers with the given text, either before or after the request of
@@ -4987,7 +4992,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_CompleteWithTheError_When_TheStepFailsAndLeavesARowWithoutAResult()
+    public async Task Defer_Should_SendNullWithTheStepError_When_TheStepFailsAndLeavesARowWithoutAResult()
     {
         // arrange
         // t sends the bio, then the step of g fails in transport before p completes, and g also selects the note
@@ -5203,9 +5208,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task
-        Defer_Should_SendNullForTheFields_When_AnOperationOfTheBatchHasNoResultAndTheirLookupsAreSkippedForAMissingKey()
+        Defer_Should_CompleteTheNestedFragmentsByTheirType_When_ABatchOperationHasNoResultAndTheirLookupsAreSkipped(
+            bool nullable)
     {
         // arrange
         // the batch of B has no result for topProduct and answers the author of product without its key
@@ -5220,10 +5228,127 @@ public partial class SinglePlanDeferTests : FusionTestBase
             configure: null,
             ("A", BatchProductSource),
             ("B", AuthorKeySource),
-            ("C", AuthorNullableBioAndNickSource));
+            ("C", nullable ? AuthorNullableBioAndNickSource : AuthorBioAndNickSource));
 
         // act
         var run = await RunDeferredAsync(gateway, BatchQuery, []);
+
+        // assert
+        MatchPayloads(run, $"nullable={nullable}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheSiblingWithTheNonNullError_When_TheRequirementOfItsStepIsNull()
+    {
+        // arrange
+        // the step of a answers a null weight and the step of b that requires it is skipped
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "B" ? WeightValue().Replace(text, "\"weight\":null") : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", WeightSource),
+            ("C", ShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { weight }
+                    ... @defer(label: "b") { shipping }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Empty(run.Problems);
+        MatchMergedAnswer(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheSiblingWithTheNonNullError_When_TheRequirementBelowASharedObjectIsNull()
+    {
+        // arrange
+        // the step of a answers a null code for the related product and the step of b that requires it is skipped
+        var gateway = await CreateGatewayAsync(
+            [],
+            (schema, _, text) => schema == "A" ? RelatedCode().Replace(text, "\"code\":null") : text,
+            failingSchema: null,
+            configure: null,
+            ("A", RelatedProductSource),
+            ("C", RelatedShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { related { code } }
+                    ... @defer(label: "b") { related { shipping } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        Assert.Empty(run.Problems);
+        MatchMergedAnswer(run);
+    }
+
+    private const string RelatedProductSource =
+        """
+        type Query { product(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! name: String! code: String! related: Product! }
+        """;
+
+    private const string RelatedShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(code: String! @require(field: "code")): Float!
+        }
+        """;
+
+    [GeneratedRegex("\"code\":\"[^\"]*\"")]
+    private static partial Regex RelatedCode();
+
+    [Fact]
+    public async Task Defer_Should_SendNullWithTheStepError_When_TheStepThatFeedsTheLookupOfANullableFieldFails()
+    {
+        // arrange
+        // t sends the author id, then the step of g that feeds the lookup of the nullable bio fails in transport
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "B:2"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "2"
+                ? "this is not json"
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", AuthorKeySource),
+            ("C", AuthorNullableBioSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "t") { author { id } }
+                    ... @defer(label: "g") { author { id ... @defer(label: "c") { bio } } }
+                }
+            }
+            """,
+            []);
 
         // assert
         MatchPayloads(run);

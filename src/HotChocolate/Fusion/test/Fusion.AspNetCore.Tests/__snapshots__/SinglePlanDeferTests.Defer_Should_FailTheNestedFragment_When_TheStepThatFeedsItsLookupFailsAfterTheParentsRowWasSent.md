@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"pending":[{"id":"2","path":["product","author"],"label":"c"}],"completed":[{"id":"1"},{"id":"2","errors":[{"message":"Unexpected Execution Error"}]}],"hasNext":false}
+{"pending":[{"id":"2","path":["product","author"],"label":"c"}],"completed":[{"id":"1"},{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["product","author","bio"]}]}],"hasNext":false}
 ```
 
 ## Requests

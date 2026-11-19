@@ -21,7 +21,7 @@
 ## Payload 4
 
 ```json
-{"completed":[{"id":"2","errors":[{"message":"Unexpected Execution Error"}]}],"hasNext":false}
+{"completed":[{"id":"2","errors":[{"message":"Unexpected Execution Error","path":["product","author","bio"]}]}],"hasNext":false}
 ```
 
 ## Requests

@@ -515,13 +515,10 @@ public sealed partial class CompositeResultDocument
         return false;
     }
 
-    // A row that no step wrote is a null result once every step of every group that holds the row is settled,
-    // which is how the plain path completes a row that its steps did not write.
-    private bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
+    // A row that no step wrote holds no result: the payload completes it by its type before it claims the rows.
+    private static bool HoldsResult(int marks, DbRow valueRow, DeliveryResolution resolution, int groupId)
         => SinglePlanDeliveryState.Contains(resolution, groupId)
-            && ((marks & PropertyMarks.Written) != 0
-                || valueRow.TokenType is not ElementTokenType.None
-                || _delivery!.AreGroupsSettled(resolution));
+            && ((marks & PropertyMarks.Written) != 0 || valueRow.TokenType is not ElementTokenType.None);
 
     // The claiming instance sends the row unless an open instance below it holds the row too.
     private (int Group, int Instance) ChooseCarrier(

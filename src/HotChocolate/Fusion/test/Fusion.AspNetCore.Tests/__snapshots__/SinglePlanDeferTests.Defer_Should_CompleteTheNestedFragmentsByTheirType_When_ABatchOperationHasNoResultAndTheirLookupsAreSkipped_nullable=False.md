@@ -1,4 +1,4 @@
-# Defer_Should_SendNullForTheFields_When_AnOperationOfTheBatchHasNoResultAndTheirLookupsAreSkippedForAMissingKey
+# Defer_Should_CompleteTheNestedFragmentsByTheirType_When_ABatchOperationHasNoResultAndTheirLookupsAreSkipped
 
 ## Payload 1
 
@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"incremental":[{"id":"2","data":{"bio":null}},{"id":"3","data":{"nick":null}}],"completed":[{"id":"2"},{"id":"3"}],"hasNext":false}
+{"completed":[{"id":"2","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}}]},{"id":"3","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","nick"],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
 ```
 
 ## Requests

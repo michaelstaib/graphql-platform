@@ -658,6 +658,11 @@ internal static partial class OperationPlanExecutor
 
                     state.CompleteDeniedAnswers(document, instance);
 
+                    if (!state.IsFailed(instance))
+                    {
+                        state.CompleteUnwrittenRows(document, instance, groupFailed);
+                    }
+
                     var failed = state.IsFailed(instance);
 
                     // The instance stays open while a step of another group can still write one of its rows.
