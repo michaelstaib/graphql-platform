@@ -222,7 +222,8 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
-    /// Marks the row of a field as holding a result, so that no later step writes it. A list item is not marked.
+    /// Marks the row of a field as holding a result, so that no step of a delivery group writes it. A list item is not
+    /// marked.
     /// </summary>
     internal void MarkWritten(CompositeResultElement element)
     {
