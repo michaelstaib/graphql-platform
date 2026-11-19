@@ -104,7 +104,8 @@ public sealed partial class CompositeResultDocument
 
         if (resolution.Kind is not DeliveryKind.Groups
             || !(SinglePlanDeliveryState.Intersects(resolution, deliveryGroups)
-                || _delivery.IsKeyOrRequirement(selection)))
+                || _delivery.IsKeyOrRequirement(selection)
+                || (sourceIsContainer && !selection.IsLeaf && _delivery.IsNestedIn(resolution, deliveryGroups))))
         {
             return false;
         }

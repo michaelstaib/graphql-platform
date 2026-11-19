@@ -4279,6 +4279,225 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendTheValue_When_TheRequestOfTheNestedFragmentAnswersBeforeItsParentsRequest()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") {
+                        author { bio }
+                        ... @defer(label: "x") { author { bio age } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheValue_When_TheNestedRequestOfAListAnswersBeforeItsParentsRequest()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            ("A", ProductListSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                products {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") {
+                        author { bio }
+                        ... @defer(label: "x") { author { bio age } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheValue_When_TheRequestOfTheDeepestNestedFragmentAnswersFirst()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:4", "B:3", "B:2>", "B:5"],
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") {
+                        author { bio }
+                        ... @defer(label: "x") {
+                            author { bio age }
+                            ... @defer(label: "y") { author { bio age note } }
+                        }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheValue_When_TheRequestOfAnUnlabelledNestedFragmentAnswersBeforeItsParent()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") {
+                        author { bio }
+                        ... @defer { author { bio age } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheValue_When_TheRequestOfANullableNestedFieldAnswersBeforeItsParentsRequest()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") {
+                        author { bio }
+                        ... @defer(label: "x") { author { bio note } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_KeepTheRowOfTheEnclosingFragment_When_TheNestedRequestAnswersFirstWithAnExtraField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3"
+                ? text.Replace("\"author\":{", "\"author\":{\"bio\":\"other\",", StringComparison.Ordinal)
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { author { id } }
+                    ... @defer(label: "b") {
+                        author { bio }
+                        ... @defer(label: "x") { author { bio age } }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_CompleteTheParentWithItsError_When_ItsRequestFailsAfterTheNestedRequestAnswered()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:2>", "B:4"],
+            ("A", ProductSource),
+            ("B", SharedAuthorSource));
+        _gate!.FailingStep = "B:2";
+
+        // act
+        var run = await RunDeferredAsync(gateway, NestedAnswerQuery, []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string NestedAnswerQuery =
+        """
+        {
+            product(id: "1") {
+                name
+                ... @defer(label: "a") { author { id } }
+                ... @defer(label: "b") {
+                    author { bio }
+                    ... @defer(label: "x") { author { bio age } }
+                }
+            }
+        }
+        """;
+
+    [Fact]
     public async Task Defer_Should_ReportTheMergeErrorAndTheErrorWithoutAPath_When_TheMergeFailsAtTheDepthLimit()
     {
         // arrange

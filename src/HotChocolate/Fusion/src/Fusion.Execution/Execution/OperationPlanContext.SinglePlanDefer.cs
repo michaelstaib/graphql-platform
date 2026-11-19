@@ -595,6 +595,26 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
+    /// Determines whether a group of <paramref name="groupIds"/> is nested in a group of
+    /// <paramref name="resolution"/>.
+    /// </summary>
+    public bool IsNestedIn(DeliveryResolution resolution, ImmutableArray<int> groupIds)
+    {
+        foreach (var groupId in groupIds)
+        {
+            for (var ancestor = _groupsById[groupId].Parent; ancestor is not null; ancestor = ancestor.Parent)
+            {
+                if (Contains(resolution, ancestor.Id))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Decides which marked steps run for this request and which delivery groups are honored.
     /// A step is needed when one of its top level fields resolves to one of its groups, or when a needed step or
     /// a needed operation of a batch depends on it. A group is honored when it is active and a needed step
