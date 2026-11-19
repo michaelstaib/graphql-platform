@@ -4404,9 +4404,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         var gateway = await CreateGatewayAsync(
             [],
             (schema, body, text) => schema == "B" && StepId().Matches(body).Any(m => m.Groups[1].Value == "2")
-                ? AuthorValue().Replace(
+                ? EntityId().Replace(
                     string.Join("\n", text.Split('\n').Where(line => !line.Contains("\"requestIndex\":0"))),
-                    "\"author\":{}")
+                    string.Empty)
                 : text,
             failingSchema: null,
             configure: null,
@@ -4663,9 +4663,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     [GeneratedRegex("\"nick\":\"[^\"]*\"")]
     private static partial Regex NickValue();
-
-    [GeneratedRegex("\"author\":\\{\"id\":\"[^\"]*\"\\}")]
-    private static partial Regex AuthorValue();
 
     private const string BatchProductSource =
         """
