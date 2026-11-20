@@ -4579,6 +4579,96 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
+    private const string BookItemSource =
+        """
+        type Query { item(id: ID!): Item book(id: ID!): Book @lookup }
+        interface Item { id: ID! name: String! }
+        type Book implements Item @key(fields: "id") { id: ID! name: String! }
+        """;
+
+    private const string PricedBookSource =
+        """
+        type Query { bookById(id: ID!): Book @lookup }
+        interface Priced { price: Float! }
+        type Book implements Priced @key(fields: "id") { id: ID! price: Float! rating: Int! }
+        """;
+
+    private const string BookReviewsSource =
+        """
+        type Query { bookByIdForReviews(id: ID!): Book @lookup }
+        type Book @key(fields: "id") { id: ID! reviews: [Review!]! }
+        type Review { body: String! }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheRating_When_TheFragmentNamesAnInterfaceAndItsChildAnObjectType()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", BookItemSource),
+            ("B", PricedBookSource),
+            ("C", BookReviewsSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { item(id: "1") { name ... on Priced @defer { ... on Book { rating } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    private const string NestedOrderingSource =
+        """
+        type Query { orders: [OrderBase] }
+        interface OrderBase { name: String }
+        interface MultiOrderBase implements OrderBase { name: String items: [OrderItem!] }
+        interface PremiumOrderBase implements MultiOrderBase & OrderBase { name: String items: [OrderItem!] }
+        type OrderA implements PremiumOrderBase & MultiOrderBase & OrderBase { name: String items: [OrderItem!] }
+        type OrderB implements PremiumOrderBase & MultiOrderBase & OrderBase { name: String items: [OrderItem!] }
+        type OrderItem { product: Product }
+        type Product @key(fields: "id") { id: ID! }
+        """;
+
+    private const string OrderProductSource =
+        """
+        type Query { productById(id: ID! @is(field: "id")): Product @lookup @internal }
+        type Product @key(fields: "id") { id: ID! name: String description: String }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheProducts_When_TheTargetPathNamesNestedInterfaces()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("ordering", NestedOrderingSource),
+            ("products", OrderProductSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                orders {
+                    ... on OrderBase {
+                        ... on MultiOrderBase {
+                            ... on PremiumOrderBase {
+                                items { product { id ... @defer { name description } } }
+                            }
+                        }
+                    }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
     [Fact]
     public async Task Defer_Should_DeliverTheFieldsOfBothDogs_When_TheFragmentHoldsTwoTypeConditionsAndOneNeedsALookup()
     {

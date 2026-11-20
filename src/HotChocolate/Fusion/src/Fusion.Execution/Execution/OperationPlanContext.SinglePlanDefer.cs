@@ -6,6 +6,7 @@ using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Text.Json;
+using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution;
 
@@ -1202,12 +1203,12 @@ internal sealed partial class SinglePlanDeliveryState
 
             if (segment.Kind is SelectionPathSegmentKind.InlineFragment)
             {
-                var typeName = segment.Name;
+                // A type segment keeps the selection sets of the object types that are its type or assignable to it.
+                var segmentType = operation.Schema.Types.GetType<ITypeDefinition>(segment.Name);
 
-                // A type segment that follows a type segment keeps the selection sets of its type.
                 if (followsTypeSegment)
                 {
-                    KeepSelectionSetsOfType(current, typeName);
+                    KeepSelectionSetsOfType(current, segmentType);
                     continue;
                 }
 
@@ -1218,7 +1219,7 @@ internal sealed partial class SinglePlanDeliveryState
                 {
                     foreach (var type in operation.GetPossibleTypes(selection))
                     {
-                        if (type.Name == typeName)
+                        if (segmentType.IsAssignableFrom(type))
                         {
                             current.Add(operation.GetSelectionSet(selection, type));
                         }
@@ -1257,13 +1258,13 @@ internal sealed partial class SinglePlanDeliveryState
         return current.ToArray();
     }
 
-    private static void KeepSelectionSetsOfType(List<SelectionSet> selectionSets, string typeName)
+    private static void KeepSelectionSetsOfType(List<SelectionSet> selectionSets, ITypeDefinition segmentType)
     {
         var kept = 0;
 
         for (var i = 0; i < selectionSets.Count; i++)
         {
-            if (selectionSets[i].Type.Name == typeName)
+            if (segmentType.IsAssignableFrom(selectionSets[i].Type))
             {
                 selectionSets[kept++] = selectionSets[i];
             }
