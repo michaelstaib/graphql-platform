@@ -2974,7 +2974,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
-            keyStepFirst ? ["A:3", "B:2"] : ["B:2>", "A:3"],
+            keyStepFirst ? ["A:3", "B:2@2"] : ["B:2>", "A:3"],
             ("A", ProductListSource),
             ("B", PriceSource),
             ("C", ReviewsSource));
@@ -3025,7 +3025,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
-            dependentFirst ? ["C:2", "A:3"] : ["A:3", "C:2"],
+            dependentFirst ? ["C:2", "A:3@2"] : ["A:3", "C:2@2"],
             ("A", ProductWeightSource),
             ("C", ShippingSource));
 
@@ -6670,7 +6670,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private async Task<Run> RunNestedAnswerAsync(bool nestedFirst, string answer)
     {
         var gateway = await CreateGatewayAsync(
-            nestedFirst ? ["B:3", "B:2>", "B:4"] : ["B:2>", "B:3", "B:4"],
+            nestedFirst ? ["B:3", "B:2>", "B:4"] : ["B:2", "B:3@2", "B:4@3"],
             (schema, body, text) => schema == "B" && StepId().Match(body).Groups[1].Value == "3" ? answer : text,
             failingSchema: null,
             configure: null,
