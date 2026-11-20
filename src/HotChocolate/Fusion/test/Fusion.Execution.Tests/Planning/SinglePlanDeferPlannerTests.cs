@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Diagnostics.Tracing;
 using System.Text.RegularExpressions;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
 using HotChocolate.Fusion.Execution.Rewriters;
@@ -692,6 +693,29 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         // assert
         Assert.Empty(result.Fallbacks);
         MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void CollectKeyAndRequirementSelectionIds_Should_HoldTheAliasedField_When_TheFragmentSelectsOtherArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+        var plan = Plan(schema, "{ product { eur ... @defer { price } } }").Plan;
+
+        // act
+        var ids = SinglePlanDeliveryState.CollectKeyAndRequirementSelectionIds(plan.Operation, plan.AllNodes);
+
+        // assert
+        Assert.Equal(plan.KeyAndRequirementSelectionIds.Order(), ids.Order());
+        DescribeSelections(plan.Operation, ids)
+            .MatchInlineSnapshots(
+            [
+                "$.product #2 not read",
+                "$.product.eur #4 not read",
+                "$.product.upc #5 read",
+                "$.product.fusion__requirement_price_0 #6 read",
+                "$.product.price #7 not read"
+            ]);
     }
 
     [Fact]
@@ -3607,6 +3631,37 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             price: Float!
         }
         """;
+
+    private static List<string> DescribeSelections(Operation operation, HashSet<int> read)
+    {
+        var lines = new List<string>();
+        DescribeSelections(operation, operation.RootSelectionSet, read, "$", lines);
+        return lines;
+    }
+
+    private static void DescribeSelections(
+        Operation operation,
+        Execution.Nodes.SelectionSet selectionSet,
+        HashSet<int> read,
+        string path,
+        List<string> lines)
+    {
+        foreach (var selection in selectionSet.Selections)
+        {
+            var selectionPath = $"{path}.{selection.ResponseName}";
+            lines.Add($"{selectionPath} #{selection.Id} {(read.Contains(selection.Id) ? "read" : "not read")}");
+
+            if (selection.IsLeaf)
+            {
+                continue;
+            }
+
+            foreach (var type in operation.GetPossibleTypes(selection))
+            {
+                DescribeSelections(operation, operation.GetSelectionSet(selection, type), read, selectionPath, lines);
+            }
+        }
+    }
 
     private static PlanResult Plan(FusionSchemaDefinition schema, string operationText)
         => Plan(

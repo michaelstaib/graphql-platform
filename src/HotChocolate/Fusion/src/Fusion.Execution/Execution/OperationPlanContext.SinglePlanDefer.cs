@@ -697,6 +697,26 @@ internal sealed partial class SinglePlanDeliveryState
     {
         foreach (var requirement in requirements)
         {
+            if (requirement.InternalAlias is not null)
+            {
+                foreach (var selectionSet in GetTargetSelectionSets(operation, requirement.Path))
+                {
+                    if (!TryGetAliasedSelection(requirement, selectionSet, out var aliased))
+                    {
+                        continue;
+                    }
+
+                    ids.Add(aliased.Id);
+
+                    if (!aliased.IsLeaf)
+                    {
+                        CollectKeyAndRequirementSelectionIds(operation, aliased, GetRequirementNames(requirement), ids);
+                    }
+                }
+
+                continue;
+            }
+
             var names = GetRequirementNames(requirement);
 
             foreach (var selectionSet in GetTargetSelectionSets(operation, requirement.Path))
@@ -704,6 +724,22 @@ internal sealed partial class SinglePlanDeliveryState
                 CollectKeyAndRequirementSelectionIds(operation, selectionSet, names, ids);
             }
         }
+    }
+
+    // Gets the selection that holds the value of a requirement with an internal alias. Such a requirement is written
+    // under the alias and not under the name of its field.
+    private static bool TryGetAliasedSelection(
+        OperationRequirement requirement,
+        SelectionSet selectionSet,
+        [NotNullWhen(true)] out Selection? selection)
+    {
+        if (requirement.InternalAlias is { } internalAlias)
+        {
+            return selectionSet.TryGetSelection(internalAlias, out selection);
+        }
+
+        selection = null;
+        return false;
     }
 
     private static HashSet<string> GetRequirementNames(OperationRequirement requirement)
@@ -745,19 +781,22 @@ internal sealed partial class SinglePlanDeliveryState
 
             ids.Add(selection.Id);
 
-            if (selection.IsLeaf)
+            if (!selection.IsLeaf)
             {
-                continue;
+                CollectKeyAndRequirementSelectionIds(operation, selection, names, ids);
             }
+        }
+    }
 
-            foreach (var type in operation.GetPossibleTypes(selection))
-            {
-                CollectKeyAndRequirementSelectionIds(
-                    operation,
-                    operation.GetSelectionSet(selection, type),
-                    names,
-                    ids);
-            }
+    private static void CollectKeyAndRequirementSelectionIds(
+        Operation operation,
+        Selection selection,
+        HashSet<string> names,
+        HashSet<int> ids)
+    {
+        foreach (var type in operation.GetPossibleTypes(selection))
+        {
+            CollectKeyAndRequirementSelectionIds(operation, operation.GetSelectionSet(selection, type), names, ids);
         }
     }
 
@@ -973,12 +1012,11 @@ internal sealed partial class SinglePlanDeliveryState
     {
         foreach (var requirement in requirements)
         {
-            // A requirement with an internal alias is written under the alias and not under the name of its field.
-            if (requirement.InternalAlias is { } internalAlias)
+            if (requirement.InternalAlias is not null)
             {
                 foreach (var selectionSet in GetTargetSelectionSets(requirement.Path))
                 {
-                    if (selectionSet.TryGetSelection(internalAlias, out var key) && Writes(definition, key))
+                    if (TryGetAliasedSelection(requirement, selectionSet, out var key) && Writes(definition, key))
                     {
                         return true;
                     }
