@@ -3959,6 +3959,141 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [GeneratedRegex("\"height\":[^,}]*")]
     private static partial Regex HeightValue();
 
+    private const string NickSource =
+        """
+        type Query { user: User }
+        type User @key(fields: "id") { id: ID! nick: String }
+        """;
+
+    private const string InnerSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inner: Inner innerNn: Inner! }
+        type Inner { a: String! @error c: String }
+        """;
+
+    private const string InnerRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            cC(c: String @require(field: "inner.c")): String
+            cA(a: String @require(field: "inner.a")): String
+            cCNn(c: String @require(field: "innerNn.c")): String
+        }
+        """;
+
+    private const string OtherFieldSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! other: String! }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_SendNullForTheDependentField_When_ItsRequirementLiesBelowAnObjectThatAnErrorNulled()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2@1"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ user { nick ... @defer { inner { a } cC } } }",
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullForTheDependentField_When_TheClientDoesNotSelectTheObjectItRequires()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:4@1"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ user { nick ... @defer { cA } } }",
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullForTheDependentField_When_TheInitialPayloadSelectsTheNulledObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:5@1"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ user { nick inner { a } ... @defer { cC } } }",
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheSiblingField_When_AnotherFieldOfTheFragmentLacksItsRequirement()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2@1"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource),
+            ("D", OtherFieldSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ user { nick ... @defer { inner { a } cC other } } }",
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheError_When_TheNonNullObjectOfTheRequirementIsNull()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2@1"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { innerNn { a } cCNn } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     // The source schema A answers null for the first id and the same name for every product.
     private static string NullTheFirstId(string schema, string body, string text)
         => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)

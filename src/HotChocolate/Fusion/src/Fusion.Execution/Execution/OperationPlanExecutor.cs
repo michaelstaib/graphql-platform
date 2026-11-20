@@ -401,8 +401,12 @@ internal static partial class OperationPlanExecutor
             var node = plan.GetNodeById(result.Id);
             executionState.CompleteNode(plan, node, result);
             state.Finished[result.Id] = true;
-            state.Failed[result.Id] = result.Status is ExecutionStatus.Failed;
-            state.FailureExceptions[result.Id] = result.Exception;
+
+            // A step that cannot build its variables because a requirement value is not there counts as skipped.
+            var failed = result.Status is ExecutionStatus.Failed
+                && result.Exception is not InvalidSelectionMapPathException;
+            state.Failed[result.Id] = failed;
+            state.FailureExceptions[result.Id] = failed ? result.Exception : null;
         }
 
         if (!cancellationToken.IsCancellationRequested)
