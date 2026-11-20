@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using HotChocolate.Execution.Configuration;
 using HotChocolate.Fusion.Configuration;
 using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
@@ -4217,45 +4218,11 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
-    private const string DoubledTypePetListSource =
-        """
-        type Query {
-            current: Holder
-            dogById(id: ID!): Dog @lookup @internal
-            catById(id: ID!): Cat @lookup @internal
-        }
-        type Holder { pets: [Pet!]! @returns(types: ["Dog", "Cat", "Dog"]) }
-        interface Pet { id: ID! owner: User! }
-        type Dog implements Pet @key(fields: "id") { id: ID! owner: User! }
-        type Cat implements Pet @key(fields: "id") { id: ID! owner: User! }
-        type User @key(fields: "id") { id: ID! }
-        """;
-
-    private const string DoubledTypeOwnerNameSource =
-        """
-        type Query { userById(id: ID!): User @lookup @internal }
-        type User @key(fields: "id") { id: ID! name: String! }
-        """;
-
-    private const string DoubledTypeSoundSource =
-        """
-        type Query {
-            dogById(id: ID!): Dog @lookup @internal
-            catById(id: ID!): Cat @lookup @internal
-        }
-        type Dog @key(fields: "id") { id: ID! bark: String! }
-        type Cat @key(fields: "id") { id: ID! meow: String! }
-        """;
-
     [Fact]
     public async Task Defer_Should_DeliverTheFieldsOfBothDogs_When_TheFragmentHoldsTwoTypeConditionsAndOneNeedsALookup()
     {
         // arrange
-        var gateway = await CreateGatewayAsync(
-            ["P:2", "A:3", "E:4"],
-            ("A", DoubledTypePetListSource),
-            ("E", DoubledTypeOwnerNameSource),
-            ("P", DoubledTypeSoundSource));
+        var gateway = await CreateDoubledTypeGatewayAsync("P:2", "A:3", "E:4");
 
         // act
         var run = await RunWithTwinAsync(
@@ -4266,14 +4233,14 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run);
+        MatchRunWithPayloadValues(run);
     }
 
     [Fact]
     public async Task Defer_Should_DeliverTheFieldsOfEveryItem_When_TheFragmentHoldsTwoTypeConditionsBelowAListInAList()
     {
         // arrange
-        var gateway = await CreateDoubledTypeGatewayAsync();
+        var gateway = await CreateDoubledTypeGatewayAsync("P:2", "A:3", "E:4");
 
         // act
         var run = await RunWithTwinAsync(
@@ -4284,19 +4251,14 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchMergedRun(run);
-        Assert.Equal(1, run.Deferred.Requests["E"]);
+        MatchRunWithPayloadValues(run);
     }
 
     [Fact]
     public async Task Defer_Should_DeliverTheOwnerOfEveryPet_When_BothTypeConditionsNeedALookup()
     {
         // arrange
-        var gateway = await CreateGatewayAsync(
-            ["P:2", "A:3", "E:4"],
-            ("A", DoubledTypePetListSource),
-            ("E", DoubledTypeOwnerNameSource),
-            ("P", DoubledTypeSoundSource));
+        var gateway = await CreateDoubledTypeGatewayAsync("P:2", "A:3", "E:4");
 
         // act
         var run = await RunWithTwinAsync(
@@ -4311,16 +4273,21 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRun(run);
+        MatchRunWithPayloadValues(run);
     }
 
-    // Matches the merged data and the request counts of the run, without the payloads.
-    private static void MatchMergedRun(TwinRun run)
+    // Matches the payloads with the values of the source schemas, and the request counts of the run and its twin.
+    private static void MatchRunWithPayloadValues(TwinRun run)
     {
         run.AssertMatchesTwin(compareValues: true);
 
         var snapshot = Snapshot.Create();
-        snapshot.Add(Canonical(run.Deferred.Data), "Merged data", "json");
+
+        for (var i = 0; i < run.Deferred.Payloads.Count; i++)
+        {
+            snapshot.Add(run.Deferred.Payloads[i], $"Payload {i + 1}", "json");
+        }
+
         snapshot.Add(
             $"deferred: {run.Deferred.RequestSummary}" + Environment.NewLine
             + $"plain twin: {run.Twin.RequestSummary}",
@@ -4329,19 +4296,57 @@ public partial class SinglePlanDeferTests : FusionTestBase
         snapshot.MatchMarkdownSnapshot();
     }
 
-    private async Task<Gateway> CreateDoubledTypeGatewayAsync()
-        => await CreateCompositeSchemaAsync(
-            [
-                ("A", CreateSourceSchema(
-                    "A",
-                    b => b.AddQueryType<DoubledTypeRootSource.Query>()
-                        .AddType<DoubledTypeRootSource.Dog>()
-                        .AddType<DoubledTypeRootSource.Cat>())),
-                ("E", CreateSourceSchema("E", b => b.AddQueryType<DoubledTypeNameSource.Query>())),
-                ("P", CreateSourceSchema("P", b => b.AddQueryType<DoubledTypePetSource.Query>()))
-            ],
-            configureGatewayBuilder: builder
-                => builder.ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true));
+    // The source schemas answer with distinct values per object, such as bark-5 for a dog and name-106 for the owner
+    // of a cat.
+    private async Task<Gateway> CreateDoubledTypeGatewayAsync(params string[] releaseOrder)
+    {
+        var gate = _gate = new ResponseGate(releaseOrder);
+        var servers = new List<(string, TestServer)>();
+        (string Name, Action<IRequestExecutorBuilder> Configure)[] sources =
+        [
+            ("A", builder => builder.AddQueryType<DoubledTypeRootSource.Query>()
+                .AddType<DoubledTypeRootSource.Dog>()
+                .AddType<DoubledTypeRootSource.Cat>()),
+            ("E", builder => builder.AddQueryType<DoubledTypeNameSource.Query>()),
+            ("P", builder => builder.AddQueryType<DoubledTypePetSource.Query>())
+        ];
+
+        foreach (var (name, configure) in sources)
+        {
+            HttpMessageInvoker? invoker = null;
+            var server = CreateSourceSchema(
+                name,
+                configure,
+                mockHttpResponse: async request =>
+                {
+                    await request.Content!.LoadIntoBufferAsync();
+                    var body = await request.Content.ReadAsStringAsync();
+                    await gate.EnterAsync(name, body);
+                    return await invoker!.SendAsync(request, CancellationToken.None);
+                });
+            invoker = new HttpMessageInvoker(server.CreateHandler());
+            servers.Add((name, server));
+        }
+
+        return await CreateCompositeSchemaAsync(
+            [.. servers],
+            configureApplication: app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Response.Body = new PayloadCountingStream(context.Response.Body, gate);
+                    await next(context);
+                });
+                app.UseRouting();
+                app.UseEndpoints(endpoint => endpoint.MapGraphQL());
+            },
+            configureGatewayBuilder: builder =>
+            {
+                builder
+                    .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true)
+                    .AddDiagnosticEventListener(_ => new StepDoneListener(gate));
+            });
+    }
 
     public static class DoubledTypeRootSource
     {
@@ -4361,6 +4366,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         public class Holder
         {
+            public IPet[] GetPets() => [new Dog(5), new Cat(6), new Dog(7)];
+
             public IPet[][] GetPetGroups() => [[new Dog(5), new Cat(6)], [new Dog(7)], [new Cat(8), new Dog(9)]];
         }
 
