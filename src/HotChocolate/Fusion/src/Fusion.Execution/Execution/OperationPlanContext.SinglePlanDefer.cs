@@ -1175,6 +1175,7 @@ internal sealed partial class SinglePlanDeliveryState
     {
         var current = new List<SelectionSet> { operation.RootSelectionSet };
         var selections = new List<Selection>();
+        var followsTypeSegment = false;
 
         for (var i = 0; i < path.Length; i++)
         {
@@ -1188,6 +1189,15 @@ internal sealed partial class SinglePlanDeliveryState
             if (segment.Kind is SelectionPathSegmentKind.InlineFragment)
             {
                 var typeName = segment.Name;
+
+                // A type segment that follows a type segment keeps the selection sets of its type.
+                if (followsTypeSegment)
+                {
+                    KeepSelectionSetsOfType(current, typeName);
+                    continue;
+                }
+
+                followsTypeSegment = true;
                 current.Clear();
 
                 foreach (var selection in selections)
@@ -1204,6 +1214,8 @@ internal sealed partial class SinglePlanDeliveryState
                 selections.Clear();
                 continue;
             }
+
+            followsTypeSegment = false;
 
             if (selections.Count > 0)
             {
@@ -1229,6 +1241,21 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         return current.ToArray();
+    }
+
+    private static void KeepSelectionSetsOfType(List<SelectionSet> selectionSets, string typeName)
+    {
+        var kept = 0;
+
+        for (var i = 0; i < selectionSets.Count; i++)
+        {
+            if (selectionSets[i].Type.Name == typeName)
+            {
+                selectionSets[kept++] = selectionSets[i];
+            }
+        }
+
+        selectionSets.RemoveRange(kept, selectionSets.Count - kept);
     }
 
     private static void ExpandPossibleTypes(Operation operation, List<Selection> selections, List<SelectionSet> output)

@@ -6,6 +6,9 @@ using HotChocolate.Fusion.Diagnostics;
 using HotChocolate.Fusion.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Transport.Http;
+using HotChocolate.Types;
+using HotChocolate.Types.Composite;
+using HotChocolate.Types.Relay;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -4077,6 +4080,181 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheFieldsOfBothDogs_When_TheFragmentHoldsTwoTypeConditionsAndOneNeedsALookup()
+    {
+        // arrange
+        var gateway = await CreateDoubledTypeGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { current { pets { ... @defer { ... on Dog { bark owner { name } } ... on Cat { meow } } } } }
+            """,
+            []);
+
+        // assert
+        MatchMergedRun(run);
+        Assert.Equal(1, run.Deferred.Requests["E"]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheFieldsOfEveryItem_When_TheFragmentHoldsTwoTypeConditionsBelowAListInAList()
+    {
+        // arrange
+        var gateway = await CreateDoubledTypeGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { current { petGroups { ... @defer { ... on Dog { bark owner { name } } ... on Cat { meow } } } } }
+            """,
+            []);
+
+        // assert
+        MatchMergedRun(run);
+        Assert.Equal(1, run.Deferred.Requests["E"]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheOwnerOfEveryPet_When_BothTypeConditionsNeedALookup()
+    {
+        // arrange
+        var gateway = await CreateDoubledTypeGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                current {
+                    pets { ... @defer { ... on Dog { bark owner { name } } ... on Cat { meow owner { name } } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchMergedRun(run);
+        Assert.Equal(1, run.Deferred.Requests["E"]);
+    }
+
+    // The payloads are not part of the snapshot: which step answers first decides how many payloads there are.
+    private static void MatchMergedRun(TwinRun run)
+    {
+        run.AssertMatchesTwin(compareValues: true);
+
+        var snapshot = Snapshot.Create();
+        snapshot.Add(Canonical(run.Deferred.Data), "Merged data", "json");
+        snapshot.Add(
+            $"deferred: {run.Deferred.RequestSummary}" + Environment.NewLine
+            + $"plain twin: {run.Twin.RequestSummary}",
+            "Requests",
+            "text");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    private async Task<Gateway> CreateDoubledTypeGatewayAsync()
+        => await CreateCompositeSchemaAsync(
+            [
+                ("A", CreateSourceSchema(
+                    "A",
+                    b => b.AddQueryType<DoubledTypeRootSource.Query>()
+                        .AddType<DoubledTypeRootSource.Dog>()
+                        .AddType<DoubledTypeRootSource.Cat>())),
+                ("E", CreateSourceSchema("E", b => b.AddQueryType<DoubledTypeNameSource.Query>())),
+                ("P", CreateSourceSchema("P", b => b.AddQueryType<DoubledTypePetSource.Query>()))
+            ],
+            configureGatewayBuilder: builder
+                => builder.ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true));
+
+    public static class DoubledTypeRootSource
+    {
+        public class Query
+        {
+            public Holder GetCurrent() => new();
+
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+
+            [Lookup, Internal]
+            public Dog? GetDogById([ID] int id) => new(id);
+
+            [Lookup, Internal]
+            public Cat? GetCatById([ID] int id) => new(id);
+        }
+
+        public class Holder
+        {
+            public IPet[] GetPets() => [new Dog(5), new Cat(6), new Dog(7)];
+
+            public IPet[][] GetPetGroups() => [[new Dog(5), new Cat(6)], [new Dog(7)], [new Cat(8), new Dog(9)]];
+        }
+
+        [InterfaceType("Pet")]
+        public interface IPet
+        {
+            [ID]
+            int Id { get; }
+
+            User Owner { get; }
+        }
+
+        [ObjectType("Dog")]
+        public record Dog([property: ID] int Id) : IPet
+        {
+            public User Owner => new(Id);
+        }
+
+        [ObjectType("Cat")]
+        public record Cat([property: ID] int Id) : IPet
+        {
+            public User Owner => new(Id + 100);
+        }
+
+        public record User([property: ID] int Id);
+    }
+
+    public static class DoubledTypeNameSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public string Name => "name-" + Id;
+        }
+    }
+
+    public static class DoubledTypePetSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public Dog? GetDogById([ID] int id) => new(id);
+
+            [Lookup, Internal]
+            public Cat? GetCatById([ID] int id) => new(id);
+        }
+
+        [ObjectType("Dog")]
+        public record Dog([property: ID] int Id)
+        {
+            public string Bark => "bark-" + Id;
+        }
+
+        [ObjectType("Cat")]
+        public record Cat([property: ID] int Id)
+        {
+            public string Meow => "meow-" + Id;
+        }
     }
 
     [Theory]
