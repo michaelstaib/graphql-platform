@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HotChocolate.Caching.Memory;
 using HotChocolate.Execution.Relay;
 using HotChocolate.Fusion.Types;
@@ -115,6 +116,21 @@ public sealed class FusionOptions : IFusionSchemaOptions, ICloneable
             field = value;
         }
     } = true;
+
+    /// <summary>
+    /// Gets or sets the names of the headers that the gateway copies from an incoming request
+    /// to the requests it sends to source schemas. Empty by default.
+    /// </summary>
+    public ImmutableArray<string> PropagatedHeaders
+    {
+        get;
+        set
+        {
+            ExpectMutableOptions();
+
+            field = value.IsDefault ? [] : value;
+        }
+    } = [];
 
     /// <summary>
     /// Gets or sets whether the request executor should be initialized lazily.

@@ -48,7 +48,8 @@ public class FusionOptionsTests : FusionTestBase
             OperationDocumentCacheSize = 1024,
             EnableDefer = false,
             EnableObjectDeprecation = true,
-            EnableEntityReuse = false
+            EnableEntityReuse = false,
+            PropagatedHeaders = ["Authorization"]
         };
 
         // act
@@ -64,6 +65,9 @@ public class FusionOptionsTests : FusionTestBase
               "OperationDocumentCacheSize": 1024,
               "PathSegmentLocalPoolCapacity": 64,
               "EnableEntityReuse": false,
+              "PropagatedHeaders": [
+                "Authorization"
+              ],
               "LazyInitialization": false,
               "NodeIdSerializerFormat": "Base64",
               "ApplySerializeAsToScalars": false,

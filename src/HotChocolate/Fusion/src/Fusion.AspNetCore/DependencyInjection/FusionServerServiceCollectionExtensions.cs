@@ -9,6 +9,7 @@ using HotChocolate.AspNetCore.Subscriptions.Protocols.GraphQLOverWebSocket;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.AspNetCore;
 using HotChocolate.Fusion.Configuration;
+using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Language;
 using Microsoft.AspNetCore.Authentication;
@@ -61,6 +62,7 @@ public static class FusionServerServiceCollectionExtensions
         builder.ConfigureSchemaServices((applicationServices, sc) =>
         {
             sc.TryAddSingleton<ITimeProvider, DefaultTimeProvider>();
+            sc.TryAddSingleton<IRequestHeaderProvider, HttpContextRequestHeaderProvider>();
 
             sc.TryAddSingleton<IAuthenticationSchemeLookup>(
                 _ => new AspNetCoreAuthenticationSchemeLookup(

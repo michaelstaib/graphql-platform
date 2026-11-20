@@ -26,17 +26,24 @@ internal static class SourceSchemaCallbackHelper
         ExecutionNode node,
         HttpSourceSchemaClientConfiguration configuration)
     {
-        if (configuration.OnBeforeSend is null && configuration.OnAfterReceive is null)
+        var hasPropagatedHeaders = context.HasPropagatedHeaders;
+
+        if (configuration.OnBeforeSend is null
+            && configuration.OnAfterReceive is null
+            && !hasPropagatedHeaders)
         {
             return;
         }
 
         request.State = new RequestCallbackState(context, node, configuration);
 
-        if (configuration.OnBeforeSend is not null)
+        if (configuration.OnBeforeSend is not null || hasPropagatedHeaders)
         {
             request.OnMessageCreated += static (_, requestMessage, state) =>
-                state.Configuration.OnBeforeSend!.Invoke(state.Context, state.Node, requestMessage);
+            {
+                state.Configuration.OnBeforeSend?.Invoke(state.Context, state.Node, requestMessage);
+                state.Context.AddPropagatedHeaders(requestMessage);
+            };
         }
 
         if (configuration.OnAfterReceive is not null)

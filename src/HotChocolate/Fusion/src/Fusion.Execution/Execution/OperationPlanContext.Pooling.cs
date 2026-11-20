@@ -9,6 +9,7 @@ using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Types;
+using Microsoft.Extensions.Primitives;
 
 namespace HotChocolate.Fusion.Execution;
 
@@ -17,15 +18,21 @@ public sealed partial class OperationPlanContext
     private CancellationTokenSource _engineCancellationSource = new();
     private ConditionFlags _activeDeliveryGroups;
     private ConditionFlags _runningIncrementalPlans;
+    private readonly IRequestHeaderProvider? _requestHeaderProvider;
+    private ImmutableArray<string> _propagatedHeaderNames = [];
+    private StringValues[] _propagatedHeaderValues = [];
+    private bool _hasPropagatedHeaders;
 
     internal OperationPlanContext(
         INodeIdParser nodeIdParser,
         IFusionExecutionDiagnosticEvents diagnosticEvents,
-        IErrorHandler errorHandler)
+        IErrorHandler errorHandler,
+        IRequestHeaderProvider? requestHeaderProvider)
     {
         _nodeIdParser = nodeIdParser;
         _diagnosticEvents = diagnosticEvents;
         _errorHandler = errorHandler;
+        _requestHeaderProvider = requestHeaderProvider;
         _resultStore = new FetchResultStore();
         _executionState = new ExecutionState();
     }
@@ -50,6 +57,9 @@ public sealed partial class OperationPlanContext
         _disposed = 0;
         RequestContext = requestContext;
 
+        var options = requestContext.Schema.GetOptions();
+        CapturePropagatedHeaders(requestContext, options.PropagatedHeaders);
+
         _memory = memory
             ?? requestContext.Memory
             ?? throw new InvalidOperationException(
@@ -68,7 +78,7 @@ public sealed partial class OperationPlanContext
             case OperationPlan plan:
                 _usesDynamicSchemaNames = plan.UsesDynamicSchemaNames;
                 _usesBatchNodes = plan.UsesBatchNodes;
-                _entityReuseCandidateMap = requestContext.Schema.GetOptions().EnableEntityReuse
+                _entityReuseCandidateMap = options.EnableEntityReuse
                     ? plan.EntityReuseCandidateMap
                     : null;
                 break;
@@ -99,7 +109,7 @@ public sealed partial class OperationPlanContext
             requestContext.ErrorHandlingMode(),
             IncludeConditionFlags,
             DeferConditionFlags,
-            requestContext.Schema.GetOptions().PathSegmentLocalPoolCapacity);
+            options.PathSegmentLocalPoolCapacity);
 
         _executionState.Initialize(_collectTelemetry, cancellationTokenSource);
 
@@ -161,6 +171,81 @@ public sealed partial class OperationPlanContext
     }
 
     /// <summary>
+    /// Gets a value indicating whether the request has a header
+    /// that the gateway copies to source schema requests.
+    /// </summary>
+    internal bool HasPropagatedHeaders => _hasPropagatedHeaders;
+
+    /// <summary>
+    /// Adds the propagated headers of the request to a source schema request.
+    /// A header that the source schema request already has is kept.
+    /// </summary>
+    /// <param name="message">The source schema request.</param>
+    internal void AddPropagatedHeaders(HttpRequestMessage message)
+    {
+        if (!_hasPropagatedHeaders)
+        {
+            return;
+        }
+
+        var names = _propagatedHeaderNames;
+        var values = _propagatedHeaderValues;
+        var content = message.Content;
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            var name = names[i];
+            var value = values[i];
+
+            if (value.Count == 0
+                || message.Headers.NonValidated.Contains(name)
+                || content?.Headers.NonValidated.Contains(name) == true)
+            {
+                continue;
+            }
+
+            if (value.Count == 1)
+            {
+                if (!message.Headers.TryAddWithoutValidation(name, value[0]))
+                {
+                    content?.Headers.TryAddWithoutValidation(name, value[0]);
+                }
+            }
+            else if (!message.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)value))
+            {
+                content?.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)value);
+            }
+        }
+    }
+
+    // The values are read once, while the pipeline of the request runs.
+    private void CapturePropagatedHeaders(RequestContext requestContext, ImmutableArray<string> names)
+    {
+        if (names.Length == 0 || _requestHeaderProvider is null)
+        {
+            return;
+        }
+
+        if (_propagatedHeaderValues.Length != names.Length)
+        {
+            _propagatedHeaderValues = new StringValues[names.Length];
+        }
+
+        var values = _propagatedHeaderValues;
+        var hasValues = false;
+
+        for (var i = 0; i < names.Length; i++)
+        {
+            var value = _requestHeaderProvider.GetHeader(requestContext, names[i]);
+            values[i] = value;
+            hasValues |= value.Count > 0;
+        }
+
+        _propagatedHeaderNames = names;
+        _hasPropagatedHeaders = hasValues;
+    }
+
+    /// <summary>
     /// Cleans the context for return to the pool.
     /// Releases per-request state while retaining reusable buffers.
     /// </summary>
@@ -201,6 +286,13 @@ public sealed partial class OperationPlanContext
         _executionState.Clean();
 
         RequestContext = default!;
+
+        if (_hasPropagatedHeaders)
+        {
+            Array.Clear(_propagatedHeaderValues);
+            _hasPropagatedHeaders = false;
+        }
+
         _memory = null;
         _memorySource.Clear();
         _currentMemorySource = null!;
