@@ -13,7 +13,6 @@ public sealed class MD5DocumentHashProvider : DocumentHashProviderBase
     private readonly ThreadLocal<MD5> _md5 = new(MD5.Create);
 
 #endif
-
     public MD5DocumentHashProvider()
         : this(HashFormat.Base64) { }
 
