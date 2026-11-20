@@ -402,7 +402,7 @@ internal static partial class OperationPlanExecutor
             executionState.CompleteNode(plan, node, result);
             state.Finished[result.Id] = true;
 
-            // A step that cannot build its variables because a requirement value is not there counts as skipped.
+            // A step that cannot build its variables from the result counts as skipped.
             var failed = result.Status is ExecutionStatus.Failed
                 && result.Exception is not InvalidSelectionMapPathException;
             state.Failed[result.Id] = failed;
