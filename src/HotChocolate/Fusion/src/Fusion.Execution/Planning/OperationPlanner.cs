@@ -3558,15 +3558,22 @@ public sealed partial class OperationPlanner
             var mintedAlias = false;
 
             // The fields of the object also conflict across the @defer fragments of its selection set.
-            var objectFields = backlog.DeferredFragments is not null
-                ? CollectObjectFields(current.InternalOperationDefinition, index, workItem.Selection.SelectionSetId)
+            var objectFields = backlog.DeferredFragments is { } deferredFragments
+                ? CollectObjectFields(
+                    current.InternalOperationDefinition,
+                    index,
+                    workItem.Selection.SelectionSetId,
+                    workItem.Selection.Field.DeclaringType,
+                    deferredFragments)
                 : null;
 
             foreach (var selection in requirements.Selections)
             {
                 if (selection is FieldNode field
                     && (HasArgumentConflict(field, siblingSelections.Selections)
-                        || (objectFields is not null && HasArgumentConflict(field, objectFields))))
+                        || (objectFields is not null
+                            && requirementAliases.CanRecordAlias(field)
+                            && HasArgumentConflict(field, objectFields))))
                 {
                     requirementAliases.MintAlias(field);
                     mintedAlias = true;
@@ -3935,10 +3942,21 @@ public sealed partial class OperationPlanner
         SelectionSetNode selectionSet,
         SelectionSetIndexBuilder index,
         uint targetSelectionSetId)
+        => FindSelectionSet(selectionSet, selectionSet, index, targetSelectionSetId, out _);
+
+    // Returns the selection set with the identifier. The object selection set is the selection set of the
+    // nearest field around it, or the root selection set, and null when the selection set is not found.
+    private static SelectionSetNode? FindSelectionSet(
+        SelectionSetNode selectionSet,
+        SelectionSetNode enclosingSelectionSet,
+        SelectionSetIndexBuilder index,
+        uint targetSelectionSetId,
+        out SelectionSetNode? objectSelectionSet)
     {
         if (index.IsRegistered(selectionSet)
             && index.GetId(selectionSet) == targetSelectionSetId)
         {
+            objectSelectionSet = enclosingSelectionSet;
             return selectionSet;
         }
 
@@ -3950,8 +3968,10 @@ public sealed partial class OperationPlanner
                 {
                     var result = FindSelectionSet(
                         field.SelectionSet,
+                        field.SelectionSet,
                         index,
-                        targetSelectionSetId);
+                        targetSelectionSetId,
+                        out objectSelectionSet);
 
                     if (result is not null)
                     {
@@ -3965,8 +3985,10 @@ public sealed partial class OperationPlanner
                 {
                     var result = FindSelectionSet(
                         inlineFragment.SelectionSet,
+                        enclosingSelectionSet,
                         index,
-                        targetSelectionSetId);
+                        targetSelectionSetId,
+                        out objectSelectionSet);
 
                     if (result is not null)
                     {
@@ -3978,6 +4000,7 @@ public sealed partial class OperationPlanner
             }
         }
 
+        objectSelectionSet = null;
         return null;
     }
 
@@ -4001,6 +4024,31 @@ public sealed partial class OperationPlanner
 
         public string? GetInternalAlias(IValueSelectionNode fieldSelectionMap)
             => _aliasesByMap.GetValueOrDefault(fieldSelectionMap);
+
+        // Returns true when a selection map reads the field and every selection map can record an alias.
+        public bool CanRecordAlias(FieldNode field)
+        {
+            var isRead = false;
+
+            for (var i = 0; i < fieldSelectionMaps.Length; i++)
+            {
+                var map = fieldSelectionMaps[i];
+
+                if (map is null)
+                {
+                    continue;
+                }
+
+                if (!TryCreateRootFieldSelectionKey(map, out var mapKey))
+                {
+                    return false;
+                }
+
+                isRead |= mapKey.Matches(field);
+            }
+
+            return isRead;
+        }
 
         public string MintAlias(FieldNode field)
         {
@@ -4256,12 +4304,26 @@ public sealed partial class OperationPlanner
         return false;
     }
 
-    private static bool ContainsDeliveryGroupFragment(IReadOnlyList<ISelectionNode> selections)
+    private static bool ContainsDeliveryGroupFragment(
+        IReadOnlyList<ISelectionNode> selections,
+        IReadOnlyDictionary<DirectiveNode, int> deferredFragments)
     {
         foreach (var selection in selections)
         {
-            if (selection is InlineFragmentNode fragment
-                && (HasDeliveryGroup(fragment) || ContainsDeliveryGroupFragment(fragment.SelectionSet.Selections)))
+            if (selection is not InlineFragmentNode fragment)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < fragment.Directives.Count; i++)
+            {
+                if (deferredFragments.ContainsKey(fragment.Directives[i]))
+                {
+                    return true;
+                }
+            }
+
+            if (ContainsDeliveryGroupFragment(fragment.SelectionSet.Selections, deferredFragments))
             {
                 return true;
             }
@@ -4270,47 +4332,30 @@ public sealed partial class OperationPlanner
         return false;
     }
 
-    private static bool HasDeliveryGroup(InlineFragmentNode fragment)
-    {
-        foreach (var directive in fragment.Directives)
-        {
-            if (!directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            foreach (var argument in directive.Arguments)
-            {
-                if (argument.Name.Value.Equals(DocumentRewriter.DeferArguments.Group, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
     // Returns the fields that the internal operation selects on the object that holds the selection set,
-    // through inline fragments but never below a field. Returns null when the selection set is not found
-    // or the object selects no @defer fragment.
-    private static List<FieldNode>? CollectObjectFields(
+    // through the inline fragments that can apply to the type but never below a field. Returns null when the
+    // selection set is not found or the object selects no @defer fragment.
+    private List<FieldNode>? CollectObjectFields(
         OperationDefinitionNode internalOperation,
         SelectionSetIndexBuilder index,
-        uint selectionSetId)
+        uint selectionSetId,
+        ITypeDefinition type,
+        IReadOnlyDictionary<DirectiveNode, int> deferredFragments)
     {
         if (index.TryGetOriginalIdFromCloned(selectionSetId, out var originalId))
         {
             selectionSetId = originalId;
         }
 
-        var objectSelectionSet = FindObjectSelectionSet(
+        FindSelectionSet(
             internalOperation.SelectionSet,
             internalOperation.SelectionSet,
             index,
-            selectionSetId);
+            selectionSetId,
+            out var objectSelectionSet);
 
-        if (objectSelectionSet is null || !ContainsDeliveryGroupFragment(objectSelectionSet.Selections))
+        if (objectSelectionSet is null
+            || !ContainsDeliveryGroupFragment(objectSelectionSet.Selections, deferredFragments))
         {
             return null;
         }
@@ -4319,7 +4364,7 @@ public sealed partial class OperationPlanner
         CollectFields(objectSelectionSet, fields);
         return fields;
 
-        static void CollectFields(SelectionSetNode selectionSet, List<FieldNode> fields)
+        void CollectFields(SelectionSetNode selectionSet, List<FieldNode> fields)
         {
             foreach (var selection in selectionSet.Selections)
             {
@@ -4329,43 +4374,28 @@ public sealed partial class OperationPlanner
                         fields.Add(field);
                         break;
 
-                    case InlineFragmentNode fragment:
+                    case InlineFragmentNode fragment when CanApply(fragment.TypeCondition):
                         CollectFields(fragment.SelectionSet, fields);
                         break;
                 }
             }
         }
-    }
 
-    private static SelectionSetNode? FindObjectSelectionSet(
-        SelectionSetNode selectionSet,
-        SelectionSetNode objectSelectionSet,
-        SelectionSetIndexBuilder index,
-        uint targetSelectionSetId)
-    {
-        if (index.IsRegistered(selectionSet) && index.GetId(selectionSet) == targetSelectionSetId)
+        // Two object types never share an object, and an object type shares one with an abstract type only as
+        // one of its possible types.
+        bool CanApply(NamedTypeNode? typeCondition)
         {
-            return objectSelectionSet;
-        }
-
-        foreach (var selection in selectionSet.Selections)
-        {
-            var found = selection switch
+            if (typeCondition is null || typeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal))
             {
-                FieldNode { SelectionSet: { } fieldSelectionSet } =>
-                    FindObjectSelectionSet(fieldSelectionSet, fieldSelectionSet, index, targetSelectionSetId),
-                InlineFragmentNode fragment =>
-                    FindObjectSelectionSet(fragment.SelectionSet, objectSelectionSet, index, targetSelectionSetId),
-                _ => null
-            };
-
-            if (found is not null)
-            {
-                return found;
+                return true;
             }
-        }
 
-        return null;
+            var conditionType = _schema.Types.GetType(typeCondition.Name.Value, allowInaccessibleFields: true);
+
+            return (type.IsAbstractType() && conditionType.IsAbstractType())
+                || conditionType.IsAssignableFrom(type)
+                || type.IsAssignableFrom(conditionType);
+        }
     }
 
     private OperationDefinitionNode InlineSelectionsIntoOverallOperation(

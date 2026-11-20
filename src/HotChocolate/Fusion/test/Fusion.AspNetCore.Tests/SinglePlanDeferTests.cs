@@ -1487,11 +1487,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRunWithValues(run);
     }
 
-    [Fact]
-    public async Task Defer_Should_MatchThePlainTwin_When_SiblingFragmentsSelectRequirementsOfOneField()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_SiblingFragmentsSelectRequirementsOfOneField(bool eurFirst)
     {
         // arrange
-        var gateway = await CreateRequirementAliasGatewayAsync();
+        var gateway = await CreateRequirementAliasGatewayAsync(eurFirst ? ["B:8>", "B:4"] : ["B:4>", "B:8"]);
 
         // act
         var run = await RunWithTwinAsync(
@@ -1500,7 +1502,28 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchDataWithValues(run);
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred, $"eurFirst={eurFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_SiblingFragmentsSelectARequirementAndItsField(
+        bool eurFirst)
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync(eurFirst ? ["B:5>", "B:2"] : ["B:2>", "B:5"]);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ product { ... @defer(label: \"eur\") { eur } ... @defer(label: \"price\") { price } } }",
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred, $"eurFirst={eurFirst}");
     }
 
     [Theory]
@@ -1533,6 +1556,35 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchRunWithValues(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_TheFragmentSelectsAFieldWithARequirementMapOfSeveralFields()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ product { usd ... @defer { bundle } } }", []);
+
+        // assert
+        MatchRunWithValues(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ResolveTheField_When_TheFragmentSelectsAFieldItsRequirementMapReads()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunDeferredAsync(gateway, "{ product { bundle ... @defer { price } } }", []);
+
+        // assert
+        run.Payloads[0].MatchInlineSnapshot(
+            """
+            {"data":{"product":{"bundle":87}},"pending":[{"id":"0","path":["product"]}],"hasNext":true}
+            """);
     }
 
     [Theory]
@@ -8219,7 +8271,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         => CreateGatewayAsync(releaseOrder, ("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));
 
     // The source schemas answer price with 100, with 80 for the currency EUR and with 90 for the currency USD, so a
-    // field that reads another price than the plain twin shows in the payloads.
+    // field that reads another price than the plain twin shows in the payloads. The weight is 7.
     private async Task<Gateway> CreateRequirementAliasGatewayAsync(params string[] releaseOrder)
     {
         var gate = _gate = new ResponseGate(releaseOrder);
@@ -8278,12 +8330,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
             public Product? GetProductByUpc(string upc) => new(upc);
         }
 
+        public class BundleInput
+        {
+            public int? Eur { get; set; }
+
+            public int? W { get; set; }
+        }
+
         [EntityKey("upc")]
         public record Product(string Upc)
         {
             public int? GetEur([Require("price(cur: \"EUR\")")] int? price) => price;
 
             public int? GetUsd([Require("price(cur: \"USD\")")] int? price) => price;
+
+            public int? GetBundle([Require("{ eur: price(cur: \"EUR\"), w: weight }")] BundleInput input)
+                => input.Eur + input.W;
         }
     }
 
@@ -8300,6 +8362,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
         public record Product(string Upc)
         {
             public int? GetPrice(string? cur) => cur == "EUR" ? 80 : cur == "USD" ? 90 : 100;
+
+            public int? Weight => 7;
         }
     }
 
@@ -8808,16 +8872,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
             + $"plain twin: {run.Twin.RequestSummary}",
             "Requests",
             "text");
-        snapshot.MatchMarkdownSnapshot();
-    }
-
-    // The snapshot holds only the merged result, for runs where the batching of the requests depends on timing.
-    private static void MatchDataWithValues(TwinRun run)
-    {
-        run.AssertMatchesTwin(compareValues: true);
-
-        var snapshot = Snapshot.Create();
-        snapshot.Add(Canonical(run.Deferred.Data), "Merged data", "json");
         snapshot.MatchMarkdownSnapshot();
     }
 

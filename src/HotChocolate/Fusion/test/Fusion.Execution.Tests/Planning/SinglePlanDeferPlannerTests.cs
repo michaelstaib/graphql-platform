@@ -753,6 +753,34 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_NotAliasTheRequirement_When_ASelectionMapOfSeveralFieldsReadsIt()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema, BundleSchema);
+
+        // act
+        var result = Plan(schema, "{ product { bundle ... @defer { price } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_NotAliasTheRequirement_When_ASelectionMapOfSeveralFieldsReadsItNextToAnotherRequirement()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema, BundleSchema);
+
+        // act
+        var result = Plan(schema, "{ product { usd ... @defer { bundle } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MergeTheOuterSteps_When_UnlabelledSiblingsHoldTheSameNestedFragment()
     {
         // arrange
@@ -3252,6 +3280,24 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             upc: String!
             price(cur: String, tax: Boolean): Int
             weight: Int
+        }
+        """;
+
+    private const string BundleSchema =
+        """
+        # name: c
+        type Query {
+            productByUpcC(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            bundle(input: BundleInput! @require(field: "{ eur: price(cur: \"EUR\"), w: weight }")): Int
+        }
+
+        input BundleInput {
+            eur: Int
+            w: Int
         }
         """;
 

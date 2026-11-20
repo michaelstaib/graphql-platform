@@ -1,0 +1,118 @@
+operation:
+  - document: |
+      {
+        product {
+          usd
+          upc @fusion__requirement
+          price(cur: "USD") @fusion__requirement
+          ... @defer(__group: 0, __parent: -1) {
+            bundle
+            upc @fusion__requirement
+            price(cur: "EUR") @fusion__requirement
+            weight @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 3
+    expandedNodes: 15
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product {
+          upc
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+        productByUpc(upc: $__fusion_2_upc) {
+          usd(price: $__fusion_1_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.product
+    requirements:
+      - name: __fusion_1_price
+        selectionMap: >-
+          price(cur: "USD")
+      - name: __fusion_2_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_3_upc: String!) {
+        productByUpcB(upc: $__fusion_3_upc) {
+          price(cur: "USD")
+        }
+      }
+    source: $.productByUpcB
+    target: $.product
+    requirements:
+      - name: __fusion_3_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6(
+        $__fusion_6_input: BundleInput!
+        $__fusion_7_upc: String!
+      ) {
+        productByUpcC(upc: $__fusion_7_upc) {
+          bundle(input: $__fusion_6_input)
+        }
+      }
+    source: $.productByUpcC
+    target: $.product
+    requirements:
+      - name: __fusion_6_input
+        selectionMap: >-
+          {
+            eur: price(cur: "EUR")
+            w: weight
+          }
+      - name: __fusion_7_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 7
+  - id: 7
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_7($__fusion_8_upc: String!) {
+        productByUpcB(upc: $__fusion_8_upc) {
+          price(cur: "EUR")
+          weight
+        }
+      }
+    source: $.productByUpcB
+    target: $.product
+    requirements:
+      - name: __fusion_8_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
