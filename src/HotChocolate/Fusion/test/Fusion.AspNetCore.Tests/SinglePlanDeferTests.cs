@@ -556,6 +556,60 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(1, run.Deferred.Requests["D"]);
     }
 
+    private const string SharedKeyUserRootSource =
+        """
+        type Query { user: User! userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! }
+        """;
+
+    private const string SharedKeyUserWeightSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! sku: String! @shareable weight: Int! }
+        """;
+
+    private const string SharedKeyUserShippingSource =
+        """
+        type Query { userBySku(sku: String!): User @lookup @internal }
+        type User @key(fields: "sku") {
+            sku: String! @shareable
+            total: Int!
+            shipping(weight: Int @require(field: "weight")): Int
+        }
+        """;
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendOneRequestToTheKeyedSource_When_ALookupOfTheGroupResolvesARequirementField(
+        bool a)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", SharedKeyUserRootSource),
+            ("D", SharedKeyUserWeightSource),
+            ("B", SharedKeyUserShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!) {
+                user {
+                    ... @defer(if: $a) {
+                        sku
+                        ... @defer { shipping total }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a });
+
+        // assert
+        MatchRun(run, $"a={a}");
+        Assert.Equal(1, run.Deferred.Requests["B"]);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

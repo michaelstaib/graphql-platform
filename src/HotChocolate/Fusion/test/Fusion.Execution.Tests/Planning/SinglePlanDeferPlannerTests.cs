@@ -1270,6 +1270,32 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_KeepBothLookupsInOneBatch_When_OneLookupOfTheGroupResolvesAFieldWithARequirement()
+    {
+        // arrange
+        var schema = ComposeSchema(SharedKeyUserRootSchema, SharedKeyUserWeightSchema, SharedKeyUserShippingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                user {
+                    ... @defer(if: $a) {
+                        sku
+                        ... @defer { shipping total }
+                    }
+                }
+            }
+
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MarkRequirementSteps_When_DeferredGroupReadsRequirementOfSchemaTwo()
     {
         // arrange
@@ -3120,6 +3146,34 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         type User @key(fields: "sku") {
             sku: String! @shareable
             total: Int!
+        }
+        """;
+
+    private const string SharedKeyUserWeightSchema =
+        """
+        # name: d
+        type Query {
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            sku: String! @shareable
+            weight: Int!
+        }
+        """;
+
+    private const string SharedKeyUserShippingSchema =
+        """
+        # name: b
+        type Query {
+            userBySku(sku: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "sku") {
+            sku: String! @shareable
+            total: Int!
+            shipping(weight: Int @require(field: "weight")): Int
         }
         """;
 

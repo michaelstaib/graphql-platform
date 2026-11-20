@@ -1435,6 +1435,9 @@ public sealed partial class OperationPlanner
         Backlog backlog,
         PlanQueue possiblePlans)
     {
+        var checkKeySteps = !workItem.DeliveryGroups.IsDefaultOrEmpty && !workItem.Dependents.IsEmpty;
+        var lookupStepId = checkKeySteps ? current.Steps.NextId() : 0;
+
         current = InlineLookupRequirements(
             workItem.SelectionSet,
             current,
@@ -1443,11 +1446,24 @@ public sealed partial class OperationPlanner
             backlog,
             workItem.Conditions,
             workItem.DeliveryGroups,
-            workItem.Dependents,
             workItem.AllowSourceSchemaReentry,
             workItem.SourceSchemaNodePolicy,
             consumerStep: null,
             out var unresolvedRequirements);
+
+        // A lookup of a delivery group never takes its key from a step that waits for the lookup.
+        if (checkKeySteps)
+        {
+            foreach (var step in current.Steps)
+            {
+                if (step is OperationPlanStep keyStep
+                    && keyStep.Dependents.Contains(lookupStepId)
+                    && IsOrDependsOnAny(keyStep, workItem.Dependents, current.Steps))
+                {
+                    return;
+                }
+            }
+        }
 
         // A self-cyclic lookup can proceed only when an existing step supplies its key.
         // If requirement inlining leaves the identical selection unresolved, this direct
@@ -1889,14 +1905,11 @@ public sealed partial class OperationPlanner
         Backlog backlog,
         ExecutionNodeCondition[]? conditions,
         ImmutableArray<int> deliveryGroups,
-        ImmutableHashSet<int> lookupDependents,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy,
         OperationPlanStep? consumerStep,
         out SelectionSetNode? unresolvedRequirements)
     {
-        // A lookup of a delivery group never takes its key from a step that waits for the lookup.
-        var rejectDependentKeySteps = !deliveryGroups.IsDefaultOrEmpty && !lookupDependents.IsEmpty;
         var processed = new HashSet<string>();
         var lookupStepId = current.Steps.NextId();
         var steps = current.Steps;
@@ -1950,11 +1963,6 @@ public sealed partial class OperationPlanner
             // The lookup step inherits the dependents of the step that consumes its field, so
             // a step that already depends on the consumer cannot provide the lookup's key.
             if (consumerStep is not null && step.DependsOn(consumerStep, steps))
-            {
-                continue;
-            }
-
-            if (rejectDependentKeySteps && IsOrDependsOnAny(step, lookupDependents, steps))
             {
                 continue;
             }
@@ -2073,7 +2081,6 @@ public sealed partial class OperationPlanner
                 workItemSelectionSet.Id,
                 workItemSelectionSet.Path) is { } ancestorMatch
             && (consumerStep is null || !ancestorMatch.Step.DependsOn(consumerStep, steps))
-            && (!rejectDependentKeySteps || !IsOrDependsOnAny(ancestorMatch.Step, lookupDependents, steps))
             && processed.Add(ancestorMatch.Step.SchemaName!)
             && (allowSourceSchemaReentry
                 || !lookup.SchemaName.Equals(ancestorMatch.Step.SchemaName)
@@ -2508,7 +2515,6 @@ public sealed partial class OperationPlanner
                 backlog,
                 workItem.Conditions,
                 workItem.DeliveryGroups,
-                lookupDependents: [],
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy,
                 currentStep,
