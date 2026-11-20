@@ -5,21 +5,10 @@ namespace HotChocolate.Fusion.Text.Json;
 public class CompositeResultDocumentCursorTests
 {
     // The cursor uses a fixed [chunk:13][row:13] split and derives the chunk-size bucket from the
-    // chunk index through the geometric schedule (Min(chunk, 7)). These cover chunk 0 (Size1K) up
-    // to a constant-size tail chunk (Size128K).
+    // chunk index through the chunk schedule. These cover chunk 0 (Size1K), the first and the last
+    // chunk of every later size step, and a constant-size tail chunk (Size128K).
     public static TheoryData<int> RampChunks()
-    {
-        var data = new TheoryData<int>();
-
-        // One chunk per ramp ordinal plus a tail chunk past the ramp.
-        foreach (var size in Enum.GetValues<ChunkSize>())
-        {
-            data.Add((int)size);
-        }
-
-        data.Add(50);
-        return data;
-    }
+        => [0, 1, 2, 3, 4, 5, 11, 12, 15, 16, 17, 18, 50];
 
     public static TheoryData<int, int> ExpectedChunkCapacities()
         => new()
@@ -29,10 +18,14 @@ public class CompositeResultDocumentCursorTests
             { 2, 204 },
             { 3, 409 },
             { 4, 819 },
-            { 5, 1638 },
-            { 6, 3276 },
-            { 7, 6553 },
-            { 8, 6553 }
+            { 5, 819 },
+            { 11, 819 },
+            { 12, 1638 },
+            { 15, 1638 },
+            { 16, 3276 },
+            { 17, 3276 },
+            { 18, 6553 },
+            { 19, 6553 }
         };
 
     [Theory]
