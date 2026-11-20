@@ -489,7 +489,6 @@ nodes:
       query Op_123456789101112_2($__fusion_1_upc: String!) {
         productByUpcB(upc: $__fusion_1_upc) {
           price
-          upc
           fusion__requirement_price_0: price(cur: "EUR")
         }
       }
@@ -525,6 +524,7 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
+      - id: 1
       - id: 2
 deliveryGroups:
   - id: 0
@@ -570,7 +570,6 @@ nodes:
       query Op_123456789101112_2($__fusion_1_upc: String!) {
         productByUpcB(upc: $__fusion_1_upc) {
           price
-          upc
           fusion__requirement_price_0: price(cur: "USD")
           fusion__requirement_price_1: price(cur: "EUR")
         }
@@ -616,6 +615,7 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
+      - id: 1
       - id: 2
 deliveryGroups:
   - id: 0

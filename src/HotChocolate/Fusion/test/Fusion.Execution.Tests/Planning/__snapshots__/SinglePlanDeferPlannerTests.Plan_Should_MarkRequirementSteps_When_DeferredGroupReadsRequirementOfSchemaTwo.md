@@ -159,7 +159,6 @@ nodes:
       query Op_123456789101112_3($__fusion_2_id: Int!) {
         userByIdB(id: $__fusion_2_id) {
           s: sku
-          sku
         }
       }
     source: $.userByIdB
@@ -194,6 +193,7 @@ nodes:
       - 0
     dependencies:
       - id: 1
+      - id: 2
       - id: 3
 deliveryGroups:
   - id: 0
@@ -508,29 +508,7 @@ nodes:
       - 0
     dependencies:
       - id: 1
-      - id: 6
-  - id: 6
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_6($__fusion_7_id: Int!) {
-        userByIdB(id: $__fusion_7_id) {
-          sku
-        }
-      }
-    source: $.userByIdB
-    target: $.user
-    requirements:
-      - name: __fusion_7_id
-        selectionMap: >-
-          id
-    conditions:
-      - variable: $v
-        passingValue: true
-    deliveryGroups:
-      - 0
-    dependencies:
-      - id: 1
+      - id: 2
 deliveryGroups:
   - id: 0
     path: $.user

@@ -380,7 +380,6 @@ nodes:
     operation: |
       query Op_123456789101112_2($__fusion_1_sku: String!) {
         userBySku(sku: $__fusion_1_sku) {
-          sku
           total
         }
       }
@@ -408,7 +407,6 @@ nodes:
     operation: |
       query Op_123456789101112_4($__fusion_3_sku: String!) {
         userBySku(sku: $__fusion_3_sku) {
-          sku
           total
         }
       }
@@ -436,7 +434,6 @@ nodes:
     operation: |
       query Op_123456789101112_6($__fusion_5_sku: String!) {
         userBySku(sku: $__fusion_5_sku) {
-          sku
           total
         }
       }
@@ -464,7 +461,6 @@ nodes:
     operation: |
       query Op_123456789101112_8($__fusion_7_sku: String!) {
         userBySku(sku: $__fusion_7_sku) {
-          sku
           total
         }
       }
@@ -492,7 +488,6 @@ nodes:
     operation: |
       query Op_123456789101112_10($__fusion_9_sku: String!) {
         userBySku(sku: $__fusion_9_sku) {
-          sku
           total
         }
       }
@@ -520,7 +515,6 @@ nodes:
     operation: |
       query Op_123456789101112_12($__fusion_11_sku: String!) {
         userBySku(sku: $__fusion_11_sku) {
-          sku
           total
         }
       }
@@ -548,7 +542,6 @@ nodes:
     operation: |
       query Op_123456789101112_14($__fusion_13_sku: String!) {
         userBySku(sku: $__fusion_13_sku) {
-          sku
           total
         }
       }

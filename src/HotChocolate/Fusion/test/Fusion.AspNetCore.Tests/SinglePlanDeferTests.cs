@@ -873,6 +873,295 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_ALabelledFragmentSitsBetweenTwoSwitches(bool a)
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<HolderUserRootSource.Query>()),
+            ("B", builder => builder.AddQueryType<HolderUserTotalSource.Query>()),
+            ("C", builder => builder.AddQueryType<HolderUserCodeSource.Query>()),
+            ("D", builder => builder.AddQueryType<HolderUserSkuByCodeSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                current {
+                    user { ... @defer(if: $a) { code ... @defer(label: "m") { sku ... @defer(if: $b) { total } } } }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = true });
+
+        // assert
+        MatchRunWithValues(run, $"a={a}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_AskTheSourceOnceForTheKey_When_TheGroupSelectsTheKeyThatTheInitialResultHolds(
+        bool a)
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            (
+                "A",
+                builder => builder
+                    .AddQueryType<HolderUserRootSource.Query>()
+                    .AddMutationType<HolderUserRootSource.Mutation>()),
+            ("B", builder => builder.AddQueryType<HolderUserTotalSource.Query>()),
+            ("C", builder => builder.AddQueryType<HolderUserSkuByIdSource.Query>()),
+            ("E", builder => builder.AddQueryType<HolderUserNameSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            mutation($a: Boolean!) {
+                create { user { ... @defer(if: $a) { nick sku ... @defer { name total } } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a });
+
+        // assert
+        MatchRunWithValues(run, $"a={a}");
+        Assert.Equal(run.Twin.Requests["C"], run.Deferred.Requests["C"]);
+    }
+
+    public static class HolderUserRootSource
+    {
+        public class Query
+        {
+            public Holder GetCurrent() => new();
+
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public class Mutation
+        {
+            public Holder Create() => new();
+        }
+
+        public class Holder
+        {
+            public User GetUser() => new(1);
+        }
+
+        public record User([property: ID] int Id);
+    }
+
+    public static class HolderUserTotalSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserBySku(string sku) => new(sku);
+        }
+
+        public record User([property: Shareable] string Sku)
+        {
+            public int Total => 100 + int.Parse(Sku[(Sku.LastIndexOf('-') + 1)..]);
+        }
+    }
+
+    public static class HolderUserSkuByIdSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Sku => "sku-" + Id;
+        }
+    }
+
+    public static class HolderUserCodeSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Code => "code-" + Id;
+        }
+    }
+
+    public static class HolderUserSkuByCodeSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserByCode(string code) => new(code);
+        }
+
+        public record User([property: Shareable] string Code)
+        {
+            [Shareable]
+            public string Sku => "sku-" + Code[(Code.LastIndexOf('-') + 1)..];
+        }
+    }
+
+    public static class HolderUserNameSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public string Name => "name-" + Id;
+
+            public string Nick => "nick-" + Id;
+        }
+    }
+
+    private const string ItemBookSource =
+        """
+        type Query {
+            items: [Item!]! @returns(types: ["Book", "Movie", "Book"])
+            book(id: ID!): Book @lookup
+        }
+        interface Item { id: ID! }
+        type Book implements Item @key(fields: "id") { id: ID! }
+        type Movie implements Item { id: ID! }
+        """;
+
+    private const string BookRatingSource =
+        """
+        type Query { bookById(id: ID!): Book @lookup }
+        type Book @key(fields: "id") { id: ID! rating: Int! }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TheConditionalFieldOfATypeBranchIsOff()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ItemBookSource),
+            ("B", BookRatingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                items { __typename ... on Book @defer(label: "d") { id rating @include(if: $c) } }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = false });
+
+        // assert
+        MatchRunWithValues(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TheConditionalFieldOfTheSwitchIsOff()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PriceSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!, $d: Boolean!) {
+                product(id: "1") { name ... @defer(label: "d", if: $d) { id rating @include(if: $c) } }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = false, ["d"] = true });
+
+        // assert
+        MatchRunWithValues(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TheConditionalFieldWithARequirementIsOff()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("W", WeightSource),
+            ("S", ShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                product(id: "1") { name ... @defer(label: "d") { id shipping @include(if: $c) } }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = false });
+
+        // assert
+        MatchRunWithValues(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TheRequirementIsFetchedForAnotherFragment()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NormalizeName,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("W", WeightSource),
+            ("S", ShippingSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "d") { weight }
+                    ... @defer(label: "e") { id shipping @include(if: $c) }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = false });
+
+        // assert
+        MatchRunWithValues(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task Defer_Should_DeliverTheMergedLookupOfTwoTargets_When_ItTakesItsKeysFromOneStep(bool b)
     {
         // arrange
@@ -9114,12 +9403,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_ReportOnlyTheNullError_When_AStepFailsInTransportForAFieldThatAlreadyHoldsAValue()
     {
         // arrange
-        // B:7 writes x and P answers null, then g's step B:2 fails for x after t completed
+        // B:2 writes x for g and P:3 answers null, then the step B:4 of t fails for x after g completed
         var gateway = await CreateGatewayAsync(
-            ["B:7", "P:3", "P:6", "P:8", "B:2@2"],
+            ["B:2", "P:3>", "P:5", "B:4@2"],
             (schema, body, text) => schema switch
             {
-                "B" when StepId().Match(body).Groups[1].Value == "2" => "this is not json",
+                "B" when StepId().Match(body).Groups[1].Value == "4" => "this is not json",
                 "P" => PriceValue().Replace(text, "\"price\":null"),
                 _ => text
             },
@@ -9130,13 +9419,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
             ("B", """
                 type Query { productById(id: ID!): Product @lookup }
                 type Product @key(fields: "id") { id: ID! x: String! }
-                """),
-            ("C", """
-                type Query { productByIdC(id: ID!): Product @lookup }
-                type Product @key(fields: "id") {
-                    id: ID!
-                    total(price: Float @require(field: "price"), x: String @require(field: "x")): String!
-                }
                 """));
 
         // act
@@ -9146,8 +9428,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
             {
                 product(id: "1") {
                     name
-                    ... @defer(label: "t") { price }
-                    ... @defer(label: "g") { price x ... @defer(label: "c") { total } }
+                    ... @defer(label: "t") { x price }
+                    ... @defer(label: "g") { x price }
                 }
             }
             """,
@@ -10656,15 +10938,17 @@ public partial class SinglePlanDeferTests : FusionTestBase
             .Select(m => m.Value.Trim().TrimEnd(','))
             .ToList();
 
+        var operationType = header.Groups["type"].Value;
+
         return kept.Count == 0
-            ? "query" + body
-            : "query(" + string.Join(", ", kept) + ")" + body;
+            ? operationType + body
+            : operationType + "(" + string.Join(", ", kept) + ")" + body;
     }
 
     [GeneratedRegex(@"\s*@defer(\([^)]*\))?")]
     private static partial Regex DeferDirective();
 
-    [GeneratedRegex(@"query\s*\((?<variables>[^)]*)\)")]
+    [GeneratedRegex(@"(?<type>query|mutation)\s*\((?<variables>[^)]*)\)")]
     private static partial Regex QueryHeader();
 
     [GeneratedRegex(@"\$(?<name>\w+)\s*:\s*[^,$]+")]

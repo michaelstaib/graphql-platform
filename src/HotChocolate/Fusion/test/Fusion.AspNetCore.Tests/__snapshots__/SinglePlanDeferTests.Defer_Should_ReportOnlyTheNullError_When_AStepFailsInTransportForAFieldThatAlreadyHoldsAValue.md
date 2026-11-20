@@ -9,17 +9,17 @@
 ## Payload 2
 
 ```json
-{"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","price"],"extensions":{"code":"HC0018"}}]}],"hasNext":true}
+{"completed":[{"id":"1","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","price"],"extensions":{"code":"HC0018"}}]}],"hasNext":true}
 ```
 
 ## Payload 3
 
 ```json
-{"completed":[{"id":"1","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","price"],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
+{"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","price"],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
 ```
 
 ## Requests
 
 ```text
-A=1, B=2, P=3
+A=1, B=2, P=2
 ```

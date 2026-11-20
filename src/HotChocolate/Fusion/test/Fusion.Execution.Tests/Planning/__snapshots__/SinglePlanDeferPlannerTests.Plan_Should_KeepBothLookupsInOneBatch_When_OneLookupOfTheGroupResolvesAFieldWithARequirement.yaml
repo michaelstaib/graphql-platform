@@ -122,31 +122,6 @@ nodes:
       - 2
     dependencies:
       - id: 1
-  - id: 6
-    type: OperationBatch
-    schema: d
-    operation: |
-      query Op_123456789101112_6($__fusion_6_id: ID!) {
-        userById(id: $__fusion_6_id) {
-          sku
-        }
-      }
-    source: $.userById
-    targets:
-      - $.user
-      - $.user
-    batchingGroupId: 14
-    requirements:
-      - name: __fusion_6_id
-        selectionMap: >-
-          id
-    conditions:
-      - variable: $a
-        passingValue: true
-    deliveryGroups:
-      - 2
-    dependencies:
-      - id: 1
   - id: 11
     type: Operation
     schema: d
@@ -161,31 +136,6 @@ nodes:
     batchingGroupId: 14
     requirements:
       - name: __fusion_12_id
-        selectionMap: >-
-          id
-    conditions:
-      - variable: $a
-        passingValue: false
-    deliveryGroups:
-      - 0
-    dependencies:
-      - id: 1
-  - id: 12
-    type: OperationBatch
-    schema: d
-    operation: |
-      query Op_123456789101112_12($__fusion_13_id: ID!) {
-        userById(id: $__fusion_13_id) {
-          sku
-        }
-      }
-    source: $.userById
-    targets:
-      - $.user
-      - $.user
-    batchingGroupId: 14
-    requirements:
-      - name: __fusion_13_id
         selectionMap: >-
           id
     conditions:
@@ -217,7 +167,7 @@ nodes:
     deliveryGroups:
       - 2
     dependencies:
-      - id: 6
+      - id: 2
   - id: 4
     type: Operation
     schema: b
@@ -243,8 +193,8 @@ nodes:
     deliveryGroups:
       - 2
     dependencies:
+      - id: 2
       - id: 5
-      - id: 6
   - id: 9
     type: Operation
     schema: b
@@ -267,7 +217,7 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
-      - id: 12
+      - id: 8
   - id: 10
     type: Operation
     schema: b
@@ -293,8 +243,8 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
+      - id: 8
       - id: 11
-      - id: 12
 deliveryGroups:
   - id: 0
     path: $.user

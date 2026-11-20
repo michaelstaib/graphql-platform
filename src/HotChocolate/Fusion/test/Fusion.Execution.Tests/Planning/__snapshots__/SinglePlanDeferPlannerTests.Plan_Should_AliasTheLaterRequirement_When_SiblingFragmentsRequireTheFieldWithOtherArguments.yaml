@@ -52,28 +52,6 @@ nodes:
       - 1
     dependencies:
       - id: 1
-  - id: 5
-    type: OperationBatch
-    schema: b
-    operation: |
-      query Op_123456789101112_5($__fusion_5_upc: String!) {
-        productByUpcB(upc: $__fusion_5_upc) {
-          upc
-        }
-      }
-    source: $.productByUpcB
-    targets:
-      - $.product
-    batchingGroupId: 10
-    requirements:
-      - name: __fusion_5_upc
-        selectionMap: >-
-          upc
-    deliveryGroups:
-      - 0
-      - 1
-    dependencies:
-      - id: 1
   - id: 8
     type: Operation
     schema: b
@@ -116,8 +94,8 @@ nodes:
     deliveryGroups:
       - 1
     dependencies:
+      - id: 1
       - id: 4
-      - id: 5
   - id: 7
     type: Operation
     schema: a
@@ -141,7 +119,7 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
-      - id: 5
+      - id: 1
       - id: 8
 deliveryGroups:
   - id: 0

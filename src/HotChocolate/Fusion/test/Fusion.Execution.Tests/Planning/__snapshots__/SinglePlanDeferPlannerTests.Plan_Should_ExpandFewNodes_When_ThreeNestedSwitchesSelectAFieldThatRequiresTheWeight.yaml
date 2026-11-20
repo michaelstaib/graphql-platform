@@ -185,12 +185,12 @@ nodes:
       - 3
     dependencies:
       - id: 1
-  - id: 5
+  - id: 6
     type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_5($__fusion_5_id: ID!) {
-        userById(id: $__fusion_5_id) {
+      query Op_123456789101112_6($__fusion_6_id: ID!) {
+        userById(id: $__fusion_6_id) {
           sku
         }
       }
@@ -198,7 +198,7 @@ nodes:
     target: $.user
     batchingGroupId: 42
     requirements:
-      - name: __fusion_5_id
+      - name: __fusion_6_id
         selectionMap: >-
           id
     conditions:
@@ -237,22 +237,20 @@ nodes:
       - 5
     dependencies:
       - id: 1
-  - id: 10
-    type: OperationBatch
+  - id: 11
+    type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_10($__fusion_11_id: ID!) {
-        userById(id: $__fusion_11_id) {
+      query Op_123456789101112_11($__fusion_12_id: ID!) {
+        userById(id: $__fusion_12_id) {
           sku
         }
       }
     source: $.userById
-    targets:
-      - $.user
-      - $.user
+    target: $.user
     batchingGroupId: 42
     requirements:
-      - name: __fusion_11_id
+      - name: __fusion_12_id
         selectionMap: >-
           id
     conditions:
@@ -293,22 +291,20 @@ nodes:
       - 6
     dependencies:
       - id: 1
-  - id: 15
-    type: OperationBatch
+  - id: 16
+    type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_15($__fusion_17_id: ID!) {
-        userById(id: $__fusion_17_id) {
+      query Op_123456789101112_16($__fusion_18_id: ID!) {
+        userById(id: $__fusion_18_id) {
           sku
         }
       }
     source: $.userById
-    targets:
-      - $.user
-      - $.user
+    target: $.user
     batchingGroupId: 42
     requirements:
-      - name: __fusion_17_id
+      - name: __fusion_18_id
         selectionMap: >-
           id
     conditions:
@@ -349,35 +345,6 @@ nodes:
       - 4
     dependencies:
       - id: 1
-  - id: 20
-    type: OperationBatch
-    schema: d
-    operation: |
-      query Op_123456789101112_20($__fusion_23_id: ID!) {
-        userById(id: $__fusion_23_id) {
-          sku
-        }
-      }
-    source: $.userById
-    targets:
-      - $.user
-      - $.user
-    batchingGroupId: 42
-    requirements:
-      - name: __fusion_23_id
-        selectionMap: >-
-          id
-    conditions:
-      - variable: $a
-        passingValue: true
-      - variable: $b
-        passingValue: false
-      - variable: $c
-        passingValue: true
-    deliveryGroups:
-      - 4
-    dependencies:
-      - id: 1
   - id: 24
     type: Operation
     schema: d
@@ -405,22 +372,20 @@ nodes:
       - 1
     dependencies:
       - id: 1
-  - id: 25
-    type: OperationBatch
+  - id: 26
+    type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_25($__fusion_29_id: ID!) {
-        userById(id: $__fusion_29_id) {
+      query Op_123456789101112_26($__fusion_30_id: ID!) {
+        userById(id: $__fusion_30_id) {
           sku
         }
       }
     source: $.userById
-    targets:
-      - $.user
-      - $.user
+    target: $.user
     batchingGroupId: 42
     requirements:
-      - name: __fusion_29_id
+      - name: __fusion_30_id
         selectionMap: >-
           id
     conditions:
@@ -461,22 +426,20 @@ nodes:
       - 2
     dependencies:
       - id: 1
-  - id: 30
-    type: OperationBatch
+  - id: 31
+    type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_30($__fusion_35_id: ID!) {
-        userById(id: $__fusion_35_id) {
+      query Op_123456789101112_31($__fusion_36_id: ID!) {
+        userById(id: $__fusion_36_id) {
           sku
         }
       }
     source: $.userById
-    targets:
-      - $.user
-      - $.user
+    target: $.user
     batchingGroupId: 42
     requirements:
-      - name: __fusion_35_id
+      - name: __fusion_36_id
         selectionMap: >-
           id
     conditions:
@@ -517,22 +480,20 @@ nodes:
       - 0
     dependencies:
       - id: 1
-  - id: 40
-    type: OperationBatch
+  - id: 41
+    type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_40($__fusion_47_id: ID!) {
-        userById(id: $__fusion_47_id) {
+      query Op_123456789101112_41($__fusion_48_id: ID!) {
+        userById(id: $__fusion_48_id) {
           sku
         }
       }
     source: $.userById
-    targets:
-      - $.user
-      - $.user
+    target: $.user
     batchingGroupId: 42
     requirements:
-      - name: __fusion_47_id
+      - name: __fusion_48_id
         selectionMap: >-
           id
     conditions:
@@ -628,7 +589,7 @@ nodes:
       - 3
     dependencies:
       - id: 4
-      - id: 5
+      - id: 6
   - id: 8
     type: Operation
     schema: b
@@ -659,7 +620,7 @@ nodes:
       - 5
     dependencies:
       - id: 9
-      - id: 10
+      - id: 11
   - id: 13
     type: Operation
     schema: b
@@ -690,7 +651,7 @@ nodes:
       - 6
     dependencies:
       - id: 14
-      - id: 15
+      - id: 16
   - id: 18
     type: Operation
     schema: b
@@ -720,8 +681,8 @@ nodes:
     deliveryGroups:
       - 4
     dependencies:
+      - id: 6
       - id: 19
-      - id: 20
   - id: 23
     type: Operation
     schema: b
@@ -752,7 +713,7 @@ nodes:
       - 1
     dependencies:
       - id: 24
-      - id: 25
+      - id: 26
   - id: 28
     type: Operation
     schema: b
@@ -783,7 +744,7 @@ nodes:
       - 2
     dependencies:
       - id: 29
-      - id: 30
+      - id: 31
   - id: 38
     type: Operation
     schema: b
@@ -814,7 +775,7 @@ nodes:
       - 0
     dependencies:
       - id: 39
-      - id: 40
+      - id: 41
 deliveryGroups:
   - id: 0
     path: $.user

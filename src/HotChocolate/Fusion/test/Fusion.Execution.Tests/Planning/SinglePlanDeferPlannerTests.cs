@@ -1087,7 +1087,7 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_MarkRequirementStep_When_PlainCopyOfTheRequirementExists()
+    public void Plan_Should_TakeTheRequirementFromThePlainStep_When_PlainCopyOfTheRequirementExists()
     {
         // arrange
         var schema = ComposeSchema(
@@ -1107,6 +1107,26 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
                 }
             }
 
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_TakeTheKeyFromThePlainStep_When_TheGroupSelectsTheKeyOfTheEnclosingFragment()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderTotalSchema, HolderSkuSchema, HolderNameSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            mutation($a: Boolean!) {
+                create { user { ... @defer(if: $a) { nick sku ... @defer { name total } } } }
+            }
             """);
 
         // assert
@@ -3485,6 +3505,67 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         type User @key(fields: "email") {
             email: String! @shareable
             total(sku: String @require(field: "sku")): String
+        }
+        """;
+
+    private const string HolderRootSchema =
+        """
+        # name: a
+        type Query {
+            current: Holder
+            userById(id: Int!): User @lookup @internal
+        }
+
+        type Mutation {
+            create: Holder
+        }
+
+        type Holder {
+            user: User!
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+        }
+        """;
+
+    private const string HolderTotalSchema =
+        """
+        # name: b
+        type Query {
+            userBySku(sku: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "sku") {
+            sku: String! @shareable
+            total: Int!
+        }
+        """;
+
+    private const string HolderSkuSchema =
+        """
+        # name: c
+        type Query {
+            userByIdC(id: Int!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            sku: String! @shareable
+        }
+        """;
+
+    private const string HolderNameSchema =
+        """
+        # name: e
+        type Query {
+            userByIdE(id: Int!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            name: String!
+            nick: String!
         }
         """;
 

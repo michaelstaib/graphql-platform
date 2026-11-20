@@ -33,27 +33,6 @@ nodes:
           }
         }
       }
-  - id: 2
-    type: Operation
-    schema: a
-    operation: |
-      query Op_123456789101112_2($__fusion_1_upc: String!) {
-        productByUpc(upc: $__fusion_1_upc) {
-          related {
-            upc
-          }
-        }
-      }
-    source: $.productByUpc
-    target: $.products
-    requirements:
-      - name: __fusion_1_upc
-        selectionMap: >-
-          upc
-    deliveryGroups:
-      - 0
-    dependencies:
-      - id: 1
   - id: 3
     type: Operation
     schema: a
@@ -76,7 +55,7 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
-      - id: 2
+      - id: 1
       - id: 4
   - id: 4
     type: Operation
@@ -96,7 +75,7 @@ nodes:
     deliveryGroups:
       - 0
     dependencies:
-      - id: 2
+      - id: 1
   - id: 6
     type: Operation
     schema: b

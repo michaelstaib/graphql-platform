@@ -68,26 +68,7 @@ nodes:
       - 0
     dependencies:
       - id: 1
-      - id: 5
-  - id: 5
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_5($__fusion_5_id: Int!) {
-        userByIdB(id: $__fusion_5_id) {
-          sku
-        }
-      }
-    source: $.userByIdB
-    target: $.user
-    requirements:
-      - name: __fusion_5_id
-        selectionMap: >-
-          id
-    deliveryGroups:
-      - 0
-    dependencies:
-      - id: 1
+      - id: 2
 deliveryGroups:
   - id: 0
     path: $.user
