@@ -452,12 +452,17 @@ internal sealed class ValueCompletion
 
             if (TMode.HasDelivery
                 && IsLeftOutsideGroups(fieldResult, selection)
-                && NullLeavesGroups(fieldResult, selection))
+                && NullLeavesGroups(fieldResult, selection, out var nullStop))
             {
                 // The failure is the result of the row, so that no step of a delivery group writes it later.
                 _store.Result.MarkWritten(fieldResult);
 
-                if (!ApplyFieldError<PlainMode>(fieldResult, selection, error, errorPath.Append(responseName)))
+                if (!ApplyFieldErrorOutsideGroups(
+                        fieldResult,
+                        selection,
+                        error,
+                        errorPath.Append(responseName),
+                        nullStop))
                 {
                     return false;
                 }
@@ -882,28 +887,53 @@ internal sealed class ValueCompletion
     /// </returns>
     private bool PropagateNullValuesInGroups(CompositeResultElement result, SelectionDelivery destination)
     {
+        if (TryFindGroupBoundary(result, destination, propagate: true, out _))
+        {
+            _store.Result.FailGroups(result, destination);
+            _stoppedAtGroupBoundary = true;
+        }
+
+        return false;
+    }
+
+    // Determines whether the null of the field reaches an object that is delivered elsewhere than the field before a
+    // nullable element stops it, and gets that object. The null is only applied when propagate is set.
+    private bool TryFindGroupBoundary(
+        CompositeResultElement field,
+        SelectionDelivery destination,
+        bool propagate,
+        out CompositeResultElement boundary)
+    {
         var document = _store.Result;
-        var current = result;
+        var current = field;
 
         do
         {
-            if (current.Cursor.Value != result.Cursor.Value && document.HasOtherDestination(current, destination))
+            if (current.Cursor.Value != field.Cursor.Value && document.HasOtherDestination(current, destination))
             {
-                document.FailGroups(result, destination);
-                _stoppedAtGroupBoundary = true;
-                return false;
+                boundary = current;
+                return true;
             }
 
             if (current.IsNullable)
             {
-                current.SetNullValue();
-                return false;
+                if (propagate)
+                {
+                    current.SetNullValue();
+                }
+
+                break;
             }
 
-            current.Invalidate();
+            if (propagate)
+            {
+                current.Invalidate();
+            }
+
             current = current.Parent;
         } while (!current.IsNullOrInvalidated);
 
+        boundary = default;
         return false;
     }
 
@@ -1146,12 +1176,14 @@ internal sealed class ValueCompletion
                 || IsReadOutsideGroups(delivery, selection, groups));
     }
 
-    // Determines whether the null of the failed field leaves its delivery groups, which holds for a field that no
-    // delivery group holds back. It does not when the error mode keeps the null at the field or a nullable object
-    // that is delivered with the field stops it.
-    private bool NullLeavesGroups(CompositeResultElement field, Selection selection)
+    // Returns true when no delivery group holds the failed field or its null propagates past every object delivered
+    // with the field, and false when the field is nullable, the error mode is not propagate or a nullable element
+    // delivered with the field stops the null. When true, stop is the element where the null stops, or null when no
+    // delivery group holds the field or nothing stops the null.
+    private bool NullLeavesGroups(CompositeResultElement field, Selection selection, out CompositeResultElement? stop)
     {
         var document = _store.Result;
+        stop = null;
 
         if (!document.TryGetDestination(field, out var destination))
         {
@@ -1163,24 +1195,49 @@ internal sealed class ValueCompletion
             return false;
         }
 
-        var current = field;
+        if (!TryFindGroupBoundary(field, destination, propagate: false, out var current))
+        {
+            return false;
+        }
 
         do
         {
-            if (current.Cursor.Value != field.Cursor.Value && document.HasOtherDestination(current, destination))
-            {
-                return true;
-            }
-
             if (current.IsNullable)
             {
-                return false;
+                stop = current;
+                break;
             }
 
             current = current.Parent;
         } while (!current.IsNullOrInvalidated);
 
-        return false;
+        return true;
+    }
+
+    // Applies the error of a field whose null propagates as it does without delivery groups. The delivery groups that
+    // hold nullStop send the error, the initial payload sends it when nullStop is null or no group holds it.
+    private bool ApplyFieldErrorOutsideGroups(
+        CompositeResultElement field,
+        Selection selection,
+        IError error,
+        Path path,
+        CompositeResultElement? nullStop)
+    {
+        var errorWithPath = ErrorBuilder.FromError(error)
+            .SetPath(path)
+            .Build();
+        errorWithPath = _errorHandler.Handle(errorWithPath);
+
+        _store.AddError(errorWithPath);
+
+        if (nullStop is { } stop)
+        {
+            _store.Result.TryRecordGroupError(stop, errorWithPath);
+        }
+
+        return _errorHandlingMode is not ErrorHandlingMode.Propagate
+            || !selection.IsNonNull
+            || !PropagateNullValues(field);
     }
 
     private static bool IsAtOrBelow(CompositeResultElement? element, CompositeResultElement ancestor)

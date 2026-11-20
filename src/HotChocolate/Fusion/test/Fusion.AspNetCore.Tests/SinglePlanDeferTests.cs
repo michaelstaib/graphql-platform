@@ -4225,6 +4225,72 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheNullObject_When_TheNullOfAFailedLookupStopsInAnEnclosingFragment()
+    {
+        // arrange
+        // every request to D fails, and shipping of the initial payload requires maybePack.h2 from D
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "D",
+            configure: null,
+            ("A", ProductSource),
+            ("B", NestedPackSource),
+            ("C", NestedPackShippingSource),
+            ("D", PackHeightSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    shipNullable
+                    ... @defer(label: "o") { maybePack { pid ... @defer(label: "i") { h2 } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReturnASingleResult_When_TheNullOfAFailedLookupLeavesAnEnclosingFragment()
+    {
+        // arrange
+        // every request to D fails, and shipping of the initial payload requires pack.h2 from D
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "D",
+            configure: null,
+            ("A", ProductSource),
+            ("B", NestedPackSource),
+            ("C", NestedPackShippingSource),
+            ("D", PackHeightSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    shipPack
+                    ... @defer(label: "o") { pack { pid ... @defer(label: "i") { h2 } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_FailTheFragmentWithOnlyItsError_When_ANullableItemTookTheNullOfARequirement()
     {
         // arrange
