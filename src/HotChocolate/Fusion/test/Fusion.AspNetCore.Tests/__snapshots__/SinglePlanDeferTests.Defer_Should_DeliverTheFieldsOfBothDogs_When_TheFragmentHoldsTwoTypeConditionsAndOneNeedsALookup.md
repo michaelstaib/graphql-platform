@@ -1,9 +1,15 @@
 # Defer_Should_DeliverTheFieldsOfBothDogs_When_TheFragmentHoldsTwoTypeConditionsAndOneNeedsALookup
 
-## Merged data
+## Payload 1
 
 ```json
-{"current":{"pets":[{"bark":"bark-5","owner":{"name":"name-5"}},{"meow":"meow-6"},{"bark":"bark-7","owner":{"name":"name-7"}}]}}
+{"data":{"current":{"pets":[{},{},{}]}},"pending":[{"id":"0","path":["current","pets",0]},{"id":"1","path":["current","pets",1]},{"id":"2","path":["current","pets",2]}],"hasNext":true}
+```
+
+## Payload 2
+
+```json
+{"incremental":[{"id":"0","data":{"bark":"s","owner":{"name":"s"}}},{"id":"1","data":{"meow":"s"}},{"id":"2","data":{"bark":"s","owner":{"name":"s"}}}],"completed":[{"id":"0"},{"id":"1"},{"id":"2"}],"hasNext":false}
 ```
 
 ## Requests

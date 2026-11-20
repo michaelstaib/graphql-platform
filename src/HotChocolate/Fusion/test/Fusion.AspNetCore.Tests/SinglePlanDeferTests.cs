@@ -4217,11 +4217,45 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run);
     }
 
+    private const string DoubledTypePetListSource =
+        """
+        type Query {
+            current: Holder
+            dogById(id: ID!): Dog @lookup @internal
+            catById(id: ID!): Cat @lookup @internal
+        }
+        type Holder { pets: [Pet!]! @returns(types: ["Dog", "Cat", "Dog"]) }
+        interface Pet { id: ID! owner: User! }
+        type Dog implements Pet @key(fields: "id") { id: ID! owner: User! }
+        type Cat implements Pet @key(fields: "id") { id: ID! owner: User! }
+        type User @key(fields: "id") { id: ID! }
+        """;
+
+    private const string DoubledTypeOwnerNameSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! name: String! }
+        """;
+
+    private const string DoubledTypeSoundSource =
+        """
+        type Query {
+            dogById(id: ID!): Dog @lookup @internal
+            catById(id: ID!): Cat @lookup @internal
+        }
+        type Dog @key(fields: "id") { id: ID! bark: String! }
+        type Cat @key(fields: "id") { id: ID! meow: String! }
+        """;
+
     [Fact]
     public async Task Defer_Should_DeliverTheFieldsOfBothDogs_When_TheFragmentHoldsTwoTypeConditionsAndOneNeedsALookup()
     {
         // arrange
-        var gateway = await CreateDoubledTypeGatewayAsync();
+        var gateway = await CreateGatewayAsync(
+            ["P:2", "A:3", "E:4"],
+            ("A", DoubledTypePetListSource),
+            ("E", DoubledTypeOwnerNameSource),
+            ("P", DoubledTypeSoundSource));
 
         // act
         var run = await RunWithTwinAsync(
@@ -4232,8 +4266,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchMergedRun(run);
-        Assert.Equal(1, run.Deferred.Requests["E"]);
+        MatchRun(run);
     }
 
     [Fact]
@@ -4259,7 +4292,11 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_DeliverTheOwnerOfEveryPet_When_BothTypeConditionsNeedALookup()
     {
         // arrange
-        var gateway = await CreateDoubledTypeGatewayAsync();
+        var gateway = await CreateGatewayAsync(
+            ["P:2", "A:3", "E:4"],
+            ("A", DoubledTypePetListSource),
+            ("E", DoubledTypeOwnerNameSource),
+            ("P", DoubledTypeSoundSource));
 
         // act
         var run = await RunWithTwinAsync(
@@ -4274,11 +4311,10 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchMergedRun(run);
-        Assert.Equal(1, run.Deferred.Requests["E"]);
+        MatchRun(run);
     }
 
-    // The payloads are not part of the snapshot: which step answers first decides how many payloads there are.
+    // Matches the merged data and the request counts of the run, without the payloads.
     private static void MatchMergedRun(TwinRun run)
     {
         run.AssertMatchesTwin(compareValues: true);
@@ -4325,8 +4361,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         public class Holder
         {
-            public IPet[] GetPets() => [new Dog(5), new Cat(6), new Dog(7)];
-
             public IPet[][] GetPetGroups() => [[new Dog(5), new Cat(6)], [new Dog(7)], [new Cat(8), new Dog(9)]];
         }
 
