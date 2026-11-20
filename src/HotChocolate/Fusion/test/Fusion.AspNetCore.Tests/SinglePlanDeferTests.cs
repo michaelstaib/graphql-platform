@@ -4553,6 +4553,76 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    private const string InnerNonNullRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            cANn(a: String @require(field: "innerNn.a")): String
+            nnA(a: String @require(field: "inner.a")): String!
+        }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_TheAnswerForItsRequirementWasDenied()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } ... @defer { cA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_ItsNonNullRequirementObjectIsSelected()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick innerNn { c } ... @defer { cANn } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ANonNullFieldLacksTheDeniedAnswer()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     // The source schema A answers null for the first id and the same name for every product.
     private static string NullTheFirstId(string schema, string body, string text)
         => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)

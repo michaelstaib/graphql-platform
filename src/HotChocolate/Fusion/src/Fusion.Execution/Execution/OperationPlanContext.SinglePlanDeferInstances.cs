@@ -458,7 +458,8 @@ internal sealed partial class SinglePlanDeliveryState
     /// <summary>
     /// Completes the selected rows of the instance that no step wrote and no open step can still write by their
     /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
-    /// <c>null</c> reaches the anchor, and a row that a failed step of the group left carries the error of the step.
+    /// <c>null</c> reaches the anchor. A row that a failed step of the group left carries the error of the step, and
+    /// a row that a step left because the answer for its requirement was denied carries the error of the answer.
     /// </summary>
     /// <returns><c>true</c> when an open step can still write a row of the instance.</returns>
     public bool CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
@@ -481,11 +482,12 @@ internal sealed partial class SinglePlanDeliveryState
         foreach (var row in rows)
         {
             var selection = row.AssertSelection();
+            var rowError = error is not null && IsLeftByFailedStep(selection, group) ? error : null;
 
             _completion!.CompleteUnwrittenField(
                 row,
                 selection,
-                error is not null && IsLeftByFailedStep(selection, group) ? error : null);
+                rowError ?? GetDeniedRequirementError(document, group, row, selection));
 
             if (IsFailed(instance))
             {
@@ -495,6 +497,120 @@ internal sealed partial class SinglePlanDeliveryState
 
         rows.Clear();
         return open;
+    }
+
+    // Gets the error of a denied answer for a value below the object of the row when a step that writes the row
+    // requires the value from the step that gave the answer, so that the step had no data for the object.
+    private IError? GetDeniedRequirementError(
+        CompositeResultDocument document,
+        int group,
+        CompositeResultElement row,
+        Selection selection)
+    {
+        if (_deniedAnswers is null || !TryGetWriters(selection, out var writers))
+        {
+            return null;
+        }
+
+        var entity = row.Parent;
+
+        foreach (var answer in _deniedAnswers)
+        {
+            if (answer.Error is null || !answer.Groups.Contains(group))
+            {
+                continue;
+            }
+
+            var denied = new CompositeResultElement(document, answer.Container);
+
+            if (denied.Selection is not { } deniedSelection || !IsBelow(denied, entity))
+            {
+                continue;
+            }
+
+            foreach (var writer in writers)
+            {
+                if (GetDeliveryGroups(writer).Contains(group)
+                    && RequiresValueOfGroup(writer, selection, deniedSelection, group))
+                {
+                    return answer.Error;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private bool RequiresValueOfGroup(ExecutionNode writer, Selection selection, Selection value, int group)
+    {
+        switch (writer)
+        {
+            case OperationExecutionNode operation:
+                return RequiresValueOfGroup(operation, operation.Requirements, value, group);
+
+            case OperationBatchExecutionNode batch:
+                foreach (var definition in batch.Operations)
+                {
+                    if (Writes(definition, selection)
+                        && RequiresValueOfGroup(definition, definition.Requirements, value, group))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    // The step depends on a step of the group that writes the value, and one of its requirements reads the value.
+    private bool RequiresValueOfGroup(
+        IOperationPlanNode step,
+        ReadOnlySpan<OperationRequirement> requirements,
+        Selection value,
+        int group)
+    {
+        if (!TryGetWriters(value, out var valueWriters))
+        {
+            return false;
+        }
+
+        var dependsOnWriter = false;
+
+        foreach (var dependency in step.Dependencies)
+        {
+            foreach (var valueWriter in valueWriters)
+            {
+                dependsOnWriter |= IsStepOrOperationOf(valueWriter, dependency.Id)
+                    && GetDeliveryGroups(valueWriter).Contains(group);
+            }
+        }
+
+        if (!dependsOnWriter)
+        {
+            return false;
+        }
+
+        var read = new HashSet<int>();
+        CollectKeyAndRequirementSelectionIds(Plan.Operation, requirements, read);
+        return read.Contains(value.Id);
+    }
+
+    private static bool IsBelow(CompositeResultElement element, CompositeResultElement ancestor)
+    {
+        for (var current = element; !current.IsRoot;)
+        {
+            current = current.Parent;
+
+            if (current.Cursor.Value == ancestor.Cursor.Value)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Another open instance that has not failed sends the row of the answer together with its error.
