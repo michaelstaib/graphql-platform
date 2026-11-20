@@ -4291,7 +4291,104 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_FailTheFragmentWithOnlyItsError_When_ANullableItemTookTheNullOfARequirement()
+    public async Task Defer_Should_SendTheErrorWithTheNullObject_When_ASourceAnswersNullBelowANullableObject()
+    {
+        // arrange
+        // D answers null for h2, and shipping of the initial payload requires maybePack.h2 from D
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheHeightOfD,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", NestedPackSource),
+            ("C", NestedPackShippingSource),
+            ("D", PackHeightSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipNullable ... @defer(label: "d") { maybePack { h2 } } } }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheNullField_When_ASourceAnswersNullAndTheErrorModeIsNull()
+    {
+        // arrange
+        // D answers null for h2, and shipping of the initial payload requires maybePack.h2 from D
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheHeightOfD,
+            failingSchema: null,
+            configure: builder => builder.ModifyRequestOptions(
+                o => o.DefaultErrorHandlingMode = HotChocolate.Language.ErrorHandlingMode.Null),
+            ("A", ProductSource),
+            ("B", NestedPackSource),
+            ("C", NestedPackShippingSource),
+            ("D", PackHeightSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipNullable ... @defer(label: "d") { maybePack { h2 } } } }
+            """,
+            []);
+
+        // assert
+        // the plain twin reports the error twice in this error mode, so only its data is compared
+        Assert.Equal(Canonical(run.Twin.Data), Canonical(run.Deferred.Data));
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheNullObject_When_TheNullAnswerStopsInAnEnclosingFragment()
+    {
+        // arrange
+        // D answers null for h2, and shipping of the initial payload requires maybePack.h2 from D
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: NullTheHeightOfD,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", NestedPackSource),
+            ("C", NestedPackShippingSource),
+            ("D", PackHeightSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    shipNullable
+                    ... @defer(label: "o") { maybePack { pid ... @defer(label: "i") { h2 } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+    }
+
+    // The source schema D answers null for every h2.
+    private static string NullTheHeightOfD(string schema, string body, string text)
+        => schema is "D" ? PackHeightValue().Replace(text, "\"h2\":null") : text;
+
+    [GeneratedRegex("\"h2\":[^,}]*")]
+    private static partial Regex PackHeightValue();
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithBothErrors_When_ANullableItemTookTheNullOfARequirement()
     {
         // arrange
         // the first part becomes null for its weight, which shipping requires, and B answers null for the height

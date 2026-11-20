@@ -1694,7 +1694,22 @@ internal sealed class ValueCompletion
 
             if (TMode.HasDelivery && !TMode.IsFiltered && _propagateNullValues && LeavesGroups(target, selection))
             {
-                _store.AddError(error);
+                // The groups that hold the element where the null stops send the error, the initial payload sends it
+                // when no group holds that element. A null that stays inside the groups of the field is a group error.
+                if (NullLeavesGroups(target, selection, out var nullStop))
+                {
+                    _store.AddError(error);
+
+                    if (nullStop is { } stop)
+                    {
+                        _store.Result.TryRecordGroupError(stop, error);
+                    }
+                }
+                else
+                {
+                    _nullLeavingGroups = null;
+                    AddError<TMode>(error, target);
+                }
             }
             else
             {
