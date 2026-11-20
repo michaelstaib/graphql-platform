@@ -111,8 +111,11 @@ public class CompositeResultDocumentCursorTests
     [Theory]
     [InlineData(0, 50, 1, 0)]
     [InlineData(1, 101, 2, 0)]
-    [InlineData(6, 3275, 7, 0)]
-    [InlineData(7, 6552, 8, 0)]
+    [InlineData(4, 818, 5, 0)]
+    [InlineData(11, 818, 12, 0)]
+    [InlineData(15, 1637, 16, 0)]
+    [InlineData(17, 3275, 18, 0)]
+    [InlineData(18, 6552, 19, 0)]
     public void AddRows_Should_AdvanceToNextChunk_When_LastRowIsIncremented(
         int chunk,
         int row,
@@ -290,7 +293,7 @@ public class CompositeResultDocumentCursorTests
     public void Cursor_Should_RoundTripThroughValue_When_RebuiltFromPackedInt()
     {
         // arrange
-        var original = Cursor.From(11, 2222);
+        var original = Cursor.From(18, 2222);
 
         // act
         var rebuilt = new Cursor(original.Value);
@@ -352,7 +355,7 @@ public class CompositeResultDocumentCursorTests
     public void ReferenceCursor_Should_RoundTripStoredCursorValue_When_RowIsReference()
     {
         // arrange
-        var target = Cursor.From(9, 4096);
+        var target = Cursor.From(19, 4096);
         var row = new CompositeResultDocument.DbRow(
             ElementTokenType.Reference,
             location: target.Value);
