@@ -450,7 +450,9 @@ internal sealed class ValueCompletion
 
             var selection = fieldResult.AssertSelection();
 
-            if (TMode.HasDelivery && IsLeftOutsideGroups(fieldResult, selection))
+            if (TMode.HasDelivery
+                && IsLeftOutsideGroups(fieldResult, selection)
+                && NullLeavesGroups(fieldResult, selection))
             {
                 // The failure is the result of the row, so that no step of a delivery group writes it later.
                 _store.Result.MarkWritten(fieldResult);
@@ -1142,6 +1144,43 @@ internal sealed class ValueCompletion
         return delivery.InstanceCount == 0
             && (!document.TryGetDestination(field, out var groups)
                 || IsReadOutsideGroups(delivery, selection, groups));
+    }
+
+    // Determines whether the null of the failed field leaves its delivery groups, which holds for a field that no
+    // delivery group holds back. It does not when the error mode keeps the null at the field or a nullable object
+    // that is delivered with the field stops it.
+    private bool NullLeavesGroups(CompositeResultElement field, Selection selection)
+    {
+        var document = _store.Result;
+
+        if (!document.TryGetDestination(field, out var destination))
+        {
+            return true;
+        }
+
+        if (_errorHandlingMode is not ErrorHandlingMode.Propagate || !selection.IsNonNull)
+        {
+            return false;
+        }
+
+        var current = field;
+
+        do
+        {
+            if (current.Cursor.Value != field.Cursor.Value && document.HasOtherDestination(current, destination))
+            {
+                return true;
+            }
+
+            if (current.IsNullable)
+            {
+                return false;
+            }
+
+            current = current.Parent;
+        } while (!current.IsNullOrInvalidated);
+
+        return false;
     }
 
     private static bool IsAtOrBelow(CompositeResultElement? element, CompositeResultElement ancestor)
