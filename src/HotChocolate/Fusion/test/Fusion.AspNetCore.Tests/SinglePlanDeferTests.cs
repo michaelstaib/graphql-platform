@@ -625,6 +625,85 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheDependentField_When_TheOperationThatSuppliesItsKeyDeliversToAnotherGroup(
+        bool c)
+    {
+        // arrange
+        var gateway = await CreateSkuChainGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                current {
+                    user {
+                        ... @defer(if: $c) { sku }
+                        ... @defer { sku total }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = c });
+
+        // assert
+        MatchRun(run, $"c={c}", compareValues: false);
+        Assert.Equal(1, run.Deferred.Requests["B"]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FetchTheDependentField_When_OnlyTheInnerFragmentOfTheSecondOuterFragmentIsOn()
+    {
+        // arrange
+        var gateway = await CreateSkuChainGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!, $d: Boolean!) {
+                current {
+                    user {
+                        ... @defer(if: $a) { friend { code ... @defer(if: $c) { sku } } }
+                        ... @defer(if: $b) { friend { code ... @defer(if: $d) { sku total } } }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = false, ["b"] = false, ["c"] = false, ["d"] = true });
+
+        // assert
+        MatchRun(run, compareValues: false);
+        Assert.Equal(1, run.Deferred.Requests["B"]);
+    }
+
+    private static readonly (string Name, string Sdl)[] s_skuChainSources =
+    [
+        ("A", """
+            type Query { current: Holder! userById(id: ID!): User @lookup @internal }
+            type Holder { user: User! }
+            type User @key(fields: "id") { id: ID! friend: User! }
+            """),
+        ("B", """
+            type Query { userBySku(sku: String!): User @lookup @internal }
+            type User @key(fields: "sku") { sku: String! @shareable total: Int! }
+            """),
+        ("C", """
+            type Query { userById(id: ID!): User @lookup @internal }
+            type User @key(fields: "id") { id: ID! code: String! @shareable }
+            """),
+        ("D", """
+            type Query { userByCode(code: String!): User @lookup @internal }
+            type User @key(fields: "code") { code: String! @shareable sku: String! @shareable }
+            """)
+    ];
+
+    private Task<Gateway> CreateSkuChainGatewayAsync()
+        => CreateGatewayAsync(s_skuChainSources);
+
     [Fact]
     public async Task Defer_Should_SendOuterDataBeforeInnerData_When_TheLookupsOfAnOuterAndAnInnerGroupShareARequest()
     {

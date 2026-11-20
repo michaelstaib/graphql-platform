@@ -696,30 +696,37 @@ internal sealed partial class SinglePlanDeliveryState
     {
         foreach (var requirement in requirements)
         {
-            var names = new HashSet<string>(StringComparer.Ordinal);
-            var map = requirement.Map.ToString() ?? string.Empty;
-            var start = -1;
-
-            for (var i = 0; i <= map.Length; i++)
-            {
-                var isNameChar = i < map.Length && (char.IsLetterOrDigit(map[i]) || map[i] == '_');
-
-                if (isNameChar && start < 0)
-                {
-                    start = i;
-                }
-                else if (!isNameChar && start >= 0)
-                {
-                    names.Add(map[start..i]);
-                    start = -1;
-                }
-            }
+            var names = GetRequirementNames(requirement);
 
             foreach (var selectionSet in GetTargetSelectionSets(operation, requirement.Path))
             {
                 CollectKeyAndRequirementSelectionIds(operation, selectionSet, names, ids);
             }
         }
+    }
+
+    private static HashSet<string> GetRequirementNames(OperationRequirement requirement)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var map = requirement.Map.ToString() ?? string.Empty;
+        var start = -1;
+
+        for (var i = 0; i <= map.Length; i++)
+        {
+            var isNameChar = i < map.Length && (char.IsLetterOrDigit(map[i]) || map[i] == '_');
+
+            if (isNameChar && start < 0)
+            {
+                start = i;
+            }
+            else if (!isNameChar && start >= 0)
+            {
+                names.Add(map[start..i]);
+                start = -1;
+            }
+        }
+
+        return names;
     }
 
     private static void CollectKeyAndRequirementSelectionIds(
@@ -850,6 +857,11 @@ internal sealed partial class SinglePlanDeliveryState
                     }
                 }
 
+                if (node is OperationExecutionNode step && MarkNeededProviders(step))
+                {
+                    changed = true;
+                }
+
                 if (node is OperationBatchExecutionNode batch)
                 {
                     foreach (var definition in batch.Operations)
@@ -907,6 +919,114 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         return marked;
+    }
+
+    // Marks the operations of a batch that the step depends on and that write a key or requirement of the step as
+    // needed. Returns whether a flag changed.
+    private bool MarkNeededProviders(OperationExecutionNode step)
+    {
+        var marked = false;
+
+        foreach (var dependency in step.Dependencies)
+        {
+            if (Plan.GetExecutionNode(dependency) is not OperationBatchExecutionNode provider
+                || GetDeliveryGroups(provider).IsDefaultOrEmpty)
+            {
+                continue;
+            }
+
+            foreach (var definition in provider.Operations)
+            {
+                if (!Needed[definition.Id]
+                    && IsInActiveGroup(definition)
+                    && Supplies(definition, step.Requirements))
+                {
+                    Needed[definition.Id] = true;
+                    marked = true;
+                }
+            }
+        }
+
+        return marked;
+    }
+
+    private bool IsInActiveGroup(OperationDefinition definition)
+    {
+        if (definition.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        foreach (var groupId in definition.DeliveryGroups)
+        {
+            if (ActiveGroups.IsSet(groupId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool Supplies(OperationDefinition definition, ReadOnlySpan<OperationRequirement> requirements)
+    {
+        foreach (var requirement in requirements)
+        {
+            var names = GetRequirementNames(requirement);
+
+            foreach (var selectionSet in GetTargetSelectionSets(requirement.Path))
+            {
+                foreach (var name in names)
+                {
+                    if (selectionSet.TryGetSelection(name, out var key) && Writes(definition, key))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool Writes(OperationDefinition definition, Selection selection)
+    {
+        switch (definition)
+        {
+            case SingleOperationDefinition single:
+                return Writes(single.Target, single.ResultSelectionSet, selection);
+
+            case BatchOperationDefinition many:
+                foreach (var target in many.Targets)
+                {
+                    if (Writes(target, many.ResultSelectionSet, selection))
+                    {
+                        return true;
+                    }
+                }
+
+                break;
+        }
+
+        return false;
+    }
+
+    private bool Writes(SelectionPath target, ResultSelectionSet resultSelectionSet, Selection selection)
+    {
+        if (!resultSelectionSet.ResponseNames.Contains(selection.ResponseName))
+        {
+            return false;
+        }
+
+        foreach (var selectionSet in GetTargetSelectionSets(target))
+        {
+            if (selectionSet.TryGetSelection(selection.ResponseName, out var written) && written.Id == selection.Id)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool NeedsAnyGroup(ExecutionNode node, ImmutableArray<int> groups, out List<int> honored)
