@@ -972,6 +972,20 @@ internal sealed partial class SinglePlanDeliveryState
     {
         foreach (var requirement in requirements)
         {
+            // A requirement with an internal alias is written under the alias and not under the name of its field.
+            if (requirement.InternalAlias is { } internalAlias)
+            {
+                foreach (var selectionSet in GetTargetSelectionSets(requirement.Path))
+                {
+                    if (selectionSet.TryGetSelection(internalAlias, out var key) && Writes(definition, key))
+                    {
+                        return true;
+                    }
+                }
+
+                continue;
+            }
+
             var names = GetRequirementNames(requirement);
 
             foreach (var selectionSet in GetTargetSelectionSets(requirement.Path))

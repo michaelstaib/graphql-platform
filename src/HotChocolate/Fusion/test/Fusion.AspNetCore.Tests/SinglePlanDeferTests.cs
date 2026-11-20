@@ -738,6 +738,67 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(1, run.Deferred.Requests["B"]);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FetchTheDependentField_When_TheSupplierOfItsAliasedRequirementDeliversNoField(
+        bool c)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(c ? ["B:6>", "E:10"] : [], s_aliasedRequirementChainSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($c: Boolean!) {
+                current {
+                    user {
+                        price
+                        ... @defer(if: $c) { tax }
+                        ... @defer { total }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["c"] = c });
+
+        // assert
+        MatchRun(run, $"c={c}");
+        Assert.Equal(1, run.Deferred.Requests["B"]);
+    }
+
+    private static readonly (string Name, string Sdl)[] s_aliasedRequirementChainSources =
+    [
+        ("A", """
+            type Query { current: Holder! userById(id: ID!): User @lookup @internal }
+            type Holder { user: User! }
+            type User @key(fields: "id") { id: ID! }
+            """),
+        ("B", """
+            type Query { userById(id: ID!): User @lookup @internal }
+            type User @key(fields: "id") {
+                id: ID!
+                total(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            }
+            """),
+        ("C", """
+            type Query { userById(id: ID!): User @lookup @internal }
+            type User @key(fields: "id") { id: ID! code: String! @shareable }
+            """),
+        ("D", """
+            type Query { userByCode(code: String!): User @lookup @internal }
+            type User @key(fields: "code") { code: String! @shareable price(cur: String): Int }
+            """),
+        ("E", """
+            type Query { userById(id: ID!): User @lookup @internal }
+            type User @key(fields: "id") {
+                id: ID!
+                tax(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            }
+            """)
+    ];
+
     private static readonly (string Name, string Sdl)[] s_skuChainSources =
     [
         ("A", """
