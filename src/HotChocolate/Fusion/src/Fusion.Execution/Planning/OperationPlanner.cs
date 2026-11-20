@@ -3557,14 +3557,13 @@ public sealed partial class OperationPlanner
         {
             var mintedAlias = false;
 
-            // The fields of the object also conflict across the @defer fragments of its selection set.
-            var objectFields = backlog.DeferredFragments is { } deferredFragments
+            // The fields of the response object also conflict across its field nodes and fragments.
+            var objectFields = backlog.DeferredFragments is not null
                 ? CollectObjectFields(
                     current.InternalOperationDefinition,
                     index,
                     workItem.Selection.SelectionSetId,
-                    workItem.Selection.Field.DeclaringType,
-                    deferredFragments)
+                    workItem.Selection.Field.DeclaringType)
                 : null;
 
             foreach (var selection in requirements.Selections)
@@ -3942,21 +3941,19 @@ public sealed partial class OperationPlanner
         SelectionSetNode selectionSet,
         SelectionSetIndexBuilder index,
         uint targetSelectionSetId)
-        => FindSelectionSet(selectionSet, selectionSet, index, targetSelectionSetId, out _);
+        => FindSelectionSet(selectionSet, index, targetSelectionSetId, responsePath: null);
 
-    // Returns the selection set with the identifier. The object selection set is the selection set of the
-    // nearest field around it, or the root selection set, and null when the selection set is not found.
+    // Returns the selection set with the identifier, or null when it is not found. A responsePath receives
+    // the response names of the fields around the selection set, from the root.
     private static SelectionSetNode? FindSelectionSet(
         SelectionSetNode selectionSet,
-        SelectionSetNode enclosingSelectionSet,
         SelectionSetIndexBuilder index,
         uint targetSelectionSetId,
-        out SelectionSetNode? objectSelectionSet)
+        List<string>? responsePath)
     {
         if (index.IsRegistered(selectionSet)
             && index.GetId(selectionSet) == targetSelectionSetId)
         {
-            objectSelectionSet = enclosingSelectionSet;
             return selectionSet;
         }
 
@@ -3966,18 +3963,20 @@ public sealed partial class OperationPlanner
             {
                 case FieldNode { SelectionSet: not null } field:
                 {
+                    responsePath?.Add(field.Alias?.Value ?? field.Name.Value);
+
                     var result = FindSelectionSet(
-                        field.SelectionSet,
                         field.SelectionSet,
                         index,
                         targetSelectionSetId,
-                        out objectSelectionSet);
+                        responsePath);
 
                     if (result is not null)
                     {
                         return result;
                     }
 
+                    responsePath?.RemoveAt(responsePath.Count - 1);
                     break;
                 }
 
@@ -3985,10 +3984,9 @@ public sealed partial class OperationPlanner
                 {
                     var result = FindSelectionSet(
                         inlineFragment.SelectionSet,
-                        enclosingSelectionSet,
                         index,
                         targetSelectionSetId,
-                        out objectSelectionSet);
+                        responsePath);
 
                     if (result is not null)
                     {
@@ -4000,7 +3998,6 @@ public sealed partial class OperationPlanner
             }
         }
 
-        objectSelectionSet = null;
         return null;
     }
 
@@ -4304,65 +4301,70 @@ public sealed partial class OperationPlanner
         return false;
     }
 
-    private static bool ContainsDeliveryGroupFragment(
-        IReadOnlyList<ISelectionNode> selections,
-        IReadOnlyDictionary<DirectiveNode, int> deferredFragments)
-    {
-        foreach (var selection in selections)
-        {
-            if (selection is not InlineFragmentNode fragment)
-            {
-                continue;
-            }
-
-            for (var i = 0; i < fragment.Directives.Count; i++)
-            {
-                if (deferredFragments.ContainsKey(fragment.Directives[i]))
-                {
-                    return true;
-                }
-            }
-
-            if (ContainsDeliveryGroupFragment(fragment.SelectionSet.Selections, deferredFragments))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Returns the fields that the internal operation selects on the object that holds the selection set,
-    // through the inline fragments that can apply to the type but never below a field. Returns null when the
-    // selection set is not found or the object selects no @defer fragment.
+    // Returns the fields that the internal operation selects on the response object of the selection set, in
+    // every field node with the same response path and through the inline fragments that can apply to the type.
+    // Returns null when the selection set is not found.
     private List<FieldNode>? CollectObjectFields(
         OperationDefinitionNode internalOperation,
         SelectionSetIndexBuilder index,
         uint selectionSetId,
-        ITypeDefinition type,
-        IReadOnlyDictionary<DirectiveNode, int> deferredFragments)
+        ITypeDefinition type)
     {
         if (index.TryGetOriginalIdFromCloned(selectionSetId, out var originalId))
         {
             selectionSetId = originalId;
         }
 
-        FindSelectionSet(
-            internalOperation.SelectionSet,
-            internalOperation.SelectionSet,
-            index,
-            selectionSetId,
-            out var objectSelectionSet);
+        var responsePath = new List<string>();
 
-        if (objectSelectionSet is null
-            || !ContainsDeliveryGroupFragment(objectSelectionSet.Selections, deferredFragments))
+        if (FindSelectionSet(internalOperation.SelectionSet, index, selectionSetId, responsePath) is null)
         {
             return null;
         }
 
+        List<SelectionSetNode> objectSelectionSets = [internalOperation.SelectionSet];
+
+        foreach (var responseName in responsePath)
+        {
+            List<SelectionSetNode> fieldSelectionSets = [];
+
+            foreach (var objectSelectionSet in objectSelectionSets)
+            {
+                CollectFieldSelectionSets(objectSelectionSet, responseName, fieldSelectionSets);
+            }
+
+            objectSelectionSets = fieldSelectionSets;
+        }
+
         var fields = new List<FieldNode>();
-        CollectFields(objectSelectionSet, fields);
+
+        foreach (var objectSelectionSet in objectSelectionSets)
+        {
+            CollectFields(objectSelectionSet, fields);
+        }
+
         return fields;
+
+        void CollectFieldSelectionSets(
+            SelectionSetNode selectionSet,
+            string responseName,
+            List<SelectionSetNode> result)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode { SelectionSet: not null } field
+                        when responseName.Equals(field.Alias?.Value ?? field.Name.Value, StringComparison.Ordinal):
+                        result.Add(field.SelectionSet);
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        CollectFieldSelectionSets(fragment.SelectionSet, responseName, result);
+                        break;
+                }
+            }
+        }
 
         void CollectFields(SelectionSetNode selectionSet, List<FieldNode> fields)
         {

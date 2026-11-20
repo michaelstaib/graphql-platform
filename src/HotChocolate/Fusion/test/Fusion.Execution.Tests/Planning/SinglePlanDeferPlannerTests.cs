@@ -753,6 +753,64 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_AliasTheRequirement_When_TheFragmentSelectsTheFieldBelowAnotherFieldNode()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc related { price } ... @defer { related { eur } } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_AliasTheRequirement_When_TheFieldWithOtherArgumentsIsDeferredBelowAnotherFieldNode()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc related { eur } ... @defer { related { price } } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_NotAliasTheRequirement_When_AFieldNodeBelowAnotherFieldNodeSelectsTheSameArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            "{ products { upc related { price(cur: \"EUR\") } ... @defer { related { eur } } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_AliasTheRequirement_When_AnOperationWithoutDeliveryGroupSelectsTheFieldNodesTwice()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc related { price } related { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_NotAliasTheRequirement_When_ASelectionMapOfSeveralFieldsReadsIt()
     {
         // arrange
@@ -3266,6 +3324,7 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             usd(price: Int @require(field: "price(cur: \"USD\")")): Int
             both(price: Int @require(field: "price(cur: \"EUR\", tax: true)")): Int
             netWeight(weight: Int @require(field: "weight")): Int
+            related: Product!
         }
         """;
 

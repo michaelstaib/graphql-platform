@@ -1648,6 +1648,38 @@ public partial class SinglePlanDeferTests : FusionTestBase
             """);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_TheFragmentSelectsARequirementBelowAnotherNode()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ products { upc related { price } ... @defer { related { eur } } } }",
+            []);
+
+        // assert
+        MatchRunWithValues(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_TheFragmentSelectsTheFieldOfARequirementBelowAnotherNode()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ products { upc related { eur } ... @defer { related { price } } } }",
+            []);
+
+        // assert
+        MatchRunWithValues(run);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -8709,6 +8741,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
         {
             public Product GetProduct() => new("u1");
 
+            public List<Product> GetProducts() => [new("u1"), new("u2")];
+
             [Lookup]
             [Internal]
             public Product? GetProductByUpc(string upc) => new(upc);
@@ -8724,6 +8758,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
         [EntityKey("upc")]
         public record Product(string Upc)
         {
+            public Product Related => new(Upc + "r");
+
             public int? GetEur([Require("price(cur: \"EUR\")")] int? price) => price;
 
             public int? GetUsd([Require("price(cur: \"USD\")")] int? price) => price;
