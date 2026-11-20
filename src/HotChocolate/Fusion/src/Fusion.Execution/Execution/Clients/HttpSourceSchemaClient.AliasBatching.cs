@@ -382,7 +382,7 @@ public sealed partial class HttpSourceSchemaClient
             HasDeadline = context.HasExecutionDeadline
         };
 
-        SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration);
+        SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration, _client);
         return httpRequest;
     }
 

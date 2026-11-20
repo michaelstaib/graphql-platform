@@ -3,6 +3,7 @@ using HotChocolate.Types.Composite;
 using HotChocolate.Types.Relay;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace HotChocolate.Fusion;
 
@@ -107,6 +108,107 @@ public class HeaderPropagationTests : FusionTestBase
 
         // assert
         result.MatchInlineSnapshot("""{"data":{"tenant":"explicit"}}""");
+    }
+
+    [Fact]
+    public async Task Execute_Should_KeepDefaultHeaderOfHttpClient_When_HeaderIsAlsoPropagated()
+    {
+        // arrange
+        using var server = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<Query>(),
+            configureServices: s => s.AddHttpContextAccessor());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureServices: services =>
+            {
+                services.RemoveAll<IHttpClientFactory>();
+                services
+                    .AddHttpClient("A")
+                    .ConfigureHttpClient(c => c.DefaultRequestHeaders.Add(TenantHeader, "default"))
+                    .ConfigurePrimaryHttpMessageHandler(() => server.CreateHandler());
+            },
+            configureGatewayBuilder: b => b.AddHeaderPropagation(TenantHeader),
+            includeOperationPlan: false);
+        using var client = gateway.CreateClient();
+
+        // act
+        var result = await ExecuteAsync(client, "{ tenant }", "first");
+
+        // assert
+        result.MatchInlineSnapshot("""{"data":{"tenant":"default"}}""");
+    }
+
+    [Fact]
+    public async Task Execute_Should_ForwardHeader_When_HttpClientHasOtherDefaultHeader()
+    {
+        // arrange
+        using var server = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<Query>(),
+            configureServices: s => s.AddHttpContextAccessor());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureServices: services =>
+            {
+                services.RemoveAll<IHttpClientFactory>();
+                services
+                    .AddHttpClient("A")
+                    .ConfigureHttpClient(c => c.DefaultRequestHeaders.Add("X-Other", "default"))
+                    .ConfigurePrimaryHttpMessageHandler(() => server.CreateHandler());
+            },
+            configureGatewayBuilder: b => b.AddHeaderPropagation(TenantHeader),
+            includeOperationPlan: false);
+        using var client = gateway.CreateClient();
+
+        // act
+        var result = await ExecuteAsync(client, "{ tenant }", "first");
+
+        // assert
+        result.MatchInlineSnapshot("""{"data":{"tenant":"first"}}""");
+    }
+
+    [Fact]
+    public void AddHeaderPropagation_Should_Throw_When_HeaderDescribesBody()
+    {
+        // arrange
+        var builder = new ServiceCollection().AddGraphQLGatewayServer();
+
+        // act
+        var exception = Record.Exception(() => builder.AddHeaderPropagation(TenantHeader, "Content-Length"));
+
+        // assert
+        var argumentException = Assert.IsType<ArgumentException>(exception);
+        Assert.Equal(
+            "The header 'Content-Length' describes the body or the connection of a single request "
+            + "and cannot be copied to source schema requests. (Parameter 'headerNames')",
+            argumentException.Message);
+    }
+
+    [Fact]
+    public async Task AddHeaderPropagation_Should_UseNamesOfTheCall_When_ArrayChangesAfterwards()
+    {
+        // arrange
+        string[] headerNames = [TenantHeader];
+        using var server = CreateSourceSchema(
+            "A",
+            b => b.AddQueryType<Query>(),
+            configureServices: s => s.AddHttpContextAccessor());
+        using var gateway = await CreateCompositeSchemaAsync(
+            [("A", server)],
+            configureGatewayBuilder: b =>
+            {
+                b.AddHeaderPropagation(headerNames);
+                headerNames[0] = "X-Other";
+            },
+            includeOperationPlan: false);
+        using var client = gateway.CreateClient();
+
+        // act
+        var result = await ExecuteAsync(client, "{ tenant }", "first");
+
+        // assert
+        result.MatchInlineSnapshot("""{"data":{"tenant":"first"}}""");
     }
 
     [Fact]

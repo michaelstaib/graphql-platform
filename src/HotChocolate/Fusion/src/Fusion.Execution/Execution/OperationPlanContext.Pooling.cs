@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using HotChocolate.Buffers;
 using HotChocolate.Execution;
@@ -178,10 +179,15 @@ public sealed partial class OperationPlanContext
 
     /// <summary>
     /// Adds the propagated headers of the request to a source schema request.
-    /// A header that the source schema request already has is kept.
+    /// A header that the source schema request already has is kept, and so is a header
+    /// that <paramref name="defaultRequestHeaders"/> has.
     /// </summary>
     /// <param name="message">The source schema request.</param>
-    internal void AddPropagatedHeaders(HttpRequestMessage message)
+    /// <param name="defaultRequestHeaders">
+    /// The headers that the HTTP client adds to a request that does not have them,
+    /// or <c>null</c> when it adds none.
+    /// </param>
+    internal void AddPropagatedHeaders(HttpRequestMessage message, HttpRequestHeaders? defaultRequestHeaders)
     {
         if (!_hasPropagatedHeaders)
         {
@@ -190,7 +196,7 @@ public sealed partial class OperationPlanContext
 
         var names = _propagatedHeaderNames;
         var values = _propagatedHeaderValues;
-        var content = message.Content;
+        var headers = message.Headers;
 
         for (var i = 0; i < values.Length; i++)
         {
@@ -198,22 +204,19 @@ public sealed partial class OperationPlanContext
             var value = values[i];
 
             if (value.Count == 0
-                || message.Headers.NonValidated.Contains(name)
-                || content?.Headers.NonValidated.Contains(name) == true)
+                || headers.NonValidated.Contains(name)
+                || defaultRequestHeaders?.NonValidated.Contains(name) == true)
             {
                 continue;
             }
 
             if (value.Count == 1)
             {
-                if (!message.Headers.TryAddWithoutValidation(name, value[0]))
-                {
-                    content?.Headers.TryAddWithoutValidation(name, value[0]);
-                }
+                headers.TryAddWithoutValidation(name, value[0]);
             }
-            else if (!message.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)value))
+            else
             {
-                content?.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)value);
+                headers.TryAddWithoutValidation(name, (IEnumerable<string?>)value);
             }
         }
     }

@@ -7,6 +7,18 @@ namespace HotChocolate.Fusion.Execution;
 
 public sealed class FusionOptions : IFusionSchemaOptions, ICloneable
 {
+    // These headers belong to one connection, so they cannot be copied to another request.
+    private static readonly string[] s_connectionHeaderNames =
+    [
+        "Connection",
+        "Keep-Alive",
+        "Proxy-Connection",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade"
+    ];
+
     private bool _isReadOnly;
 
     /// <summary>
@@ -121,6 +133,10 @@ public sealed class FusionOptions : IFusionSchemaOptions, ICloneable
     /// Gets or sets the names of the headers that the gateway copies from an incoming request
     /// to the requests it sends to source schemas. Empty by default.
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// A name is not a valid header name, or it names a header that describes the body
+    /// or the connection of a single request.
+    /// </exception>
     public ImmutableArray<string> PropagatedHeaders
     {
         get;
@@ -128,7 +144,18 @@ public sealed class FusionOptions : IFusionSchemaOptions, ICloneable
         {
             ExpectMutableOptions();
 
-            field = value.IsDefault ? [] : value;
+            if (value.IsDefaultOrEmpty)
+            {
+                field = [];
+                return;
+            }
+
+            foreach (var headerName in value)
+            {
+                ValidatePropagatedHeader(headerName, nameof(value));
+            }
+
+            field = value;
         }
     } = [];
 
@@ -286,6 +313,44 @@ public sealed class FusionOptions : IFusionSchemaOptions, ICloneable
 
     internal void MakeReadOnly()
         => _isReadOnly = true;
+
+    /// <summary>
+    /// Ensures that a header can be copied from an incoming request to a source schema request.
+    /// </summary>
+    /// <param name="headerName">The name of the header.</param>
+    /// <param name="paramName">The name of the parameter that holds the header name.</param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="headerName"/> is not a valid header name, or it names a header that
+    /// describes the body or the connection of a single request.
+    /// </exception>
+    internal static void ValidatePropagatedHeader(string? headerName, string paramName)
+    {
+        if (string.IsNullOrEmpty(headerName))
+        {
+            throw ThrowHelper.PropagatedHeaderNameInvalid(headerName, paramName);
+        }
+
+        foreach (var connectionHeaderName in s_connectionHeaderNames)
+        {
+            if (headerName.Equals(connectionHeaderName, StringComparison.OrdinalIgnoreCase))
+            {
+                throw ThrowHelper.PropagatedHeaderNotAllowed(headerName, paramName);
+            }
+        }
+
+        using var request = new HttpRequestMessage();
+
+        if (request.Headers.TryAddWithoutValidation(headerName, string.Empty))
+        {
+            return;
+        }
+
+        using var content = new ByteArrayContent([]);
+
+        throw content.Headers.TryAddWithoutValidation(headerName, string.Empty)
+            ? ThrowHelper.PropagatedHeaderNotAllowed(headerName, paramName)
+            : ThrowHelper.PropagatedHeaderNameInvalid(headerName, paramName);
+    }
 
     private void ExpectMutableOptions()
     {
