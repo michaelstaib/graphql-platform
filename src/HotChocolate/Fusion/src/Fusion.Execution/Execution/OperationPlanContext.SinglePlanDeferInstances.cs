@@ -1,8 +1,10 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Results;
 using HotChocolate.Fusion.Text.Json;
+using HotChocolate.Fusion.Types;
 
 namespace HotChocolate.Fusion.Execution;
 
@@ -46,6 +48,7 @@ internal sealed partial class SinglePlanDeliveryState
     private List<SourceError>? _sourceErrors;
     private Dictionary<long, List<IError>>? _deniedErrors;
     private List<DeniedAnswer>? _deniedAnswers;
+    private Dictionary<OperationRequirement, HashSet<int>>? _requirementReads;
     private List<CompositeResultElement>? _unwrittenRows;
     private List<CompositeResultElement>? _unwrittenOtherRows;
     private ValueCompletion? _completion;
@@ -459,7 +462,8 @@ internal sealed partial class SinglePlanDeliveryState
     /// Completes the selected rows of the instance that no step wrote and no open step can still write by their
     /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
     /// <c>null</c> reaches the anchor. A row that a failed step of the group left carries the error of the step, and
-    /// a row that a step left because the answer for its requirement was denied carries the error of the answer.
+    /// a row whose field lacks a required value because the answer for it was denied with an error carries that
+    /// error.
     /// </summary>
     /// <returns><c>true</c> when an open step can still write a row of the instance.</returns>
     public bool CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
@@ -499,22 +503,150 @@ internal sealed partial class SinglePlanDeliveryState
         return open;
     }
 
-    // Gets the error of a denied answer for a value below the object of the row when a step that writes the row
-    // requires the value from the step that gave the answer, so that the step had no data for the object.
+    // Gets the error of the denied answer for a value that a requirement of the field of the row lacks. When no
+    // requirement of the field lacks a value, the requirements of the step that writes the row are used.
     private IError? GetDeniedRequirementError(
         CompositeResultDocument document,
         int group,
         CompositeResultElement row,
         Selection selection)
     {
-        if (_deniedAnswers is null || !TryGetWriters(selection, out var writers))
+        if (!HasDeniedError(group) || !TryGetWriters(selection, out var writers))
         {
             return null;
         }
 
         var entity = row.Parent;
 
-        foreach (var answer in _deniedAnswers)
+        foreach (var writer in writers)
+        {
+            if (!GetDeliveryGroups(writer).Contains(group))
+            {
+                continue;
+            }
+
+            switch (writer)
+            {
+                case OperationExecutionNode operation:
+                    if (GetDeniedRequirementError(document, group, entity, selection, operation.Requirements)
+                        is { } error)
+                    {
+                        return error;
+                    }
+
+                    break;
+
+                case OperationBatchExecutionNode batch:
+                    foreach (var definition in batch.Operations)
+                    {
+                        if (Writes(definition, selection)
+                            && GetDeniedRequirementError(document, group, entity, selection, definition.Requirements)
+                                is { } definitionError)
+                        {
+                            return definitionError;
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        return null;
+    }
+
+    // A denied answer of the group carries an error.
+    private bool HasDeniedError(int group)
+    {
+        if (_deniedAnswers is not null)
+        {
+            foreach (var answer in _deniedAnswers)
+            {
+                if (answer.Error is not null && answer.Groups.Contains(group))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // The requirements are taken in their order in the step, the requirements of the field first.
+    private IError? GetDeniedRequirementError(
+        CompositeResultDocument document,
+        int group,
+        CompositeResultElement entity,
+        Selection selection,
+        ReadOnlySpan<OperationRequirement> requirements)
+    {
+        for (var i = 0; i < requirements.Length; i++)
+        {
+            if (IsRequirementOf(requirements[i], selection)
+                && GetDeniedError(document, group, entity, requirements.Slice(i, 1)) is { } error)
+            {
+                return error;
+            }
+        }
+
+        for (var i = 0; i < requirements.Length; i++)
+        {
+            if (!IsRequirementOf(requirements[i], selection)
+                && GetDeniedError(document, group, entity, requirements.Slice(i, 1)) is { } error)
+            {
+                return error;
+            }
+        }
+
+        return null;
+    }
+
+    // The requirement is declared by the field of the selection and anchored at the selection set of the selection.
+    private bool IsRequirementOf(OperationRequirement requirement, Selection selection)
+    {
+        if (selection.Field is not FusionOutputFieldDefinition field
+            || Array.IndexOf(GetTargetSelectionSets(requirement.Path), selection.DeclaringSelectionSet) < 0)
+        {
+            return false;
+        }
+
+        foreach (var source in field.Sources.Members)
+        {
+            if (source.Requirements is { } declared)
+            {
+                foreach (var map in declared.Fields)
+                {
+                    if (ReferenceEquals(map, requirement.Map))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Gets the error of the denied answer below the entity for a value that the requirement reads and that holds a
+    // row without a result. Of several answers the one for the selection with the lowest id is taken.
+    private IError? GetDeniedError(
+        CompositeResultDocument document,
+        int group,
+        CompositeResultElement entity,
+        ReadOnlySpan<OperationRequirement> requirement)
+    {
+        var requirementReads = _requirementReads ??= new(ReferenceEqualityComparer.Instance);
+
+        if (!requirementReads.TryGetValue(requirement[0], out var read))
+        {
+            read = [];
+            CollectKeyAndRequirementSelectionIds(Plan.Operation, requirement, read);
+            requirementReads.Add(requirement[0], read);
+        }
+
+        IError? error = null;
+        var lowest = int.MaxValue;
+
+        foreach (var answer in _deniedAnswers!)
         {
             if (answer.Error is null || !answer.Groups.Contains(group))
             {
@@ -523,36 +655,44 @@ internal sealed partial class SinglePlanDeliveryState
 
             var denied = new CompositeResultElement(document, answer.Container);
 
-            if (denied.Selection is not { } deniedSelection || !IsBelow(denied, entity))
+            if (denied.Selection is { } deniedSelection
+                && deniedSelection.Id < lowest
+                && read.Contains(deniedSelection.Id)
+                && IsBelow(denied, entity)
+                && LacksReadRow(denied, read))
             {
-                continue;
-            }
-
-            foreach (var writer in writers)
-            {
-                if (GetDeliveryGroups(writer).Contains(group)
-                    && RequiresValueOfGroup(writer, selection, deniedSelection, group))
-                {
-                    return answer.Error;
-                }
+                error = answer.Error;
+                lowest = deniedSelection.Id;
             }
         }
 
-        return null;
+        return error;
     }
 
-    private bool RequiresValueOfGroup(ExecutionNode writer, Selection selection, Selection value, int group)
+    // The value is a row without a result, or holds one for a selection that the requirement reads.
+    private static bool LacksReadRow(CompositeResultElement value, HashSet<int> read)
     {
-        switch (writer)
+        switch (value.ValueKind)
         {
-            case OperationExecutionNode operation:
-                return RequiresValueOfGroup(operation, operation.Requirements, value, group);
+            case JsonValueKind.Undefined:
+                return true;
 
-            case OperationBatchExecutionNode batch:
-                foreach (var definition in batch.Operations)
+            case JsonValueKind.Object:
+                foreach (var selection in value.AssertSelectionSet().Selections)
                 {
-                    if (Writes(definition, selection)
-                        && RequiresValueOfGroup(definition, definition.Requirements, value, group))
+                    if (read.Contains(selection.Id)
+                        && LacksReadRow(value.GetPropertyBySelectionId(selection.Id), read))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            case JsonValueKind.Array:
+                foreach (var element in value.EnumerateArray())
+                {
+                    if (LacksReadRow(element, read))
                     {
                         return true;
                     }
@@ -563,39 +703,6 @@ internal sealed partial class SinglePlanDeliveryState
             default:
                 return false;
         }
-    }
-
-    // The step depends on a step of the group that writes the value, and one of its requirements reads the value.
-    private bool RequiresValueOfGroup(
-        IOperationPlanNode step,
-        ReadOnlySpan<OperationRequirement> requirements,
-        Selection value,
-        int group)
-    {
-        if (!TryGetWriters(value, out var valueWriters))
-        {
-            return false;
-        }
-
-        var dependsOnWriter = false;
-
-        foreach (var dependency in step.Dependencies)
-        {
-            foreach (var valueWriter in valueWriters)
-            {
-                dependsOnWriter |= IsStepOrOperationOf(valueWriter, dependency.Id)
-                    && GetDeliveryGroups(valueWriter).Contains(group);
-            }
-        }
-
-        if (!dependsOnWriter)
-        {
-            return false;
-        }
-
-        var read = new HashSet<int>();
-        CollectKeyAndRequirementSelectionIds(Plan.Operation, requirements, read);
-        return read.Contains(value.Id);
     }
 
     private static bool IsBelow(CompositeResultElement element, CompositeResultElement ancestor)

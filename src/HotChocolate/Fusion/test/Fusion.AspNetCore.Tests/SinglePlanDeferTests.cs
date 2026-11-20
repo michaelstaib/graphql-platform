@@ -4601,6 +4601,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // arrange
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
             ("A", NickSource),
             ("B", InnerSource),
             ("C", InnerRequirementSource));
@@ -4621,6 +4624,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // arrange
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
             ("A", NickSource),
             ("B", InnerSource),
             ("C", InnerNonNullRequirementSource));
@@ -4641,6 +4647,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // arrange
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
             ("A", NickSource),
             ("B", InnerSource),
             ("C", InnerNonNullRequirementSource));
@@ -4649,6 +4658,219 @@ public partial class SinglePlanDeferTests : FusionTestBase
         var run = await RunDeferredAsync(
             gateway,
             "{ user { nick inner { c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string BoxSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! box: Box }
+        type Box { z: String! @error y: String }
+        """;
+
+    private const string InnerAndBoxRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            gA(a: String @require(field: "inner.a")): String
+            gZ(z: String @require(field: "box.z")): String
+            gAZ(a: String @require(field: "inner.a"), z: String @require(field: "box.z")): String
+        }
+        """;
+
+    private const string InnerAndBoxObjectRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            gO(o: AZInput @require(field: "{ a: inner.a, z: box.z }")): String
+        }
+        input AZInput { a: String z: String }
+        """;
+
+    private const string InnerCRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! dC(c: String @require(field: "inner.c")): String }
+        """;
+
+    private const string UserListNickSource =
+        """
+        type Query { users: [User!]! }
+        type User @key(fields: "id") { id: ID! nick: String }
+        """;
+
+    // The source error of schema B reads "B failed" and the one of schema F reads "F failed".
+    private static string NameTheSourceError(string schema, string body, string text)
+        => schema switch
+        {
+            "B" => text.Replace("Unexpected Execution Error", "B failed", StringComparison.Ordinal),
+            "F" => text.Replace("Unexpected Execution Error", "F failed", StringComparison.Ordinal),
+            _ => text
+        };
+
+    // The source schema D answers without the field dC.
+    private static string OmitTheFieldDC(string schema, string body, string text)
+        => schema is "D" ? FieldDC().Replace(text, string.Empty) : NameTheSourceError(schema, body, text);
+
+    [GeneratedRegex("\"dC\":(null|\"[^\"]*\"),?")]
+    private static partial Regex FieldDC();
+
+    [GeneratedRegex("Unexpected Execution Error")]
+    private static partial Regex SourceErrorMessage();
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendEachFieldTheErrorOfItsOwnRequirement_When_OneStepLacksTwoDeniedAnswers(
+        bool innerFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            innerFirst ? ["B:2", "F:3", "B:7", "F:6"] : ["B:2", "F:3", "F:6", "B:7"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("F", BoxSource),
+            ("G", InnerAndBoxRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } box { y } ... @defer { gA gZ } } }",
+            []);
+
+        // assert
+        MatchPayloads(run, $"innerFirst={innerFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheErrorOfItsFirstRequirement_When_OneFieldLacksTwoDeniedAnswers(
+        bool innerFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            innerFirst ? ["B:2", "F:3", "B:7", "F:6"] : ["B:2", "F:3", "F:6", "B:7"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("F", BoxSource),
+            ("G", InnerAndBoxRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } box { y } ... @defer { gAZ } } }",
+            []);
+
+        // assert
+        MatchPayloads(run, $"innerFirst={innerFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheErrorOfTheFirstValue_When_OneRequirementReadsTwoDeniedValues(
+        bool innerFirst)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            innerFirst ? ["B:2", "F:3", "B:7", "F:6"] : ["B:2", "F:3", "F:6", "B:7"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("F", BoxSource),
+            ("G", InnerAndBoxObjectRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } box { y } ... @defer { gO } } }",
+            []);
+
+        // assert
+        MatchPayloads(run, $"innerFirst={innerFirst}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullWithoutAnError_When_TheStepRanAndItsAnswerOmitsTheField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            OmitTheFieldDC,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource),
+            ("D", InnerCRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } ... @defer { cA dC } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendEachEntityTheErrorOfItsOwnAnswer_When_EveryEntityLacksItsRequirement()
+    {
+        // arrange
+        var number = 0;
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            (schema, _, text) => schema is "B"
+                ? SourceErrorMessage().Replace(text, _ => $"B failed {number++}")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", UserListNickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ users { nick inner { c } ... @defer { cA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOfTheStep_When_ARequirementOfAnotherFieldOfItsStepWasDenied()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } ... @defer { cA cC } } }",
             []);
 
         // assert

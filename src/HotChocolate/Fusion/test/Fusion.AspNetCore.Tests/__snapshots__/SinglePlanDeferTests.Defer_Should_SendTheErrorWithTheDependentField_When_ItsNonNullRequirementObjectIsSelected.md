@@ -9,7 +9,7 @@
 ## Payload 2
 
 ```json
-{"incremental":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["user","cANn"]}],"data":{"cANn":null}}],"completed":[{"id":"0"}],"hasNext":false}
+{"incremental":[{"id":"0","errors":[{"message":"B failed","path":["user","cANn"]}],"data":{"cANn":null}}],"completed":[{"id":"0"}],"hasNext":false}
 ```
 
 ## Requests
