@@ -719,7 +719,7 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void CollectKeyAndRequirementSelectionIds_Should_HoldTheFieldsBelowTheAliasedObject_When_TheFragmentSelectsOtherArguments()
+    public void CollectKeyAndRequirementSelectionIds_Should_HoldTheAliasedObject_When_TheFragmentSelectsOtherArguments()
     {
         // arrange
         var schema = ComposeSchema(InnerOwnerSchema, InnerSchema);
