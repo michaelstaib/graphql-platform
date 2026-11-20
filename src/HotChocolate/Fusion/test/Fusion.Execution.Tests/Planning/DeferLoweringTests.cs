@@ -4171,52 +4171,8 @@ public class DeferLoweringTests : FusionTestBase
     public void Lower_Should_AttachAPartToEachTypeBranch_When_TwoTypeFragmentsShareAFieldNode()
     {
         // arrange
-        var schema = ComposeSchema(
-            """
-            # name: a
-            schema { query: Query }
-
-            type Query {
-                feed: [Post]
-                imagePostById(id: ID! @is(field: "id")): ImagePost @lookup @internal
-                textPostById(id: ID! @is(field: "id")): TextPost @lookup @internal
-                userById(id: ID!): User @lookup
-            }
-
-            interface Post {
-                id: ID!
-                author: User!
-            }
-
-            type ImagePost implements Post @key(fields: "id") {
-                id: ID!
-                author: User!
-            }
-
-            type TextPost implements Post @key(fields: "id") {
-                id: ID!
-                author: User!
-            }
-
-            type User @key(fields: "id") {
-                id: ID!
-                friends: [User!]!
-            }
-            """,
-            """
-            # name: b
-            schema { query: Query }
-
-            type Query {
-                userByIdB(id: ID!): User @lookup
-            }
-
-            type User @key(fields: "id") {
-                id: ID!
-                email: String!
-            }
-            """);
-        var document = Utf8GraphQLParser.Parse(
+        var schema = CreateSharedAuthorSchema();
+        var operation = ParseOperation(
             """
             query {
                 feed {
@@ -4232,18 +4188,7 @@ public class DeferLoweringTests : FusionTestBase
                 }
             }
             """);
-        var operation = document.Definitions.OfType<OperationDefinitionNode>().First();
-        var feed = (FieldNode)operation.SelectionSet.Selections[0];
-
-        // The field node of the interface stands below one fragment per possible type.
-        var author = feed.SelectionSet!.Selections[0];
-        var fragments = new ISelectionNode[]
-        {
-            new InlineFragmentNode(null, new NamedTypeNode("ImagePost"), [], new SelectionSetNode([author])),
-            new InlineFragmentNode(null, new NamedTypeNode("TextPost"), [], new SelectionSetNode([author]))
-        };
-        var shared = operation.WithSelectionSet(
-            new SelectionSetNode([feed.WithSelectionSet(new SelectionSetNode(fragments))]));
+        var shared = ShareFieldBelowTypeFragments(operation);
 
         // act
         var lowered = DeferLowering.Lower(shared, schema).ToString(indented: true);

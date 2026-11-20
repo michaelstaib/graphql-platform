@@ -4393,6 +4393,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:4"],
             ("A", OverriddenAuthorPostSource),
             ("B", OverriddenAuthorMovedSource));
 
@@ -4434,6 +4435,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:4"],
             ("A", OverriddenAuthorPostSource),
             ("B", OverriddenAuthorMovedSource));
 
@@ -4472,6 +4474,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            ["A:4", "B:5>", "B:6"],
             ("A", OverriddenAuthorPostSource),
             ("B", OverriddenAuthorMovedSource));
 
@@ -4511,6 +4514,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:4"],
             ("A", OverriddenAuthorPostSource),
             ("B", OverriddenAuthorMovedSource));
 
@@ -4552,6 +4556,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     {
         // arrange
         var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:4"],
             ("A", OverriddenAuthorPostSource),
             ("B", OverriddenAuthorMovedSource));
 
@@ -4608,6 +4613,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
         var snapshot = Snapshot.Create();
         snapshot.Add(Canonical(ToShape(run.Deferred.Data)), "Merged data", "json");
         snapshot.Add(string.Join(Environment.NewLine, places), "Announced places", "text");
+
+        for (var i = 0; i < run.Deferred.Payloads.Count; i++)
+        {
+            snapshot.Add(ToShape(run.Deferred.Payloads[i]), $"Payload {i + 1}", "json");
+        }
+
         snapshot.Add(
             $"deferred: {run.Deferred.RequestSummary}" + Environment.NewLine
             + $"per type twin: {run.Twin.RequestSummary}",
