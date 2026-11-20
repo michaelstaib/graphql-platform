@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace HotChocolate.Fusion.Text.Json;
 
 /// <summary>
@@ -47,23 +45,34 @@ internal static class ChunkSchedule
     /// </summary>
     public const int RampLength = 18;
 
-    // Chunks 0..4 double from 1 KB to 16 KB, then the size is held for a while before it doubles
-    // again: seven more 16 KB chunks, four 32 KB chunks and two 64 KB chunks. A store that holds
-    // n bytes has rented at most n plus one chunk of its current size, which stays below an
-    // eighth of n once the store has left the first 16 KB chunks.
-    private static ReadOnlySpan<byte> Ordinals =>
-    [
-        0, 1, 2, 3, 4,
-        4, 4, 4, 4, 4, 4, 4,
-        5, 5, 5, 5,
-        6, 6,
-        7
-    ];
+    private const int First32K = 12;
+    private const int First64K = 16;
 
     /// <summary>
     /// Gets the chunk size of the chunk at the given index.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    /// <remarks>
+    /// Chunks 0..4 double from 1 KB to 16 KB, then the size is held for a while before it doubles
+    /// again: seven more 16 KB chunks, four 32 KB chunks and two 64 KB chunks. A store that holds
+    /// n bytes has rented at most n plus one chunk of its current size.
+    /// </remarks>
     public static ChunkSize SizeFor(int chunkIndex)
-        => (ChunkSize)Ordinals[Math.Min(chunkIndex, RampLength)];
+    {
+        if (chunkIndex <= (int)ChunkSize.Size16K)
+        {
+            return (ChunkSize)chunkIndex;
+        }
+
+        if (chunkIndex < First32K)
+        {
+            return ChunkSize.Size16K;
+        }
+
+        if (chunkIndex < First64K)
+        {
+            return ChunkSize.Size32K;
+        }
+
+        return chunkIndex < RampLength ? ChunkSize.Size64K : ChunkSize.Size128K;
+    }
 }

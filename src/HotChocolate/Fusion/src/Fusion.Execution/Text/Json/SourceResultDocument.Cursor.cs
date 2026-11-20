@@ -37,8 +37,7 @@ public sealed partial class SourceResultDocument
         private const int RampLength = ChunkSchedule.RampLength;
         private static readonly int[] s_rampPrefix = BuildRampPrefix();
 
-        // Rows held by the chunk at index i (i = Min(chunk, RampLength)); a direct table load
-        // replaces the Min+shift+div of RowsPerChunkFor on the AddRows fast path.
+        // Rows held by the chunk at index i (i = Min(chunk, RampLength)).
         private static readonly int[] s_rowsPerChunk = BuildRowsPerChunk();
 
         private readonly uint _value;
@@ -69,7 +68,7 @@ public sealed partial class SourceResultDocument
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int RowsPerChunkFor(int chunkIndex)
-            => (1 << (10 + (int)ChunkSizeFor(chunkIndex))) / DbRowSize;
+            => s_rowsPerChunk[Math.Min(chunkIndex, RampLength)];
 
         /// <summary>
         /// Create from validated (chunk,row) parts.
@@ -283,7 +282,7 @@ public sealed partial class SourceResultDocument
             for (var chunk = 0; chunk < RampLength; chunk++)
             {
                 prefix[chunk] = cumulative;
-                cumulative += RowsPerChunkFor(chunk);
+                cumulative += ComputeRowsPerChunk(chunk);
             }
 
             prefix[RampLength] = cumulative;
@@ -296,11 +295,14 @@ public sealed partial class SourceResultDocument
 
             for (var chunk = 0; chunk <= RampLength; chunk++)
             {
-                rows[chunk] = RowsPerChunkFor(chunk);
+                rows[chunk] = ComputeRowsPerChunk(chunk);
             }
 
             return rows;
         }
+
+        private static int ComputeRowsPerChunk(int chunkIndex)
+            => (1 << (10 + (int)ChunkSizeFor(chunkIndex))) / DbRowSize;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool Equals(Cursor other) => _value == other._value;
