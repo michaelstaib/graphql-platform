@@ -485,7 +485,7 @@ internal static partial class OperationPlanExecutor
                 {
                     executionState.ReleaseNode(node);
                 }
-                else
+                else if (!executionState.IsNodeSkipped(node.Id))
                 {
                     executionState.SkipNode(plan, node);
                 }
