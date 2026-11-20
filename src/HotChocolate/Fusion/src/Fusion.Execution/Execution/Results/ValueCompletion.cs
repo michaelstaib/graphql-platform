@@ -505,9 +505,19 @@ internal sealed class ValueCompletion
                 return true;
             }
 
-            if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult))
             {
+                continue;
+            }
+
+            if (fieldResult.IsInternal)
+            {
+                // A field the client did not select keeps the answer for the rows below it.
+                if (_writeFilterDocument is not null)
+                {
+                    RecordDeniedAnswer(fieldResult, error);
+                }
+
                 continue;
             }
 

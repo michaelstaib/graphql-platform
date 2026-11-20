@@ -4664,6 +4664,29 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_ItsRequirementObjectIsNotSelected()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { cANn } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string BoxSource =
         """
         type Query { userById(id: ID!): User @lookup @internal }
