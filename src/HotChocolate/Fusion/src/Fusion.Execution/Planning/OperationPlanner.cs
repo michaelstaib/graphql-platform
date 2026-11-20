@@ -3551,10 +3551,16 @@ public sealed partial class OperationPlanner
         {
             var mintedAlias = false;
 
+            // The fields of the object also conflict across the @defer fragments of its selection set.
+            var objectFields = backlog.DeferredFragments is not null
+                ? CollectObjectFields(current.InternalOperationDefinition, index, workItem.Selection.SelectionSetId)
+                : null;
+
             foreach (var selection in requirements.Selections)
             {
                 if (selection is FieldNode field
-                    && HasArgumentConflict(field, siblingSelections.Selections))
+                    && (HasArgumentConflict(field, siblingSelections.Selections)
+                        || (objectFields is not null && HasArgumentConflict(field, objectFields))))
                 {
                     requirementAliases.MintAlias(field);
                     mintedAlias = true;
@@ -4242,6 +4248,118 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+    }
+
+    private static bool ContainsDeliveryGroupFragment(IReadOnlyList<ISelectionNode> selections)
+    {
+        foreach (var selection in selections)
+        {
+            if (selection is InlineFragmentNode fragment
+                && (HasDeliveryGroup(fragment) || ContainsDeliveryGroupFragment(fragment.SelectionSet.Selections)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasDeliveryGroup(InlineFragmentNode fragment)
+    {
+        foreach (var directive in fragment.Directives)
+        {
+            if (!directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var argument in directive.Arguments)
+            {
+                if (argument.Name.Value.Equals(DocumentRewriter.DeferArguments.Group, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Returns the fields that the internal operation selects on the object that holds the selection set,
+    // through inline fragments but never below a field. Returns null when the selection set is not found
+    // or the object selects no @defer fragment.
+    private static List<FieldNode>? CollectObjectFields(
+        OperationDefinitionNode internalOperation,
+        SelectionSetIndexBuilder index,
+        uint selectionSetId)
+    {
+        if (index.TryGetOriginalIdFromCloned(selectionSetId, out var originalId))
+        {
+            selectionSetId = originalId;
+        }
+
+        var objectSelectionSet = FindObjectSelectionSet(
+            internalOperation.SelectionSet,
+            internalOperation.SelectionSet,
+            index,
+            selectionSetId);
+
+        if (objectSelectionSet is null || !ContainsDeliveryGroupFragment(objectSelectionSet.Selections))
+        {
+            return null;
+        }
+
+        var fields = new List<FieldNode>();
+        CollectFields(objectSelectionSet, fields);
+        return fields;
+
+        static void CollectFields(SelectionSetNode selectionSet, List<FieldNode> fields)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode field:
+                        fields.Add(field);
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        CollectFields(fragment.SelectionSet, fields);
+                        break;
+                }
+            }
+        }
+    }
+
+    private static SelectionSetNode? FindObjectSelectionSet(
+        SelectionSetNode selectionSet,
+        SelectionSetNode objectSelectionSet,
+        SelectionSetIndexBuilder index,
+        uint targetSelectionSetId)
+    {
+        if (index.IsRegistered(selectionSet) && index.GetId(selectionSet) == targetSelectionSetId)
+        {
+            return objectSelectionSet;
+        }
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            var found = selection switch
+            {
+                FieldNode { SelectionSet: { } fieldSelectionSet } =>
+                    FindObjectSelectionSet(fieldSelectionSet, fieldSelectionSet, index, targetSelectionSetId),
+                InlineFragmentNode fragment =>
+                    FindObjectSelectionSet(fragment.SelectionSet, objectSelectionSet, index, targetSelectionSetId),
+                _ => null
+            };
+
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private OperationDefinitionNode InlineSelectionsIntoOverallOperation(

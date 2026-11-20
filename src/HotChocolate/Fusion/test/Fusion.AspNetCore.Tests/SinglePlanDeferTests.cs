@@ -1407,6 +1407,80 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRun(run, $"x={x}");
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_TheFragmentSelectsTheFieldOfARequirementWithOtherArguments()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ product { eur ... @defer { price } } }", []);
+
+        // assert
+        MatchRunWithValues(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_TheFragmentSelectsARequirementOfAFieldOutsideIt()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ product { price ... @defer { eur } } }", []);
+
+        // assert
+        MatchRunWithValues(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_SiblingFragmentsSelectRequirementsOfOneField()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ product { ... @defer(label: \"eur\") { eur } ... @defer(label: \"usd\") { usd } } }",
+            []);
+
+        // assert
+        MatchDataWithValues(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_TheSwitchedFragmentSelectsARequirementOfAFieldOutsideIt(
+        bool v)
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "query($v: Boolean!) { product { price ... @defer(if: $v) { eur } } }",
+            new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        MatchRunWithValues(run, $"v={v}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_ShareOneRowWithTheRequirement_When_TheFragmentSelectsTheFieldWithTheSameArguments()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ product { eur ... @defer { price(cur: \"EUR\") } } }", []);
+
+        // assert
+        MatchRunWithValues(run);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -8090,6 +8164,91 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private Task<Gateway> CreateProductGatewayAsync(params string[] releaseOrder)
         => CreateGatewayAsync(releaseOrder, ("A", ProductSource), ("B", PriceSource), ("C", ReviewsSource));
 
+    // The source schemas answer price with 100, with 80 for the currency EUR and with 90 for the currency USD, so a
+    // field that reads another price than the plain twin shows in the payloads.
+    private async Task<Gateway> CreateRequirementAliasGatewayAsync(params string[] releaseOrder)
+    {
+        var gate = _gate = new ResponseGate(releaseOrder);
+        var servers = new List<(string, TestServer)>();
+        (string Name, Action<IRequestExecutorBuilder> Configure)[] sources =
+        [
+            ("A", builder => builder.AddQueryType<RequirementAliasSourceA.Query>()),
+            ("B", builder => builder.AddQueryType<RequirementAliasSourceB.Query>())
+        ];
+
+        foreach (var (name, configure) in sources)
+        {
+            HttpMessageInvoker? invoker = null;
+            var server = CreateSourceSchema(
+                name,
+                configure,
+                mockHttpResponse: async request =>
+                {
+                    await request.Content!.LoadIntoBufferAsync();
+                    var body = await request.Content.ReadAsStringAsync();
+                    await gate.EnterAsync(name, body);
+                    return await invoker!.SendAsync(request, CancellationToken.None);
+                });
+            invoker = new HttpMessageInvoker(server.CreateHandler());
+            servers.Add((name, server));
+        }
+
+        return await CreateCompositeSchemaAsync(
+            [.. servers],
+            configureApplication: app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Response.Body = new PayloadCountingStream(context.Response.Body, gate);
+                    await next(context);
+                });
+                app.UseRouting();
+                app.UseEndpoints(endpoint => endpoint.MapGraphQL());
+            },
+            configureGatewayBuilder: builder =>
+            {
+                builder
+                    .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true)
+                    .AddDiagnosticEventListener(_ => new StepDoneListener(gate));
+            });
+    }
+
+    private static class RequirementAliasSourceA
+    {
+        public class Query
+        {
+            public Product GetProduct() => new("u1");
+
+            [Lookup]
+            [Internal]
+            public Product? GetProductByUpc(string upc) => new(upc);
+        }
+
+        [EntityKey("upc")]
+        public record Product(string Upc)
+        {
+            public int? GetEur([Require("price(cur: \"EUR\")")] int? price) => price;
+
+            public int? GetUsd([Require("price(cur: \"USD\")")] int? price) => price;
+        }
+    }
+
+    private static class RequirementAliasSourceB
+    {
+        public class Query
+        {
+            [Lookup]
+            [Internal]
+            public Product? GetProductByUpc(string upc) => new(upc);
+        }
+
+        [EntityKey("upc")]
+        public record Product(string Upc)
+        {
+            public int? GetPrice(string? cur) => cur == "EUR" ? 80 : cur == "USD" ? 90 : 100;
+        }
+    }
+
     private Task<Gateway> CreateGatewayAsync(params (string Name, string Sdl)[] sources)
         => CreateGatewayAsync([], sources);
 
@@ -8580,6 +8739,31 @@ public partial class SinglePlanDeferTests : FusionTestBase
             + $"plain twin: {run.Twin.RequestSummary}",
             "Requests",
             "text");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    // The snapshot holds the merged result with the values of the scalars and the requests of both runs.
+    private static void MatchRunWithValues(TwinRun run, string? postFix = null)
+    {
+        run.AssertMatchesTwin(compareValues: true);
+
+        var snapshot = Snapshot.Create(postFix);
+        snapshot.Add(Canonical(run.Deferred.Data), "Merged data", "json");
+        snapshot.Add(
+            $"deferred: {run.Deferred.RequestSummary}" + Environment.NewLine
+            + $"plain twin: {run.Twin.RequestSummary}",
+            "Requests",
+            "text");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
+    // The snapshot holds only the merged result, for runs where the batching of the requests depends on timing.
+    private static void MatchDataWithValues(TwinRun run)
+    {
+        run.AssertMatchesTwin(compareValues: true);
+
+        var snapshot = Snapshot.Create();
+        snapshot.Add(Canonical(run.Deferred.Data), "Merged data", "json");
         snapshot.MatchMarkdownSnapshot();
     }
 

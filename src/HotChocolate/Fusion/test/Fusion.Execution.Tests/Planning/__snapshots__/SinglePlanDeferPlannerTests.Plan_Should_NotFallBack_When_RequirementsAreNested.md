@@ -303,11 +303,11 @@ operation:
           ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
-            price(cur: "EUR") @fusion__requirement
+            fusion__requirement_price_0: price(cur: "EUR") @fusion__requirement
             ... @defer(__group: 1, __parent: 0) {
               usd
               upc @fusion__requirement
-              price(cur: "USD") @fusion__requirement
+              fusion__requirement_price_1: price(cur: "USD") @fusion__requirement
             }
           }
         }
@@ -348,7 +348,7 @@ nodes:
     operation: |
       query Op_123456789101112_5($__fusion_5_upc: String!) {
         productByUpcB(upc: $__fusion_5_upc) {
-          price(cur: "EUR")
+          fusion__requirement_price_0: price(cur: "EUR")
         }
       }
     source: $.productByUpcB
@@ -368,7 +368,7 @@ nodes:
     operation: |
       query Op_123456789101112_9($__fusion_10_upc: String!) {
         productByUpcB(upc: $__fusion_10_upc) {
-          price(cur: "USD")
+          fusion__requirement_price_1: price(cur: "USD")
         }
       }
     source: $.productByUpcB
@@ -396,6 +396,7 @@ nodes:
     batchingGroupId: 12
     requirements:
       - name: __fusion_3_price
+        internalAlias: fusion__requirement_price_0
         selectionMap: >-
           price(cur: "EUR")
       - name: __fusion_4_upc
@@ -420,6 +421,7 @@ nodes:
     batchingGroupId: 12
     requirements:
       - name: __fusion_8_price
+        internalAlias: fusion__requirement_price_1
         selectionMap: >-
           price(cur: "USD")
       - name: __fusion_9_upc

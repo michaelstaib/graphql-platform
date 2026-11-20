@@ -15,13 +15,14 @@ operation:
           ... @defer(__group: 0, __parent: -1) {
             both
             upc @fusion__requirement
-            price(cur: "EUR", tax: true) @fusion__requirement
+            fusion__requirement_price_1: price(cur: "EUR", tax: true)
+              @fusion__requirement
           }
         }
       }
     hash: 123456789101112
     searchSpace: 3
-    expandedNodes: 20
+    expandedNodes: 19
 nodes:
   - id: 1
     type: Operation
@@ -60,7 +61,26 @@ nodes:
         selectionMap: >-
           price(cur: "EUR")
     dependencies:
-      - id: 9
+      - id: 1
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_3_upc: String!) {
+        productByUpcB(upc: $__fusion_3_upc) {
+          price(cur: "USD")
+          fusion__requirement_price_0: price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    requirements:
+      - name: __fusion_3_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
   - id: 6
     type: Operation
     schema: a
@@ -74,6 +94,7 @@ nodes:
     target: $.products
     requirements:
       - name: __fusion_7_price
+        internalAlias: fusion__requirement_price_1
         selectionMap: >-
           price(cur: "EUR", tax: true)
       - name: __fusion_8_upc
@@ -90,7 +111,7 @@ nodes:
     operation: |
       query Op_123456789101112_7($__fusion_9_upc: String!) {
         productByUpcB(upc: $__fusion_9_upc) {
-          price(cur: "EUR", tax: true)
+          fusion__requirement_price_1: price(cur: "EUR", tax: true)
         }
       }
     source: $.productByUpcB
@@ -101,43 +122,6 @@ nodes:
           upc
     deliveryGroups:
       - 0
-    dependencies:
-      - id: 1
-  - id: 3
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_3($__fusion_3_upc: String!) {
-        productByUpcB(upc: $__fusion_3_upc) {
-          price(cur: "USD")
-        }
-      }
-    source: $.productByUpcB
-    target: $.products
-    batchingGroupId: 9
-    requirements:
-      - name: __fusion_3_upc
-        selectionMap: >-
-          upc
-    dependencies:
-      - id: 1
-  - id: 4
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_4($__fusion_4_upc: String!) {
-        productByUpcB(upc: $__fusion_4_upc) {
-          upc
-          fusion__requirement_price_0: price(cur: "EUR")
-        }
-      }
-    source: $.productByUpcB
-    target: $.products
-    batchingGroupId: 9
-    requirements:
-      - name: __fusion_4_upc
-        selectionMap: >-
-          upc
     dependencies:
       - id: 1
 deliveryGroups:
@@ -159,7 +143,7 @@ operation:
           ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
-            price(cur: "EUR") @fusion__requirement
+            fusion__requirement_price_0: price(cur: "EUR") @fusion__requirement
           }
         }
       }
@@ -227,6 +211,7 @@ nodes:
     target: $.products
     requirements:
       - name: __fusion_6_price
+        internalAlias: fusion__requirement_price_0
         selectionMap: >-
           price(cur: "EUR")
       - name: __fusion_7_upc
@@ -243,7 +228,7 @@ nodes:
     operation: |
       query Op_123456789101112_7($__fusion_8_upc: String!) {
         productByUpcB(upc: $__fusion_8_upc) {
-          price(cur: "EUR")
+          fusion__requirement_price_0: price(cur: "EUR")
         }
       }
     source: $.productByUpcB
@@ -349,7 +334,7 @@ operation:
           ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
-            price(cur: "EUR") @fusion__requirement
+            fusion__requirement_price_0: price(cur: "EUR") @fusion__requirement
           }
           ... @defer(__group: 1, __parent: -1) {
             usd
@@ -397,7 +382,7 @@ nodes:
     operation: |
       query Op_123456789101112_8($__fusion_9_upc: String!) {
         productByUpcB(upc: $__fusion_9_upc) {
-          price(cur: "EUR")
+          fusion__requirement_price_0: price(cur: "EUR")
         }
       }
     source: $.productByUpcB
@@ -449,6 +434,7 @@ nodes:
     batchingGroupId: 11
     requirements:
       - name: __fusion_7_price
+        internalAlias: fusion__requirement_price_0
         selectionMap: >-
           price(cur: "EUR")
       - name: __fusion_8_upc
@@ -649,7 +635,7 @@ operation:
           ... @defer(__group: 0, __parent: -1) {
             eur
             upc @fusion__requirement
-            price(cur: "EUR") @fusion__requirement
+            fusion__requirement_price_0: price(cur: "EUR") @fusion__requirement
           }
         }
       }
@@ -696,6 +682,7 @@ nodes:
     target: $.products
     requirements:
       - name: __fusion_3_price
+        internalAlias: fusion__requirement_price_0
         selectionMap: >-
           price(cur: "EUR")
       - name: __fusion_4_upc
@@ -712,7 +699,7 @@ nodes:
     operation: |
       query Op_123456789101112_5($__fusion_5_upc: String!) {
         productByUpcB(upc: $__fusion_5_upc) {
-          price(cur: "EUR")
+          fusion__requirement_price_0: price(cur: "EUR")
         }
       }
     source: $.productByUpcB

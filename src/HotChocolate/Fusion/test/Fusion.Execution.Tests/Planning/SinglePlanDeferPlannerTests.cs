@@ -681,6 +681,78 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_AliasTheRequirement_When_TheFragmentSelectsTheFieldWithOtherArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ product { eur ... @defer { price } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_AliasTheRequirement_When_TheFieldWithOtherArgumentsIsOutsideTheFragment()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ product { price ... @defer { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_AliasTheLaterRequirement_When_SiblingFragmentsRequireTheFieldWithOtherArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ product { ... @defer { eur } ... @defer { usd } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_AliasTheRequirementOfBothCopies_When_TheSwitchedFragmentHoldsTheRequirement()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            "query($v: Boolean!) { product { price ... @defer(if: $v) { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_NotAliasTheRequirement_When_TheFragmentSelectsTheFieldWithTheSameArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(schema, "{ product { eur ... @defer { price(cur: \"EUR\") } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MergeTheOuterSteps_When_UnlabelledSiblingsHoldTheSameNestedFragment()
     {
         // arrange
