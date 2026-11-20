@@ -613,6 +613,196 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task Defer_Should_DeliverTheInitialField_When_NestedFragmentsSelectFieldsThatRequireFromOneSource(
+        bool a)
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<RequirementUserRootSource.Query>()),
+            ("D", builder => builder.AddQueryType<RequirementUserSkuWeightSource.Query>()),
+            ("B", builder => builder.AddQueryType<RequirementUserSkuShippingSource.Query>()),
+            ("E", builder => builder.AddQueryType<RequirementUserSkuTaxSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!) {
+                user { shipping ... @defer(if: $a) { tax ... @defer { shipping tax } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a });
+
+        // assert
+        MatchRunWithPayloadValues(run, $"a={a}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheInitialField_When_TheSwitchSelectsAFieldThatRequiresFromTheSameSource(
+        bool a)
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<RequirementUserRootSource.Query>()),
+            ("D", builder => builder.AddQueryType<RequirementUserIdWeightSource.Query>()),
+            ("B", builder => builder.AddQueryType<RequirementUserIdShippingSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!) {
+                user { shipping ... @defer(if: $a) { tax } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a });
+
+        // assert
+        MatchRunWithPayloadValues(run, $"a={a}");
+    }
+
+    // The source schemas answer shipping with 1000 plus the weight and tax with 2000 plus the total, so a field that
+    // reads another weight or total than the plain twin shows in the payloads. The weight is ten times the id.
+    private async Task<Gateway> CreateRequirementUserGatewayAsync(
+        params (string Name, Action<IRequestExecutorBuilder> Configure)[] sources)
+    {
+        var gate = _gate = new ResponseGate([]);
+        var servers = new List<(string, TestServer)>();
+
+        foreach (var (name, configure) in sources)
+        {
+            HttpMessageInvoker? invoker = null;
+            var server = CreateSourceSchema(
+                name,
+                configure,
+                mockHttpResponse: async request =>
+                {
+                    await request.Content!.LoadIntoBufferAsync();
+                    var body = await request.Content.ReadAsStringAsync();
+                    await gate.EnterAsync(name, body);
+                    return await invoker!.SendAsync(request, CancellationToken.None);
+                });
+            invoker = new HttpMessageInvoker(server.CreateHandler());
+            servers.Add((name, server));
+        }
+
+        return await CreateCompositeSchemaAsync(
+            [.. servers],
+            configureApplication: app =>
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Response.Body = new PayloadCountingStream(context.Response.Body, gate);
+                    await next(context);
+                });
+                app.UseRouting();
+                app.UseEndpoints(endpoint => endpoint.MapGraphQL());
+            },
+            configureGatewayBuilder: builder =>
+            {
+                builder
+                    .ModifyPlannerOptions(options => options.EnableSinglePlanDefer = true)
+                    .AddDiagnosticEventListener(_ => new StepDoneListener(gate));
+            });
+    }
+
+    public static class RequirementUserRootSource
+    {
+        public class Query
+        {
+            public User GetUser() => new(1);
+
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id);
+    }
+
+    public static class RequirementUserSkuWeightSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            [Shareable]
+            public string Sku => "sku-" + Id;
+
+            public int Weight => Id * 10;
+        }
+    }
+
+    public static class RequirementUserSkuShippingSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserBySku(string sku) => new(sku);
+        }
+
+        public record User([property: Shareable] string Sku)
+        {
+            public int Total => 100 + int.Parse(Sku[(Sku.LastIndexOf('-') + 1)..]);
+
+            public int? GetShipping([Require("weight")] int? weight) => weight is null ? null : 1000 + weight;
+        }
+    }
+
+    public static class RequirementUserSkuTaxSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserBySku(string sku) => new(sku);
+        }
+
+        public record User([property: Shareable] string Sku)
+        {
+            public int? GetTax([Require("total")] int? total) => total is null ? null : 2000 + total;
+        }
+    }
+
+    public static class RequirementUserIdWeightSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int Weight => Id * 10;
+
+            public int Total => 100 + Id;
+        }
+    }
+
+    public static class RequirementUserIdShippingSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public int? GetShipping([Require("weight")] int? weight) => weight is null ? null : 1000 + weight;
+
+            public int? GetTax([Require("total")] int? total) => total is null ? null : 2000 + total;
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task Defer_Should_DeliverTheMergedLookupOfTwoTargets_When_ItTakesItsKeysFromOneStep(bool b)
     {
         // arrange
@@ -5890,7 +6080,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRunWithPayloadValues(run);
+        MatchRunWithPayloadValues(run, null);
     }
 
     [Fact]
@@ -5908,7 +6098,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRunWithPayloadValues(run);
+        MatchRunWithPayloadValues(run, null);
     }
 
     [Fact]
@@ -5930,15 +6120,15 @@ public partial class SinglePlanDeferTests : FusionTestBase
             []);
 
         // assert
-        MatchRunWithPayloadValues(run);
+        MatchRunWithPayloadValues(run, null);
     }
 
     // Matches the payloads with the values of the source schemas, and the request counts of the run and its twin.
-    private static void MatchRunWithPayloadValues(TwinRun run)
+    private static void MatchRunWithPayloadValues(TwinRun run, string? postFix)
     {
         run.AssertMatchesTwin(compareValues: true);
 
-        var snapshot = Snapshot.Create();
+        var snapshot = Snapshot.Create(postFix);
 
         for (var i = 0; i < run.Deferred.Payloads.Count; i++)
         {

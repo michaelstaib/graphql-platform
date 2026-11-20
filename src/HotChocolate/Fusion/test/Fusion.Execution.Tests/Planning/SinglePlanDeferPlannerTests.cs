@@ -1431,6 +1431,46 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_KeepTheRequirementOutOfTheStepOfTheSwitch_When_TheSwitchSelectsAFieldOfTheSameSource()
+    {
+        // arrange
+        var schema = ComposeSchema(SharedKeyUserRootSchema, IdKeyWeightTotalSchema, IdKeyShippingTaxSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                user { shipping ... @defer(if: $a) { tax } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepThePlanOfAnOperationWithoutDefer_When_ARequirementMeetsAStepWithAnotherCondition()
+    {
+        // arrange
+        var schema = ComposeSchema(SharedKeyUserRootSchema, IdKeyWeightTotalSchema, IdKeyShippingTaxSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                user { shipping tax @skip(if: $a) }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MarkRequirementSteps_When_DeferredGroupReadsRequirementOfSchemaTwo()
     {
         // arrange
@@ -3309,6 +3349,34 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             sku: String! @shareable
             total: Int!
             shipping(weight: Int @require(field: "weight")): Int
+        }
+        """;
+
+    private const string IdKeyWeightTotalSchema =
+        """
+        # name: d
+        type Query {
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            weight: Int!
+            total: Int!
+        }
+        """;
+
+    private const string IdKeyShippingTaxSchema =
+        """
+        # name: b
+        type Query {
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            shipping(weight: Int @require(field: "weight")): Int
+            tax(total: Int @require(field: "total")): Int
         }
         """;
 
