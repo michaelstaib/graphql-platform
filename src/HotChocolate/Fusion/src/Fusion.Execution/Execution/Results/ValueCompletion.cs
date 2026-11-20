@@ -512,10 +512,13 @@ internal sealed class ValueCompletion
 
             if (fieldResult.IsInternal)
             {
-                // A field the client did not select keeps the answer for the rows below it.
-                if (_writeFilterDocument is not null)
+                // A field the client did not select keeps the answer for the rows below it and for the fields that
+                // require it.
+                if (_writeFilterDocument is not null
+                    && !fieldResult.IsNullOrInvalidated
+                    && fieldResult.ValueKind is JsonValueKind.Undefined or JsonValueKind.Object or JsonValueKind.Array)
                 {
-                    RecordDeniedAnswer(fieldResult, error);
+                    _writeFilterDocument.Delivery!.AddDeniedAnswer(fieldResult.Cursor, _writeFilterGroups, error);
                 }
 
                 continue;

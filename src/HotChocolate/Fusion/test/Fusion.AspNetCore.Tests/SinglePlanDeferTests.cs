@@ -5007,6 +5007,233 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    private const string RequiredLeafSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! x: String! }
+        """;
+
+    private const string LeafRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            cX(x: String @require(field: "x")): String
+            nnX(x: String @require(field: "x")): String!
+        }
+        """;
+
+    private const string InnerEntityListSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inners: [Inner] }
+        type Inner @key(fields: "id") { id: ID! a: String! c: String }
+        """;
+
+    private const string InnerEntityLeafSource =
+        """
+        type Query { innerById(id: ID!): Inner @lookup @internal }
+        type Inner @key(fields: "id") { id: ID! z: String! }
+        """;
+
+    private const string InnerEntityListRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            gO(o: [AZInput] @require(field: "inners[{ a: a, z: z }]")): String
+        }
+        input AZInput { a: String z: String }
+        """;
+
+    // The source schema B answers null with the error "B failed" for the user that has x, of a list only for the
+    // second user.
+    private static string FailTheUserWithX(string schema, string body, string text)
+        => schema is "B"
+            ? UserWithX().Replace(
+                text,
+                """{$1"errors":[{"message":"B failed","path":["userById","x"]}],"data":{"userById":null}}""")
+            : text;
+
+    [GeneratedRegex("""(?m)^\{("variableIndex":1,)?"data":\{"userById":\{"x":"[^"]*"\}\}\}""")]
+    private static partial Regex UserWithX();
+
+    // The source schema F answers null with the error "F failed 0" for the first inner that has z.
+    private static string FailTheFirstInnerWithZ(string schema, string body, string text)
+        => schema is "F"
+            ? FirstInnerWithZ().Replace(
+                text,
+                """{"variableIndex":0,"errors":[{"message":"F failed 0","path":["innerById","z"]}]"""
+                + ""","data":{"innerById":null}}""")
+            : text;
+
+    [GeneratedRegex("""(?m)^\{"variableIndex":0,"data":\{"innerById":\{"z":"[^"]*"\}\}\}""")]
+    private static partial Regex FirstInnerWithZ();
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_ItsRequiredLeafIsNotSelected()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheUserWithX,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", RequiredLeafSource),
+            ("C", LeafRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { cX } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ANonNullFieldLacksAnUnselectedLeaf()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheUserWithX,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", RequiredLeafSource),
+            ("C", LeafRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { nnX } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnlyWithTheEntityOfTheAnswer_When_OneEntityLacksItsRequiredLeaf()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheUserWithX,
+            failingSchema: null,
+            configure: null,
+            ("A", UserListNickSource),
+            ("B", RequiredLeafSource),
+            ("C", LeafRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ users { nick ... @defer { cX } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_AnEntityOfItsRequiredListLacksALeaf()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheFirstInnerWithZ,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerEntityListSource),
+            ("F", InnerEntityLeafSource),
+            ("G", InnerEntityListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inners { c } ... @defer { gO } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithOneError_When_ItSelectsTheLeafThatItsFieldRequires()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheUserWithX,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", RequiredLeafSource),
+            ("C", LeafRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { x cX } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_AnInitialFieldAlsoRequiresItsObject()
+    {
+        // arrange
+        // cCNn of the initial payload requires innerNn.c, so innerNn holds an object when the fragment's answer fails
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource),
+            ("D", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick cCNn ... @defer { cANn } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheStepErrorWithTheDependentField_When_TheStepOfItsUnselectedRequirementFails()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { cANn } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     // The source schema A answers null for the first id and the same name for every product.
     private static string NullTheFirstId(string schema, string body, string text)
         => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)
