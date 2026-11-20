@@ -113,7 +113,8 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
                     httpRequest,
                     context,
                     request.Node,
-                    _configuration);
+                    _configuration,
+                    _client);
 
                 httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
                 context.TrackTransport(request.Node, httpRequest.Uri, httpResponse.RawContentType);
@@ -198,7 +199,12 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
                 requests,
                 requiresFileUpload,
                 ref buffer);
-            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, requests[0].Node, _configuration);
+            SourceSchemaCallbackHelper.ConfigureCallbacks(
+                httpRequest,
+                context,
+                requests[0].Node,
+                _configuration,
+                _client);
 
             var results = ExecuteBatchStreamAsync(context, requests, httpRequest, buffer, cancellationToken);
 
@@ -235,7 +241,7 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
         try
         {
             var httpRequest = CreateHttpRequest(context, in request, ref buffer);
-            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration);
+            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration, _client);
 
             httpResponse = await _client.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             context.TrackTransport(request.Node, httpRequest.Uri, httpResponse.RawContentType);

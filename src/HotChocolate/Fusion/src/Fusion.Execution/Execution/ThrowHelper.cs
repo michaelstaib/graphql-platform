@@ -187,6 +187,15 @@ internal static class ThrowHelper
     public static InvalidOperationException ApolloLookupOperationMissing(int stepId)
         => new($"The original Apollo lookup operation for execution step {stepId} is missing.");
 
+    public static ArgumentException PropagatedHeaderNameInvalid(string? headerName, string paramName)
+        => new($"'{headerName}' is not a valid HTTP header name.", paramName);
+
+    public static ArgumentException PropagatedHeaderNotAllowed(string headerName, string paramName)
+        => new(
+            $"The header '{headerName}' describes the body or the connection of a single request "
+            + "and cannot be copied to source schema requests.",
+            paramName);
+
     public static InvalidOperationException ApolloEntityFetchProducedMultipleResults()
         => new("Apollo entity fetches must produce a single source schema result.");
 
