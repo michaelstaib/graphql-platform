@@ -733,8 +733,6 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRunWithPayloadValues(run, $"a={a}, b={b}, c={c}");
     }
 
-    // The source schemas answer shipping with 1000 plus the weight and tax with 2000 plus the total, so a field that
-    // reads another weight or total than the plain twin shows in the payloads. The weight is ten times the id.
     private async Task<Gateway> CreateRequirementUserGatewayAsync(
         params (string Name, Action<IRequestExecutorBuilder> Configure)[] sources)
     {
@@ -778,6 +776,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
             });
     }
 
+    // The RequirementUser sources answer shipping with 1000 plus the weight and tax with 2000 plus the total.
+    // The weight is ten times the id.
     public static class RequirementUserRootSource
     {
         public class Query
