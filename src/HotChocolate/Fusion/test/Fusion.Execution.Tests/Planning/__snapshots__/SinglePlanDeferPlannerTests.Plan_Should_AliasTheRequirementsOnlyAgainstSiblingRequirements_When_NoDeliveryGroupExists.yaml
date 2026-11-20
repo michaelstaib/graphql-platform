@@ -1,0 +1,100 @@
+operation:
+  - document: |
+      {
+        products {
+          upc
+          upc @fusion__requirement
+          eur
+          usd
+          both
+          price(cur: "EUR", tax: true) @fusion__requirement
+          fusion__requirement_price_0: price(cur: "USD") @fusion__requirement
+          fusion__requirement_price_1: price(cur: "EUR") @fusion__requirement
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 9
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        products {
+          upc
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2(
+        $__fusion_1_price: Int
+        $__fusion_2_upc: String!
+        $__fusion_5_price: Int
+        $__fusion_6_price: Int
+      ) {
+        productByUpc(upc: $__fusion_2_upc) {
+          both(price: $__fusion_1_price)
+          usd(price: $__fusion_5_price)
+          eur(price: $__fusion_6_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    requirements:
+      - name: __fusion_1_price
+        selectionMap: >-
+          price(cur: "EUR", tax: true)
+      - name: __fusion_2_upc
+        selectionMap: >-
+          upc
+      - name: __fusion_5_price
+        internalAlias: fusion__requirement_price_0
+        selectionMap: >-
+          price(cur: "USD")
+      - name: __fusion_6_price
+        internalAlias: fusion__requirement_price_1
+        selectionMap: >-
+          price(cur: "EUR")
+    dependencies:
+      - id: 5
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_3_upc: String!) {
+        productByUpcB(upc: $__fusion_3_upc) {
+          price(cur: "EUR", tax: true)
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 5
+    requirements:
+      - name: __fusion_3_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_4_upc: String!) {
+        productByUpcB(upc: $__fusion_4_upc) {
+          upc
+          fusion__requirement_price_0: price(cur: "USD")
+          fusion__requirement_price_1: price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 5
+    requirements:
+      - name: __fusion_4_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1

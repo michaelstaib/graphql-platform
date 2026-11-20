@@ -4302,7 +4302,8 @@ public sealed partial class OperationPlanner
     }
 
     // Returns the fields that the internal operation selects on the response object of the selection set, in
-    // every field node with the same response path and through the inline fragments that can apply to the type.
+    // every field node with the same response path. Inline fragments on the path are followed whatever their type
+    // condition, and inline fragments of the last selection set only when they can apply to the type.
     // Returns null when the selection set is not found.
     private List<FieldNode>? CollectObjectFields(
         OperationDefinitionNode internalOperation,

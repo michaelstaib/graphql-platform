@@ -797,13 +797,13 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_AliasTheRequirement_When_AnOperationWithoutDeliveryGroupSelectsTheFieldNodesTwice()
+    public void Plan_Should_AliasTheRequirementsOnlyAgainstSiblingRequirements_When_NoDeliveryGroupExists()
     {
         // arrange
         var schema = ComposeSchema(CatalogSchema, PriceListSchema);
 
         // act
-        var result = Plan(schema, "{ products { upc related { price } related { eur } } }");
+        var result = Plan(schema, "{ products { upc eur usd both } }");
 
         // assert
         Assert.Empty(result.Fallbacks);
