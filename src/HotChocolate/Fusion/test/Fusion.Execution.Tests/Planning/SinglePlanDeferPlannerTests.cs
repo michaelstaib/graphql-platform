@@ -1168,6 +1168,36 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_PlanNestedSwitchesWithinTheBudget_When_TheKeyFieldIsShareableInTheLookupSchema()
+    {
+        // arrange
+        var schema = ComposeSchema(SharedKeyUserRootSchema, SharedKeyUserSkuSchema, SharedKeyUserTotalSchema);
+        var options = new OperationPlannerOptions { EnableSinglePlanDefer = true, MaxExpandedNodes = 2000 };
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                user {
+                    ... @defer(if: $a) {
+                        ... @defer(if: $b) {
+                            ... @defer(if: $c) { sku total }
+                        }
+                    }
+                }
+            }
+
+            """,
+            options,
+            "123456789101112");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MarkRequirementSteps_When_DeferredGroupReadsRequirementOfSchemaTwo()
     {
         // arrange
@@ -2979,6 +3009,45 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         type Carrier @key(fields: "id") {
             id: ID!
             rating: Int!
+        }
+        """;
+
+    private const string SharedKeyUserRootSchema =
+        """
+        # name: a
+        type Query {
+            user: User!
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+        }
+        """;
+
+    private const string SharedKeyUserSkuSchema =
+        """
+        # name: d
+        type Query {
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            sku: String! @shareable
+        }
+        """;
+
+    private const string SharedKeyUserTotalSchema =
+        """
+        # name: b
+        type Query {
+            userBySku(sku: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "sku") {
+            sku: String! @shareable
+            total: Int!
         }
         """;
 
