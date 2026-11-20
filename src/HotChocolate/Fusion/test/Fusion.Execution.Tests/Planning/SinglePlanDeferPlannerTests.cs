@@ -1471,6 +1471,56 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_ExpandFewNodes_When_ThreeNestedSwitchesSelectAFieldThatRequiresTheWeight()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            SharedKeyUserRootSchema,
+            SharedKeyUserWeightSchema,
+            SharedKeyUserShippingSchema,
+            SharedKeyUserTaxSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                user { ... @defer(if: $a) { ... @defer(if: $b) { ... @defer(if: $c) { shipping } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        Assert.True(result.Plan.ExpandedNodes < 200);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_ExpandFewNodes_When_ThreeNestedSwitchesSelectAFieldThatRequiresTheTotal()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            SharedKeyUserRootSchema,
+            SharedKeyUserWeightSchema,
+            SharedKeyUserShippingSchema,
+            SharedKeyUserTaxSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                user { ... @defer(if: $a) { ... @defer(if: $b) { ... @defer(if: $c) { tax } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        Assert.True(result.Plan.ExpandedNodes < 200);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MarkRequirementSteps_When_DeferredGroupReadsRequirementOfSchemaTwo()
     {
         // arrange
@@ -3349,6 +3399,19 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             sku: String! @shareable
             total: Int!
             shipping(weight: Int @require(field: "weight")): Int
+        }
+        """;
+
+    private const string SharedKeyUserTaxSchema =
+        """
+        # name: e
+        type Query {
+            userBySku(sku: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "sku") {
+            sku: String! @shareable
+            tax(total: Int @require(field: "total")): Int
         }
         """;
 

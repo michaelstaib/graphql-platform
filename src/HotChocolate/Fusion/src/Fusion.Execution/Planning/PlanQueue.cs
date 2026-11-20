@@ -150,6 +150,11 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
             && candidateSchemas is [(var soleSchema, _)]
             && soleSchema.Equals(workItem.FromSchema, StringComparison.Ordinal);
 
+        // A lookup of a delivery group that selects only its own key is not enqueued when
+        // another candidate schema of the work item has a lookup that does not.
+        var mayDropSelfCyclicLookups = !workItem.DeliveryGroups.IsDefaultOrEmpty && !workItem.Dependents.IsEmpty;
+        bool? hasResolvingLookup = null;
+
         // Each branch starts from the same popped template and mutates a local copy
         // of backlog state. This avoids recomputing backlog shape from collections
         // for every candidate.
@@ -168,6 +173,23 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
                 toSchema,
                 out var bestLookup))
             {
+                var isSelfCyclic = IsSelfCyclicLookup(workItem, bestLookup);
+
+                if (isSelfCyclic && mayDropSelfCyclicLookups)
+                {
+                    hasResolvingLookup ??= HasResolvingLookup(
+                        workItem,
+                        type,
+                        allCandidateSchemas,
+                        candidateSchemas,
+                        onlyCandidateIsExcludedSelf);
+
+                    if (hasResolvingLookup.Value)
+                    {
+                        continue;
+                    }
+                }
+
                 var lookupWorkItem = workItem with { Lookup = bestLookup };
                 var branchBacklog = backlog.Push(lookupWorkItem);
                 var branchRemainingCost = EstimateRemainingCost(planNodeTemplate, branchBacklog);
@@ -183,7 +205,7 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
                 // asked to produce, so it cannot bootstrap that key on its own. In that case we do
                 // not let it suppress the parent-path walk: the parent path can supply the key from
                 // an enclosing entity, which yields an acyclic plan.
-                if (IsSelfCyclicLookup(workItem, bestLookup))
+                if (isSelfCyclic)
                 {
                     EnqueueParentPathLookupPlanNodes(planNodeTemplate, workItem, backlog, toSchema, resolutionCost);
                 }
@@ -194,6 +216,23 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
             var hasEnqueuedResolvingDirectLookup = false;
             foreach (var lookup in schema.GetPossibleLookupsOrdered(workItem.SelectionSet.Type, toSchema))
             {
+                var isSelfCyclic = IsSelfCyclicLookup(workItem, lookup);
+
+                if (isSelfCyclic && mayDropSelfCyclicLookups)
+                {
+                    hasResolvingLookup ??= HasResolvingLookup(
+                        workItem,
+                        type,
+                        allCandidateSchemas,
+                        candidateSchemas,
+                        onlyCandidateIsExcludedSelf);
+
+                    if (hasResolvingLookup.Value)
+                    {
+                        continue;
+                    }
+                }
+
                 var lookupWorkItem = workItem with { Lookup = lookup };
                 var branchBacklog = backlog.Push(lookupWorkItem);
                 var branchRemainingCost = EstimateRemainingCost(planNodeTemplate, branchBacklog);
@@ -207,7 +246,7 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
 
                 // A self-cyclic lookup makes no progress on its own (see above), so it does not
                 // count as a resolving direct lookup that can suppress the parent-path walk.
-                if (!IsSelfCyclicLookup(workItem, lookup))
+                if (!isSelfCyclic)
                 {
                     hasEnqueuedResolvingDirectLookup = true;
                 }
@@ -221,6 +260,49 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
                 EnqueueParentPathLookupPlanNodes(planNodeTemplate, workItem, backlog, toSchema, resolutionCost);
             }
         }
+    }
+
+    // Determines whether a candidate schema of the work item has a lookup that is not self-cyclic.
+    private bool HasResolvingLookup(
+        OperationWorkItem workItem,
+        FusionComplexTypeDefinition type,
+        ImmutableHashSet<string> allCandidateSchemas,
+        (string SchemaName, double Cost)[] candidateSchemas,
+        bool onlyCandidateIsExcludedSelf)
+    {
+        foreach (var (toSchema, _) in candidateSchemas)
+        {
+            if (!workItem.AllowSourceSchemaReentry
+                && toSchema.Equals(workItem.FromSchema, StringComparison.Ordinal)
+                && !onlyCandidateIsExcludedSelf)
+            {
+                continue;
+            }
+
+            if (schema.TryGetBestDirectLookup(
+                type,
+                allCandidateSchemas.Remove(toSchema),
+                toSchema,
+                out var bestLookup))
+            {
+                if (!IsSelfCyclicLookup(workItem, bestLookup))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            foreach (var lookup in schema.GetPossibleLookupsOrdered(workItem.SelectionSet.Type, toSchema))
+            {
+                if (!IsSelfCyclicLookup(workItem, lookup))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

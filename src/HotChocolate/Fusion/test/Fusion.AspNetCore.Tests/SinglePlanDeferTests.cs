@@ -663,6 +663,76 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRunWithPayloadValues(run, $"a={a}");
     }
 
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, false, false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_ThreeNestedSwitchesSelectAFieldThatRequiresTheWeight(
+        bool a,
+        bool b,
+        bool c)
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<RequirementUserRootSource.Query>()),
+            ("D", builder => builder.AddQueryType<RequirementUserSkuWeightSource.Query>()),
+            ("B", builder => builder.AddQueryType<RequirementUserSkuShippingSource.Query>()),
+            ("E", builder => builder.AddQueryType<RequirementUserSkuTaxSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                user { ... @defer(if: $a) { ... @defer(if: $b) { ... @defer(if: $c) { shipping } } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b, ["c"] = c });
+
+        // assert
+        MatchRunWithPayloadValues(run, $"a={a}, b={b}, c={c}");
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, false, false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_ThreeNestedSwitchesSelectAFieldThatRequiresTheTotal(
+        bool a,
+        bool b,
+        bool c)
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<RequirementUserRootSource.Query>()),
+            ("D", builder => builder.AddQueryType<RequirementUserSkuWeightSource.Query>()),
+            ("B", builder => builder.AddQueryType<RequirementUserSkuShippingSource.Query>()),
+            ("E", builder => builder.AddQueryType<RequirementUserSkuTaxSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                user { ... @defer(if: $a) { ... @defer(if: $b) { ... @defer(if: $c) { tax } } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b, ["c"] = c });
+
+        // assert
+        MatchRunWithPayloadValues(run, $"a={a}, b={b}, c={c}");
+    }
+
     // The source schemas answer shipping with 1000 plus the weight and tax with 2000 plus the total, so a field that
     // reads another weight or total than the plain twin shows in the payloads. The weight is ten times the id.
     private async Task<Gateway> CreateRequirementUserGatewayAsync(
