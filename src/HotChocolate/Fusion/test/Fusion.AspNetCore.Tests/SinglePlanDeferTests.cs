@@ -4900,6 +4900,113 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    private const string InnerListSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inners: [Inner] }
+        type Inner { a: String! c: String }
+        """;
+
+    private const string InnerListRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! gL(a: [String] @require(field: "inners[a]")): String }
+        """;
+
+    // The source schema B answers null with the error "B failed 1" for the second element of inners.
+    private static string FailTheSecondInner(string schema, string body, string text)
+        => schema is "B"
+            ? InnersWithA().Replace(
+                text,
+                """{"errors":[{"message":"B failed 1","path":["userById","inners",1,"a"]}],"data":$1$2,null,$4""")
+            : text;
+
+    // The source schema B answers null for the first and the third element of inners with the errors "B failed 0"
+    // and "B failed 2", and lists the error of the third element first.
+    private static string FailTheFirstAndThirdInner(string schema, string body, string text)
+        => schema is "B"
+            ? InnersWithA().Replace(
+                text,
+                """{"errors":[{"message":"B failed 2","path":["userById","inners",2,"a"]},"""
+                + """{"message":"B failed 0","path":["userById","inners",0,"a"]}],"data":$1null,$3,null""")
+            : text;
+
+    // The source schema B answers null without an error for the second element of inners.
+    private static string NullTheSecondInner(string schema, string body, string text)
+        => schema is "B" ? InnersWithA().Replace(text, """{"data":$1$2,null,$4""") : text;
+
+    [GeneratedRegex("""^\{"data":(\{"userById":\{"inners":\[)(\{"a":"[^"]*"\}),(\{"a":"[^"]*"\}),(\{"a":"[^"]*"\})""")]
+    private static partial Regex InnersWithA();
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheDependentField_When_AnElementOfItsRequiredListWasDenied()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            FailTheSecondInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inners { c } ... @defer { gL } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOfTheFirstElement_When_TwoElementsOfItsRequiredListWereDenied()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            FailTheFirstAndThirdInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inners { c } ... @defer { gL } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNullWithoutAnError_When_AnElementOfItsRequiredListIsNullWithoutAnError()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            NullTheSecondInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inners { c } ... @defer { gL } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     // The source schema A answers null for the first id and the same name for every product.
     private static string NullTheFirstId(string schema, string body, string text)
         => schema is "A" && !body.Contains("__fusion", StringComparison.Ordinal)

@@ -462,8 +462,8 @@ internal sealed partial class SinglePlanDeliveryState
     /// Completes the selected rows of the instance that no step wrote and no open step can still write by their
     /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
     /// <c>null</c> reaches the anchor. A row that a failed step of the group left carries the error of the step, and
-    /// a row whose field lacks a required value because the answer for it was denied with an error carries that
-    /// error.
+    /// a row whose step lacks a required value because the answer for it was denied with an error carries that
+    /// error, the error for a requirement of its own field first.
     /// </summary>
     /// <returns><c>true</c> when an open step can still write a row of the instance.</returns>
     public bool CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
@@ -627,7 +627,8 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     // Gets the error of the denied answer below the entity for a value that the requirement reads and that holds a
-    // row without a result. Of several answers the one for the selection with the lowest id is taken.
+    // row without a result. Of several answers the one for the selection with the lowest id is taken, and of
+    // several for one selection the first recorded.
     private IError? GetDeniedError(
         CompositeResultDocument document,
         int group,
@@ -654,8 +655,15 @@ internal sealed partial class SinglePlanDeliveryState
             }
 
             var denied = new CompositeResultElement(document, answer.Container);
+            var field = denied;
 
-            if (denied.Selection is { } deniedSelection
+            // An element of a list has the selection of the field that holds the list.
+            while (field.Selection is null && !field.IsRoot)
+            {
+                field = field.Parent;
+            }
+
+            if (field.Selection is { } deniedSelection
                 && deniedSelection.Id < lowest
                 && read.Contains(deniedSelection.Id)
                 && IsBelow(denied, entity)
