@@ -2670,6 +2670,118 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_PlanAPartPerTypeBranch_When_ANestedFragmentLiesBelowASharedInterfaceField()
+    {
+        // arrange
+        var schema = ComposeSchema(OverriddenAuthorPostSchema, OverriddenAuthorMovedSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                feed {
+                    author {
+                        friends { id }
+                        ... @defer(label: "d") {
+                            friends { id }
+                            ... @defer(label: "n") { friends { email } }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_PlanAPartPerTypeBranch_When_OneFragmentLiesBelowASharedInterfaceField()
+    {
+        // arrange
+        var schema = ComposeSchema(OverriddenAuthorPostSchema, OverriddenAuthorMovedSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                feed {
+                    author {
+                        friends { id }
+                        ... @defer(label: "n") { friends { email } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    private const string OverriddenAuthorPostSchema =
+        """
+        # name: a
+        schema { query: Query }
+
+        type Query {
+            feed: [Post]
+            imagePostById(id: ID! @is(field: "id")): ImagePost @lookup @internal
+            textPostById(id: ID! @is(field: "id")): TextPost @lookup @internal
+            userById(id: ID!): User @lookup
+        }
+
+        interface Post {
+            id: ID!
+            author: User!
+        }
+
+        type ImagePost implements Post @key(fields: "id") {
+            id: ID!
+            author: User!
+        }
+
+        type TextPost implements Post @key(fields: "id") {
+            id: ID!
+            author: User!
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            friends: [User!]!
+        }
+        """;
+
+    private const string OverriddenAuthorMovedSchema =
+        """
+        # name: b
+        schema { query: Query }
+
+        type Query {
+            textPostById(id: ID! @is(field: "id")): TextPost @lookup @internal
+            userByIdB(id: ID!): User @lookup
+        }
+
+        interface Post {
+            id: ID!
+            author: User!
+        }
+
+        type TextPost implements Post @key(fields: "id") {
+            id: ID!
+            author: User! @override(from: "a")
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            email: String!
+        }
+        """;
+
     private const string ShelfSchema =
         """
         # name: a

@@ -1,0 +1,140 @@
+operation:
+  - document: |
+      {
+        feed {
+          __typename @fusion__requirement
+          ... on ImagePost {
+            author {
+              friends {
+                id
+                ... @defer(label: "n", __group: 0, __parent: -1, __levels: 1) {
+                  email
+                  id @fusion__requirement
+                }
+              }
+            }
+          }
+          ... on TextPost {
+            author {
+              friends {
+                id
+                ... @defer(label: "n", __group: 1, __parent: -1, __levels: 1) {
+                  email
+                  id @fusion__requirement
+                }
+              }
+              id @fusion__requirement
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        feed {
+          __typename
+          ... on ImagePost {
+            author {
+              friends {
+                id
+              }
+            }
+          }
+          ... on TextPost {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        textPostById(id: $__fusion_1_id) {
+          author {
+            id
+          }
+        }
+      }
+    source: $.textPostById
+    target: $.feed<TextPost>
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        userById(id: $__fusion_2_id) {
+          friends {
+            id
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.userById
+    target: $.feed<TextPost>.author
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 2
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        userByIdB(id: $__fusion_3_id) {
+          email
+        }
+      }
+    source: $.userByIdB
+    target: $.feed<TextPost>.author.friends
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 3
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        userByIdB(id: $__fusion_4_id) {
+          email
+        }
+      }
+    source: $.userByIdB
+    target: $.feed<ImagePost>.author.friends
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.feed.author
+    label: n
+  - id: 1
+    path: $.feed.author
+    label: n

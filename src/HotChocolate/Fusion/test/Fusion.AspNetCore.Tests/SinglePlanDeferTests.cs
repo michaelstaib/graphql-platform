@@ -4350,6 +4350,272 @@ public partial class SinglePlanDeferTests : FusionTestBase
         snapshot.MatchMarkdownSnapshot();
     }
 
+    private const string OverriddenAuthorPostSource =
+        """
+        type Query {
+            feed: [Post]
+            imagePostById(id: ID!): ImagePost @lookup @internal
+            textPostById(id: ID!): TextPost @lookup @internal
+            userById(id: ID!): User @lookup
+        }
+
+        interface Post { id: ID! author: User! reviewers: [User!]! }
+
+        type ImagePost implements Post @key(fields: "id") { id: ID! author: User! reviewers: [User!]! }
+
+        type TextPost implements Post @key(fields: "id") { id: ID! author: User! reviewers: [User!]! }
+
+        type User @key(fields: "id") { id: ID! name: String! friends: [User!]! }
+        """;
+
+    private const string OverriddenAuthorMovedSource =
+        """
+        directive @override(from: String!) on FIELD_DEFINITION
+
+        type Query {
+            textPostById(id: ID!): TextPost @lookup @internal
+            userById(id: ID!): User @lookup @internal
+        }
+
+        interface Post { id: ID! author: User! reviewers: [User!]! }
+
+        type TextPost implements Post @key(fields: "id") {
+            id: ID!
+            author: User! @override(from: "A")
+            reviewers: [User!]! @override(from: "A")
+        }
+
+        type User @key(fields: "id") { id: ID! email: String! }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_DeliverThePartOfEveryTypeBranch_When_ANestedFragmentLiesBelowASharedInterfaceField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", OverriddenAuthorPostSource),
+            ("B", OverriddenAuthorMovedSource));
+
+        // act
+        var run = await RunWithPerTypeTwinAsync(
+            gateway,
+            """
+            {
+                feed {
+                    author {
+                        friends { id }
+                        ... @defer(label: "d") {
+                            friends { id }
+                            ... @defer(label: "n") { friends { email } }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                feed {
+                    ... on ImagePost {
+                        author { friends { id } ... { friends { id } ... { friends { email } } } }
+                    }
+                    ... on TextPost {
+                        author { friends { id } ... { friends { id } ... { friends { email } } } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchRunAgainstPerTypeTwin(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverThePartOfEveryTypeBranch_When_OneFragmentLiesBelowASharedInterfaceField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", OverriddenAuthorPostSource),
+            ("B", OverriddenAuthorMovedSource));
+
+        // act
+        var run = await RunWithPerTypeTwinAsync(
+            gateway,
+            """
+            {
+                feed {
+                    author {
+                        friends { id }
+                        ... @defer(label: "n") { friends { email } }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                feed {
+                    ... on ImagePost {
+                        author { friends { id } ... { friends { email } } }
+                    }
+                    ... on TextPost {
+                        author { friends { id } ... { friends { email } } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchRunAgainstPerTypeTwin(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverThePartOfEveryTypeBranch_When_TheFragmentSelectsAnOwnFieldAndAPart()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", OverriddenAuthorPostSource),
+            ("B", OverriddenAuthorMovedSource));
+
+        // act
+        var run = await RunWithPerTypeTwinAsync(
+            gateway,
+            """
+            {
+                feed {
+                    author {
+                        name
+                        friends { id }
+                        ... @defer(label: "d") { email friends { name } }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                feed {
+                    ... on ImagePost {
+                        author { name friends { id } ... { email friends { name } } }
+                    }
+                    ... on TextPost {
+                        author { name friends { id } ... { email friends { name } } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchRunAgainstPerTypeTwin(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverThePartOfEveryTypeBranch_When_ANestedFragmentLiesBelowASharedInterfaceList()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", OverriddenAuthorPostSource),
+            ("B", OverriddenAuthorMovedSource));
+
+        // act
+        var run = await RunWithPerTypeTwinAsync(
+            gateway,
+            """
+            {
+                feed {
+                    reviewers {
+                        friends { id }
+                        ... @defer(label: "d") {
+                            friends { id }
+                            ... @defer(label: "n") { friends { email } }
+                        }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                feed {
+                    ... on ImagePost {
+                        reviewers { friends { id } ... { friends { id } ... { friends { email } } } }
+                    }
+                    ... on TextPost {
+                        reviewers { friends { id } ... { friends { id } ... { friends { email } } } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchRunAgainstPerTypeTwin(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverThePartOfEveryTypeBranch_When_OneFragmentLiesBelowASharedInterfaceList()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", OverriddenAuthorPostSource),
+            ("B", OverriddenAuthorMovedSource));
+
+        // act
+        var run = await RunWithPerTypeTwinAsync(
+            gateway,
+            """
+            {
+                feed {
+                    reviewers {
+                        friends { id }
+                        ... @defer(label: "n") { friends { email } }
+                    }
+                }
+            }
+            """,
+            """
+            {
+                feed {
+                    ... on ImagePost {
+                        reviewers { friends { id } ... { friends { email } } }
+                    }
+                    ... on TextPost {
+                        reviewers { friends { id } ... { friends { email } } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        MatchRunAgainstPerTypeTwin(run);
+    }
+
+    private async Task<TwinRun> RunWithPerTypeTwinAsync(Gateway gateway, string query, string reference)
+    {
+        var deferred = await RunDeferredAsync(gateway, query, []);
+
+        _gate?.Enabled = false;
+
+        // The reference selects the fields once per type. The same selection written once for the interface
+        // answers null for fields of one type branch without @defer.
+        var twin = await RunAsync(gateway, reference, []);
+        return new TwinRun(deferred, twin);
+    }
+
+    private static void MatchRunAgainstPerTypeTwin(TwinRun run)
+    {
+        run.AssertMatchesTwin(compareValues: true);
+
+        var places = run.Deferred.Payloads
+            .SelectMany(t => JsonNode.Parse(t)!["pending"]?.AsArray() ?? [])
+            .Select(t => $"{t!["path"]!.ToJsonString()} {t["label"]}")
+            .Order(StringComparer.Ordinal);
+        var snapshot = Snapshot.Create();
+        snapshot.Add(Canonical(ToShape(run.Deferred.Data)), "Merged data", "json");
+        snapshot.Add(string.Join(Environment.NewLine, places), "Announced places", "text");
+        snapshot.Add(
+            $"deferred: {run.Deferred.RequestSummary}" + Environment.NewLine
+            + $"per type twin: {run.Twin.RequestSummary}",
+            "Requests",
+            "text");
+        snapshot.MatchMarkdownSnapshot();
+    }
+
     // The source schemas answer with distinct values per object, such as bark-5 for a dog and name-106 for the owner
     // of a cat.
     private async Task<Gateway> CreateDoubledTypeGatewayAsync(params string[] releaseOrder)
@@ -8558,11 +8824,13 @@ public partial class SinglePlanDeferTests : FusionTestBase
     // on the last payload, a single payload carries neither pending nor hasNext, an incremental entry targets
     // an object that exists and never carries a field the object already has, no payload sends data for an id that it
     // completes with errors, a payload after the first that announces an id completes, without errors and in the
-    // same payload, another id whose path encloses the announced path, and the last payload carries hasNext false.
+    // same payload, another id whose path encloses the announced path, no two ids share a label at one path, and the
+    // last payload carries hasNext false.
     private static List<string> ReadDelivery(List<string> payloads)
     {
         var problems = new List<string>();
         var pending = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
+        var labelledPlaces = new Dictionary<string, string>(StringComparer.Ordinal);
         var completed = new HashSet<string>(StringComparer.Ordinal);
         JsonNode? data = null;
 
@@ -8624,6 +8892,12 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 if (!pending.TryAdd(id, entry["path"]!.AsArray()))
                 {
                     problems.Add($"payload {number} announces id {id} again");
+                }
+
+                if (entry["label"] is JsonValue label
+                    && !labelledPlaces.TryAdd(label.GetValue<string>() + " at " + entry["path"]!.ToJsonString(), id))
+                {
+                    problems.Add($"payload {number} announces id {id} with a label and path that another id has");
                 }
 
                 announcedPaths.Add((id, entry["path"]!.AsArray()));

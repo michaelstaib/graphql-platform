@@ -4168,7 +4168,7 @@ public class DeferLoweringTests : FusionTestBase
     }
 
     [Fact]
-    public void Lower_Should_AttachThePartsToTheFieldLoweredLast_When_TwoTypeFragmentsShareAFieldNode()
+    public void Lower_Should_AttachAPartToEachTypeBranch_When_TwoTypeFragmentsShareAFieldNode()
     {
         // arrange
         var schema = ComposeSchema(
@@ -4261,6 +4261,9 @@ public class DeferLoweringTests : FusionTestBase
                     ... {
                       friends {
                         id
+                        ... @defer(label: "inner", __group: 0, __parent: -1, __levels: 1) {
+                          email
+                        }
                       }
                     }
                   }
@@ -4273,9 +4276,6 @@ public class DeferLoweringTests : FusionTestBase
                     ... {
                       friends {
                         id
-                        ... @defer(label: "inner", __group: 0, __parent: -1, __levels: 1) {
-                          email
-                        }
                         ... @defer(label: "inner", __group: 1, __parent: -1, __levels: 1) {
                           email
                         }
@@ -4287,6 +4287,191 @@ public class DeferLoweringTests : FusionTestBase
             }
             """);
     }
+
+    [Fact]
+    public void Lower_Should_AttachAPartToEachTypeBranch_When_TwoTypeFragmentsShareAFieldNodeWithOneDeferredFragment()
+    {
+        // arrange
+        var schema = CreateSharedAuthorSchema();
+        var operation = ParseOperation(
+            """
+            query {
+                feed {
+                    author {
+                        friends { id }
+                        ... @defer(label: "part") {
+                            friends { email }
+                        }
+                    }
+                }
+            }
+            """);
+        var shared = ShareFieldBelowTypeFragments(operation);
+
+        // act
+        var lowered = DeferLowering.Lower(shared, schema).ToString(indented: true);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              feed {
+                ... on ImagePost {
+                  author {
+                    friends {
+                      id
+                      ... @defer(label: "part", __group: 0, __parent: -1, __levels: 1) {
+                        email
+                      }
+                    }
+                  }
+                }
+                ... on TextPost {
+                  author {
+                    friends {
+                      id
+                      ... @defer(label: "part", __group: 1, __parent: -1, __levels: 1) {
+                        email
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Lower_Should_AttachAPartToEachTypeBranch_When_TwoTypeFragmentsShareAnInlineFragmentNode()
+    {
+        // arrange
+        var schema = CreateSharedAuthorSchema();
+        var operation = ParseOperation(
+            """
+            query {
+                feed {
+                    ... {
+                        author {
+                            friends { id }
+                            ... @defer(label: "part") {
+                                friends { email }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+        var feed = (FieldNode)operation.SelectionSet.Selections[0];
+        var wrapper = feed.SelectionSet!.Selections[0];
+        var fragments = new ISelectionNode[]
+        {
+            new InlineFragmentNode(null, new NamedTypeNode("ImagePost"), [], new SelectionSetNode([wrapper])),
+            new InlineFragmentNode(null, new NamedTypeNode("TextPost"), [], new SelectionSetNode([wrapper]))
+        };
+        var shared = operation.WithSelectionSet(
+            new SelectionSetNode([feed.WithSelectionSet(new SelectionSetNode(fragments))]));
+
+        // act
+        var lowered = DeferLowering.Lower(shared, schema).ToString(indented: true);
+
+        // assert
+        lowered.MatchInlineSnapshot(
+            """
+            {
+              feed {
+                ... on ImagePost {
+                  ... {
+                    author {
+                      friends {
+                        id
+                        ... @defer(label: "part", __group: 0, __parent: -1, __levels: 1) {
+                          email
+                        }
+                      }
+                    }
+                  }
+                }
+                ... on TextPost {
+                  ... {
+                    author {
+                      friends {
+                        id
+                        ... @defer(label: "part", __group: 1, __parent: -1, __levels: 1) {
+                          email
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+    }
+
+    private static OperationDefinitionNode ParseOperation(string text)
+        => Utf8GraphQLParser.Parse(text).Definitions.OfType<OperationDefinitionNode>().First();
+
+    // The first field below feed stands below one type fragment per possible type.
+    private static OperationDefinitionNode ShareFieldBelowTypeFragments(OperationDefinitionNode operation)
+    {
+        var feed = (FieldNode)operation.SelectionSet.Selections[0];
+        var author = feed.SelectionSet!.Selections[0];
+        var fragments = new ISelectionNode[]
+        {
+            new InlineFragmentNode(null, new NamedTypeNode("ImagePost"), [], new SelectionSetNode([author])),
+            new InlineFragmentNode(null, new NamedTypeNode("TextPost"), [], new SelectionSetNode([author]))
+        };
+
+        return operation.WithSelectionSet(
+            new SelectionSetNode([feed.WithSelectionSet(new SelectionSetNode(fragments))]));
+    }
+
+    private static FusionSchemaDefinition CreateSharedAuthorSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            schema { query: Query }
+
+            type Query {
+                feed: [Post]
+                imagePostById(id: ID! @is(field: "id")): ImagePost @lookup @internal
+                textPostById(id: ID! @is(field: "id")): TextPost @lookup @internal
+                userById(id: ID!): User @lookup
+            }
+
+            interface Post {
+                id: ID!
+                author: User!
+            }
+
+            type ImagePost implements Post @key(fields: "id") {
+                id: ID!
+                author: User!
+            }
+
+            type TextPost implements Post @key(fields: "id") {
+                id: ID!
+                author: User!
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                friends: [User!]!
+            }
+            """,
+            """
+            # name: b
+            schema { query: Query }
+
+            type Query {
+                userByIdB(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+            }
+            """);
 
     private static string CreateNestedDefer(string shape, int depth)
     {

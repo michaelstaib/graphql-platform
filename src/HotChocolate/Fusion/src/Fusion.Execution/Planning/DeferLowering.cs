@@ -15,7 +15,8 @@ namespace HotChocolate.Fusion.Planning;
 internal static class DeferLowering
 {
     /// <summary>
-    /// Lowers the <c>@defer</c> fragments of <paramref name="operation"/>.
+    /// Lowers the <c>@defer</c> fragments of <paramref name="operation"/>. A node that stands at more than one
+    /// place of the operation is lowered as if each place held its own copy.
     /// </summary>
     /// <param name="operation">The operation with inlined fragment spreads.</param>
     /// <param name="schema">The composite schema that provides the lookup metadata.</param>
@@ -28,11 +29,67 @@ internal static class DeferLowering
         ArgumentNullException.ThrowIfNull(schema);
 
         var lowerer = new Lowerer(schema, operation.Operation);
-        var rootItems = operation.SelectionSet.Selections;
+        var rootItems = SeparateOccurrences(
+            operation.SelectionSet.Selections,
+            new HashSet<ISelectionNode>(ReferenceEqualityComparer.Instance));
         var rootScope = Scope.Root(schema.GetOperationType(operation.Operation), rootItems);
         var selections = lowerer.LowerPass(rootItems, rootScope);
 
         return operation.WithSelectionSet(new SelectionSetNode(lowerer.Finish(selections)));
+    }
+
+    // Gives every further occurrence of a composite field node or an inline fragment node its own copy, together
+    // with its ancestors. A list without such a node is returned as it is.
+    private static IReadOnlyList<ISelectionNode> SeparateOccurrences(
+        IReadOnlyList<ISelectionNode> items,
+        HashSet<ISelectionNode> seen)
+    {
+        List<ISelectionNode>? result = null;
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            var separated = item;
+
+            switch (item)
+            {
+                case FieldNode { SelectionSet: { } selectionSet } field:
+                    var isFirst = seen.Add(field);
+                    var children = SeparateOccurrences(selectionSet.Selections, seen);
+
+                    if (!isFirst || !ReferenceEquals(children, selectionSet.Selections))
+                    {
+                        separated = field.WithSelectionSet(new SelectionSetNode(children));
+                    }
+
+                    break;
+
+                case InlineFragmentNode fragment:
+                    var isFirstFragment = seen.Add(fragment);
+                    var content = SeparateOccurrences(fragment.SelectionSet.Selections, seen);
+
+                    if (!isFirstFragment || !ReferenceEquals(content, fragment.SelectionSet.Selections))
+                    {
+                        separated = fragment.WithSelectionSet(new SelectionSetNode(content));
+                    }
+
+                    break;
+            }
+
+            if (result is null && !ReferenceEquals(separated, item))
+            {
+                result = new List<ISelectionNode>(items.Count);
+
+                for (var j = 0; j < i; j++)
+                {
+                    result.Add(items[j]);
+                }
+            }
+
+            result?.Add(separated);
+        }
+
+        return result ?? items;
     }
 
     /// <summary>
@@ -1248,7 +1305,7 @@ internal static class DeferLowering
 
     /// <summary>
     /// One lowering of a selection list: the lowered field of every composite field, by the field it was
-    /// lowered from. A field that the list holds more than once maps to the field that was lowered last.
+    /// lowered from. Every composite field of the input is a node of its own.
     /// </summary>
     private sealed class Pass
     {
