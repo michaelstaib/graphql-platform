@@ -4381,8 +4381,8 @@ public sealed partial class OperationPlanner
             }
         }
 
-        // Two object types never share an object, and an object type shares one with an abstract type only as
-        // one of its possible types.
+        // Returns true when an object of the type can match the type condition. A fragment without a type condition
+        // always matches.
         bool CanApply(NamedTypeNode? typeCondition)
         {
             if (typeCondition is null || typeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal))
