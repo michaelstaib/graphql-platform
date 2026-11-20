@@ -719,6 +719,31 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void CollectKeyAndRequirementSelectionIds_Should_HoldTheFieldsBelowTheAliasedObject_When_TheFragmentSelectsOtherArguments()
+    {
+        // arrange
+        var schema = ComposeSchema(InnerOwnerSchema, InnerSchema);
+        var plan = Plan(schema, "{ thing { cA ... @defer { inner { a } } } }").Plan;
+
+        // act
+        var ids = SinglePlanDeliveryState.CollectKeyAndRequirementSelectionIds(plan.Operation, plan.AllNodes);
+
+        // assert
+        Assert.Equal(plan.KeyAndRequirementSelectionIds.Order(), ids.Order());
+        DescribeSelections(plan.Operation, ids)
+            .MatchInlineSnapshots(
+            [
+                "$.thing #2 not read",
+                "$.thing.cA #4 not read",
+                "$.thing.id #5 read",
+                "$.thing.fusion__requirement_inner_0 #6 read",
+                "$.thing.fusion__requirement_inner_0.a #9 read",
+                "$.thing.inner #7 not read",
+                "$.thing.inner.a #11 not read"
+            ]);
+    }
+
+    [Fact]
     public void Plan_Should_AliasTheRequirement_When_TheFieldWithOtherArgumentsIsOutsideTheFragment()
     {
         // arrange
@@ -3381,6 +3406,38 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         input BundleInput {
             eur: Int
             w: Int
+        }
+        """;
+
+    private const string InnerOwnerSchema =
+        """
+        # name: a
+        type Query {
+            thing: Thing
+            thingById(id: ID!): Thing @lookup
+        }
+
+        type Thing @key(fields: "id") {
+            id: ID!
+            cA(a: String @require(field: "inner(x: 1).a")): String
+        }
+        """;
+
+    private const string InnerSchema =
+        """
+        # name: b
+        type Query {
+            thingByIdB(id: ID!): Thing @lookup
+        }
+
+        type Thing @key(fields: "id") {
+            id: ID!
+            inner(x: Int): Inner
+        }
+
+        type Inner {
+            a: String!
+            c: String
         }
         """;
 

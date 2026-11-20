@@ -699,6 +699,8 @@ internal sealed partial class SinglePlanDeliveryState
         {
             if (requirement.InternalAlias is not null)
             {
+                HashSet<string>? aliasedNames = null;
+
                 foreach (var selectionSet in GetTargetSelectionSets(operation, requirement.Path))
                 {
                     if (!TryGetAliasedSelection(requirement, selectionSet, out var aliased))
@@ -710,7 +712,8 @@ internal sealed partial class SinglePlanDeliveryState
 
                     if (!aliased.IsLeaf)
                     {
-                        CollectKeyAndRequirementSelectionIds(operation, aliased, GetRequirementNames(requirement), ids);
+                        aliasedNames ??= GetRequirementNames(requirement);
+                        CollectKeyAndRequirementSelectionIds(operation, aliased, aliasedNames, ids);
                     }
                 }
 
