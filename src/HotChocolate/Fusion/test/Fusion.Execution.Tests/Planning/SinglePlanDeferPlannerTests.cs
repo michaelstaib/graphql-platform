@@ -3197,6 +3197,99 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_KeepTheKeyOutOfTheStepOfTheSwitch_When_AnInitialFieldNeedsTheSameKey()
+    {
+        // arrange
+        var schema = ComposeSchema(KeyHopRootSchema, KeyHopPriceSchema, KeyHopIdSchema, KeyHopRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                product { upc ... @defer(if: $a) { eur } rating }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepThePlanOfAnOperationWithoutDefer_When_AKeyMeetsAStepWithAnotherCondition()
+    {
+        // arrange
+        var schema = ComposeSchema(KeyHopRootSchema, KeyHopPriceSchema, KeyHopIdSchema, KeyHopRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                product { upc eur @skip(if: $a) rating }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    private const string KeyHopRootSchema =
+        """
+        # name: a
+        type Query {
+            product: Product
+            productByUpc(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            eur(price: Int @require(field: "price")): Int
+        }
+        """;
+
+    private const string KeyHopPriceSchema =
+        """
+        # name: b
+        type Query {
+            productByIdB(id: ID!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "id") {
+            id: ID! @shareable
+            price: Int
+        }
+        """;
+
+    private const string KeyHopIdSchema =
+        """
+        # name: s
+        type Query {
+            productByUpcS(upc: String!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            id: ID! @shareable
+        }
+        """;
+
+    private const string KeyHopRatingSchema =
+        """
+        # name: t
+        type Query {
+            productById(id: ID!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "id") {
+            id: ID! @shareable
+            rating: Int!
+        }
+        """;
+
     private const string OverriddenAuthorPostSchema =
         """
         # name: a

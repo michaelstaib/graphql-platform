@@ -873,6 +873,118 @@ public partial class SinglePlanDeferTests : FusionTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public async Task Defer_Should_DeliverTheInitialField_When_TheSwitchAndTheInitialFieldNeedTheSameKey(bool a)
+    {
+        // arrange
+        var gateway = await CreateKeyHopGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!) {
+                product { upc ... @defer(if: $a) { eur } rating }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a });
+
+        // assert
+        MatchRunWithPayloadValues(run, $"a={a}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_DeliverTheInitialKey_When_TheSwitchNeedsTheKeyTheOperationSelects(bool a)
+    {
+        // arrange
+        var gateway = await CreateKeyHopGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!) {
+                product { upc ... @defer(if: $a) { eur } id }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a });
+
+        // assert
+        MatchRunWithPayloadValues(run, $"a={a}");
+    }
+
+    private Task<Gateway> CreateKeyHopGatewayAsync()
+        => CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<KeyHopRootSource.Query>()),
+            ("B", builder => builder.AddQueryType<KeyHopPriceSource.Query>()),
+            ("S", builder => builder.AddQueryType<KeyHopIdSource.Query>()),
+            ("T", builder => builder.AddQueryType<KeyHopRatingSource.Query>()));
+
+    public static class KeyHopRootSource
+    {
+        public class Query
+        {
+            public Product GetProduct() => new("u1");
+
+            [Lookup]
+            public Product? GetProductByUpc(string upc) => new(upc);
+        }
+
+        [EntityKey("upc")]
+        public record Product(string Upc)
+        {
+            public int? GetEur([Require("price")] int? price) => price is null ? null : 1000 + price;
+        }
+    }
+
+    public static class KeyHopPriceSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public Product? GetProductByIdB([ID] string id) => new(id);
+        }
+
+        public record Product([property: ID, Shareable] string Id)
+        {
+            public int Price => 80 + Id.Length;
+        }
+    }
+
+    public static class KeyHopIdSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public Product? GetProductByUpcS(string upc) => new(upc);
+        }
+
+        [EntityKey("upc")]
+        public record Product(string Upc)
+        {
+            [Shareable, ID]
+            public string Id => "id-" + Upc;
+        }
+    }
+
+    public static class KeyHopRatingSource
+    {
+        public class Query
+        {
+            [Lookup, Internal]
+            public Product? GetProductById([ID] string id) => new(id);
+        }
+
+        public record Product([property: ID, Shareable] string Id)
+        {
+            public int Rating => Id.Length;
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public async Task Defer_Should_MatchThePlainTwin_When_ALabelledFragmentSitsBetweenTwoSwitches(bool a)
     {
         // arrange

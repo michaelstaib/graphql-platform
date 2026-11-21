@@ -1967,6 +1967,13 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            // A step that runs under a condition the lookup does not carry cannot supply its key.
+            if (backlog.DeferredFragments is not null
+                && HasConditionNotIn(step.Conditions, conditions ?? []))
+            {
+                continue;
+            }
+
             if (!processed.Add(schemaName)
                 || (!allowSourceSchemaReentry
                     && lookup.SchemaName.Equals(schemaName)
@@ -2081,6 +2088,8 @@ public sealed partial class OperationPlanner
                 workItemSelectionSet.Id,
                 workItemSelectionSet.Path) is { } ancestorMatch
             && (consumerStep is null || !ancestorMatch.Step.DependsOn(consumerStep, steps))
+            && (backlog.DeferredFragments is null
+                || !HasConditionNotIn(ancestorMatch.Step.Conditions, conditions ?? []))
             && processed.Add(ancestorMatch.Step.SchemaName!)
             && (allowSourceSchemaReentry
                 || !lookup.SchemaName.Equals(ancestorMatch.Step.SchemaName)
