@@ -4420,7 +4420,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private static partial Regex PackHeightValue();
 
     [Fact]
-    public async Task Defer_Should_FailTheFragmentWithBothErrors_When_ANullableItemTookTheNullOfARequirement()
+    public async Task Defer_Should_FailTheFragmentWithOnlyItsError_When_ANullableItemTookTheNullOfARequirement()
     {
         // arrange
         // the first part becomes null for its weight, which shipping requires, and B answers null for the height
@@ -4449,6 +4449,104 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     [GeneratedRegex("\"height\":[^,}]*")]
     private static partial Regex HeightValue();
+
+    [Fact]
+    public async Task Defer_Should_FailEachFragmentWithItsErrorOnce_When_BothHoldTheNullableItemThatTookTheNull()
+    {
+        // arrange
+        // the first part becomes null for its weight, which shipping requires, and B answers null for the height
+        // the step of e (B:5) answers first, so that e completes in its own payload
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:6"],
+            rewrite: (schema, body, text) => schema is "B"
+                ? HeightValue().Replace(WeightValue().Replace(text, "\"weight\":null", 1), "\"height\":null")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackagePartsSource),
+            ("C", PartsShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    shipping
+                    ... @defer(label: "d") { package { height parts { weight } } }
+                    ... @defer(label: "e") { package { height parts { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheInnerErrorWithTheOtherFragment_When_OneFragmentFailsOnTheSameObject()
+    {
+        // arrange
+        // the first part becomes null for its weight, which shipping requires, and B answers null for the height
+        // the step of e (B:5) answers first, so that e completes in its own payload
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:6"],
+            rewrite: (schema, body, text) => schema is "B"
+                ? HeightValue().Replace(WeightValue().Replace(text, "\"weight\":null", 1), "\"height\":null")
+                : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackagePartsSource),
+            ("C", PartsShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    shipping
+                    ... @defer(label: "d") { package { height } }
+                    ... @defer(label: "e") { package { parts { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorWithTheEntry_When_ANullableItemTookTheNullAndTheFragmentDoesNotFail()
+    {
+        // arrange
+        // the first part becomes null for its weight, which shipping requires
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: (schema, body, text) => schema is "B" ? WeightValue().Replace(text, "\"weight\":null", 1) : text,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackagePartsSource),
+            ("C", PartsShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { product(id: "1") { name shipping ... @defer(label: "d") { package { height parts { weight } } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
 
     private const string NickSource =
         """

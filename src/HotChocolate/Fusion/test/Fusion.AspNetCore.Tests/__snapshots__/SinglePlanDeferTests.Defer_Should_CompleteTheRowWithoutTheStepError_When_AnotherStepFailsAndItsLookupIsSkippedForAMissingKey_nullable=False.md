@@ -9,7 +9,7 @@
 ## Payload 2
 
 ```json
-{"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}},{"message":"Unexpected Execution Error","path":["product","price"]}]}],"hasNext":false}
+{"completed":[{"id":"0","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","author","bio"],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
 ```
 
 ## Requests

@@ -174,9 +174,10 @@ public sealed partial class CompositeResultDocument
     }
 
     /// <summary>
-    /// Fails the instances of the groups of a field at the anchor objects above the field.
+    /// Fails the instances of the groups of a field at the anchor objects above the field. The instances report
+    /// <paramref name="failure"/> as the error that failed them, or <c>null</c> when no recorded error failed them.
     /// </summary>
-    internal void FailGroups(CompositeResultElement field, SelectionDelivery groups)
+    internal void FailGroups(CompositeResultElement field, SelectionDelivery groups, GroupError? failure)
     {
         var delivery = _delivery!;
 
@@ -184,7 +185,7 @@ public sealed partial class CompositeResultDocument
         {
             if (TryGetObjectAtDepth(field.Cursor, delivery.AnchorDepths[group.Id], out var anchor))
             {
-                delivery.FailInstance(group.Id, anchor);
+                delivery.FailInstance(group.Id, anchor, failure);
             }
         }
     }
@@ -193,14 +194,14 @@ public sealed partial class CompositeResultDocument
     /// Records an error for the delivery groups that hold the field, so that it is sent with the instances of the
     /// groups instead of the initial payload.
     /// </summary>
-    /// <returns><c>true</c> when the field is held back for delivery groups.</returns>
-    internal bool TryRecordGroupError(CompositeResultElement element, IError error)
+    /// <returns>The recorded error, or <c>null</c> when no delivery group holds the field.</returns>
+    internal GroupError? TryRecordGroupError(CompositeResultElement element, IError error)
     {
         var delivery = _delivery;
 
         if (delivery is null || !TryGetDestination(element, out var selectionDelivery))
         {
-            return false;
+            return null;
         }
 
         // A row with an error holds a result, so that no later step writes it and reports its error again.
@@ -218,7 +219,7 @@ public sealed partial class CompositeResultDocument
             }
         }
 
-        return recorded;
+        return recorded ? record : null;
     }
 
     /// <summary>

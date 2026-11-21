@@ -9,7 +9,7 @@
 ## Payload 2
 
 ```json
-{"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["product","nullable"]},{"message":"Unexpected Execution Error","path":["product","required"]}]}],"hasNext":false}
+{"completed":[{"id":"0","errors":[{"message":"Unexpected Execution Error","path":["product","required"]}]}],"hasNext":false}
 ```
 
 ## Requests

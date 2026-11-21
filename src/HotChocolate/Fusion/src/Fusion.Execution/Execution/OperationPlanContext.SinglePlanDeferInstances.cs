@@ -38,6 +38,7 @@ internal sealed partial class SinglePlanDeliveryState
 
     // The errors of the rows of a group below an anchor object, by group and anchor, and the failed anchors.
     private Dictionary<long, List<GroupError>>? _groupErrors;
+    private Dictionary<long, List<GroupError>>? _failureErrors;
     private HashSet<IError>? _groupOwnedErrors;
     private HashSet<long>? _failedAnchors;
     private List<GroupError>? _takenPayload;
@@ -114,13 +115,22 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
-    /// Marks the instance of a group at an anchor object as failed, also when it is announced later.
+    /// Marks the instance of a group at an anchor object as failed, also when it is announced later. The instance
+    /// reports <paramref name="failure"/>, the error whose null left the group, instead of the other errors of its
+    /// rows, or all of them when <paramref name="failure"/> is <c>null</c>.
     /// </summary>
-    public void FailInstance(int groupId, CompositeResultDocument.Cursor anchor)
+    public void FailInstance(int groupId, CompositeResultDocument.Cursor anchor, GroupError? failure)
     {
         lock (_sync)
         {
-            (_failedAnchors ??= []).Add(CreateKey(groupId, anchor));
+            var key = CreateKey(groupId, anchor);
+
+            (_failedAnchors ??= []).Add(key);
+
+            if (failure is not null)
+            {
+                MarkFailure(key, failure);
+            }
         }
 
         if (_instanceCount > 0 && TryGetInstance(groupId, anchor, out var instance))
@@ -195,6 +205,48 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
+    /// Records an error for the rows of a group below an anchor object as the error that failed the instance of the
+    /// group.
+    /// </summary>
+    public void AddFailureError(int groupId, CompositeResultDocument.Cursor anchor, GroupError error)
+    {
+        AddGroupError(groupId, anchor, error);
+
+        lock (_sync)
+        {
+            MarkFailure(CreateKey(groupId, anchor), error);
+        }
+    }
+
+    private void MarkFailure(long key, GroupError error)
+    {
+        _failureErrors ??= [];
+
+        if (!_failureErrors.TryGetValue(key, out var errors))
+        {
+            errors = _failureErrors[key] = [];
+        }
+
+        if (!errors.Contains(error))
+        {
+            errors.Add(error);
+        }
+    }
+
+    // The errors that the instance reports: the errors that failed it, or else all errors recorded for its rows.
+    private List<GroupError>? GetReportedErrors(int instance)
+    {
+        var key = CreateKey(_instanceGroups[instance], _instanceAnchors[instance]);
+
+        if (_failureErrors is not null && _failureErrors.TryGetValue(key, out var failures))
+        {
+            return failures;
+        }
+
+        return _groupErrors is not null && _groupErrors.TryGetValue(key, out var errors) ? errors : null;
+    }
+
+    /// <summary>
     /// Determines whether the error belongs to a delivery group instead of the initial payload.
     /// </summary>
     public bool IsGroupError(IError error)
@@ -236,10 +288,7 @@ internal sealed partial class SinglePlanDeliveryState
     {
         lock (_sync)
         {
-            if (_groupErrors is null
-                || !_groupErrors.TryGetValue(
-                    CreateKey(_instanceGroups[instance], _instanceAnchors[instance]),
-                    out var errors))
+            if (GetReportedErrors(instance) is not { } errors)
             {
                 return null;
             }
@@ -278,10 +327,7 @@ internal sealed partial class SinglePlanDeliveryState
     {
         lock (_sync)
         {
-            if (_groupErrors is null
-                || !_groupErrors.TryGetValue(
-                    CreateKey(_instanceGroups[instance], _instanceAnchors[instance]),
-                    out var errors))
+            if (GetReportedErrors(instance) is not { } errors)
             {
                 return false;
             }
@@ -435,7 +481,7 @@ internal sealed partial class SinglePlanDeliveryState
                         rows[0],
                         answer.Error!,
                         document.HoldsOnlyRowsOf(rows[0], answer.Groups));
-                    AddGroupError(group, anchor, new GroupError(error));
+                    AddFailureError(group, anchor, new GroupError(error));
                 }
 
                 continue;

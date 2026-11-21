@@ -30,6 +30,7 @@ internal sealed class ValueCompletion
     private ImmutableArray<int> _writeFilterGroups;
     private bool _stoppedAtGroupBoundary;
     private CompositeResultElement? _nullLeavingGroups;
+    private GroupError? _lastGroupError;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
@@ -57,6 +58,7 @@ internal sealed class ValueCompletion
         _errorHandlingMode = errorHandlingMode;
         _propagateNullValues = errorHandlingMode is not ErrorHandlingMode.Null;
         _nullLeavingGroups = null;
+        _lastGroupError = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -106,6 +108,7 @@ internal sealed class ValueCompletion
         _propagateNullValues = false;
         _mode = CompletionMode.Plain;
         _nullLeavingGroups = null;
+        _lastGroupError = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -865,10 +868,12 @@ internal sealed class ValueCompletion
         _stoppedAtGroupBoundary = false;
 
         var leavesGroups = IsAtOrBelow(_nullLeavingGroups, result);
+        var failure = _lastGroupError;
         _nullLeavingGroups = null;
+        _lastGroupError = null;
 
         return !leavesGroups && _store.Result.TryGetDestination(result, out var destination)
-            ? PropagateNullValuesInGroups(result, destination)
+            ? PropagateNullValuesInGroups(result, destination, failure)
             : PropagateNullValues(result);
     }
 
@@ -893,16 +898,19 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Invalidates the field and its parents, but stops before an object that is delivered elsewhere than the
-    /// field. The groups of the field fail at that object.
+    /// field. The groups of the field fail at that object with <paramref name="failure"/> as their error.
     /// </summary>
     /// <returns>
     /// <c>false</c>, because the null never propagates up to the root.
     /// </returns>
-    private bool PropagateNullValuesInGroups(CompositeResultElement result, SelectionDelivery destination)
+    private bool PropagateNullValuesInGroups(
+        CompositeResultElement result,
+        SelectionDelivery destination,
+        GroupError? failure)
     {
         if (TryFindGroupBoundary(result, destination, propagate: true, out _))
         {
-            _store.Result.FailGroups(result, destination);
+            _store.Result.FailGroups(result, destination, failure);
             _stoppedAtGroupBoundary = true;
         }
 
@@ -1534,7 +1542,7 @@ internal sealed class ValueCompletion
             .Build();
         errorWithPath = _errorHandler.Handle(errorWithPath);
 
-        AddError<TMode>(errorWithPath, fieldResult);
+        AddNullError<TMode>(errorWithPath, fieldResult);
 
         switch (_errorHandlingMode)
         {
@@ -1548,14 +1556,23 @@ internal sealed class ValueCompletion
 
     // An error of a field that a delivery group holds back is also recorded for the group, so that the group
     // sends it and the initial payload does not.
-    private void AddError<TMode>(IError error, CompositeResultElement element)
+    private GroupError? AddError<TMode>(IError error, CompositeResultElement element)
         where TMode : struct, IMode
     {
         _store.AddError(error);
 
+        return TMode.HasDelivery ? _store.Result.TryRecordGroupError(element, error) : null;
+    }
+
+    // Adds the error of a null that the caller propagates next. The groups that the null fails report the error.
+    private void AddNullError<TMode>(IError error, CompositeResultElement element)
+        where TMode : struct, IMode
+    {
+        var recorded = AddError<TMode>(error, element);
+
         if (TMode.HasDelivery)
         {
-            _store.Result.TryRecordGroupError(element, error);
+            _lastGroupError = recorded;
         }
     }
 
@@ -1721,12 +1738,12 @@ internal sealed class ValueCompletion
                 else
                 {
                     _nullLeavingGroups = null;
-                    AddError<TMode>(error, target);
+                    AddNullError<TMode>(error, target);
                 }
             }
             else
             {
-                AddError<TMode>(error, target);
+                AddNullError<TMode>(error, target);
             }
 
             return !_propagateNullValues;
