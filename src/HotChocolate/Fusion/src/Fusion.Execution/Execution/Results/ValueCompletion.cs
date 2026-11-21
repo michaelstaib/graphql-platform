@@ -30,7 +30,8 @@ internal sealed class ValueCompletion
     private ImmutableArray<int> _writeFilterGroups;
     private bool _stoppedAtGroupBoundary;
     private CompositeResultElement? _nullLeavingGroups;
-    private GroupError? _lastGroupError;
+    // The recorded error of the null that a completion returned last, null when that null has none.
+    private GroupError? _returnedNullError;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
@@ -58,7 +59,7 @@ internal sealed class ValueCompletion
         _errorHandlingMode = errorHandlingMode;
         _propagateNullValues = errorHandlingMode is not ErrorHandlingMode.Null;
         _nullLeavingGroups = null;
-        _lastGroupError = null;
+        _returnedNullError = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -108,7 +109,7 @@ internal sealed class ValueCompletion
         _propagateNullValues = false;
         _mode = CompletionMode.Plain;
         _nullLeavingGroups = null;
-        _lastGroupError = null;
+        _returnedNullError = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -613,7 +614,7 @@ internal sealed class ValueCompletion
             }
 
             if (_errorHandlingMode is ErrorHandlingMode.Propagate
-                && PropagateNullValues<TMode>(fieldResult))
+                && PropagateNullValues<TMode>(fieldResult, failure: null))
             {
                 return false;
             }
@@ -847,6 +848,7 @@ internal sealed class ValueCompletion
     /// <summary>
     /// Invalidates the current result and its parents,
     /// until reaching a parent that can be set to <c>null</c>.
+    /// The null is the one that a completion returned last.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the null propagated up to the root.
@@ -857,20 +859,38 @@ internal sealed class ValueCompletion
     {
         if (TMode.HasDelivery)
         {
-            return PropagateNullValuesWithDelivery(result);
+            return PropagateNullValuesWithDelivery(result, _returnedNullError);
         }
 
         return PropagateNullValues(result);
     }
 
-    private bool PropagateNullValuesWithDelivery(CompositeResultElement result)
+    /// <summary>
+    /// Invalidates the current result and its parents,
+    /// until reaching a parent that can be set to <c>null</c>.
+    /// The groups that the null fails report <paramref name="failure"/>, the recorded error of the null, if any.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the null propagated up to the root.
+    /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool PropagateNullValues<TMode>(CompositeResultElement result, GroupError? failure)
+        where TMode : struct, IMode
+    {
+        if (TMode.HasDelivery)
+        {
+            return PropagateNullValuesWithDelivery(result, failure);
+        }
+
+        return PropagateNullValues(result);
+    }
+
+    private bool PropagateNullValuesWithDelivery(CompositeResultElement result, GroupError? failure)
     {
         _stoppedAtGroupBoundary = false;
 
         var leavesGroups = IsAtOrBelow(_nullLeavingGroups, result);
-        var failure = _lastGroupError;
         _nullLeavingGroups = null;
-        _lastGroupError = null;
 
         return !leavesGroups && _store.Result.TryGetDestination(result, out var destination)
             ? PropagateNullValuesInGroups(result, destination, failure)
@@ -1253,7 +1273,7 @@ internal sealed class ValueCompletion
 
         if (nullStop is { } stop)
         {
-            _store.Result.TryRecordGroupError(stop, errorWithPath);
+            _store.Result.RecordGroupError(stop, errorWithPath);
         }
 
         return _errorHandlingMode is not ErrorHandlingMode.Propagate
@@ -1542,12 +1562,12 @@ internal sealed class ValueCompletion
             .Build();
         errorWithPath = _errorHandler.Handle(errorWithPath);
 
-        AddNullError<TMode>(errorWithPath, fieldResult);
+        var failure = AddError<TMode>(errorWithPath, fieldResult);
 
         switch (_errorHandlingMode)
         {
             case ErrorHandlingMode.Propagate when selection.IsNonNull:
-                var didPropagateToRoot = PropagateNullValues<TMode>(fieldResult);
+                var didPropagateToRoot = PropagateNullValues<TMode>(fieldResult, failure);
                 return !didPropagateToRoot;
         }
 
@@ -1555,25 +1575,13 @@ internal sealed class ValueCompletion
     }
 
     // An error of a field that a delivery group holds back is also recorded for the group, so that the group
-    // sends it and the initial payload does not.
+    // sends it and the initial payload does not. Returns the recorded error, or null when no group holds the field.
     private GroupError? AddError<TMode>(IError error, CompositeResultElement element)
         where TMode : struct, IMode
     {
         _store.AddError(error);
 
-        return TMode.HasDelivery ? _store.Result.TryRecordGroupError(element, error) : null;
-    }
-
-    // Adds the error of a null that the caller propagates next. The groups that the null fails report the error.
-    private void AddNullError<TMode>(IError error, CompositeResultElement element)
-        where TMode : struct, IMode
-    {
-        var recorded = AddError<TMode>(error, element);
-
-        if (TMode.HasDelivery)
-        {
-            _lastGroupError = recorded;
-        }
+        return TMode.HasDelivery ? _store.Result.RecordGroupError(element, error) : null;
     }
 
     private void PocketErrors(Path path, ResultSelectionSet resultSelectionSet, IError error)
@@ -1722,6 +1730,8 @@ internal sealed class ValueCompletion
 
             error = _errorHandler.Handle(error);
 
+            GroupError? recorded = null;
+
             if (TMode.HasDelivery && !TMode.IsFiltered && _propagateNullValues && LeavesGroups(target, selection))
             {
                 // The groups that hold the element where the null stops send the error, the initial payload sends it
@@ -1732,18 +1742,23 @@ internal sealed class ValueCompletion
 
                     if (nullStop is { } stop)
                     {
-                        _store.Result.TryRecordGroupError(stop, error);
+                        _store.Result.RecordGroupError(stop, error);
                     }
                 }
                 else
                 {
                     _nullLeavingGroups = null;
-                    AddNullError<TMode>(error, target);
+                    recorded = AddError<TMode>(error, target);
                 }
             }
             else
             {
-                AddNullError<TMode>(error, target);
+                recorded = AddError<TMode>(error, target);
+            }
+
+            if (TMode.HasDelivery)
+            {
+                _returnedNullError = recorded;
             }
 
             return !_propagateNullValues;
@@ -1863,6 +1878,12 @@ internal sealed class ValueCompletion
         else if (target.ValueKind is not JsonValueKind.Array
             || target.GetArrayLength() != source.GetArrayLength())
         {
+            // The null of the list has no recorded error.
+            if (TMode.HasDelivery)
+            {
+                _returnedNullError = null;
+            }
+
             return ReportSharedListLengthMismatch(target);
         }
         else
@@ -1918,6 +1939,12 @@ internal sealed class ValueCompletion
 
                 if (isNonNull && _propagateNullValues)
                 {
+                    // The null of the item has no recorded error.
+                    if (TMode.HasDelivery)
+                    {
+                        _returnedNullError = null;
+                    }
+
                     return false;
                 }
 

@@ -204,20 +204,6 @@ internal sealed partial class SinglePlanDeliveryState
         }
     }
 
-    /// <summary>
-    /// Records an error for the rows of a group below an anchor object as the error that failed the instance of the
-    /// group.
-    /// </summary>
-    public void AddFailureError(int groupId, CompositeResultDocument.Cursor anchor, GroupError error)
-    {
-        AddGroupError(groupId, anchor, error);
-
-        lock (_sync)
-        {
-            MarkFailure(CreateKey(groupId, anchor), error);
-        }
-    }
-
     private void MarkFailure(long key, GroupError error)
     {
         _failureErrors ??= [];
@@ -496,6 +482,18 @@ internal sealed partial class SinglePlanDeliveryState
                     break;
                 }
             }
+        }
+    }
+
+    // Records an error for the rows of a group below an anchor object as the error that failed the instance of the
+    // group.
+    private void AddFailureError(int groupId, CompositeResultDocument.Cursor anchor, GroupError error)
+    {
+        AddGroupError(groupId, anchor, error);
+
+        lock (_sync)
+        {
+            MarkFailure(CreateKey(groupId, anchor), error);
         }
     }
 

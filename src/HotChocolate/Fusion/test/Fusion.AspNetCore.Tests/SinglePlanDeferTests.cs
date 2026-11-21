@@ -4548,6 +4548,153 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    // The source schema C answers null without an error for the first review.
+    private static string NullTheFirstReview(string schema, string body, string text)
+        => schema is "C" ? FirstReview().Replace(text, """{"data":$1null""") : text;
+
+    // The source schema C answers null with the error "C failed 0" for the first review.
+    private static string FailTheFirstReview(string schema, string body, string text)
+        => schema is "C"
+            ? FirstReview().Replace(
+                text,
+                """{"errors":[{"message":"C failed 0","path":["productByIdForReviews","reviews",0]}],"data":$1null""")
+            : text;
+
+    [GeneratedRegex("""^\{"data":(\{"productByIdForReviews":\{"reviews":\[)\{[^}]*\}""")]
+    private static partial Regex FirstReview();
+
+    [Fact]
+    public async Task Defer_Should_NotReportTheErrorOfAnotherFragment_When_ANullItemFailsItAfterAStepOfTheOtherFailed()
+    {
+        // arrange
+        // the step of a (B:3) fails first, then C answers null without an error for the first review
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "C:2"],
+            NullTheFirstReview,
+            failingSchema: "B",
+            configure: null,
+            ("A", ProductSource),
+            ("B", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! nullable: String }
+                """),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { nullable }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportOnlyTheItemError_When_ItFailsTheFragmentAfterAnItemOfAnotherTookANull()
+    {
+        // arrange
+        // the first part of a becomes null for its weight (B:3), then C answers null with an error for the first review
+        var gateway = await CreateGatewayAsync(
+            ["B:3>", "C:2"],
+            rewrite: (schema, body, text) => schema is "B"
+                ? WeightValue().Replace(text, "\"weight\":null", 1)
+                : FailTheFirstReview(schema, body, text),
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackagePartsSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { package { parts { weight } } }
+                    ... @defer(label: "b") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string PartsWeightSource =
+        """
+        type Query { productByIdForWeights(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! package: Package! @shareable }
+        type Package { parts: [Part]! @shareable spares: [Spare]! }
+        type Part { weight: Float! }
+        type Spare { weight: Float! }
+        """;
+
+    private const string PartsSizeSource =
+        """
+        type Query { productByIdForSizes(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! package: Package! @shareable }
+        type Package { parts: [Part]! @shareable }
+        type Part { size: Float! }
+        """;
+
+    // The source schema B answers null for the weight of the first spare, and the source schema C one part less
+    // than B.
+    private static string NullASpareAndDropAPart(string schema, string body, string text)
+        => schema is "B"
+            ? FirstSpareWeight().Replace(text, "\"spares\":[{\"weight\":null")
+            : FirstPart().Replace(text, "\"parts\":[");
+
+    [GeneratedRegex("\"spares\":\\[\\{\"weight\":[^,}]*")]
+    private static partial Regex FirstSpareWeight();
+
+    [GeneratedRegex("\"parts\":\\[\\{[^}]*\\},")]
+    private static partial Regex FirstPart();
+
+    [Fact]
+    public async Task Defer_Should_ReportOnlyTheLengthError_When_ASharedListFailsItAfterAnItemOfAnotherTookANull()
+    {
+        // arrange
+        // the first spare of a takes a null weight, then C answers the shared list one part shorter than B
+        var gateway = await CreateGatewayAsync(
+            ["B:4>", "C:3>", "B:2"],
+            NullASpareAndDropAPart,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PartsWeightSource),
+            ("C", PartsSizeSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { package { spares { weight } } }
+                    ... @defer(label: "b") { package { parts { size } } }
+                    ... @defer(label: "c") { package { parts { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string NickSource =
         """
         type Query { user: User }
@@ -6259,7 +6406,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_ReportBothErrors_When_ANullableAndARequiredFieldOfTheGroupFail()
+    public async Task Defer_Should_FailTheFragmentWithOnlyTheRequiredFieldsError_When_ANullableAndARequiredFieldFail()
     {
         // arrange
         var gateway = await CreateGatewayAsync(

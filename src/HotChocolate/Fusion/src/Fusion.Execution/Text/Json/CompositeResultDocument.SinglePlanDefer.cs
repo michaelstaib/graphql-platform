@@ -195,7 +195,7 @@ public sealed partial class CompositeResultDocument
     /// groups instead of the initial payload.
     /// </summary>
     /// <returns>The recorded error, or <c>null</c> when no delivery group holds the field.</returns>
-    internal GroupError? TryRecordGroupError(CompositeResultElement element, IError error)
+    internal GroupError? RecordGroupError(CompositeResultElement element, IError error)
     {
         var delivery = _delivery;
 
