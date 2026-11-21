@@ -1,0 +1,49 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        viewer {
+          shipping
+          total @fusion__requirement
+          weight @fusion__requirement
+          tax @skip(if: $a)
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 3
+    expandedNodes: 8
+nodes:
+  - id: 1
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_1 {
+        viewer {
+          total
+          weight
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2(
+        $a: Boolean!
+        $__fusion_1_total: Int
+        $__fusion_2_weight: Int
+      ) {
+        viewer {
+          tax(total: $__fusion_1_total) @skip(if: $a)
+          shipping(weight: $__fusion_2_weight)
+        }
+      }
+    requirements:
+      - name: __fusion_1_total
+        selectionMap: >-
+          total
+      - name: __fusion_2_weight
+        selectionMap: >-
+          weight
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 1

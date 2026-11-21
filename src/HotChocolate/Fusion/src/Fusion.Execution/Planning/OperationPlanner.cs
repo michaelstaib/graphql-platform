@@ -2935,6 +2935,13 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            if (HasConditionNotIn(step.Conditions, workItem.Conditions))
+            {
+                // a step that runs under a condition the requiring field does not carry
+                // cannot supply the requirement.
+                continue;
+            }
+
             if (!TryInlineSelectionSetIntoStep(
                 step,
                 workItem.Selection.SelectionSetId,
@@ -3024,7 +3031,8 @@ public sealed partial class OperationPlanner
         // Fallback: if no candidate step was found via exact selection set ID match,
         // walk the internal operation AST to find the nearest ancestor step and the
         // complete connector chain to the target selection set. An ancestor step of the
-        // requiring field's schema is skipped for the same reason as in the candidate loop.
+        // requiring field's schema, or one that runs under a condition the requiring field
+        // does not carry, is skipped for the same reasons as in the candidate loop.
         if (requirements is not null
             && TryFindAncestorStepForRequirement(
                 current.InternalOperationDefinition,
@@ -3034,7 +3042,8 @@ public sealed partial class OperationPlanner
                 workItem.Selection.Path) is { } ancestorMatch
             && currentStep.Id != ancestorMatch.Step.Id
             && !ancestorMatch.Step.DependsOn(currentStep, steps)
-            && !string.Equals(ancestorMatch.Step.SchemaName, current.SchemaName, StringComparison.Ordinal))
+            && !string.Equals(ancestorMatch.Step.SchemaName, current.SchemaName, StringComparison.Ordinal)
+            && !HasConditionNotIn(ancestorMatch.Step.Conditions, workItem.Conditions))
         {
             if (TryInlineIntoAncestorStep(
                 ancestorMatch, requirements, workItem.Selection.Path,
@@ -3083,6 +3092,25 @@ public sealed partial class OperationPlanner
         }
 
         return requirements;
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="stepConditions"/> holds a condition that is not one of
+    /// <paramref name="conditions"/>.
+    /// </summary>
+    private static bool HasConditionNotIn(
+        ExecutionNodeCondition[] stepConditions,
+        ExecutionNodeCondition[] conditions)
+    {
+        foreach (var condition in stepConditions)
+        {
+            if (Array.IndexOf(conditions, condition) < 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool TryInlineSelectionSetIntoStep(

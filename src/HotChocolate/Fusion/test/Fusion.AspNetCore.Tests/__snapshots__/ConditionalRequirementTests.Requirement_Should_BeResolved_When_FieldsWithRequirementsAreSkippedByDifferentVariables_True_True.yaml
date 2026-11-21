@@ -1,0 +1,204 @@
+title: Requirement_Should_BeResolved_When_FieldsWithRequirementsAreSkippedByDifferentVariables
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      user {
+        shipping @skip(if: $b)
+        tax @skip(if: $a)
+      }
+    }
+  variables: |
+    {
+      "a": true,
+      "b": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "user": {}
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+        users: [User!]!
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_b064e92c_1 {
+              user {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "id": 1
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+        weight: Int!
+        total: Int!
+      }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+        id: Int!
+      }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          user {
+            id @fusion__requirement
+            total @fusion__requirement
+            weight @fusion__requirement
+            shipping @skip(if: $b)
+            tax @skip(if: $a)
+          }
+        }
+      name: testQuery
+      hash: 1c342bc44c3b28b61a70ddb8628d35a4
+      searchSpace: 2
+      expandedNodes: 8
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_b064e92c_1 {
+          user {
+            id
+          }
+        }
+    - id: 4
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_b064e92c_4($__fusion_4_id: Int!) {
+          userById(id: $__fusion_4_id) {
+            total
+          }
+        }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 7
+      requirements:
+        - name: __fusion_4_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 6
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_b064e92c_6($__fusion_7_id: Int!) {
+          userById(id: $__fusion_7_id) {
+            weight
+          }
+        }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 7
+      requirements:
+        - name: __fusion_7_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $b
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_b064e92c_3($__fusion_2_total: Int, $__fusion_3_id: Int!) {
+          userById(id: $__fusion_3_id) {
+            tax(total: $__fusion_2_total)
+          }
+        }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_2_total
+          selectionMap: >-
+            total
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 4
+    - id: 5
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_b064e92c_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
+          userById(id: $__fusion_6_id) {
+            shipping(weight: $__fusion_5_weight)
+          }
+        }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_5_weight
+          selectionMap: >-
+            weight
+        - name: __fusion_6_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $b
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 6
