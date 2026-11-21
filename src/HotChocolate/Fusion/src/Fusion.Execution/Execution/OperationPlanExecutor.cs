@@ -316,6 +316,7 @@ internal static partial class OperationPlanExecutor
 
             initialResult.HasNext = true;
             initialResult.Pending = pendingResults.ToImmutable();
+            state.AddSentErrors(initialResult.Errors);
 
             var requestArena = context.Memory;
             var stream = new ResponseStream(
@@ -627,6 +628,7 @@ internal static partial class OperationPlanExecutor
         var completed = ImmutableList.CreateBuilder<CompletedResult>();
         var document = context.ResultDocument;
         var unattributed = context.GetErrorsAfter(state.PublishedErrorCount);
+        var sent = ImmutableList<IError>.Empty;
         var instanceCountBefore = state.InstanceCount;
         var roots = new List<ClaimedObject>();
         var progressed = true;
@@ -678,6 +680,7 @@ internal static partial class OperationPlanExecutor
                     {
                         // A failed instance completes with its errors and without data, and announces nothing.
                         var failure = TakeFailureErrors(state, instance, ref unattributed);
+                        sent = sent.AddRange(failure);
                         completed.Add(new CompletedResult(instance, failure.Count > 0 ? failure : null));
                         state.MarkDone(instance);
                         continue;
@@ -691,6 +694,9 @@ internal static partial class OperationPlanExecutor
                         errors = errors.AddRange(unattributed);
                         unattributed = [];
                     }
+
+                    errors = state.ExcludeSentErrors(errors);
+                    sent = sent.AddRange(errors);
 
                     roots.Clear();
                     document.ClaimDeliveryRows(instance, roots);
@@ -737,6 +743,7 @@ internal static partial class OperationPlanExecutor
             return null;
         }
 
+        state.AddSentErrors(sent);
         state.PublishedErrorCount = context.ErrorCount;
 
         return CreateSinglePlanPayloadResult(

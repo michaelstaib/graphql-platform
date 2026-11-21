@@ -49,6 +49,7 @@ internal sealed partial class SinglePlanDeliveryState
     private List<SourceError>? _sourceErrors;
     private Dictionary<long, List<IError>>? _deniedErrors;
     private List<DeniedAnswer>? _deniedAnswers;
+    private ImmutableList<IError>? _sentErrors;
     private Dictionary<OperationRequirement, HashSet<int>>? _requirementReads;
     private List<CompositeResultElement>? _unwrittenRows;
     private List<CompositeResultElement>? _unwrittenOtherRows;
@@ -372,6 +373,67 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
+    /// Records the errors that a sent payload carries.
+    /// </summary>
+    public void AddSentErrors(ImmutableList<IError> errors)
+    {
+        if (errors.Count > 0)
+        {
+            _sentErrors = _sentErrors?.AddRange(errors) ?? errors;
+        }
+    }
+
+    /// <summary>
+    /// Removes the errors that have the path of an error that a sent payload carries.
+    /// </summary>
+    public ImmutableList<IError> ExcludeSentErrors(ImmutableList<IError> errors)
+    {
+        if (_sentErrors is null)
+        {
+            return errors;
+        }
+
+        for (var i = errors.Count - 1; i >= 0; i--)
+        {
+            if (errors[i].Path is { } path && IsSent(path, includeBelow: false))
+            {
+                errors = errors.RemoveAt(i);
+            }
+        }
+
+        return errors;
+    }
+
+    // A sent payload carries an error at the path, or below it when includeBelow is set.
+    private bool IsSent(Path path, bool includeBelow)
+    {
+        if (_sentErrors is null)
+        {
+            return false;
+        }
+
+        foreach (var error in _sentErrors)
+        {
+            if (error.Path is not { } errorPath)
+            {
+                continue;
+            }
+
+            while (includeBelow && errorPath.Length > path.Length)
+            {
+                errorPath = errorPath.Parent;
+            }
+
+            if (errorPath.Equals(path))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Records an error that a step reported for a row of the group below an anchor object that already held a
     /// result.
     /// </summary>
@@ -507,7 +569,8 @@ internal sealed partial class SinglePlanDeliveryState
     /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
     /// <c>null</c> reaches the anchor. A row that a failed step of the group left carries the error of the step, and
     /// a row whose step lacks a required value because the answer for it was denied with an error carries that
-    /// error, the error for a requirement of its own field first.
+    /// error, the error for a requirement of its own field first. A nullable row does not take the error of a
+    /// denied answer whose value has an error that a sent payload already carries.
     /// </summary>
     /// <returns><c>true</c> when an open step can still write a row of the instance.</returns>
     public bool CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)
@@ -615,7 +678,8 @@ internal sealed partial class SinglePlanDeliveryState
         return false;
     }
 
-    // The requirements are taken in their order in the step, the requirements of the field first.
+    // The requirements are taken in their order in the step, the requirements of the field first. A nullable field
+    // takes no error that a sent payload already carries.
     private IError? GetDeniedRequirementError(
         CompositeResultDocument document,
         int group,
@@ -623,10 +687,12 @@ internal sealed partial class SinglePlanDeliveryState
         Selection selection,
         ReadOnlySpan<OperationRequirement> requirements)
     {
+        var skipSent = !selection.IsNonNull;
+
         for (var i = 0; i < requirements.Length; i++)
         {
             if (IsRequirementOf(requirements[i], selection)
-                && GetDeniedError(document, group, entity, requirements.Slice(i, 1)) is { } error)
+                && GetDeniedError(document, group, entity, requirements.Slice(i, 1), skipSent) is { } error)
             {
                 return error;
             }
@@ -635,7 +701,7 @@ internal sealed partial class SinglePlanDeliveryState
         for (var i = 0; i < requirements.Length; i++)
         {
             if (!IsRequirementOf(requirements[i], selection)
-                && GetDeniedError(document, group, entity, requirements.Slice(i, 1)) is { } error)
+                && GetDeniedError(document, group, entity, requirements.Slice(i, 1), skipSent) is { } error)
             {
                 return error;
             }
@@ -672,12 +738,14 @@ internal sealed partial class SinglePlanDeliveryState
 
     // Gets the error of the denied answer below the entity for a value that the requirement reads and that holds a
     // row without a result. Of several answers the one for the selection with the lowest id is taken, and of
-    // several for one selection the first recorded.
+    // several for one selection the first recorded. With skipSent an answer is left out when a sent payload carries
+    // an error at or below the path of its value.
     private IError? GetDeniedError(
         CompositeResultDocument document,
         int group,
         CompositeResultElement entity,
-        ReadOnlySpan<OperationRequirement> requirement)
+        ReadOnlySpan<OperationRequirement> requirement,
+        bool skipSent)
     {
         var requirementReads = _requirementReads ??= new(ReferenceEqualityComparer.Instance);
 
@@ -711,7 +779,8 @@ internal sealed partial class SinglePlanDeliveryState
                 && deniedSelection.Id < lowest
                 && read.Contains(deniedSelection.Id)
                 && IsBelow(denied, entity)
-                && LacksReadRow(denied, read))
+                && LacksReadRow(denied, read)
+                && !(skipSent && IsSent(denied.Path, includeBelow: true)))
             {
                 error = answer.Error;
                 lowest = deniedSelection.Id;

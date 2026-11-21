@@ -4932,6 +4932,53 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnce_When_APayloadAlreadyReportsTheDeniedRequirement()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { cA } } }",
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ANonNullFieldRequiresAReportedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string BoxSource =
         """
         type Query { userById(id: ID!): User @lookup @internal }
@@ -5180,7 +5227,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private static string NullTheSecondInner(string schema, string body, string text)
         => schema is "B" ? InnersWithA().Replace(text, """{"data":$1$2,null,$4""") : text;
 
-    [GeneratedRegex("""^\{"data":(\{"userById":\{"inners":\[)(\{"a":"[^"]*"\}),(\{"a":"[^"]*"\}),(\{"a":"[^"]*"\})""")]
+    [GeneratedRegex(
+        """^\{"data":(\{"userById":\{"inners":\[)(\{"a":"[^"]*"(?:,"c":"[^"]*")?\}),"""
+        + """(\{"a":"[^"]*"(?:,"c":"[^"]*")?\}),(\{"a":"[^"]*"(?:,"c":"[^"]*")?\})""")]
     private static partial Regex InnersWithA();
 
     [Fact]
@@ -5246,6 +5295,29 @@ public partial class SinglePlanDeferTests : FusionTestBase
         var run = await RunDeferredAsync(
             gateway,
             "{ user { nick inners { c } ... @defer { gL } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnlyInTheInitialPayload_When_AnElementOfTheRequiredListFailedThere()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            FailTheSecondInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inners { a c } ... @defer { gL } } }",
             []);
 
         // assert
