@@ -930,6 +930,59 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(run.Twin.Requests["C"], run.Deferred.Requests["C"]);
     }
 
+    [Fact]
+    public async Task Defer_Should_SendTheSourceOneRequest_When_TakingTheKeyWouldMoveALookupOutOfItsRequest()
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<HolderUserFriendRootSource.Query>()),
+            ("C", builder => builder.AddQueryType<HolderUserCodeSource.Query>()),
+            ("D", builder => builder.AddQueryType<HolderUserSkuByCodeSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $i: Boolean!) {
+                current {
+                    user {
+                        f1: friend { code }
+                        ... @defer(if: $a) { f2: friend { sku } f1: friend { sku @include(if: $i) } }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = true, ["i"] = true });
+
+        // assert
+        MatchRunWithValues(run);
+        Assert.Equal(run.Twin.Requests["D"], run.Deferred.Requests["D"]);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SkipThePlainLookup_When_TheSwitchIsOnAndItsProducerHoldsItsKey()
+    {
+        // arrange
+        var gateway = await CreateRequirementUserGatewayAsync(
+            ("A", builder => builder.AddQueryType<HolderUserRootSource.Query>()),
+            ("B", builder => builder.AddQueryType<HolderUserTotalSource.Query>()),
+            ("C", builder => builder.AddQueryType<HolderUserSkuByIdSource.Query>()));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!) {
+                current { user { sku ... @defer(if: $a) { total } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = true });
+
+        // assert
+        MatchRunWithValues(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
     public static class HolderUserRootSource
     {
         public class Query
@@ -1025,6 +1078,27 @@ public partial class SinglePlanDeferTests : FusionTestBase
             public string Name => "name-" + Id;
 
             public string Nick => "nick-" + Id;
+        }
+    }
+
+    public static class HolderUserFriendRootSource
+    {
+        public class Query
+        {
+            public Holder GetCurrent() => new();
+
+            [Lookup, Internal]
+            public User? GetUserById([ID] int id) => new(id);
+        }
+
+        public class Holder
+        {
+            public User GetUser() => new(1);
+        }
+
+        public record User([property: ID] int Id)
+        {
+            public User GetFriend() => new(Id + 10);
         }
     }
 

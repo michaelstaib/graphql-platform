@@ -1,0 +1,275 @@
+operation:
+  - document: |
+      query($a: Boolean!, $i: Boolean!) {
+        current {
+          user {
+            f1: friend {
+              code
+              id @fusion__requirement
+              ... @skip(if: $a) {
+                code @fusion__requirement
+                sku @include(if: $i)
+              }
+            }
+            f2: friend @skip(if: $a) {
+              sku
+              code @fusion__requirement
+              id @fusion__requirement
+            }
+            ... @include(if: $a) {
+              ... @defer(if: $a, __group: 0, __parent: -1) {
+                f2: friend {
+                  sku
+                  code @fusion__requirement
+                  id @fusion__requirement
+                }
+                f1: friend {
+                  code @fusion__requirement
+                  id @fusion__requirement
+                  sku @include(if: $i)
+                }
+                id @fusion__requirement
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!) {
+        current {
+          user {
+            f1: friend {
+              ... @skip(if: $a) {
+                __typename
+              }
+              id
+            }
+            f2: friend @skip(if: $a) {
+              id
+            }
+            ... @include(if: $a) {
+              ... {
+                id
+              }
+            }
+          }
+        }
+      }
+    forwardedVariables:
+      - a
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: Int!) {
+        userById(id: $__fusion_1_id) {
+          f2: friend {
+            id
+          }
+        }
+      }
+    source: $.userById
+    target: $.current.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 8
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_8($__fusion_7_id: Int!) {
+        userByIdC(id: $__fusion_7_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user.f2
+    batchingGroupId: 12
+    requirements:
+      - name: __fusion_7_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 9
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_9($__fusion_8_id: Int!) {
+        userByIdC(id: $__fusion_8_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user.f1
+    batchingGroupId: 12
+    requirements:
+      - name: __fusion_8_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: Int!) {
+        userByIdC(id: $__fusion_3_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user.f1
+    batchingGroupId: 13
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $i
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 2
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: Int!) {
+        userByIdC(id: $__fusion_5_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user.f2
+    batchingGroupId: 13
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 2
+  - id: 7
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_7($__fusion_6_code: String!) {
+        userByCode(code: $__fusion_6_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.current.user.f2
+    batchingGroupId: 14
+    requirements:
+      - name: __fusion_6_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 8
+  - id: 10
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_10($__fusion_9_code: String!) {
+        userByCode(code: $__fusion_9_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.current.user.f1
+    batchingGroupId: 14
+    requirements:
+      - name: __fusion_9_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $i
+        passingValue: true
+    dependencies:
+      - id: 9
+  - id: 3
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_3($__fusion_2_code: String!) {
+        userByCode(code: $__fusion_2_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.current.user.f1
+    batchingGroupId: 15
+    requirements:
+      - name: __fusion_2_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $i
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 4
+  - id: 5
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_5($__fusion_4_code: String!) {
+        userByCode(code: $__fusion_4_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.current.user.f2
+    batchingGroupId: 15
+    requirements:
+      - name: __fusion_4_code
+        selectionMap: >-
+          code
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 6
+deliveryGroups:
+  - id: 0
+    path: $.current.user
+    ifVariable: $a

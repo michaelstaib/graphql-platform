@@ -1135,6 +1135,107 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_KeepTheKeyLookup_When_TakingTheKeyWouldSendTheSourceAnotherRequest()
+    {
+        // arrange
+        var schema = ComposeSchema(FriendRootSchema, HolderCodeSchema, HolderByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $i: Boolean!) {
+                current {
+                    user {
+                        f1: friend { code }
+                        ... @defer(if: $a) { f2: friend { sku } f1: friend { sku @include(if: $i) } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_TakeTheKeyFromThePlainStep_When_AStepOfTheEnclosingGroupAlsoHoldsIt()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderTotalSchema, HolderSkuSchema, HolderNameSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($c: Boolean!) {
+                current {
+                    user {
+                        sku @include(if: $c)
+                        ... @defer(label: "x") { sku ... @defer(label: "y") { total @include(if: $c) } }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_TakeTheKeyFromTheStepWithTheLowestId_When_TwoGroupStepsOfOneDepthHoldIt()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderTotalSchema, HolderSkuSchema, HolderNameSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($c: Boolean!, $d: Boolean!) {
+                current {
+                    user {
+                        ... @defer(label: "x") {
+                            sku @include(if: $c)
+                            ... @defer(label: "y") {
+                                sku @include(if: $d)
+                                nick
+                                ... @defer(label: "z") { ... @include(if: $c) { total @include(if: $d) } }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheKeyInTheLookup_When_TheOperationHasNoDefer()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderTotalSchema, HolderSkuSchema, HolderNameSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                current { user { sku total @skip(if: $a) } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_MarkRequirementSteps_When_DeferIsBelowAMutation()
     {
         // arrange
@@ -3566,6 +3667,52 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
             id: Int!
             name: String!
             nick: String!
+        }
+        """;
+
+    private const string FriendRootSchema =
+        """
+        # name: a
+        type Query {
+            current: Holder
+            userById(id: Int!): User @lookup @internal
+        }
+
+        type Holder {
+            user: User!
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            friend: User!
+        }
+        """;
+
+    private const string HolderCodeSchema =
+        """
+        # name: c
+        type Query {
+            userByIdC(id: Int!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            code: String! @shareable
+            nick: String!
+        }
+        """;
+
+    private const string HolderByCodeSchema =
+        """
+        # name: d
+        type Query {
+            userByCode(code: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "code") {
+            code: String! @shareable
+            sku: String! @shareable
+            total: Int!
         }
         """;
 
