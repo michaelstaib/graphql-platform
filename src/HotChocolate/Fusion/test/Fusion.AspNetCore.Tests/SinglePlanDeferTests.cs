@@ -5969,8 +5969,33 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendTheErrorOnce_When_APayloadAlreadyReportsTheDeniedRequirement()
     {
         // arrange
+        // the initial step of inner (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { cA } } }",
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnce_When_TheInitialStepHoldsTheFailedRequirement()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
             NameTheSourceError,
             failingSchema: null,
             configure: null,
@@ -5993,6 +6018,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ANonNullFieldRequiresAReportedObject()
     {
         // arrange
+        // the initial step of inner (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
             NameTheSourceError,
@@ -6005,8 +6031,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // act
         var run = await RunDeferredAsync(
             gateway,
-            "{ user { nick inner { a c } ... @defer { nnA } } }",
-            []);
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { nnA } } }",
+            new Dictionary<string, object?> { ["v"] = true });
 
         // assert
         MatchPayloads(run);
@@ -6415,6 +6441,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendTheErrorOnlyInTheInitialPayload_When_AnElementOfTheRequiredListFailedThere()
     {
         // arrange
+        // the initial step of inners (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
             FailTheSecondInner,
@@ -6427,11 +6454,35 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // act
         var run = await RunDeferredAsync(
             gateway,
+            "query($v: Boolean!) { user { nick inners @include(if: $v) { a c } ... @defer { gL } } }",
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnlyInTheInitialPayload_When_TheInitialStepHoldsTheFailedElement()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheSecondInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
             "{ user { nick inners { a c } ... @defer { gL } } }",
             []);
 
         // assert
-        MatchPayloads(run);
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
     }
 
     // The source schema B reports the error "B failed 0" at the first element of inners for the step B:2, and answers
