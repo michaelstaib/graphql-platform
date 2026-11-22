@@ -5401,6 +5401,40 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    // The source schema B reports the error "B failed 0" at the first element of inners for the step B:2, and answers
+    // null with the error "B failed" for inners for the step B:5.
+    private static string FailTheFirstInnerAndTheList(string schema, string body, string text)
+        => schema is not "B"
+            ? text
+            : StepId().Match(body).Groups[1].Value is "2"
+                ? """{"errors":[{"message":"B failed 0","path":["userById","inners",0]}],""" + text[1..]
+                : """{"errors":[{"message":"B failed","path":["userById","inners"]}],"data":"""
+                + """{"userById":{"inners":null}}}""";
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnce_When_TheCompletionOfAnotherFragmentReportsARowOfTheRequiredList()
+    {
+        // arrange
+        // the step of q (B:2) answers first and q completes in its own payload, then the step of the requirement (B:5)
+        var gateway = await CreateGatewayAsync(
+            ["B:2>", "B:5"],
+            FailTheFirstInnerAndTheList,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick ... @defer { gL } ... @defer(label: "q") { inners { c } } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string RequiredLeafSource =
         """
         type Query { userById(id: ID!): User @lookup @internal }
