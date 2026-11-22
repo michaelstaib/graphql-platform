@@ -253,6 +253,228 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Plan_Should_InlineRequirementIntoParentLookup_When_ConditionSitsOnAncestorField()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+              orderById(id: ID!): Order @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              order: Order!
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              orderById(id: ID!): Order @lookup @internal
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user @skip(if: $a) {
+                order {
+                  shipping
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_InlineRequirementIntoAncestorStep_When_ConditionSitsAboveTypeCondition()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              item: Item!
+            }
+
+            interface Item @key(fields: "id") {
+              id: ID!
+              dItemField: String
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              dItemField: String
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: c
+            type Query {
+              itemById(id: ID!): Item @lookup @internal
+            }
+
+            interface Item @key(fields: "id") {
+              id: ID!
+              sku: ID!
+            }
+
+            type Product implements Item @key(fields: "id") @key(fields: "sku") {
+              id: ID!
+              sku: ID!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              productBySku(sku: ID!): Product @lookup @internal
+            }
+
+            type Product @key(fields: "sku") {
+              sku: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user @skip(if: $a) {
+                item {
+                  dItemField
+                  ... on Product {
+                    shipping
+                  }
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_FetchRequirementThroughParentLookup_When_SourceOfRequirementHasNoLookupForTheEntity()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              order: Order! @shareable
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              order: Order! @shareable
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              orderById(id: ID!): Order @lookup @internal
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user {
+                order {
+                  tax @skip(if: $a)
+                  shipping
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
     private static FusionSchemaDefinition ComposeUserSchema()
         => ComposeSchema(
             """

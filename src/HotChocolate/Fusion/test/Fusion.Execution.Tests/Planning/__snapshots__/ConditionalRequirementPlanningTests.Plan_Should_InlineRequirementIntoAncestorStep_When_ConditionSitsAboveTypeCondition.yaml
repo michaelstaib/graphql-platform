@@ -1,0 +1,101 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user @skip(if: $a) {
+          item {
+            __typename @fusion__requirement
+            dItemField
+            ... on Product {
+              shipping
+              sku @fusion__requirement
+              weight @fusion__requirement
+              id @fusion__requirement
+            }
+          }
+          id @fusion__requirement
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 5
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          id
+        }
+      }
+    conditions:
+      - variable: $a
+        passingValue: false
+  - id: 2
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          item {
+            __typename
+            dItemField
+            ... on Product {
+              weight
+              id
+            }
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_sku: ID!, $__fusion_3_weight: Int) {
+        productBySku(sku: $__fusion_2_sku) {
+          shipping(weight: $__fusion_3_weight)
+        }
+      }
+    source: $.productBySku
+    target: $.user.item<Product>
+    requirements:
+      - name: __fusion_2_sku
+        selectionMap: >-
+          sku
+      - name: __fusion_3_weight
+        selectionMap: >-
+          weight
+    dependencies:
+      - id: 2
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_4_id: ID!) {
+        itemById(id: $__fusion_4_id) {
+          __typename
+          ... on Product {
+            sku
+          }
+        }
+      }
+    source: $.itemById<Product>
+    target: $.user.item<Product>
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 2

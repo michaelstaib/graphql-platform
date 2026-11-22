@@ -1,0 +1,192 @@
+title: Requirement_Should_BeResolved_When_ConditionSitsOnAncestorField
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      user @skip(if: $a) {
+        order {
+          shipping
+          tax @skip(if: $b)
+        }
+      }
+    }
+  variables: |
+    {
+      "a": true,
+      "b": false
+    }
+response:
+  body: |
+    {
+      "data": {}
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+      }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: Int!): User @lookup @internal
+        orderById(id: Int!): Order @lookup @internal
+      }
+
+      type Order @key(fields: "id") {
+        id: Int!
+        weight: Int!
+        total: Int!
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+        order: Order!
+      }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: Int!): Order @lookup @internal
+      }
+
+      type Order @key(fields: "id") @key(fields: "sku") {
+        id: Int!
+        sku: Int!
+      }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderBySku(sku: Int!): Order @lookup @internal
+      }
+
+      type Order @key(fields: "sku") {
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+        sku: Int!
+      }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          user @skip(if: $a) {
+            order {
+              shipping
+              sku @fusion__requirement
+              total @fusion__requirement
+              weight @fusion__requirement
+              id @fusion__requirement
+              tax @skip(if: $b)
+            }
+            id @fusion__requirement
+          }
+        }
+      name: testQuery
+      hash: cbf9b96f7e6d290e957449587c30018e
+      searchSpace: 2
+      expandedNodes: 5
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_dcc93276_1 {
+          user {
+            id
+          }
+        }
+      conditions:
+        - variable: $a
+          passingValue: false
+    - id: 2
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_dcc93276_2($__fusion_1_id: Int!) {
+          userById(id: $__fusion_1_id) {
+            order {
+              total
+              weight
+              id
+            }
+          }
+        }
+      source: $.userById
+      target: $.user
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_dcc93276_3(
+          $b: Boolean!
+          $__fusion_2_sku: Int!
+          $__fusion_3_total: Int
+          $__fusion_4_weight: Int
+        ) {
+          orderBySku(sku: $__fusion_2_sku) {
+            tax(total: $__fusion_3_total) @skip(if: $b)
+            shipping(weight: $__fusion_4_weight)
+          }
+        }
+      source: $.orderBySku
+      target: $.user.order
+      requirements:
+        - name: __fusion_2_sku
+          selectionMap: >-
+            sku
+        - name: __fusion_3_total
+          selectionMap: >-
+            total
+        - name: __fusion_4_weight
+          selectionMap: >-
+            weight
+      forwardedVariables:
+        - b
+      dependencies:
+        - id: 2
+        - id: 4
+    - id: 4
+      type: Operation
+      schema: C
+      operation: |
+        query testQuery_dcc93276_4($__fusion_5_id: Int!) {
+          orderById(id: $__fusion_5_id) {
+            sku
+          }
+        }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_5_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 2

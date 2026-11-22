@@ -2911,6 +2911,8 @@ public sealed partial class OperationPlanner
         // inlining performs must happen up front here.
         RegisterRequirementSelectionSets(requirements, index);
 
+        ExecutionNodeCondition[]? effectiveConditions = null;
+
         foreach (var (step, stepIndex, schemaName) in current.GetCandidateSteps(workItem.Selection.SelectionSetId))
         {
             if (currentStep.Id == step.Id)
@@ -2935,10 +2937,10 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
-            if (HasConditionNotIn(step.Conditions, workItem.Conditions))
+            if (HasForeignCondition(step.Conditions, current.InternalOperationDefinition))
             {
-                // a step that runs under a condition the requiring field does not carry
-                // cannot supply the requirement.
+                // a step that runs under a condition that neither the requiring field nor a field
+                // or fragment around it carries cannot supply the requirement.
                 continue;
             }
 
@@ -3031,8 +3033,9 @@ public sealed partial class OperationPlanner
         // Fallback: if no candidate step was found via exact selection set ID match,
         // walk the internal operation AST to find the nearest ancestor step and the
         // complete connector chain to the target selection set. An ancestor step of the
-        // requiring field's schema, or one that runs under a condition the requiring field
-        // does not carry, is skipped for the same reasons as in the candidate loop.
+        // requiring field's schema, or one that runs under a condition that neither the requiring
+        // field nor a field or fragment around it carries, is skipped for the same reasons as in
+        // the candidate loop.
         if (requirements is not null
             && TryFindAncestorStepForRequirement(
                 current.InternalOperationDefinition,
@@ -3043,7 +3046,7 @@ public sealed partial class OperationPlanner
             && currentStep.Id != ancestorMatch.Step.Id
             && !ancestorMatch.Step.DependsOn(currentStep, steps)
             && !string.Equals(ancestorMatch.Step.SchemaName, current.SchemaName, StringComparison.Ordinal)
-            && !HasConditionNotIn(ancestorMatch.Step.Conditions, workItem.Conditions))
+            && !HasForeignCondition(ancestorMatch.Step.Conditions, current.InternalOperationDefinition))
         {
             if (TryInlineIntoAncestorStep(
                 ancestorMatch, requirements, workItem.Selection.Path,
@@ -3092,6 +3095,12 @@ public sealed partial class OperationPlanner
         }
 
         return requirements;
+
+        bool HasForeignCondition(ExecutionNodeCondition[] stepConditions, OperationDefinitionNode operation)
+            => HasConditionNotIn(stepConditions, workItem.Conditions)
+                && HasConditionNotIn(
+                    stepConditions,
+                    effectiveConditions ??= GetEffectiveConditions(operation, index, workItem));
     }
 
     /// <summary>
@@ -3111,6 +3120,79 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Gets the conditions of the requiring field together with the conditions of the fields and
+    /// inline fragments that enclose its selection set in <paramref name="operation"/>.
+    /// Returns the conditions of the requiring field alone when its selection set is not found.
+    /// </summary>
+    private static ExecutionNodeCondition[] GetEffectiveConditions(
+        OperationDefinitionNode operation,
+        SelectionSetIndexBuilder index,
+        FieldRequirementWorkItem workItem)
+    {
+        var conditions = new List<ExecutionNodeCondition>(workItem.Conditions);
+
+        if (!TryCollect(operation.SelectionSet, SelectionPath.Root))
+        {
+            return workItem.Conditions;
+        }
+
+        return conditions.ToArray();
+
+        bool TryCollect(SelectionSetNode selectionSet, SelectionPath path)
+        {
+            if (index.IsRegistered(selectionSet)
+                && index.GetId(selectionSet) == workItem.Selection.SelectionSetId
+                && path.Equals(workItem.Selection.Path))
+            {
+                return true;
+            }
+
+            foreach (var selection in selectionSet.Selections)
+            {
+                SelectionSetNode child;
+                SelectionPath childPath;
+                IReadOnlyList<DirectiveNode> directives;
+
+                switch (selection)
+                {
+                    case FieldNode { SelectionSet: { } fieldSelectionSet } field:
+                        child = fieldSelectionSet;
+                        childPath = path.AppendField(field.Alias?.Value ?? field.Name.Value);
+                        directives = field.Directives;
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        child = fragment.SelectionSet;
+                        childPath = fragment.TypeCondition is null
+                            ? path
+                            : path.AppendFragment(fragment.TypeCondition.Name.Value);
+                        directives = fragment.Directives;
+                        break;
+
+                    default:
+                        continue;
+                }
+
+                var count = conditions.Count;
+
+                if (ExtractConditions(directives) is { } enclosing)
+                {
+                    conditions.AddRange(enclosing);
+                }
+
+                if (TryCollect(child, childPath))
+                {
+                    return true;
+                }
+
+                conditions.RemoveRange(count, conditions.Count - count);
+            }
+
+            return false;
+        }
     }
 
     private bool TryInlineSelectionSetIntoStep(
