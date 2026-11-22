@@ -73,38 +73,48 @@ public sealed partial class OperationPlanner
             ? null
             : PolicyMarker.TryCreate(_schema, policyContext, operation);
 
-        planSteps = TransformPlanSteps(planSteps, operationDefinition, marker, ctx.DeliveryGroups);
+        var splitForEntityReuse = _options.EnableEntityReuseSplitting
+            && operationDefinition.Operation is OperationType.Query
+            && deliveryGroups.IsDefaultOrEmpty
+            && incrementalPlans.IsDefaultOrEmpty;
 
-        var hasVariables = operationDefinition.VariableDefinitions.Count > 0
-            || marker is { HasVariables: true };
+        var requestCheck = ctx.DeliveryGroups.IsDefaultOrEmpty
+            ? null
+            : new RequestCheck(
+                this,
+                operationDefinition,
+                marker,
+                ctx.DeliveryGroups,
+                nextNodeId,
+                splitForEntityReuse,
+                singlePlanDefer,
+                cancellationToken);
+
+        planSteps = TransformPlanSteps(planSteps, operationDefinition, marker, requestCheck);
+
+        var hasVariables = HasVariables(operationDefinition, marker);
 
         if (policyContext is not null && marker is not null)
         {
             policyContext.AddRoot(marker);
         }
 
-        IndexDependencies(planSteps, ctx);
-        BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);
-        var splitForEntityReuse = _options.EnableEntityReuseSplitting
-            && operationDefinition.Operation is OperationType.Query
-            && deliveryGroups.IsDefaultOrEmpty
-            && incrementalPlans.IsDefaultOrEmpty;
-        var serialScopes = operationDefinition.Operation is OperationType.Mutation
-            ? CreateSerialScopes(planSteps, ctx)
-            : null;
-
-        if (singlePlanDefer)
+        if (requestCheck?.TryTakeBuild(planSteps) is { } checkedContext)
         {
-            MergeOperationsThatDifferInConditions(ctx, _options.MergePolicy, serialScopes);
+            ctx = checkedContext;
+        }
+        else
+        {
+            BuildMergedExecutionNodes(
+                planSteps,
+                ctx,
+                operationDefinition,
+                hasVariables,
+                splitForEntityReuse,
+                singlePlanDefer,
+                cancellationToken);
         }
 
-        MergeAndBatchOperations(
-            ctx,
-            _options.EnableRequestGrouping,
-            _options.MergePolicy,
-            splitForEntityReuse,
-            serialScopes,
-            _schema);
         WireExecutionDependencies(ctx);
 
         var rootNodes = planSteps
@@ -147,6 +157,104 @@ public sealed partial class OperationPlanner
         AssignIncrementalPlanAnchors(operationPlan, allNodes, incrementalPlans);
 
         return operationPlan;
+    }
+
+    private static bool HasVariables(OperationDefinitionNode operationDefinition, PolicyMarker? marker)
+        => operationDefinition.VariableDefinitions.Count > 0 || marker is { HasVariables: true };
+
+    // Builds the execution nodes of the plan steps and merges and batches them into the requests of the plan.
+    private void BuildMergedExecutionNodes(
+        ImmutableList<PlanStep> planSteps,
+        ExecutionPlanBuildContext ctx,
+        OperationDefinitionNode operationDefinition,
+        bool hasVariables,
+        bool splitForEntityReuse,
+        bool singlePlanDefer,
+        CancellationToken cancellationToken)
+    {
+        IndexDependencies(planSteps, ctx);
+        BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);
+        var serialScopes = operationDefinition.Operation is OperationType.Mutation
+            ? CreateSerialScopes(planSteps, ctx)
+            : null;
+
+        if (singlePlanDefer)
+        {
+            MergeOperationsThatDifferInConditions(ctx, _options.MergePolicy, serialScopes);
+        }
+
+        MergeAndBatchOperations(
+            ctx,
+            _options.EnableRequestGrouping,
+            _options.MergePolicy,
+            splitForEntityReuse,
+            serialScopes,
+            _schema);
+    }
+
+    /// <summary>
+    /// Builds the execution nodes of the step lists that the pass taking selections from other steps checks, at
+    /// most <see cref="MaxBuilds"/> times, and keeps the build of the list the pass accepted last.
+    /// </summary>
+    private sealed class RequestCheck(
+        OperationPlanner planner,
+        OperationDefinitionNode operationDefinition,
+        PolicyMarker? marker,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        int nextNodeId,
+        bool splitForEntityReuse,
+        bool singlePlanDefer,
+        CancellationToken cancellationToken)
+    {
+        public const int MaxBuilds = 8;
+
+        public ImmutableArray<DeliveryGroup> DeliveryGroups => deliveryGroups;
+
+        public bool CanBuild => BuildCount < MaxBuilds;
+
+        public int BuildCount { get; private set; }
+
+        public StepBuild? Accepted { get; set; }
+
+        public StepBuild Build(
+            ImmutableList<PlanStep> planSteps,
+            ForwardVariableRewriter.Context forwardVariableContext)
+        {
+            BuildCount++;
+
+            var completed = CompletePlanSteps(planSteps, forwardVariableContext);
+            var ctx = new ExecutionPlanBuildContext(nextNodeId) { DeliveryGroups = deliveryGroups };
+
+            planner.BuildMergedExecutionNodes(
+                completed,
+                ctx,
+                operationDefinition,
+                HasVariables(operationDefinition, marker),
+                splitForEntityReuse,
+                singlePlanDefer,
+                cancellationToken);
+
+            return new StepBuild(planSteps, completed, ctx);
+        }
+
+        public ExecutionPlanBuildContext? TryTakeBuild(ImmutableList<PlanStep> completedSteps)
+        {
+            return Accepted is { } accepted && ReferenceEquals(accepted.Steps, completedSteps)
+                ? accepted.Context
+                : null;
+        }
+    }
+
+    private sealed class StepBuild(
+        ImmutableList<PlanStep> source,
+        ImmutableList<PlanStep> steps,
+        ExecutionPlanBuildContext context)
+    {
+        public ImmutableList<PlanStep> Source { get; } = source;
+
+        public ImmutableList<PlanStep> Steps { get; } = steps;
+
+        public ExecutionPlanBuildContext Context { get; } = context;
     }
 
     /// <summary>
@@ -579,7 +687,7 @@ public sealed partial class OperationPlanner
         ImmutableList<PlanStep> planSteps,
         OperationDefinitionNode originalOperation,
         PolicyMarker? marker,
-        ImmutableArray<DeliveryGroup> deliveryGroups)
+        RequestCheck? requestCheck)
     {
         var forwardVariableContext = new ForwardVariableRewriter.Context();
 
@@ -599,7 +707,7 @@ public sealed partial class OperationPlanner
         }
 
         var updatedPlanSteps = planSteps;
-        var hasDeliveryGroups = !deliveryGroups.IsDefaultOrEmpty;
+        var hasDeliveryGroups = requestCheck is not null;
 
         foreach (var step in planSteps)
         {
@@ -622,51 +730,71 @@ public sealed partial class OperationPlanner
                 hasDeliveryGroups ? transformed : AddVariableDefinitions(transformed, forwardVariableContext));
         }
 
-        if (hasDeliveryGroups)
+        if (requestCheck is not null)
         {
-            updatedPlanSteps = TakeSelectionsFromHolders(updatedPlanSteps, originalOperation, deliveryGroups);
+            updatedPlanSteps = TakeSelectionsFromHolders(
+                updatedPlanSteps,
+                originalOperation,
+                requestCheck,
+                forwardVariableContext);
 
-            foreach (var step in updatedPlanSteps)
+            // The pass leaves the build of the list it ends with in the check, unless it changed nothing.
+            return requestCheck.Accepted is { } accepted && ReferenceEquals(accepted.Source, updatedPlanSteps)
+                ? accepted.Steps
+                : CompletePlanSteps(updatedPlanSteps, forwardVariableContext);
+        }
+
+        return RemoveKeyOnlyLookupSteps(updatedPlanSteps);
+    }
+
+    // Attaches the variable definitions to the steps of a plan with delivery groups and removes the lookup steps
+    // that select nothing but their entry key.
+    private static ImmutableList<PlanStep> CompletePlanSteps(
+        ImmutableList<PlanStep> planSteps,
+        ForwardVariableRewriter.Context forwardVariableContext)
+    {
+        var updatedPlanSteps = planSteps;
+
+        foreach (var step in planSteps)
+        {
+            if (step is OperationPlanStep operationPlanStep)
             {
-                if (step is OperationPlanStep operationPlanStep)
-                {
-                    updatedPlanSteps = updatedPlanSteps.Replace(
-                        step,
-                        AddVariableDefinitions(operationPlanStep, forwardVariableContext));
-                }
+                updatedPlanSteps = updatedPlanSteps.Replace(
+                    step,
+                    AddVariableDefinitions(operationPlanStep, forwardVariableContext));
             }
         }
 
         return RemoveKeyOnlyLookupSteps(updatedPlanSteps);
+    }
 
-        static OperationPlanStep AddVariableDefinitions(
-            OperationPlanStep step,
-            ForwardVariableRewriter.Context forwardVariableContext)
+    private static OperationPlanStep AddVariableDefinitions(
+        OperationPlanStep step,
+        ForwardVariableRewriter.Context forwardVariableContext)
+    {
+        forwardVariableContext.Reset();
+
+        foreach (var (key, requirement) in step.Requirements.OrderBy(t => t.Key))
         {
-            forwardVariableContext.Reset();
-
-            foreach (var (key, requirement) in step.Requirements.OrderBy(t => t.Key))
-            {
-                forwardVariableContext.Requirements[key] =
-                    new VariableDefinitionNode(
-                        null,
-                        new VariableNode(null, new NameNode(key)),
-                        description: null,
-                        requirement.Type,
-                        null,
-                        []);
-            }
-
-            var rewrittenNode = s_forwardVariableRewriter.Rewrite(step.Definition, forwardVariableContext);
-
-            if (rewrittenNode is OperationDefinitionNode rewrittenOperationNode
-                && !ReferenceEquals(rewrittenOperationNode, step.Definition))
-            {
-                return step with { Definition = rewrittenOperationNode };
-            }
-
-            return step;
+            forwardVariableContext.Requirements[key] =
+                new VariableDefinitionNode(
+                    null,
+                    new VariableNode(null, new NameNode(key)),
+                    description: null,
+                    requirement.Type,
+                    null,
+                    []);
         }
+
+        var rewrittenNode = s_forwardVariableRewriter.Rewrite(step.Definition, forwardVariableContext);
+
+        if (rewrittenNode is OperationDefinitionNode rewrittenOperationNode
+            && !ReferenceEquals(rewrittenOperationNode, step.Definition))
+        {
+            return step with { Definition = rewrittenOperationNode };
+        }
+
+        return step;
     }
 
     /// <summary>
@@ -788,20 +916,25 @@ public sealed partial class OperationPlanner
     /// Removes the entry selections of the lookup steps of a plan with delivery groups that another step fetches at
     /// the same response path whenever the step runs, and makes the dependents of the step depend on that step.
     /// A step without delivery groups only gives up the entry key that its producer fetches. A step keeps the fields
-    /// that the operation selects for its groups, and no source schema gets more requests.
+    /// that the operation selects for its groups, and no source schema gets more requests than the plan build
+    /// creates for the steps before the pass.
     /// </summary>
     private static ImmutableList<PlanStep> TakeSelectionsFromHolders(
         ImmutableList<PlanStep> planSteps,
         OperationDefinitionNode operation,
-        ImmutableArray<DeliveryGroup> deliveryGroups)
+        RequestCheck requestCheck,
+        ForwardVariableRewriter.Context forwardVariableContext)
     {
-        using var pass = new HolderPass(planSteps, operation, deliveryGroups);
+        using var pass = new HolderPass(planSteps, operation, requestCheck, forwardVariableContext);
         var taken = TakeSelections(planSteps, pass, checkEveryStep: false);
 
-        // When the result sends a source more requests, the steps are taken again with a check per step.
-        return !ReferenceEquals(taken, planSteps) && pass.IncreasesRequests(planSteps, taken)
-            ? TakeSelections(planSteps, pass, checkEveryStep: true)
-            : taken;
+        if (ReferenceEquals(taken, planSteps) || pass.TryAccept(planSteps, taken))
+        {
+            return taken;
+        }
+
+        // The result sends a source more requests, so the steps are taken again with a check per step.
+        return TakeSelections(planSteps, pass, checkEveryStep: true);
     }
 
     private static ImmutableList<PlanStep> TakeSelections(
@@ -879,7 +1012,14 @@ public sealed partial class OperationPlanner
 
             if (!hasGroups)
             {
-                planSteps = planSteps.SetItem(i, updated);
+                var plainCandidate = planSteps.SetItem(i, updated);
+
+                if (checkEveryStep && !pass.TryAccept(planSteps, plainCandidate))
+                {
+                    continue;
+                }
+
+                planSteps = plainCandidate;
                 continue;
             }
 
@@ -912,7 +1052,7 @@ public sealed partial class OperationPlanner
 
             candidate = pass.KeptCount == 0 ? candidate.RemoveAt(i) : candidate.SetItem(i, updated);
 
-            if (checkEveryStep && pass.IncreasesRequests(planSteps, candidate))
+            if (checkEveryStep && !pass.TryAccept(planSteps, candidate))
             {
                 continue;
             }
@@ -986,26 +1126,34 @@ public sealed partial class OperationPlanner
 
         private readonly OperationDefinitionNode _operation;
         private readonly ImmutableArray<DeliveryGroup> _deliveryGroups;
+        private readonly RequestCheck _requestCheck;
+        private readonly ForwardVariableRewriter.Context _forwardVariableContext;
         private readonly int _maxId;
+        private readonly int _schemaCapacity;
+        private readonly string?[] _schemaNames;
         private readonly ConditionKey[] _allowed;
         private readonly ISelectionNode[] _kept;
         private readonly int[] _holders;
         private readonly OperationPlanStep?[] _byId;
-        private readonly OperationPlanStep?[] _byIdAfter;
         private readonly int[] _depth;
-        private readonly int[] _depthAfter;
         private readonly int[] _remaining;
         private readonly int[] _queue;
         private readonly int[] _visited;
+        private int[] _acceptedCounts;
+        private int[] _candidateCounts;
         private ImmutableArray<int> _stepGroups;
+        private int _schemaCount;
         private int _allowedCount;
         private int _visitStamp;
 
         public HolderPass(
             ImmutableList<PlanStep> planSteps,
             OperationDefinitionNode operation,
-            ImmutableArray<DeliveryGroup> deliveryGroups)
+            RequestCheck requestCheck,
+            ForwardVariableRewriter.Context forwardVariableContext)
         {
+            _requestCheck = requestCheck;
+            _forwardVariableContext = forwardVariableContext;
             var maxId = 0;
             var maxEntry = 0;
 
@@ -1021,15 +1169,17 @@ public sealed partial class OperationPlanner
             }
 
             _operation = operation;
-            _deliveryGroups = deliveryGroups;
+            _deliveryGroups = requestCheck.DeliveryGroups;
             _maxId = maxId;
+            _schemaCapacity = planSteps.Count + 1;
+            _schemaNames = ArrayPool<string?>.Shared.Rent(_schemaCapacity);
+            _acceptedCounts = ArrayPool<int>.Shared.Rent(_schemaCapacity);
+            _candidateCounts = ArrayPool<int>.Shared.Rent(_schemaCapacity);
             _allowed = ArrayPool<ConditionKey>.Shared.Rent(ConditionCapacity);
             _kept = ArrayPool<ISelectionNode>.Shared.Rent(Math.Max(maxEntry, 1));
             _holders = ArrayPool<int>.Shared.Rent(Math.Max(maxEntry, 1));
             _byId = ArrayPool<OperationPlanStep?>.Shared.Rent(maxId + 1);
-            _byIdAfter = ArrayPool<OperationPlanStep?>.Shared.Rent(maxId + 1);
             _depth = ArrayPool<int>.Shared.Rent(maxId + 1);
-            _depthAfter = ArrayPool<int>.Shared.Rent(maxId + 1);
             _remaining = ArrayPool<int>.Shared.Rent(maxId + 1);
             _queue = ArrayPool<int>.Shared.Rent(maxId + 1);
             _visited = ArrayPool<int>.Shared.Rent(maxId + 1);
@@ -1165,33 +1315,79 @@ public sealed partial class OperationPlanner
             return true;
         }
 
-        public bool IncreasesRequests(ImmutableList<PlanStep> before, ImmutableList<PlanStep> after)
+        // Accepts the list when the plan build creates no more requests for any source schema than for the list
+        // accepted before, and keeps its build. Returns false when the list is not accepted or the build limit is hit.
+        public bool TryAccept(ImmutableList<PlanStep> before, ImmutableList<PlanStep> after)
         {
-            Index(before, _byId, _depth);
-            Index(after, _byIdAfter, _depthAfter);
-
-            foreach (var planStep in after)
+            if (_requestCheck.Accepted is null)
             {
-                if (planStep is OperationPlanStep { SchemaName: { } schemaName }
-                    && !HasEarlierStepOfSchema(after, planStep, schemaName)
-                    && CountRequests(after, _depthAfter, schemaName) > CountRequests(before, _depth, schemaName))
+                _requestCheck.Accepted = _requestCheck.Build(before, _forwardVariableContext);
+                Count(_requestCheck.Accepted.Context, _acceptedCounts);
+            }
+
+            Debug.Assert(ReferenceEquals(_requestCheck.Accepted.Source, before));
+
+            if (!_requestCheck.CanBuild)
+            {
+                return false;
+            }
+
+            var candidate = _requestCheck.Build(after, _forwardVariableContext);
+            Count(candidate.Context, _candidateCounts);
+
+            for (var i = 0; i < _schemaCount; i++)
+            {
+                if (_candidateCounts[i] > _acceptedCounts[i])
                 {
-                    return true;
+                    return false;
                 }
             }
 
-            return false;
+            _requestCheck.Accepted = candidate;
+            (_acceptedCounts, _candidateCounts) = (_candidateCounts, _acceptedCounts);
+            return true;
+        }
+
+        // Counts the execution nodes that send a request to each source schema.
+        private void Count(ExecutionPlanBuildContext ctx, int[] counts)
+        {
+            counts.AsSpan(0, _schemaCapacity).Clear();
+
+            foreach (var node in ctx.ExecutionNodes.Values)
+            {
+                if (node is NodeFieldExecutionNode)
+                {
+                    continue;
+                }
+
+                counts[GetSchemaIndex(node.SchemaName ?? DynamicSchemaNameMarker)]++;
+            }
+        }
+
+        private int GetSchemaIndex(string schemaName)
+        {
+            for (var i = 0; i < _schemaCount; i++)
+            {
+                if (schemaName.Equals(_schemaNames[i], StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+
+            _schemaNames[_schemaCount] = schemaName;
+            return _schemaCount++;
         }
 
         public void Dispose()
         {
+            ArrayPool<string?>.Shared.Return(_schemaNames, clearArray: true);
+            ArrayPool<int>.Shared.Return(_acceptedCounts);
+            ArrayPool<int>.Shared.Return(_candidateCounts);
             ArrayPool<ConditionKey>.Shared.Return(_allowed, clearArray: true);
             ArrayPool<ISelectionNode>.Shared.Return(_kept, clearArray: true);
             ArrayPool<int>.Shared.Return(_holders);
             ArrayPool<OperationPlanStep?>.Shared.Return(_byId, clearArray: true);
-            ArrayPool<OperationPlanStep?>.Shared.Return(_byIdAfter, clearArray: true);
             ArrayPool<int>.Shared.Return(_depth);
-            ArrayPool<int>.Shared.Return(_depthAfter);
             ArrayPool<int>.Shared.Return(_remaining);
             ArrayPool<int>.Shared.Return(_queue);
             ArrayPool<int>.Shared.Return(_visited);
@@ -1376,105 +1572,6 @@ public sealed partial class OperationPlanner
             }
 
             return false;
-        }
-
-        private bool HasEarlierStepOfSchema(ImmutableList<PlanStep> steps, PlanStep step, string schemaName)
-        {
-            foreach (var planStep in steps)
-            {
-                if (ReferenceEquals(planStep, step))
-                {
-                    return false;
-                }
-
-                if (planStep is OperationPlanStep { SchemaName: { } other }
-                    && other.Equals(schemaName, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        // Counts the requests the source schema gets: the operations of one dependency depth and one delivery
-        // group mark travel together.
-        private int CountRequests(ImmutableList<PlanStep> steps, int[] depth, string schemaName)
-        {
-            var count = 0;
-
-            foreach (var planStep in steps)
-            {
-                if (planStep is not OperationPlanStep step
-                    || !schemaName.Equals(step.SchemaName, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var isFirst = true;
-
-                if (step.Definition.Operation is OperationType.Query)
-                {
-                    foreach (var earlier in steps)
-                    {
-                        if (ReferenceEquals(earlier, planStep))
-                        {
-                            break;
-                        }
-
-                        if (earlier is OperationPlanStep other
-                            && schemaName.Equals(other.SchemaName, StringComparison.Ordinal)
-                            && other.Definition.Operation is OperationType.Query
-                            && depth[other.Id] == depth[step.Id]
-                            && HaveSameBatchMark(other, step))
-                        {
-                            isFirst = false;
-                            break;
-                        }
-                    }
-                }
-
-                if (isFirst)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
-        private bool HaveSameBatchMark(OperationPlanStep first, OperationPlanStep second)
-        {
-            var firstGroups = first.DeliveryGroups;
-            var secondGroups = second.DeliveryGroups;
-
-            if (firstGroups.IsDefaultOrEmpty || secondGroups.IsDefaultOrEmpty)
-            {
-                return firstGroups.IsDefaultOrEmpty && secondGroups.IsDefaultOrEmpty;
-            }
-
-            var firstIsUnlabelled = TryGetUnlabelledSite(_deliveryGroups, firstGroups, out _);
-            var secondIsUnlabelled = TryGetUnlabelledSite(_deliveryGroups, secondGroups, out _);
-
-            if (firstIsUnlabelled || secondIsUnlabelled)
-            {
-                return firstIsUnlabelled && secondIsUnlabelled;
-            }
-
-            if (firstGroups.Length != secondGroups.Length)
-            {
-                return false;
-            }
-
-            foreach (var group in firstGroups)
-            {
-                if (!secondGroups.Contains(group))
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         private bool AreConditionsAllowed(OperationPlanStep holder)

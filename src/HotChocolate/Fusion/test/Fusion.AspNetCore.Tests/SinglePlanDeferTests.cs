@@ -1072,6 +1072,44 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendEqualLookupsAsOneRequest_When_OnlyOneOfThemCouldTakeItsKey()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { current: Holder! userById(id: ID!): User @lookup @internal }
+                type Holder { user: User! }
+                type User @key(fields: "id") { id: ID! }
+                """),
+            ("F", """
+                type Query { userById(id: ID!): User @lookup @internal }
+                type User @key(fields: "id") { id: ID! friend: User! }
+                """),
+            ("C", """
+                type Query { userById(id: ID!): User @lookup @internal }
+                type User @key(fields: "id") { id: ID! code: String! @shareable nick: String! }
+                """),
+            ("D", """
+                type Query { userByCode(code: String!): User @lookup @internal }
+                type User @key(fields: "code") { code: String! @shareable total: Int! }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                current { user { code ... @defer { nick total friend { nick total } } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.Requests["C"], run.Deferred.Requests["C"]);
+    }
+
+    [Fact]
     public async Task Defer_Should_SkipThePlainLookup_When_TheSwitchIsOnAndItsProducerHoldsItsKey()
     {
         // arrange

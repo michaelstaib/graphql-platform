@@ -1160,6 +1160,87 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_KeepEqualLookupsInOneOperation_When_OnlyOneOfThemCouldTakeItsKey()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderFriendSchema, HolderCodeSchema, HolderByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                current { user { code ... @defer { nick total friend { nick total } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheLastCheckedSteps_When_TheCheckReachesItsBuildLimit()
+    {
+        // arrange
+        var schema = ComposeSchema(FriendRootSchema, HolderTotalSchema, HolderCodeSchema, HolderSkuByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!, $d: Boolean!, $e: Boolean!) {
+                current {
+                    user {
+                        ... @defer(if: $a) {
+                            friend { code }
+                            ... @defer(if: $b) { friend { sku } }
+                        }
+                        ... @defer(if: $c) { friend { code total } }
+                        ... @defer(if: $d) {
+                            friend { sku total }
+                            ... @defer(if: $e) { friend { code sku } }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepEqualLookupsMerged_When_RequestGroupingIsOff()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderFriendSchema, HolderCodeSchema, HolderByCodeSchema);
+        var options = new OperationPlannerOptions { EnableSinglePlanDefer = true, EnableRequestGrouping = false };
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                current {
+                    user {
+                        code
+                        friend { code }
+                        ... @defer { nick total friend { nick total friend { nick total } } }
+                    }
+                }
+            }
+            """,
+            options,
+            "123456789101112");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_TakeTheKeyFromThePlainStep_When_AStepOfTheEnclosingGroupAlsoHoldsIt()
     {
         // arrange
@@ -3773,6 +3854,32 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
 
         type Holder {
             user: User!
+        }
+
+        type User @key(fields: "id") {
+            id: Int!
+            friend: User!
+        }
+        """;
+
+    private const string HolderSkuByCodeSchema =
+        """
+        # name: d
+        type Query {
+            userByCode(code: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "code") {
+            code: String! @shareable
+            sku: String! @shareable
+        }
+        """;
+
+    private const string HolderFriendSchema =
+        """
+        # name: f
+        type Query {
+            userByIdF(id: Int!): User @lookup @internal
         }
 
         type User @key(fields: "id") {
