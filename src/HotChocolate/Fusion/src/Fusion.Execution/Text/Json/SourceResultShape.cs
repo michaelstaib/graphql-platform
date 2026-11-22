@@ -88,21 +88,27 @@ internal sealed class SourceResultShape
     /// when the selections of the node are already kept for too many other selection sets.
     /// </summary>
     public Selection?[]? GetSelections(int node, SelectionSet selectionSet)
-    {
-        for (var current = Volatile.Read(ref _nodeSelections[node]); current is not null; current = current.Next)
-        {
-            if (ReferenceEquals(current.SelectionSet, selectionSet))
-            {
-                return current.Selections;
-            }
-        }
+        => GetNodeSelections(node, selectionSet)?.Selections;
 
-        return AddSelections(node, selectionSet);
+    /// <summary>
+    /// Gets the selections of <paramref name="selectionSet"/> that the expected fields of
+    /// <paramref name="node"/> are completed into. Returns <c>null</c> when the selections of the
+    /// node are already kept for too many other selection sets.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public NodeSelections? GetNodeSelections(int node, SelectionSet selectionSet)
+    {
+        var first = Volatile.Read(ref _nodeSelections[node]);
+
+        return first is not null && ReferenceEquals(first.SelectionSet, selectionSet)
+            ? first
+            : FindNodeSelections(node, selectionSet);
     }
 
-    private Selection?[]? AddSelections(int node, SelectionSet selectionSet)
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private NodeSelections? FindNodeSelections(int node, SelectionSet selectionSet)
     {
-        Selection?[]? selections = null;
+        NodeSelections? created = null;
 
         while (true)
         {
@@ -113,7 +119,7 @@ internal sealed class SourceResultShape
             {
                 if (ReferenceEquals(current.SelectionSet, selectionSet))
                 {
-                    return current.Selections;
+                    return current;
                 }
 
                 count++;
@@ -126,24 +132,44 @@ internal sealed class SourceResultShape
                 return null;
             }
 
-            if (selections is null)
-            {
-                var shapeNode = _nodes[node];
-                selections = new Selection?[shapeNode.FieldCount];
+            created ??= CreateNodeSelections(node, selectionSet);
 
-                for (var i = 0; i < selections.Length; i++)
-                {
-                    selectionSet.TryGetSelection(_fieldNames[shapeNode.FirstField + i], out selections[i]);
-                }
-            }
-
-            var added = new NodeSelections(selectionSet, selections, first);
+            var added = created.WithNext(first);
 
             if (ReferenceEquals(Interlocked.CompareExchange(ref _nodeSelections[node], added, first), first))
             {
-                return selections;
+                return added;
             }
         }
+    }
+
+    private NodeSelections CreateNodeSelections(int node, SelectionSet selectionSet)
+    {
+        var shapeNode = _nodes[node];
+        var selections = new Selection?[shapeNode.FieldCount];
+        var valueRowOffsets = new int[shapeNode.FieldCount];
+        var objectRowCount = (selectionSet.Selections.Length * 2) + 1;
+
+        for (var i = 0; i < selections.Length; i++)
+        {
+            if (!selectionSet.TryGetSelection(_fieldNames[shapeNode.FirstField + i], out var selection))
+            {
+                valueRowOffsets[i] = NodeSelections.NotSelected;
+                continue;
+            }
+
+            selections[i] = selection;
+
+            // The value of an enum is checked before it is assigned, and a value row outside of
+            // the rows of the object is not addressed by its offset.
+            var valueRow = CompositeResultDocument.GetValueRowOffset(selectionSet, selection);
+
+            valueRowOffsets[i] = selection.IsEnumValue || valueRow < 2 || valueRow >= objectRowCount
+                ? NodeSelections.NotAssignable
+                : valueRow * CompositeResultDocument.DbRow.Size;
+        }
+
+        return new NodeSelections(selectionSet, selections, valueRowOffsets, objectRowCount, next: null);
     }
 
     /// <summary>
@@ -354,13 +380,58 @@ internal sealed class SourceResultShape
         public readonly int AnyFieldChild = anyFieldChild;
     }
 
-    private sealed class NodeSelections(SelectionSet selectionSet, Selection?[] selections, NodeSelections? next)
+    /// <summary>
+    /// The selections of a selection set that the expected fields of a node are completed into.
+    /// </summary>
+    internal sealed class NodeSelections(
+        SelectionSet selectionSet,
+        Selection?[] selections,
+        int[] valueRowOffsets,
+        int objectRowCount,
+        NodeSelections? next)
     {
+        /// <summary>
+        /// The value row offset of an expected field that the selection set does not select.
+        /// </summary>
+        public const int NotSelected = 0;
+
+        /// <summary>
+        /// The value row offset of an expected field whose selection takes no source value
+        /// unchanged.
+        /// </summary>
+        public const int NotAssignable = -1;
+
         public SelectionSet SelectionSet { get; } = selectionSet;
 
+        /// <summary>
+        /// Gets for every expected field, in the expected order, the selection whose response
+        /// name is the name of the field, or <c>null</c> for a field that is not selected.
+        /// </summary>
         public Selection?[] Selections { get; } = selections;
 
+        /// <summary>
+        /// Gets for every expected field, in the expected order, the offset in bytes of the value
+        /// row of its selection from the first row of a result object of the selection set. The
+        /// offset is given for a selection that takes a string, a number or a boolean of the
+        /// source unchanged, otherwise it is <see cref="NotSelected"/> or
+        /// <see cref="NotAssignable"/>.
+        /// </summary>
+        public int[] ValueRowOffsets { get; } = valueRowOffsets;
+
+        /// <summary>
+        /// Gets the number of rows of a result object of the selection set without its end row.
+        /// </summary>
+        public int ObjectRowCount { get; } = objectRowCount;
+
         public NodeSelections? Next { get; } = next;
+
+        /// <summary>
+        /// Gets these selections in front of <paramref name="next"/>.
+        /// </summary>
+        public NodeSelections WithNext(NodeSelections? next)
+            => ReferenceEquals(Next, next)
+                ? this
+                : new NodeSelections(SelectionSet, Selections, ValueRowOffsets, ObjectRowCount, next);
     }
 
     /// <summary>

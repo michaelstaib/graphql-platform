@@ -93,16 +93,26 @@ internal readonly ref struct SourceResultElementSnapshot
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal Selection?[]? GetPropertySelections(SelectionSet selectionSet)
+        => GetNodeSelections(selectionSet)?.Selections;
+
+    /// <summary>
+    /// Gets the selections of <paramref name="selectionSet"/> that the properties of this object
+    /// are completed into, in the order of the properties. Returns <c>null</c> when the
+    /// properties of the object have to be looked up by their names, and for a value that is
+    /// not an object.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal SourceResultShape.NodeSelections? GetNodeSelections(SelectionSet selectionSet)
     {
         var shape = _parent.Shape;
 
-        if (shape is null)
+        if (shape is null || _row.TokenType is not JsonTokenType.StartObject)
         {
             return null;
         }
 
         var node = _parent.GetObjectShapeNode(_cursor, _row);
-        return node < 0 ? null : shape.GetSelections(node, selectionSet);
+        return node < 0 ? null : shape.GetNodeSelections(node, selectionSet);
     }
 
     /// <summary>

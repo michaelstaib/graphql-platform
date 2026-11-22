@@ -40,6 +40,24 @@ internal readonly struct CompositeObjectContext
     public bool HasSelectionProperties => _selectionSet is not null && _numberOfRows != 1;
 
     /// <summary>
+    /// Gets the result document of the object.
+    /// </summary>
+    internal CompositeResultDocument Document => _document;
+
+    /// <summary>
+    /// Gets the number of rows of the object without its end row.
+    /// </summary>
+    internal int NumberOfRows => _numberOfRows;
+
+    /// <summary>
+    /// Gets a reference to the first row of the object when all rows of the object lie in one
+    /// chunk, otherwise a null reference.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal ref byte GetRows()
+        => ref _document._metaDb.GetRows(_objectStartCursor, _numberOfRows);
+
+    /// <summary>
     /// Gets the property of <paramref name="selection"/>, which must be a selection of
     /// <see cref="SelectionSet"/> of an object for which <see cref="HasSelectionProperties"/>
     /// is <c>true</c>.

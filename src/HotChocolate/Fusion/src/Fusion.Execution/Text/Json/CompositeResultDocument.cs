@@ -699,6 +699,53 @@ public sealed partial class CompositeResultDocument : IDisposable
             flags: ElementFlags.SourceResult);
     }
 
+    /// <summary>
+    /// Assigns the string, number or boolean of the source row <paramref name="source"/> to the
+    /// value row at <paramref name="valueRow"/>. The document with the row must be registered as
+    /// <paramref name="sourceDocumentId"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void AssignSourceLeafValue(
+        ref byte valueRow,
+        SourceResultDocument.DbRow source,
+        int sourceDocumentId)
+    {
+        Debug.Assert(
+            source.TokenType is >= System.Text.Json.JsonTokenType.String and <= System.Text.Json.JsonTokenType.False);
+        Debug.Assert((byte)source.TokenType.ToElementTokenType() == (byte)source.TokenType);
+        Debug.Assert((uint)sourceDocumentId < (uint)_sourceCount);
+
+        TrackValueReplacement(MetaDb.GetElementTokenType(ref valueRow));
+
+        MetaDb.ReplacePreserveParent(
+            ref valueRow,
+            tokenType: (ElementTokenType)(byte)source.TokenType,
+            location: source.Location,
+            sizeOrLength: source.SizeOrLength,
+            sourceDocumentId: sourceDocumentId,
+            operationReferenceId: 0,
+            operationReferenceType: OperationReferenceType.None,
+            numberOfRows: 0,
+            flags: ElementFlags.SourceResult);
+    }
+
+    /// <summary>
+    /// Gets the id of <paramref name="source"/> in this document. A document that is not bound
+    /// to a result document yet is registered first.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal int GetSourceDocumentId(SourceResultDocument source)
+    {
+        if (source.Id == -1)
+        {
+            Debug.Assert(!IsSourceRegistered(source), "The source document is marked as unbound but is already registered.");
+            RegisterSource(source);
+        }
+
+        Debug.Assert(IsSourceRegistered(source), "Expected the source document of the source element to be registered.");
+        return source.Id;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void AssignNullValue(CompositeResultElement target)
     {
@@ -927,9 +974,12 @@ public sealed partial class CompositeResultDocument : IDisposable
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void TrackValueReplacement(Cursor target)
+        => TrackValueReplacement(_metaDb.GetElementTokenType(target, resolveReferences: false));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void TrackValueReplacement(ElementTokenType replaced)
     {
-        if (_metaDb.GetElementTokenType(target, resolveReferences: false)
-            is ElementTokenType.Reference or ElementTokenType.StartObject or ElementTokenType.StartArray)
+        if (replaced is ElementTokenType.Reference or ElementTokenType.StartObject or ElementTokenType.StartArray)
         {
             _layoutVersion++;
             _shapeVersion++;

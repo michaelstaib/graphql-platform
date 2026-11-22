@@ -1531,8 +1531,24 @@ TryCompleteList_MoveNext:
                 objectContext);
         }
 
+        var nodeSelections = GetNodeSelections(source, objectContext);
+
+        if (nodeSelections is not null
+            && errorTrie is null
+            && TryCompleteIdentifiedObjectProperties(
+                in source,
+                in objectContext,
+                nodeSelections,
+                objectType,
+                depth,
+                resultSelectionSet,
+                out var completed))
+        {
+            return completed;
+        }
+
         var properties = source.EnumeratePropertySnapshots();
-        var propertySelections = GetPropertySelections(source, objectContext);
+        var propertySelections = nodeSelections?.Selections;
         var propertyIndex = 0;
 
         while (properties.MoveNext())
@@ -1641,6 +1657,128 @@ TryCompleteList_MoveNext:
     }
 
     /// <summary>
+    /// Completes the properties of a source object without errors into the selections
+    /// <paramref name="nodeSelections"/>, which <see cref="GetNodeSelections"/> returned for
+    /// the object. <paramref name="completed"/> is then <c>true</c>, if the object was
+    /// completed, and <c>false</c>, if a non-null violation must propagate to the parent.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the properties were completed. Otherwise <c>false</c>, and no property
+    /// was completed.
+    /// </returns>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool TryCompleteIdentifiedObjectProperties(
+        in SourceResultElementSnapshot source,
+        in CompositeObjectContext objectContext,
+        SourceResultShape.NodeSelections nodeSelections,
+        IComplexTypeDefinition objectType,
+        int depth,
+        ResultSelectionSet? resultSelectionSet,
+        out bool completed)
+    {
+        if (!IdentifiedObjectCompletion.TryCreate(in source, in objectContext, nodeSelections, out var completion))
+        {
+            completed = false;
+            return false;
+        }
+
+        while (completion.MoveNext())
+        {
+            var selection = completion.Selection;
+
+            if (!TryCompletePropertyValue(
+                completion.Value,
+                objectContext.GetProperty(selection),
+                selection,
+                objectType,
+                depth,
+                resultSelectionSet))
+            {
+                completed = false;
+                return true;
+            }
+        }
+
+        completed = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Completes the value of a property of a source object that has no errors into
+    /// <paramref name="target"/>, the property of <paramref name="selection"/> in a result object
+    /// of the type <paramref name="objectType"/>.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the value was completed.
+    /// <c>false</c>, if a non-null violation must propagate to the parent.
+    /// </returns>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool TryCompletePropertyValue(
+        SourceResultElementSnapshot source,
+        CompositeResultElement target,
+        Selection selection,
+        IComplexTypeDefinition objectType,
+        int depth,
+        ResultSelectionSet? resultSelectionSet)
+    {
+        var valueKind = source.ValueKind;
+
+        if (valueKind.IsScalarValue())
+        {
+            if (valueKind is JsonValueKind.String && selection.IsEnumValue)
+            {
+                CompleteEnumValue(
+                    source,
+                    target,
+                    Unsafe.As<FusionEnumTypeDefinition>(selection.NamedType));
+                return true;
+            }
+
+            target.SetLeafValue(source);
+            return true;
+        }
+
+        if (valueKind is JsonValueKind.Object
+            && selection.UnwrappedKind is TypeKind.Object)
+        {
+            var namedType = selection.NamedType;
+
+            return TryCompleteObjectValue(
+                source,
+                target,
+                errorTrie: null,
+                selection,
+                Unsafe.As<ITypeDefinition, IObjectTypeDefinition>(ref namedType),
+                depth,
+                resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
+                preparedSelectionSet: null);
+        }
+
+        if (valueKind is JsonValueKind.Array
+            && selection.UnwrappedKind is TypeKind.List)
+        {
+            return TryCompleteList(
+                source,
+                target,
+                errorTrie: null,
+                selection,
+                selection.ListElementType!,
+                selection.ListElementKind,
+                selection.IsNonNullListElement,
+                depth,
+                resultSelectionSet?.TryGetChild(selection.ResponseName, objectType));
+        }
+
+        return TryCompleteValue(
+            source,
+            target,
+            errorTrie: null,
+            selection,
+            depth,
+            resultSelectionSet?.TryGetChild(selection.ResponseName, objectType));
+    }
+
+    /// <summary>
     /// Gets the selection that every property of <paramref name="source"/> is completed into, in
     /// the order of the properties, with <c>null</c> for a property that is not selected. Returns
     /// <c>null</c> when the properties have to be looked up by their names. The selections are
@@ -1653,6 +1791,19 @@ TryCompleteList_MoveNext:
         CompositeObjectContext objectContext)
         => objectContext.HasSelectionProperties
             ? source.GetPropertySelections(objectContext.SelectionSet!)
+            : null;
+
+    /// <summary>
+    /// Gets the selections that the properties of <paramref name="source"/> are completed into,
+    /// in the order of the properties. Returns <c>null</c> when the properties have to be looked
+    /// up by their names.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static SourceResultShape.NodeSelections? GetNodeSelections(
+        SourceResultElementSnapshot source,
+        CompositeObjectContext objectContext)
+        => objectContext.HasSelectionProperties
+            ? source.GetNodeSelections(objectContext.SelectionSet!)
             : null;
 
     /// <summary>

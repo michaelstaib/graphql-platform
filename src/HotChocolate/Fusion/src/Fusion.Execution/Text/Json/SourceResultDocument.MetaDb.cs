@@ -396,6 +396,33 @@ public sealed partial class SourceResultDocument
             return (JsonTokenType)(union >> 28);
         }
 
+        /// <summary>
+        /// Gets a reference to the row at <paramref name="cursor"/> when the
+        /// <paramref name="rowCount"/> rows from that row on lie in one chunk, otherwise a null
+        /// reference.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal ref byte GetRows(Cursor cursor, int rowCount)
+        {
+            AssertValidCursor(cursor);
+
+            var chunkIndex = cursor.Chunk;
+            var row = cursor.Row;
+
+            if ((uint)(row + rowCount) > (uint)Cursor.RowsPerChunkFor(chunkIndex))
+            {
+                return ref Unsafe.NullRef<byte>();
+            }
+
+            ref readonly var chunk = ref Unsafe.Add(
+                ref MemoryMarshal.GetArrayDataReference(_chunks),
+                chunkIndex);
+
+            return ref Unsafe.Add(
+                ref MemoryMarshal.GetArrayDataReference(chunk.Buffer),
+                chunk.Offset + (row * DbRow.Size));
+        }
+
         [Conditional("DEBUG")]
         private void AssertValidCursor(Cursor cursor)
         {

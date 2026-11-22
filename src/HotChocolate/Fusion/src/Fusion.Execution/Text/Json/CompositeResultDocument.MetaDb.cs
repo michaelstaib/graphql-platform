@@ -615,9 +615,36 @@ public sealed partial class CompositeResultDocument
             ElementFlags flags = ElementFlags.None)
         {
             AssertValidCursor(cursor);
-            Debug.Assert((int)flags is >= 0 and <= DbRow.FlagsMask);
 
-            ref var row = ref RowRef(cursor);
+            ReplacePreserveParent(
+                ref RowRef(cursor),
+                tokenType,
+                location,
+                sizeOrLength,
+                sourceDocumentId,
+                operationReferenceId,
+                operationReferenceType,
+                numberOfRows,
+                flags);
+        }
+
+        /// <summary>
+        /// Overwrites the value payload of the row at <paramref name="row"/> and preserves its
+        /// parent pointer.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void ReplacePreserveParent(
+            ref byte row,
+            ElementTokenType tokenType,
+            int location,
+            int sizeOrLength,
+            int sourceDocumentId,
+            int operationReferenceId,
+            OperationReferenceType operationReferenceType,
+            int numberOfRows,
+            ElementFlags flags)
+        {
+            Debug.Assert((int)flags is >= 0 and <= DbRow.FlagsMask);
 
             // int 1: OperationReferenceId + OperationReferenceType + Flags
             Unsafe.WriteUnaligned(
@@ -917,6 +944,34 @@ public sealed partial class CompositeResultDocument
             }
 
             return tokenType;
+        }
+
+        /// <summary>
+        /// Gets the token type of the row at <paramref name="row"/>. A reference is not resolved.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static ElementTokenType GetElementTokenType(ref byte row)
+        {
+            var sourceAndType = Unsafe.ReadUnaligned<int>(ref Unsafe.Add(ref row, DbRow.SourceAndTypeOffset));
+            return (ElementTokenType)((sourceAndType >>> 15) & 0x0F);
+        }
+
+        /// <summary>
+        /// Gets a reference to the row at <paramref name="cursor"/> when the
+        /// <paramref name="rowCount"/> rows from that row on lie in one chunk, otherwise a null
+        /// reference.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal readonly ref byte GetRows(Cursor cursor, int rowCount)
+        {
+            AssertValidCursor(cursor);
+
+            if ((uint)(cursor.Row + rowCount) > (uint)Cursor.RowsPerChunkFor(cursor.Chunk))
+            {
+                return ref Unsafe.NullRef<byte>();
+            }
+
+            return ref RowRef(cursor);
         }
 
         /// <summary>

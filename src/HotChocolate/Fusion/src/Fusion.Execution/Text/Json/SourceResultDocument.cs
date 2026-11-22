@@ -186,6 +186,15 @@ public sealed partial class SourceResultDocument : IDisposable
         return _parsedData.Get(cursor + (row.NumberOfRows - 1)).ShapeNode;
     }
 
+    /// <summary>
+    /// Gets a reference to the row at <paramref name="cursor"/> when the
+    /// <paramref name="rowCount"/> rows from that row on lie in one chunk, otherwise a null
+    /// reference.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal ref byte GetRows(Cursor cursor, int rowCount)
+        => ref _parsedData.GetRows(cursor, rowCount);
+
     internal SourceResultElement GetArrayIndexElement(Cursor startCursor, int arrayIndex)
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, this);
