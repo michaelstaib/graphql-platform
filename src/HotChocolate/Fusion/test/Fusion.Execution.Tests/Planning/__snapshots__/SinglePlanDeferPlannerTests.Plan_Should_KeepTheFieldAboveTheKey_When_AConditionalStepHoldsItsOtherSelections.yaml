@@ -1,0 +1,89 @@
+operation:
+  - document: |
+      query($v: Boolean!) {
+        shelf {
+          top {
+            ... @include(if: $v) {
+              upc
+              name
+              ... @defer(label: "x", __group: 0, __parent: -1) {
+                price
+                upc @fusion__requirement
+                id @fusion__requirement
+              }
+            }
+          }
+          sid @fusion__requirement
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 3
+    expandedNodes: 4
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($v: Boolean!) {
+        shelf {
+          top {
+            ... @include(if: $v) {
+              ... {
+                id
+              }
+            }
+          }
+          sid
+        }
+      }
+    forwardedVariables:
+      - v
+  - id: 2
+    type: Operation
+    schema: h
+    operation: |
+      query Op_123456789101112_2($__fusion_1_sid: ID!) {
+        shelfBySid(sid: $__fusion_1_sid) {
+          top {
+            upc
+            name
+          }
+        }
+      }
+    source: $.shelfBySid
+    target: $.shelf
+    requirements:
+      - name: __fusion_1_sid
+        selectionMap: >-
+          sid
+    conditions:
+      - variable: $v
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: e
+    operation: |
+      query Op_123456789101112_3($__fusion_2_upc: String!) {
+        productByUpc(upc: $__fusion_2_upc) {
+          price
+        }
+      }
+    source: $.productByUpc
+    target: $.shelf.top
+    requirements:
+      - name: __fusion_2_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $v
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 2
+deliveryGroups:
+  - id: 0
+    path: $.shelf.top
+    label: x

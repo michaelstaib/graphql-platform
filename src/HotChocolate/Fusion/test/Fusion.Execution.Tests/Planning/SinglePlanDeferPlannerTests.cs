@@ -1212,6 +1212,36 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_KeepTheOnlyStepOfAGroup_When_TheStepLostItsReaders()
+    {
+        // arrange
+        var schema = ComposeSchema(FriendRootSchema, HolderTotalSchema, HolderCodeSchema, HolderSkuByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                current {
+                    user {
+                        friend { sku }
+                        ... @defer(label: "x") {
+                            friend {
+                                code
+                                ... @defer(label: "y") { total }
+                            }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_KeepEqualLookupsMerged_When_RequestGroupingIsOff()
     {
         // arrange
@@ -3544,6 +3574,93 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         Assert.Empty(result.Fallbacks);
         MatchSnapshot(result.Plan);
     }
+
+    [Fact]
+    public void Plan_Should_KeepTheFieldAboveTheKey_When_AConditionalStepHoldsItsOtherSelections()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ShelfRootSchema,
+            ShelfProductSchema,
+            ShelfProductIdSchema,
+            ShelfPriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                shelf { top { ... @include(if: $v) { upc name ... @defer(label: "x") { price } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    private const string ShelfRootSchema =
+        """
+        # name: a
+        type Query {
+            shelf: Shelf
+        }
+
+        type Shelf @key(fields: "sid") {
+            sid: ID!
+            top: Product! @shareable
+            items: [Product!]! @shareable
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+        }
+        """;
+
+    private const string ShelfProductSchema =
+        """
+        # name: h
+        type Query {
+            shelfBySid(sid: ID!): Shelf @lookup @internal
+        }
+
+        type Shelf @key(fields: "sid") {
+            sid: ID!
+            top: Product! @shareable
+            items: [Product!]! @shareable
+        }
+
+        type Product {
+            upc: String! @shareable
+            name: String!
+        }
+        """;
+
+    private const string ShelfProductIdSchema =
+        """
+        # name: r
+        type Query {
+            productById(id: ID!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "id") {
+            id: ID!
+            upc: String! @shareable
+        }
+        """;
+
+    private const string ShelfPriceSchema =
+        """
+        # name: e
+        type Query {
+            productByUpc(upc: String!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String! @shareable
+            price: Int
+        }
+        """;
 
     private const string UpcToSkuSchema =
         """

@@ -1145,6 +1145,8 @@ public sealed partial class OperationPlanner
         return producer with { Definition = definition };
     }
 
+    // Returns the selection set without the key fields of the removed step that nothing reads.
+    // A field on the path to them stays unchanged when no other selection would be left below it.
     private static SelectionSetNode RemoveKeyFields(
         SelectionSetNode current,
         SelectionPath path,
@@ -1184,9 +1186,9 @@ public sealed partial class OperationPlanner
                         && (parent.Alias?.Value ?? parent.Name.Value)
                             .Equals(path[pathIndex].Name, StringComparison.Ordinal):
                     var below = RemoveKeyFields(child, path, pathIndex + 1, removed, pass);
-                    replacement = ReferenceEquals(below, child)
+                    replacement = ReferenceEquals(below, child) || IsPlaceholderOnly(below)
                         ? selection
-                        : IsPlaceholderOnly(below) ? null : parent.WithSelectionSet(below);
+                        : parent.WithSelectionSet(below);
                     break;
 
                 case FieldNode field when pathIndex == path.Length && pass.IsKeyWithoutReader(removed, field):

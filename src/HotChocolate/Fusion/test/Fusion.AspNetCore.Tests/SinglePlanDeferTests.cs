@@ -1204,6 +1204,60 @@ public partial class SinglePlanDeferTests : FusionTestBase
         Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
     }
 
+    [Theory]
+    [InlineData("top", true)]
+    [InlineData("top", false)]
+    [InlineData("items", true)]
+    [InlineData("items", false)]
+    public async Task Defer_Should_EqualTheTwin_When_AConditionCoversEverySelectionOfTheObject(string field, bool v)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_shelfSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            $$"""
+            query($v: Boolean!) {
+                shelf { {{field}} { ... @include(if: $v) { upc name ... @defer(label: "x") { price } } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        MatchRun(run, $"field={field}, v={v}", compareValues: false);
+    }
+
+    private static readonly (string Name, string Sdl)[] s_shelfSources =
+    [
+        ("A", """
+            type Query { shelf: Shelf }
+            type Shelf @key(fields: "sid") {
+                sid: ID!
+                top: Product! @shareable
+                items: [Product!]! @shareable
+            }
+            type Product @key(fields: "id") { id: ID! }
+            """),
+        ("H", """
+            type Query { shelfBySid(sid: ID!): Shelf @lookup @internal }
+            type Shelf @key(fields: "sid") {
+                sid: ID!
+                top: Product! @shareable
+                items: [Product!]! @shareable
+            }
+            type Product { upc: String! @shareable name: String! }
+            """),
+        ("R", """
+            type Query { productById(id: ID!): Product @lookup @internal }
+            type Product @key(fields: "id") { id: ID! upc: String! @shareable }
+            """),
+        ("E", """
+            type Query { productByUpc(upc: String!): Product @lookup @internal }
+            type Product @key(fields: "upc") { upc: String! @shareable price: Int }
+            """)
+    ];
+
     [Fact]
     public async Task Defer_Should_SkipThePlainLookup_When_TheSwitchIsOnAndItsProducerHoldsItsKey()
     {
