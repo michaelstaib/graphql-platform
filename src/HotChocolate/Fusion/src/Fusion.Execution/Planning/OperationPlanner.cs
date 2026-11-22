@@ -2911,6 +2911,19 @@ public sealed partial class OperationPlanner
         // inlining performs must happen up front here.
         RegisterRequirementSelectionSets(requirements, index);
 
+        // The dependent step is the current step, or a lookup step that is not created yet and
+        // takes the conditions, the selection set and the path of the requiring field.
+        var dependentConditions = workItem.Conditions;
+        var dependentSelectionSetId = workItem.Selection.SelectionSetId;
+        var dependentPath = workItem.Selection.Path;
+
+        if (currentStep.Id == dependentStepId)
+        {
+            dependentConditions = currentStep.Conditions;
+            dependentSelectionSetId = currentStep.RootSelectionSetId;
+            dependentPath = currentStep.Target;
+        }
+
         ExecutionNodeCondition[]? effectiveConditions = null;
 
         foreach (var (step, stepIndex, schemaName) in current.GetCandidateSteps(workItem.Selection.SelectionSetId))
@@ -2939,8 +2952,8 @@ public sealed partial class OperationPlanner
 
             if (HasForeignCondition(step.Conditions, current.InternalOperationDefinition))
             {
-                // a step that runs under a condition that neither the requiring field nor a field
-                // or fragment around it carries cannot supply the requirement.
+                // a step that runs under a condition that neither the dependent step nor a field
+                // or fragment around its root selection set carries cannot supply the requirement.
                 continue;
             }
 
@@ -3097,10 +3110,15 @@ public sealed partial class OperationPlanner
         return requirements;
 
         bool HasForeignCondition(ExecutionNodeCondition[] stepConditions, OperationDefinitionNode operation)
-            => HasConditionNotIn(stepConditions, workItem.Conditions)
+            => HasConditionNotIn(stepConditions, dependentConditions)
                 && HasConditionNotIn(
                     stepConditions,
-                    effectiveConditions ??= GetEffectiveConditions(operation, index, workItem));
+                    effectiveConditions ??= GetEffectiveConditions(
+                        operation,
+                        index,
+                        dependentSelectionSetId,
+                        dependentPath,
+                        dependentConditions));
     }
 
     /// <summary>
@@ -3123,30 +3141,29 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Returns the conditions of the requiring field together with the conditions of the fields and
-    /// inline fragments that enclose its selection set in <paramref name="operation"/>.
-    /// Returns the conditions of the requiring field alone when its selection set is not found in
-    /// <paramref name="operation"/>.
+    /// Returns <paramref name="ownConditions"/> together with the conditions of the fields and
+    /// inline fragments that enclose the selection set <paramref name="selectionSetId"/> at
+    /// <paramref name="path"/> in <paramref name="operation"/>. Returns
+    /// <paramref name="ownConditions"/> alone when that selection set is not found.
     /// </summary>
     private static ExecutionNodeCondition[] GetEffectiveConditions(
         OperationDefinitionNode operation,
         SelectionSetIndexBuilder index,
-        FieldRequirementWorkItem workItem)
+        uint selectionSetId,
+        SelectionPath path,
+        ExecutionNodeCondition[] ownConditions)
     {
-        var path = workItem.Selection.Path;
-        var selectionSetId = workItem.Selection.SelectionSetId;
-
         // A cloned selection set is found under the id of its original.
         if (index.TryGetOriginalIdFromCloned(selectionSetId, out var originalId))
         {
             selectionSetId = originalId;
         }
 
-        var conditions = new List<ExecutionNodeCondition>(workItem.Conditions);
+        var conditions = new List<ExecutionNodeCondition>(ownConditions);
 
         if (!TryCollect(operation.SelectionSet, 0))
         {
-            return workItem.Conditions;
+            return ownConditions;
         }
 
         return conditions.ToArray();

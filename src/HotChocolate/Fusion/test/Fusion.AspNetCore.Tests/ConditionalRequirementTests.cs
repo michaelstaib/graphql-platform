@@ -379,6 +379,303 @@ public sealed class ConditionalRequirementTests : FusionTestBase
         await MatchSnapshotAsync(gateway, request, result, skip.ToString());
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSource(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateTwoRequiringSourcesGatewayAsync(TwoRequiringSourcesUserSchema, "User");
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user { tax @skip(if: $a) label shipping @skip(if: $a) @include(if: $b) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldsOfBothSources(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateTwoRequiringSourcesGatewayAsync(TwoRequiringSourcesUserSchema, "User");
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user { label shipping @skip(if: $a) @include(if: $b) tax @skip(if: $a) rating }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourceInList(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateTwoRequiringSourcesGatewayAsync(TwoRequiringSourcesUserSchema, "User");
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              users { tax @skip(if: $a) label shipping @skip(if: $a) @include(if: $b) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourceBelowChildEntity(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateTwoRequiringSourcesGatewayAsync(
+            """
+            type Query {
+              user: User!
+            }
+
+            type User {
+              id: ID!
+              order: Order!
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            "Order");
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user { order { label tax @skip(if: $a) shipping @skip(if: $a) @include(if: $b) } }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourcePerConcreteType(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateTwoRequiringSourcesGatewayAsync(
+            """
+            type Query {
+              thing: Thing!
+            }
+
+            interface Thing {
+              id: ID!
+            }
+
+            type Alpha implements Thing @key(fields: "id") {
+              id: ID!
+              item: Product!
+            }
+
+            type Beta implements Thing @key(fields: "id") {
+              id: ID!
+              item: Product!
+            }
+
+            type Product @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            "Product");
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              thing {
+                ... on Alpha { item { label tax @skip(if: $a) shipping @skip(if: $a) @include(if: $b) } }
+                ... on Beta { item { label shipping } }
+              }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourceBelowNode(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateTwoRequiringSourcesGatewayAsync(
+            """
+            type Query {
+              node(id: ID!): Node @lookup
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Product implements Node @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            "Product");
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              # Product:1
+              node(id: "UHJvZHVjdDox") {
+                ... on Product { label tax @skip(if: $a) shipping @skip(if: $a) @include(if: $b) }
+              }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    private const string TwoRequiringSourcesUserSchema =
+        """
+        type Query {
+          user: User!
+          users: [User!]!
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+        }
+        """;
+
+    private async Task<Gateway> CreateTwoRequiringSourcesGatewayAsync(string sourceA, string entityType)
+    {
+        var lookup = char.ToLowerInvariant(entityType[0]) + entityType[1..] + "ById";
+        var serverA = CreateSourceSchema("A", sourceA);
+        var serverD = CreateSourceSchema(
+            "D",
+            $$"""
+            type Query {
+              {{lookup}}(id: ID!): {{entityType}} @lookup @internal
+            }
+
+            type {{entityType}} @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """);
+        var serverB = CreateSourceSchema(
+            "B",
+            $$"""
+            type Query {
+              {{lookup}}(id: ID!): {{entityType}} @lookup @internal
+            }
+
+            type {{entityType}} @key(fields: "id") {
+              id: ID!
+              label: String
+              shipping(weight: Int @require(field: "weight")): Int
+            }
+            """);
+        var serverC = CreateSourceSchema(
+            "C",
+            $$"""
+            type Query {
+              {{lookup}}(id: ID!): {{entityType}} @lookup @internal
+            }
+
+            type {{entityType}} @key(fields: "id") {
+              id: ID!
+              rating: Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+        return await CreateCompositeSchemaAsync([("A", serverA), ("D", serverD), ("B", serverB), ("C", serverC)]);
+    }
+
     private async Task<Gateway> CreateItemGatewayAsync()
     {
         var serverA = CreateSourceSchema(

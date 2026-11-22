@@ -659,6 +659,126 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
         MatchSnapshot(plan);
     }
 
+    [Fact]
+    public void Plan_Should_KeepUnconditionalFieldOutOfConditionalLookup_When_RequirementIsSharedWithOtherSource()
+    {
+        // arrange
+        var schema = ComposeTwoRequiringSourcesSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            "User");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+              user {
+                tax @skip(if: $a)
+                label
+                shipping @skip(if: $a) @include(if: $b)
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepUnconditionalFieldOutOfConditionalLookup_When_SharedRequirementSitsBelowChildEntity()
+    {
+        // arrange
+        var schema = ComposeTwoRequiringSourcesSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+            }
+
+            type User {
+              id: ID!
+              order: Order!
+            }
+
+            type Order @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            "Order");
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+              user {
+                order {
+                  label
+                  tax @skip(if: $a)
+                  shipping @skip(if: $a) @include(if: $b)
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    private static FusionSchemaDefinition ComposeTwoRequiringSourcesSchema(string sourceA, string entityType)
+    {
+        var lookup = char.ToLowerInvariant(entityType[0]) + entityType[1..] + "ById";
+
+        return ComposeSchema(
+            sourceA,
+            $$"""
+            # name: d
+            type Query {
+              {{lookup}}(id: ID!): {{entityType}} @lookup @internal
+            }
+
+            type {{entityType}} @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            $$"""
+            # name: b
+            type Query {
+              {{lookup}}(id: ID!): {{entityType}} @lookup @internal
+            }
+
+            type {{entityType}} @key(fields: "id") {
+              id: ID!
+              label: String
+              shipping(weight: Int @require(field: "weight")): Int
+            }
+            """,
+            $$"""
+            # name: c
+            type Query {
+              {{lookup}}(id: ID!): {{entityType}} @lookup @internal
+            }
+
+            type {{entityType}} @key(fields: "id") {
+              id: ID!
+              rating: Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+    }
+
     private static FusionSchemaDefinition ComposeItemSchema()
         => ComposeSchema(
             """

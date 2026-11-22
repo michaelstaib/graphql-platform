@@ -1,0 +1,347 @@
+title: Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourcePerConcreteType
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      thing {
+        ... on Alpha {
+          item {
+            label
+            tax @skip(if: $a)
+            shipping @skip(if: $a) @include(if: $b)
+          }
+        }
+        ... on Beta {
+          item {
+            label
+            shipping
+          }
+        }
+      }
+    }
+  variables: |
+    {
+      "a": true,
+      "b": false
+    }
+response:
+  body: |
+    {
+      "data": {
+        "thing": {
+          "item": {
+            "label": "Product: UHJvZHVjdDo0MjMyMzE1ODU4"
+          }
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        thing: Thing!
+      }
+
+      type Alpha implements Thing @key(fields: "id") {
+        id: ID!
+        item: Product!
+      }
+
+      type Beta implements Thing @key(fields: "id") {
+        id: ID!
+        item: Product!
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+      }
+
+      interface Thing {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_1 {
+              thing {
+                __typename
+                ... on Alpha {
+                  item {
+                    id
+                  }
+                }
+                ... on Beta {
+                  item {
+                    id
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "thing": {
+                    "__typename": "Alpha",
+                    "item": {
+                      "id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+                    }
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+        weight: Int!
+        total: Int!
+      }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+        label: String
+        shipping(weight: Int @require(field: "weight")): Int
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_2($__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                label
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "label": "Product: UHJvZHVjdDo0MjMyMzE1ODU4"
+                  }
+                }
+              }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+        rating: Int
+        tax(total: Int @require(field: "total")): Int
+      }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          thing {
+            __typename @fusion__requirement
+            ... on Alpha {
+              item {
+                label
+                id @fusion__requirement
+                total @fusion__requirement
+                weight @fusion__requirement
+                tax @skip(if: $a)
+                shipping @skip(if: $a) @include(if: $b)
+              }
+            }
+            ... on Beta {
+              item {
+                label
+                shipping
+                id @fusion__requirement
+                weight @fusion__requirement
+              }
+            }
+          }
+        }
+      name: testQuery
+      hash: b2c96df0cc5cdfb45f0038a035348a9e
+      searchSpace: 3
+      expandedNodes: 22
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_eaa4b15f_1 {
+          thing {
+            __typename
+            ... on Alpha {
+              item {
+                id
+              }
+            }
+            ... on Beta {
+              item {
+                id
+              }
+            }
+          }
+        }
+    - id: 6
+      type: Operation
+      schema: C
+      operation: |
+        query testQuery_eaa4b15f_6($__fusion_6_total: Int, $__fusion_7_id: ID!) {
+          productById(id: $__fusion_7_id) {
+            tax(total: $__fusion_6_total)
+          }
+        }
+      source: $.productById
+      target: $.thing<Alpha>.item
+      requirements:
+        - name: __fusion_6_total
+          selectionMap: >-
+            total
+        - name: __fusion_7_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 10
+    - id: 4
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_eaa4b15f_4($__fusion_4_id: ID!) {
+          productById(id: $__fusion_4_id) {
+            weight
+          }
+        }
+      source: $.productById
+      target: $.thing<Beta>.item
+      batchingGroupId: 10
+      requirements:
+        - name: __fusion_4_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 7
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_eaa4b15f_7($__fusion_8_id: ID!) {
+          productById(id: $__fusion_8_id) {
+            total
+            weight
+          }
+        }
+      source: $.productById
+      target: $.thing<Alpha>.item
+      batchingGroupId: 10
+      requirements:
+        - name: __fusion_8_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_eaa4b15f_3($__fusion_2_weight: Int, $__fusion_3_id: ID!) {
+          productById(id: $__fusion_3_id) {
+            shipping(weight: $__fusion_2_weight)
+          }
+        }
+      source: $.productById
+      target: $.thing<Beta>.item
+      batchingGroupId: 11
+      requirements:
+        - name: __fusion_2_weight
+          selectionMap: >-
+            weight
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+        - id: 4
+    - id: 9
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_eaa4b15f_9($__fusion_10_weight: Int, $__fusion_11_id: ID!) {
+          productById(id: $__fusion_11_id) {
+            shipping(weight: $__fusion_10_weight)
+          }
+        }
+      source: $.productById
+      target: $.thing<Alpha>.item
+      batchingGroupId: 11
+      requirements:
+        - name: __fusion_10_weight
+          selectionMap: >-
+            weight
+        - name: __fusion_11_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+        - variable: $b
+          passingValue: true
+      dependencies:
+        - id: 1
+        - id: 7
+    - id: 2
+      type: OperationBatch
+      schema: B
+      operation: |
+        query testQuery_eaa4b15f_2($__fusion_1_id: ID!) {
+          productById(id: $__fusion_1_id) {
+            label
+          }
+        }
+      source: $.productById
+      targets:
+        - $.thing<Beta>.item
+        - $.thing<Alpha>.item
+      batchingGroupId: 12
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1

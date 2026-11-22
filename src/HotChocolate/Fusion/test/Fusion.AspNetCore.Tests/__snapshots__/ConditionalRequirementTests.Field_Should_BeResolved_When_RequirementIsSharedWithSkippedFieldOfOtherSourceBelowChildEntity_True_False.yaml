@@ -1,0 +1,257 @@
+title: Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourceBelowChildEntity
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      user {
+        order {
+          label
+          tax @skip(if: $a)
+          shipping @skip(if: $a) @include(if: $b)
+        }
+      }
+    }
+  variables: |
+    {
+      "a": true,
+      "b": false
+    }
+response:
+  body: |
+    {
+      "data": {
+        "user": {
+          "order": {
+            "label": "Order: T3JkZXI6MTM3ODc3NjgwMQ=="
+          }
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+      }
+
+      type Order @key(fields: "id") {
+        id: ID!
+      }
+
+      type User {
+        id: ID!
+        order: Order!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_cf23ac65_1 {
+              user {
+                order {
+                  id
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "order": {
+                      "id": "T3JkZXI6MTM3ODc3NjgwMQ=="
+                    }
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: ID!): Order @lookup @internal
+      }
+
+      type Order @key(fields: "id") {
+        id: ID!
+        weight: Int!
+        total: Int!
+      }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: ID!): Order @lookup @internal
+      }
+
+      type Order @key(fields: "id") {
+        id: ID!
+        label: String
+        shipping(weight: Int @require(field: "weight")): Int
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_cf23ac65_5($__fusion_5_id: ID!) {
+              orderById(id: $__fusion_5_id) {
+                label
+              }
+            }
+          variables: |
+            {
+              "__fusion_5_id": "T3JkZXI6MTM3ODc3NjgwMQ=="
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "orderById": {
+                    "label": "Order: T3JkZXI6MTM3ODc3NjgwMQ=="
+                  }
+                }
+              }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: ID!): Order @lookup @internal
+      }
+
+      type Order @key(fields: "id") {
+        id: ID!
+        rating: Int
+        tax(total: Int @require(field: "total")): Int
+      }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          user {
+            order {
+              label
+              id @fusion__requirement
+              total @fusion__requirement
+              weight @fusion__requirement
+              tax @skip(if: $a)
+              shipping @skip(if: $a) @include(if: $b)
+            }
+          }
+        }
+      name: testQuery
+      hash: 942069eb56ca819e527aa4ae99cdd6e8
+      searchSpace: 3
+      expandedNodes: 17
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_cf23ac65_1 {
+          user {
+            order {
+              id
+            }
+          }
+        }
+    - id: 3
+      type: Operation
+      schema: C
+      operation: |
+        query testQuery_cf23ac65_3($__fusion_2_total: Int, $__fusion_3_id: ID!) {
+          orderById(id: $__fusion_3_id) {
+            tax(total: $__fusion_2_total)
+          }
+        }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_2_total
+          selectionMap: >-
+            total
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 4
+    - id: 4
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_cf23ac65_4($__fusion_4_id: ID!) {
+          orderById(id: $__fusion_4_id) {
+            total
+            weight
+          }
+        }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_4_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 5
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_cf23ac65_5($__fusion_5_id: ID!) {
+          orderById(id: $__fusion_5_id) {
+            label
+          }
+        }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_5_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 6
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_cf23ac65_6($__fusion_6_weight: Int, $__fusion_7_id: ID!) {
+          orderById(id: $__fusion_7_id) {
+            shipping(weight: $__fusion_6_weight)
+          }
+        }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_6_weight
+          selectionMap: >-
+            weight
+        - name: __fusion_7_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+        - variable: $b
+          passingValue: true
+      dependencies:
+        - id: 1
+        - id: 4
