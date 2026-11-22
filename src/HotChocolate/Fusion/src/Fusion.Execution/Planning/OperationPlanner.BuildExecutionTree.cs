@@ -921,10 +921,10 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Returns the steps with the entry selections removed that another step fetches at the same response path
-    /// whenever the step runs, and with the dependents of the step moved to that step.
-    /// A take that would send a source schema more requests than the plan build created is refused and the step stays
-    /// as it was.
+    /// Returns the steps without the entry selections that another step fetches at the same response path
+    /// whenever the step runs, with the dependents moved to that step, and without the steps and key fields
+    /// that lost their last reader by this. A step without delivery groups gives up only its entry key, and a
+    /// change that would send a source schema more requests than the plan build created is not made.
     /// </summary>
     private static ImmutableList<PlanStep> TakeSelectionsFromHolders(
         ImmutableList<PlanStep> planSteps,
