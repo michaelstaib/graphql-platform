@@ -1791,6 +1791,71 @@ public partial class SinglePlanDeferTests : FusionTestBase
             """)
     ];
 
+    private static readonly (string Name, string Sdl)[] s_catalogIdSources =
+    [
+        ("A", """
+            type Query { products: [Product!]! product: Product productByUpc(upc: String!): Product @lookup }
+            type Product @key(fields: "upc") {
+                upc: String!
+                id: ID! @shareable
+                name: String!
+                eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            }
+            """),
+        .. s_catalogSources.Where(t => t.Name is "B" or "C" or "R")
+    ];
+
+    private const string IdKeyUserCodeSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! code: String! @shareable }
+        """;
+
+    private const string CodeKeyUserSkuWeightSource =
+        """
+        type Query { userByCode(code: String!): User @lookup @internal }
+        type User @key(fields: "code") { code: String! @shareable sku: String! @shareable weight: Int! }
+        """;
+
+    private const string SharedKeyUserTaxSource =
+        """
+        type Query { userBySku(sku: String!): User @lookup @internal }
+        type User @key(fields: "sku") { sku: String! @shareable tax(total: Int @require(field: "total")): Int }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TheInitialStepHoldsTheKeyOfTheOtherLookup()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_catalogIdSources);
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ products { upc ... @defer { eur } } }", []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TheKeyOfTheFragmentComesThroughAChainOfSources()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", SharedKeyUserRootSource),
+            ("C", IdKeyUserCodeSource),
+            ("D", CodeKeyUserSkuWeightSource),
+            ("B", SharedKeyUserShippingSource),
+            ("E", SharedKeyUserTaxSource));
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ user { ... @defer { tax } } }", []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
     [Fact]
     public async Task Defer_Should_SendOuterDataBeforeInnerData_When_TheLookupsOfAnOuterAndAnInnerGroupShareARequest()
     {

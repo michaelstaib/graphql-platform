@@ -150,8 +150,8 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
             && candidateSchemas is [(var soleSchema, _)]
             && soleSchema.Equals(workItem.FromSchema, StringComparison.Ordinal);
 
-        // A lookup of a delivery group that selects only its own key is not enqueued when
-        // another candidate schema of the work item has a lookup that does not.
+        // A self-cyclic lookup of a delivery group is not enqueued when the loop below offers a lookup of
+        // the work item that is not self-cyclic. The schema of the self-cyclic lookup counts as well.
         var mayDropSelfCyclicLookups = !workItem.DeliveryGroups.IsDefaultOrEmpty && !workItem.Dependents.IsEmpty;
         bool? hasResolvingLookup = null;
 
@@ -262,7 +262,8 @@ internal sealed class PlanQueue(FusionSchemaDefinition schema)
         }
     }
 
-    // Determines whether a candidate schema of the work item has a lookup that is not self-cyclic.
+    // Determines whether the enqueue loop offers a lookup of the work item that is not self-cyclic. Only the
+    // lookups that the loop would enqueue are considered, and the own schema of a self-cyclic lookup counts.
     private bool HasResolvingLookup(
         OperationWorkItem workItem,
         FusionComplexTypeDefinition type,

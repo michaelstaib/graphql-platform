@@ -921,12 +921,10 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Removes the entry selections of the lookup steps of a plan with delivery groups that another step fetches at
-    /// the same response path whenever the step runs, and makes the dependents of the step depend on that step.
-    /// A step without delivery groups only gives up the entry key that its producer fetches. A step keeps the fields
-    /// that the operation selects for its groups, and no source schema gets more requests than the plan build
-    /// creates for the steps before the pass. The steps and key fields that lost their last reader to the pass are
-    /// removed afterwards under the same request check.
+    /// Returns the steps with the entry selections removed that another step fetches at the same response path
+    /// whenever the step runs, and with the dependents of the step moved to that step.
+    /// A take that would send a source schema more requests than the plan build created is refused and the step stays
+    /// as it was.
     /// </summary>
     private static ImmutableList<PlanStep> TakeSelectionsFromHolders(
         ImmutableList<PlanStep> planSteps,
@@ -1477,7 +1475,7 @@ public sealed partial class OperationPlanner
 
         public void Begin(ImmutableList<PlanStep> planSteps, OperationPlanStep step)
         {
-            Index(planSteps, _byId, _depth);
+            Index(planSteps);
             KeptCount = 0;
             HolderCount = 0;
             _allowedCount = 0;
@@ -1866,18 +1864,18 @@ public sealed partial class OperationPlanner
         }
 
         // Computes the dependency depth of every operation step, the longest chain of dependencies in front of it.
-        private void Index(ImmutableList<PlanStep> planSteps, OperationPlanStep?[] byId, int[] depth)
+        private void Index(ImmutableList<PlanStep> planSteps)
         {
-            byId.AsSpan(0, _maxId + 1).Clear();
+            _byId.AsSpan(0, _maxId + 1).Clear();
             _remaining.AsSpan(0, _maxId + 1).Fill(-1);
 
             foreach (var planStep in planSteps)
             {
                 if (planStep is OperationPlanStep step)
                 {
-                    byId[step.Id] = step;
+                    _byId[step.Id] = step;
                     _remaining[step.Id] = 0;
-                    depth[step.Id] = 0;
+                    _depth[step.Id] = 0;
                 }
             }
 
@@ -1890,7 +1888,7 @@ public sealed partial class OperationPlanner
 
                 foreach (var dependentId in step.Dependents)
                 {
-                    if (dependentId > 0 && dependentId <= _maxId && byId[dependentId] is not null)
+                    if (dependentId > 0 && dependentId <= _maxId && _byId[dependentId] is not null)
                     {
                         _remaining[dependentId]++;
                     }
@@ -1910,16 +1908,16 @@ public sealed partial class OperationPlanner
 
             while (head < tail)
             {
-                var current = byId[_queue[head++]]!;
+                var current = _byId[_queue[head++]]!;
 
                 foreach (var dependentId in current.Dependents)
                 {
-                    if (dependentId <= 0 || dependentId > _maxId || byId[dependentId] is null)
+                    if (dependentId <= 0 || dependentId > _maxId || _byId[dependentId] is null)
                     {
                         continue;
                     }
 
-                    depth[dependentId] = Math.Max(depth[dependentId], depth[current.Id] + 1);
+                    _depth[dependentId] = Math.Max(_depth[dependentId], _depth[current.Id] + 1);
 
                     if (--_remaining[dependentId] == 0)
                     {

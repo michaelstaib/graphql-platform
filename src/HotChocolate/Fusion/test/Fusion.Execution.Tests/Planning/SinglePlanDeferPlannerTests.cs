@@ -3599,6 +3599,62 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_PlanOneStepPerSource_When_TheKeyOfTheDeferredFieldComesThroughAChainOfSources()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            SharedKeyUserRootSchema,
+            IdKeyUserCodeSchema,
+            CodeKeyUserSkuWeightSchema,
+            SharedKeyUserShippingSchema,
+            SharedKeyUserTaxSchema);
+
+        // act
+        var result = Plan(schema, "{ user { ... @defer { tax } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheSelfCyclicLookup_When_TheOperationHasNoDeferAndAnotherLookupResolvesTheKey()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            KeyHopIdSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc eur } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_ForwardThePolicyVariable_When_TheDeferredFieldIsProtected()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            ProtectedIdCatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc ... @defer { eur name note } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
     private const string ShelfRootSchema =
         """
         # name: a
@@ -4663,6 +4719,52 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         type Product implements Node @key(fields: "id") {
             id: ID!
             price: Float!
+        }
+        """;
+
+    private const string ProtectedIdCatalogSchema =
+        """
+        # name: a
+        directive @authenticated on FIELD_DEFINITION
+
+        type Query {
+            products: [Product!]!
+            productByUpc(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            id: ID! @shareable
+            name: String!
+            note: String @authenticated
+            eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+        }
+        """;
+
+    private const string IdKeyUserCodeSchema =
+        """
+        # name: c
+        type Query {
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            code: String! @shareable
+        }
+        """;
+
+    private const string CodeKeyUserSkuWeightSchema =
+        """
+        # name: d
+        type Query {
+            userByCode(code: String!): User @lookup @internal
+        }
+
+        type User @key(fields: "code") {
+            code: String! @shareable
+            sku: String! @shareable
+            weight: Int!
         }
         """;
 
