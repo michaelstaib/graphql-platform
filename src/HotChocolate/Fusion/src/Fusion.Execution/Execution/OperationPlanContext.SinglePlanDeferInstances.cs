@@ -604,9 +604,10 @@ internal sealed partial class SinglePlanDeliveryState
     /// Completes the selected rows of the instance that no step wrote and no open step can still write by their
     /// type. A non-null row propagates its <c>null</c> inside the group and fails the instance when the
     /// <c>null</c> reaches the anchor. A row that a failed step of the group left carries the error of the step, and
-    /// a row whose step lacks a required value because the answer for it was denied with an error carries that
-    /// error, the error for a requirement of its own field first. A nullable row does not take the error of a
-    /// denied answer whose value has an error that a sent payload already carries.
+    /// a row whose step lacks a required value carries the error of that value, when the answer for it was denied
+    /// with an error or a step that does not carry the group wrote the error, the error for a requirement of its
+    /// own field first. A nullable row does not take such an error when a sent payload already carries an error of
+    /// the value.
     /// </summary>
     /// <returns><c>true</c> when an open step can still write a row of the instance.</returns>
     public bool CompleteUnwrittenRows(CompositeResultDocument document, int instance, bool groupFailed)

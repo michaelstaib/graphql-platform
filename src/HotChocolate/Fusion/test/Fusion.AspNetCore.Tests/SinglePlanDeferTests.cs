@@ -6331,6 +6331,102 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    // The source schema B answers null with the error "B failed" for the user.
+    private static string FailTheUserOfB(string schema, string body, string text)
+        => schema is "B"
+            ? """{"errors":[{"message":"B failed","path":["userById"]}],"data":{"userById":null}}"""
+            : text;
+
+    [Fact]
+    public async Task Defer_Should_FailTheInnerFragmentWithTheSourceError_When_TheOuterFragmentHoldsTheFailedEntity()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheUserOfB,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick ... @defer(label: "o") { inner { a c } ... @defer(label: "i") { nnA } } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    // The source error of schema B reads "B failed" followed by the id of the step.
+    private static string NameTheSourceErrorWithTheStep(string schema, string body, string text)
+        => schema is "B"
+            ? text.Replace(
+                "Unexpected Execution Error",
+                "B failed " + StepId().Match(body).Groups[1].Value,
+                StringComparison.Ordinal)
+            : text;
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfItsOwnStep_When_TheInitialStepAlsoReportsTheObject()
+    {
+        // arrange
+        // the initial step of inner (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            NameTheSourceErrorWithTheStep,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { nnA } } }",
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string TwoInnerRequirementsSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            cA(a: String @require(field: "inner.a")): String
+            cB(a: String @require(field: "inner.a")): String
+        }
+        """;
+
+    [Fact]
+    public async Task
+        Defer_Should_SendTheErrorWithTheDependentField_When_TheStepOfItsUnselectedObjectAnswersNoEntity()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheUserOfB,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", TwoInnerRequirementsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick cA ... @defer { cB } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     [Fact]
     public async Task Defer_Should_SendTheErrorOnce_When_TheCompletionOfAnotherFragmentReportsTheRequiredField()
     {
