@@ -446,13 +446,27 @@ internal sealed class ValueCompletion
                 return true;
             }
 
-            if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult))
             {
                 continue;
             }
 
+            if (fieldResult.IsInternal)
+            {
+                if (TMode.HasDelivery)
+                {
+                    RecordWrittenAnswer(fieldResult, isLeaf: false, groups: [], error);
+                }
+
+                continue;
+            }
+
             var selection = fieldResult.AssertSelection();
+
+            if (TMode.HasDelivery)
+            {
+                RecordWrittenAnswer(fieldResult, selection.IsLeaf, groups: [], error);
+            }
 
             if (TMode.HasDelivery
                 && IsLeftOutsideGroups(fieldResult, selection)
@@ -549,6 +563,8 @@ internal sealed class ValueCompletion
 
                 continue;
             }
+
+            RecordWrittenAnswer(fieldResult, selection.IsLeaf, deliveryGroups, error);
 
             if (!ApplyFieldError<DeliveryMode>(fieldResult, selection, error, errorPath.Append(responseName)))
             {
@@ -1000,6 +1016,25 @@ internal sealed class ValueCompletion
                 || (value.ValueKind is JsonValueKind.Undefined && !value.AssertSelection().IsLeaf)))
         {
             _writeFilterDocument!.Delivery!.AddDeniedAnswer(value.Cursor, _writeFilterGroups, error);
+        }
+    }
+
+    /// <summary>
+    /// Records the error that the step writes as the result of a value that holds an object or a list, or that no
+    /// step wrote yet. <paramref name="isLeaf"/> is <c>false</c> for a field that the client did not select, and
+    /// <paramref name="groups"/> is empty for a step without delivery groups.
+    /// </summary>
+    private void RecordWrittenAnswer(
+        CompositeResultElement value,
+        bool isLeaf,
+        ImmutableArray<int> groups,
+        IError error)
+    {
+        if (!value.IsNullOrInvalidated
+            && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                || (value.ValueKind is JsonValueKind.Undefined && !isLeaf)))
+        {
+            _store.Result.Delivery!.AddWrittenAnswer(value.Cursor, groups, error);
         }
     }
 
@@ -1787,6 +1822,15 @@ internal sealed class ValueCompletion
                 .SetPath(target.Path)
                 .Build();
             errorWithPath = _errorHandler.Handle(errorWithPath);
+
+            if (TMode.HasDelivery)
+            {
+                RecordWrittenAnswer(
+                    target,
+                    selection.IsLeaf,
+                    TMode.IsFiltered ? _writeFilterGroups : [],
+                    nullErrorFromPath);
+            }
 
             AddError<TMode>(errorWithPath, target);
         }

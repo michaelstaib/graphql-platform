@@ -504,7 +504,21 @@ internal sealed partial class SinglePlanDeliveryState
     {
         AssertOnLoop();
 
-        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error));
+        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error, IsWritten: false));
+    }
+
+    /// <summary>
+    /// Records that a step wrote an error as the result of a value that held an object or a list, or that no step
+    /// had written yet. <paramref name="groups"/> is empty for a step without delivery groups.
+    /// </summary>
+    public void AddWrittenAnswer(
+        CompositeResultDocument.Cursor container,
+        ImmutableArray<int> groups,
+        IError error)
+    {
+        AssertOnLoop();
+
+        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error, IsWritten: true));
     }
 
     /// <summary>
@@ -527,7 +541,7 @@ internal sealed partial class SinglePlanDeliveryState
         {
             var answer = _deniedAnswers[i];
 
-            if (!answer.Groups.Contains(group))
+            if (answer.IsWritten || !answer.Groups.Contains(group))
             {
                 continue;
             }
@@ -683,14 +697,14 @@ internal sealed partial class SinglePlanDeliveryState
         return null;
     }
 
-    // A denied answer of the group carries an error.
+    // An answer that the fields of the group report carries an error.
     private bool HasDeniedError(int group)
     {
         if (_deniedAnswers is not null)
         {
             foreach (var answer in _deniedAnswers)
             {
-                if (answer.Error is not null && answer.Groups.Contains(group))
+                if (answer.Error is not null && answer.IsReportedBy(group))
                 {
                     return true;
                 }
@@ -759,9 +773,10 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     // Gets the error of the denied answer below the entity for a value that the requirement reads and that holds a
-    // row without a result, taking the selection with the lowest id and, for one selection, the first recorded. With
-    // skipSent an answer is left out when a sent payload carries an error at the path of its value, or on the way
-    // from there down to a row without a result that the requirement reads.
+    // row without a result, taking the selection with the lowest id and, for one selection, the first recorded, a
+    // denied answer before an error that a step wrote. With skipSent an answer is left out when a sent payload carries
+    // an error at the path of its value, or on the way from there down to a row without a result that the requirement
+    // reads.
     private IError? GetDeniedError(
         CompositeResultDocument document,
         int group,
@@ -780,10 +795,11 @@ internal sealed partial class SinglePlanDeliveryState
 
         IError? error = null;
         var lowest = int.MaxValue;
+        var isWritten = false;
 
         foreach (var answer in _deniedAnswers!)
         {
-            if (answer.Error is null || !answer.Groups.Contains(group))
+            if (answer.Error is null || !answer.IsReportedBy(group))
             {
                 continue;
             }
@@ -798,7 +814,7 @@ internal sealed partial class SinglePlanDeliveryState
             }
 
             if (field.Selection is { } deniedSelection
-                && deniedSelection.Id < lowest
+                && (deniedSelection.Id < lowest || (deniedSelection.Id == lowest && isWritten && !answer.IsWritten))
                 && read.Contains(deniedSelection.Id)
                 && IsBelow(denied, entity)
                 && LacksReadRow(denied, read)
@@ -806,6 +822,7 @@ internal sealed partial class SinglePlanDeliveryState
             {
                 error = answer.Error;
                 lowest = deniedSelection.Id;
+                isWritten = answer.IsWritten;
             }
         }
 
@@ -1530,12 +1547,21 @@ internal readonly record struct SourceError(GroupError Error, ImmutableArray<int
 
 /// <summary>
 /// A value that held an object or a list, or that no step had written yet, when a step of the delivery groups
-/// answered <c>null</c>, an error or a missing entity for it.
+/// answered <c>null</c>, an error or a missing entity for it. <paramref name="IsWritten"/> is set when the step wrote
+/// the error as the result of the value, and <paramref name="Groups"/> is then empty for a step without groups.
 /// </summary>
 internal readonly record struct DeniedAnswer(
     CompositeResultDocument.Cursor Container,
     ImmutableArray<int> Groups,
-    IError? Error);
+    IError? Error,
+    bool IsWritten)
+{
+    /// <summary>
+    /// Determines whether a field of the group that requires the value reports the error of the answer. That holds
+    /// for a group of the step of a denied answer, and for every other group when the step wrote the error.
+    /// </summary>
+    public bool IsReportedBy(int group) => IsWritten != Groups.Contains(group);
+}
 
 /// <summary>
 /// An object that a delivery group is applied to.

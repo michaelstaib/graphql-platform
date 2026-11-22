@@ -6039,6 +6039,239 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheInitialStepHoldsTheReportedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheInitialStepHoldsTheUnselectedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource),
+            ("D", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick cA ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheEnclosingFragmentHoldsTheReportedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick ... @defer(label: "o") { inner { a c } ... @defer(label: "i") { nnA } } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheStepThatHoldsTheRequiredObjectFails()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheStepThatHoldsTheUnselectedObjectFails()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "B",
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource),
+            ("D", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick cA ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceErrorOnce_When_TwoFieldsRequireTheReportedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource),
+            ("D", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { cA nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailEachFragmentWithTheSourceError_When_TheInitialStepHoldsTheReportedObjects()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", UserListNickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ users { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string InnerAndBoxNonNullRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            nnAZ(a: String @require(field: "inner.a"), z: String @require(field: "box.z")): String!
+        }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheFirstArgument_When_TheInitialStepHoldsItsObject()
+    {
+        // arrange
+        // the initial step holds inner, and the fragment fetches box.z itself
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("F", BoxSource),
+            ("G", InnerAndBoxNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } box { y } ... @defer { nnAZ } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string InnerListNonNullRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! nnL(a: [String] @require(field: "inners[a]")): String! }
+        """;
+
+    // The source schema B answers null with the error "B failed" for inners.
+    private static string FailTheInnerList(string schema, string body, string text)
+        => schema is "B"
+            ? """{"errors":[{"message":"B failed","path":["userById","inners"]}],"data":{"userById":{"inners":null}}}"""
+            : text;
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheInitialStepHoldsTheReportedList()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheInnerList,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inners { a c } ... @defer { nnL } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_SendTheErrorOnce_When_TheCompletionOfAnotherFragmentReportsTheRequiredField()
     {
         // arrange
