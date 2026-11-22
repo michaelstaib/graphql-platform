@@ -2751,6 +2751,28 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run.Deferred, $"v={v}_w={w}");
     }
 
+    [Fact]
+    public async Task
+        Defer_Should_MatchThePlainTwin_When_TwoFragmentsWithSwitchesSelectFieldsWithRequirementsOfListItems()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($v: Boolean!, $w: Boolean!) {
+                products { upc ... @defer(if: $v) { eur } ... @defer(if: $w) { usd } }
+            }
+            """,
+            new Dictionary<string, object?> { ["v"] = true, ["w"] = false });
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
