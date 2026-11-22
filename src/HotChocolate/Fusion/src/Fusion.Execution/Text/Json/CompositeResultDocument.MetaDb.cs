@@ -228,6 +228,15 @@ public sealed partial class CompositeResultDocument
             ref var dest = ref MemoryMarshal.GetArrayDataReference(chunk.Buffer);
             ref var row = ref Unsafe.Add(ref dest, chunk.Offset + byteOffset);
 
+            WriteStartArrayRow(ref row, parentRow, length, flags);
+
+            _next = cursor + 1;
+            return cursor;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void WriteStartArrayRow(ref byte row, int parentRow, int length, ElementFlags flags)
+        {
             // int 0: parent cursor value
             Unsafe.WriteUnaligned(ref row, parentRow);
 
@@ -244,8 +253,55 @@ public sealed partial class CompositeResultDocument
 
             // int 4: StartArray token (sourceDocumentId = 0)
             Unsafe.WriteUnaligned(ref Unsafe.Add(ref row, 16), (int)ElementTokenType.StartArray << 15);
+        }
 
-            _next = cursor + 1;
+        /// <summary>
+        /// Appends the rows of an array of <paramref name="length"/> undefined elements: the
+        /// start row, one row per element and the end row. Returns the cursor of the start row.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal Cursor AppendArray(int parentRow, int length)
+        {
+            Debug.Assert(parentRow is >= 0 and <= 0x1FFFFFFF);
+            Debug.Assert(length >= 0);
+
+            var next = _next;
+            var byteOffset = next.ByteOffset;
+            var chunks = _chunks;
+
+            // Fast path: all rows of the array fit into the current chunk.
+            if (((long)length + 2) * DbRow.Size <= _chunkBytes - byteOffset
+                && (uint)next.Chunk < (uint)chunks.Length
+                && chunks[next.Chunk] is { Buffer: { } buffer } segment)
+            {
+                ref var start = ref Unsafe.Add(
+                    ref MemoryMarshal.GetArrayDataReference(buffer),
+                    segment.Offset + byteOffset);
+
+                WriteStartArrayRow(ref start, parentRow, length, ElementFlags.None);
+
+                // Zero the element rows once (off 16 = TokenType.None for free), then stamp the
+                // cursor value of the start row into int 0 of each row.
+                ref var elements = ref Unsafe.Add(ref start, DbRow.Size);
+                var startValue = next.Value;
+
+                Unsafe.InitBlockUnaligned(ref elements, 0, (uint)(length * DbRow.Size));
+
+                for (var i = 0; i < length; i++)
+                {
+                    Unsafe.WriteUnaligned(ref Unsafe.Add(ref elements, i * DbRow.Size), startValue);
+                }
+
+                WriteEndArrayRow(ref Unsafe.Add(ref elements, length * DbRow.Size));
+
+                _next = next + (length + 2);
+                return next;
+            }
+
+            // Slow path: crosses a chunk boundary or the chunk is not rented yet.
+            var cursor = AppendStartArray(parentRow, length, ElementFlags.None);
+            AppendNullRange(cursor.Value, length);
+            AppendEndArray();
             return cursor;
         }
 
@@ -276,15 +332,21 @@ public sealed partial class CompositeResultDocument
             ref var dest = ref MemoryMarshal.GetArrayDataReference(chunk.Buffer);
             ref var row = ref Unsafe.Add(ref dest, chunk.Offset + byteOffset);
 
+            WriteEndArrayRow(ref row);
+
+            _next = cursor + 1;
+            return cursor;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void WriteEndArrayRow(ref byte row)
+        {
             // int 0: no parent
             Unsafe.WriteUnaligned(ref row, 0);
             // ints 1..3 zeroed (int 4 is written directly below)
             Unsafe.InitBlockUnaligned(ref Unsafe.Add(ref row, 4), 0, 12);
             // int 4: EndArray token
             Unsafe.WriteUnaligned(ref Unsafe.Add(ref row, 16), (int)ElementTokenType.EndArray << 15);
-
-            _next = cursor + 1;
-            return cursor;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

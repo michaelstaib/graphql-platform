@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using HotChocolate.Buffers;
 using static HotChocolate.Fusion.Text.Json.CompositeResultDocument;
 
 namespace HotChocolate.Fusion.Text.Json;
@@ -1034,6 +1036,95 @@ public class CompositeResultDocumentMetaDbTests : IDisposable
             metaDb.Dispose();
         }
     }
+
+    [Fact]
+    public void AppendArray_Should_WriteTheSameRows_When_TheArrayIsAppendedRowByRow()
+    {
+        // arrange
+        // every number of rows before the array moves it by one row, so that it fits into its
+        // chunk, ends with its chunk, or has rows in the following chunks
+        int[] lengths = [0, 1, 2, 7, 48, 49, 50, 51, 100, 153, 400];
+        var differences = new List<string>();
+
+        // act
+        for (var rowsBefore = 0; rowsBefore < 160; rowsBefore++)
+        {
+            foreach (var length in lengths)
+            {
+                using var expectedArena = new MemoryArena();
+                using var actualArena = new MemoryArena();
+                using var expected = MetaDb.Create(expectedArena);
+                using var actual = MetaDb.Create(actualArena);
+
+                for (var i = 0; i < rowsBefore; i++)
+                {
+                    expected.AppendNull(0);
+                    actual.AppendNull(0);
+                }
+
+                var expectedStart = expected.AppendStartArray(parentRow: 42, length, ElementFlags.None);
+                expected.AppendNullRange(expectedStart.Value, length);
+                expected.AppendEndArray();
+
+                var actualStart = actual.AppendArray(parentRow: 42, length);
+
+                if (expectedStart != actualStart
+                    || expected.NextCursor != actual.NextCursor
+                    || expected.AppendNull(7) != actual.AppendNull(7))
+                {
+                    differences.Add($"cursors after {rowsBefore} rows, length {length}");
+                }
+
+                for (var i = 0; i < length + 3; i++)
+                {
+                    var cursor = expectedStart + i;
+
+                    if (!HasSameBytes(expected.Get(cursor), actual.Get(cursor)))
+                    {
+                        differences.Add($"row {i} after {rowsBefore} rows, length {length}");
+                    }
+                }
+            }
+        }
+
+        // assert
+        Assert.Empty(differences);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(60)]
+    public void AppendArray_Should_WriteStartElementAndEndRows_When_TheArrayIsAppended(int length)
+    {
+        // arrange
+        using var arena = new MemoryArena();
+        using var metaDb = MetaDb.Create(arena);
+        metaDb.AppendNull(0);
+
+        // act
+        var start = metaDb.AppendArray(parentRow: 42, length);
+
+        // assert
+        var rows = new List<string>();
+
+        for (var i = 0; i < length + 2; i++)
+        {
+            var row = metaDb.Get(start + i);
+            rows.Add($"{row.TokenType} {row.Parent} {row.SizeOrLength} {row.NumberOfRows}");
+        }
+
+        var expected = new List<string> { $"StartArray 42 {length} {length + 1}" };
+        expected.AddRange(Enumerable.Repeat($"None {start.Value} 0 0", length));
+        expected.Add("EndArray 0 0 0");
+
+        Assert.Equal(expected.ToArray(), rows.ToArray());
+        Assert.Equal(1 + length + 2, metaDb.NextCursor.Index);
+    }
+
+    private static bool HasSameBytes(DbRow left, DbRow right)
+        => MemoryMarshal.AsBytes(new ReadOnlySpan<DbRow>(in left))
+            .SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<DbRow>(in right)));
 
     public void Dispose() => _metaDb.Dispose();
 }

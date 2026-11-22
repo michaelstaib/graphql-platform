@@ -585,15 +585,7 @@ public sealed partial class CompositeResultDocument : IDisposable
     }
 
     internal CompositeResultElement CreateArray(Cursor parent, int length)
-    {
-        var cursor = WriteStartArray(parent, length);
-
-        _metaDb.AppendNullRange(cursor.Value, length);
-
-        WriteEndArray();
-
-        return new CompositeResultElement(this, cursor);
-    }
+        => new(this, _metaDb.AppendArray(parent.Value, length));
 
     /// <summary>
     /// Creates an object for <paramref name="selectionSet"/> and assigns it to the undefined
@@ -985,13 +977,6 @@ public sealed partial class CompositeResultDocument : IDisposable
             _shapeVersion++;
         }
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private Cursor WriteStartArray(Cursor parent, int length = 0)
-        => _metaDb.AppendStartArray(parent.Value, length, ElementFlags.None);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void WriteEndArray() => _metaDb.AppendEndArray();
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteEmptyValue(Cursor parent) => _metaDb.AppendNull(parent.Value);
