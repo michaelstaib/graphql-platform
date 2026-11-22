@@ -150,7 +150,6 @@ internal sealed partial class SinglePlanDeliveryState
     private readonly ConcurrentQueue<DeliveryError> _errors = new();
     private readonly ExecutionState _executionState;
     private Dictionary<int, List<ExecutionNode>>? _writers;
-    private volatile bool _queuesErrors;
 #if DEBUG
     private int _loopThreadId;
 #endif
@@ -266,15 +265,6 @@ internal sealed partial class SinglePlanDeliveryState
             owner == 0 || owner == Environment.CurrentManagedThreadId,
             "The result document is read while another thread runs the loop of the single plan delivery.");
 #endif
-    }
-
-    /// <summary>
-    /// Gets or sets a value that indicates whether the errors of failed steps are queued for the executor.
-    /// </summary>
-    public bool QueuesErrors
-    {
-        get => _queuesErrors;
-        set => _queuesErrors = value;
     }
 
     public ConditionFlags IncludeFlags { get; }

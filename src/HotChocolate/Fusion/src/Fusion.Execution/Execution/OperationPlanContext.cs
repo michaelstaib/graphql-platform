@@ -882,7 +882,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
         ResultSelectionSet resultSelectionSet,
         params ReadOnlySpan<Path> paths)
     {
-        if (_singlePlanDelivery is { QueuesErrors: true } delivery)
+        if (_singlePlanDelivery is { } delivery)
         {
             delivery.EnqueueError(error, resultSelectionSet, paths);
             return;
@@ -898,7 +898,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal void AddErrors(IError error, ResultSelectionSet resultSelectionSet, ReadOnlySpan<CompactPath> paths)
     {
-        if (_singlePlanDelivery is { QueuesErrors: true } delivery)
+        if (_singlePlanDelivery is { } delivery)
         {
             delivery.EnqueueError(error, resultSelectionSet, paths);
             return;

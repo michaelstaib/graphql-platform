@@ -6427,6 +6427,56 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    // The request to the source schema B ends with an exception after the source answered.
+    private static string ThrowForB(string schema, string body, string text)
+        => schema is "B" ? throw new HttpRequestException("The connection was closed.") : text;
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOfTheInitialStep_When_ItsRequestEndsWithAnException()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            ThrowForB,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOfTheRootStep_When_ItsRequestFails()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            rewrite: null,
+            failingSchema: "A",
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     [Fact]
     public async Task Defer_Should_SendTheErrorOnce_When_TheCompletionOfAnotherFragmentReportsTheRequiredField()
     {

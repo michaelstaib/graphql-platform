@@ -287,6 +287,11 @@ internal static partial class OperationPlanExecutor
                 await RunSinglePlanInitialPhaseAsync(context, operationPlan, state, token);
 
                 await DrainActiveNodesAsync(operationPlan, executionState);
+
+                // a step that ended during the drain reported its error after the last pump
+                state.EnterLoop();
+                context.ApplyDeliveryErrors(state);
+                state.ExitLoop();
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -476,8 +481,6 @@ internal static partial class OperationPlanExecutor
             await using var registration = cancellationToken.Register(
                 static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
                 executionState.Signal);
-
-            state.QueuesErrors = true;
 
             foreach (var node in state.MarkedNodes)
             {
