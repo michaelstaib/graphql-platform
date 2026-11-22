@@ -1,0 +1,69 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user {
+          order @skip(if: $a) {
+            item {
+              price
+              id @fusion__requirement
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($a: Boolean!) {
+        user {
+          order @skip(if: $a) {
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - a
+  - id: 2
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        orderById(id: $__fusion_1_id) {
+          item {
+            id
+          }
+        }
+      }
+    source: $.orderById
+    target: $.user.order
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: e
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        itemById(id: $__fusion_2_id) {
+          price
+        }
+      }
+    source: $.itemById
+    target: $.user.order.item
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 2

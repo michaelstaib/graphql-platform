@@ -1,0 +1,228 @@
+title: LookupKey_Should_StayInParentStep_When_ConditionSitsOnParentField
+request:
+  document: |
+    query testQuery($a: Boolean!) {
+      user {
+        order @skip(if: $a) {
+          item {
+            price
+          }
+        }
+      }
+    }
+  variables: |
+    {
+      "a": false
+    }
+response:
+  body: |
+    {
+      "data": {
+        "user": {
+          "order": {
+            "item": {
+              "price": 21
+            }
+          }
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+      }
+
+      type Order @key(fields: "id") {
+        id: Int!
+      }
+
+      type User {
+        id: Int!
+        order: Order!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_e819cb85_1($a: Boolean!) {
+              user {
+                order @skip(if: $a) {
+                  id
+                }
+              }
+            }
+          variables: |
+            {
+              "a": false
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "order": {
+                      "id": 2
+                    }
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: Int!): Order @lookup @internal
+      }
+
+      type Item @key(fields: "id") {
+        id: Int!
+      }
+
+      type Order @key(fields: "id") {
+        id: Int!
+        item: Item!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_e819cb85_2($__fusion_1_id: Int!) {
+              orderById(id: $__fusion_1_id) {
+                item {
+                  id
+                }
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": 2
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "orderById": {
+                    "item": {
+                      "id": 3
+                    }
+                  }
+                }
+              }
+  - name: E
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        itemById(id: Int!): Item @lookup @internal
+      }
+
+      type Item @key(fields: "id") {
+        id: Int!
+        price: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_e819cb85_3($__fusion_2_id: Int!) {
+              itemById(id: $__fusion_2_id) {
+                price
+              }
+            }
+          variables: |
+            {
+              "__fusion_2_id": 3
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "itemById": {
+                    "price": 21
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!) {
+          user {
+            order @skip(if: $a) {
+              item {
+                price
+                id @fusion__requirement
+              }
+              id @fusion__requirement
+            }
+          }
+        }
+      name: testQuery
+      hash: 5264bc2c4da4b47291745016525fe3bc
+      searchSpace: 1
+      expandedNodes: 3
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_e819cb85_1($a: Boolean!) {
+          user {
+            order @skip(if: $a) {
+              id
+            }
+          }
+        }
+      forwardedVariables:
+        - a
+    - id: 2
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_e819cb85_2($__fusion_1_id: Int!) {
+          orderById(id: $__fusion_1_id) {
+            item {
+              id
+            }
+          }
+        }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: E
+      operation: |
+        query testQuery_e819cb85_3($__fusion_2_id: Int!) {
+          itemById(id: $__fusion_2_id) {
+            price
+          }
+        }
+      source: $.itemById
+      target: $.user.order.item
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 2

@@ -1307,6 +1307,12 @@ public sealed partial class OperationPlanner
             workItemSelectionSet.Id,
             selectionSet);
 
+        // The dependent step is the lookup step that is not created yet. It takes these conditions,
+        // the selection set and the path of the work item.
+        var dependentConditions = conditions ?? [];
+        var hasSharedConditions = false;
+        ExecutionNodeCondition[]? effectiveConditions = null;
+
         foreach (var (step, stepIndex, schemaName) in current.GetCandidateSteps(workItemSelectionSet.Id))
         {
             // A step can only carry a requirement that lives within the data it produces.
@@ -1321,6 +1327,13 @@ public sealed partial class OperationPlanner
             // a step that already depends on the consumer cannot provide the lookup's key.
             if (consumerStep is not null && step.DependsOn(consumerStep, steps))
             {
+                continue;
+            }
+
+            if (HasForeignCondition(step.Conditions))
+            {
+                // a step that runs under a condition that neither the lookup step nor a field or
+                // fragment around its root selection set carries cannot supply the lookup key.
                 continue;
             }
 
@@ -1425,7 +1438,8 @@ public sealed partial class OperationPlanner
 
         // Fallback: if no candidate step was found via exact selection set ID match,
         // walk the internal operation AST to find the nearest ancestor step and the
-        // complete connector chain to the target selection set.
+        // complete connector chain to the target selection set. An ancestor step that runs
+        // under a condition the lookup step does not carry is skipped as in the candidate loop.
         if (selectionSet is not null
             && TryFindAncestorStepForRequirement(
                 internalOperation,
@@ -1434,6 +1448,7 @@ public sealed partial class OperationPlanner
                 workItemSelectionSet.Id,
                 workItemSelectionSet.Path) is { } ancestorMatch
             && (consumerStep is null || !ancestorMatch.Step.DependsOn(consumerStep, steps))
+            && !HasForeignCondition(ancestorMatch.Step.Conditions)
             && processed.Add(ancestorMatch.Step.SchemaName!)
             && (allowSourceSchemaReentry
                 || !lookup.SchemaName.Equals(ancestorMatch.Step.SchemaName)
@@ -1495,7 +1510,7 @@ public sealed partial class OperationPlanner
                 lookup.SchemaName,
                 ImmutableHashSet<int>.Empty.Add(lookupStepId),
                 lookupStepDepth,
-                conditions ?? [],
+                dependentConditions,
                 allowSourceSchemaReentry,
                 sourceSchemaNodePolicy);
         }
@@ -1515,6 +1530,95 @@ public sealed partial class OperationPlanner
             SelectionSetIndex = index,
             InternalOperationDefinition = internalOperation
         };
+
+        bool HasForeignCondition(ExecutionNodeCondition[] stepConditions)
+        {
+            if (!HasConditionNotIn(stepConditions, dependentConditions))
+            {
+                return false;
+            }
+
+            effectiveConditions ??= GetEffectiveConditions(
+                internalOperation,
+                index,
+                workItemSelectionSet.Id,
+                workItemSelectionSet.Path,
+                dependentConditions);
+
+            if (!HasConditionNotIn(stepConditions, effectiveConditions))
+            {
+                return false;
+            }
+
+            if (hasSharedConditions)
+            {
+                return true;
+            }
+
+            // The conditions that every selection of the lookup step carries are conditions of the step.
+            hasSharedConditions = true;
+            var count = dependentConditions.Length;
+            dependentConditions = AddSharedConditions(dependentConditions, workItemSelectionSet.Node);
+
+            if (dependentConditions.Length == count)
+            {
+                return true;
+            }
+
+            effectiveConditions = GetEffectiveConditions(
+                internalOperation,
+                index,
+                workItemSelectionSet.Id,
+                workItemSelectionSet.Path,
+                dependentConditions);
+
+            return HasConditionNotIn(stepConditions, effectiveConditions);
+        }
+    }
+
+    /// <summary>
+    /// Returns <paramref name="conditions"/> together with the conditions that every selection of
+    /// <paramref name="selectionSet"/> carries. Returns <paramref name="conditions"/> itself when
+    /// there is no such condition to add.
+    /// </summary>
+    private static ExecutionNodeCondition[] AddSharedConditions(
+        ExecutionNodeCondition[] conditions,
+        SelectionSetNode selectionSet)
+    {
+        List<ExecutionNodeCondition>? shared = null;
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            var own = selection switch
+            {
+                FieldNode field => ExtractConditions(field.Directives),
+                InlineFragmentNode fragment => ExtractConditions(fragment.Directives),
+                _ => null
+            };
+
+            if (own is null)
+            {
+                return conditions;
+            }
+
+            if (shared is null)
+            {
+                shared = own;
+            }
+            else
+            {
+                shared.RemoveAll(condition => !own.Contains(condition));
+            }
+        }
+
+        if (shared is null)
+        {
+            return conditions;
+        }
+
+        shared.RemoveAll(condition => Array.IndexOf(conditions, condition) >= 0);
+
+        return shared.Count == 0 ? conditions : [.. conditions, .. shared];
     }
 
     /// <summary>
@@ -2114,7 +2218,12 @@ public sealed partial class OperationPlanner
             SelectionSets = SelectionSetIndexer.CreateIdSet(definition.SelectionSet, indexBuilder),
             Requirements = requirements,
             // The consumer step lists this lookup as a dependent when it provides the lookup key.
-            Dependents = currentStep.Dependents.Remove(stepId),
+            Dependents = RemoveDependentsWithoutConditions(
+                currentStep.Dependents.Remove(stepId),
+                workItem.Conditions,
+                steps,
+                current.InternalOperationDefinition,
+                indexBuilder),
             Conditions = workItem.Conditions,
             Target = workItem.Selection.Path,
             Source = source,
@@ -2151,6 +2260,45 @@ public sealed partial class OperationPlanner
         };
 
         possiblePlans.EnqueueBranches(next);
+    }
+
+    /// <summary>
+    /// Returns <paramref name="dependents"/> without the steps that do not carry every condition of
+    /// <paramref name="conditions"/>, neither themselves nor on a field or inline fragment that encloses
+    /// their root selection set in <paramref name="operation"/>.
+    /// </summary>
+    private static ImmutableHashSet<int> RemoveDependentsWithoutConditions(
+        ImmutableHashSet<int> dependents,
+        ExecutionNodeCondition[] conditions,
+        ImmutableList<PlanStep> steps,
+        OperationDefinitionNode operation,
+        SelectionSetIndexBuilder index)
+    {
+        if (conditions.Length == 0)
+        {
+            return dependents;
+        }
+
+        var remaining = dependents;
+
+        foreach (var dependentId in dependents)
+        {
+            if (steps.ById(dependentId) is OperationPlanStep dependent
+                && HasConditionNotIn(conditions, dependent.Conditions)
+                && HasConditionNotIn(
+                    conditions,
+                    GetEffectiveConditions(
+                        operation,
+                        index,
+                        dependent.RootSelectionSetId,
+                        dependent.Target,
+                        dependent.Conditions)))
+            {
+                remaining = remaining.Remove(dependentId);
+            }
+        }
+
+        return remaining;
     }
 
     private static bool TryFindMergeableRequirementLookupStep(
@@ -3046,9 +3194,9 @@ public sealed partial class OperationPlanner
         // Fallback: if no candidate step was found via exact selection set ID match,
         // walk the internal operation AST to find the nearest ancestor step and the
         // complete connector chain to the target selection set. An ancestor step of the
-        // requiring field's schema, or one that runs under a condition that neither the requiring
-        // field nor a field or fragment around it carries, is skipped for the same reasons as in
-        // the candidate loop.
+        // requiring field's schema, or one that runs under a condition that neither the dependent
+        // step nor a field or fragment around its root selection set carries, is skipped for the
+        // same reasons as in the candidate loop.
         if (requirements is not null
             && TryFindAncestorStepForRequirement(
                 current.InternalOperationDefinition,

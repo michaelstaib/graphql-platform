@@ -1,0 +1,275 @@
+title: Field_Should_BeResolved_When_LookupKeyIsFetchedForSkippedSiblingFieldOfSingleEntity
+request:
+  document: |
+    query testQuery($a: Boolean!) {
+      product {
+        upc
+        eur @skip(if: $a)
+        rating
+      }
+    }
+  variables: |
+    {
+      "a": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "product": {
+          "upc": "1",
+          "rating": 14
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        products: [Product!]!
+        product: Product
+        productByUpc(upc: String!): Product @lookup
+      }
+
+      type Product @key(fields: "upc") {
+        eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+        upc: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_4942b8a6_1 {
+              product {
+                upc
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "product": {
+                    "upc": "1"
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: Int!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        price(cur: String): Int
+        id: Int! @shareable
+      }
+  - name: S
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productByUpc(upc: String!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "upc") {
+        upc: String!
+        id: Int! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_4942b8a6_7($__fusion_7_upc: String!) {
+              productByUpc(upc: $__fusion_7_upc) {
+                id
+              }
+            }
+          variables: |
+            {
+              "__fusion_7_upc": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "id": 11
+                  }
+                }
+              }
+  - name: T
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: Int!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: Int! @shareable
+        rating: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_4942b8a6_6($__fusion_6_id: Int!) {
+              productById(id: $__fusion_6_id) {
+                rating
+              }
+            }
+          variables: |
+            {
+              "__fusion_6_id": 11
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "rating": 14
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!) {
+          product {
+            upc
+            upc @fusion__requirement
+            rating
+            price(cur: "EUR") @fusion__requirement
+            id @fusion__requirement
+            eur @skip(if: $a)
+          }
+        }
+      name: testQuery
+      hash: 521a9d01b9c9ff7ffe185bcf44f380c9
+      searchSpace: 3
+      expandedNodes: 12
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_4942b8a6_1 {
+          product {
+            upc
+          }
+        }
+    - id: 2
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_4942b8a6_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+          productByUpc(upc: $__fusion_2_upc) {
+            eur(price: $__fusion_1_price)
+          }
+        }
+      source: $.productByUpc
+      target: $.product
+      requirements:
+        - name: __fusion_1_price
+          selectionMap: >-
+            price(cur: "EUR")
+        - name: __fusion_2_upc
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 3
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_4942b8a6_3($__fusion_3_id: Int!) {
+          productById(id: $__fusion_3_id) {
+            price(cur: "EUR")
+          }
+        }
+      source: $.productById
+      target: $.product
+      requirements:
+        - name: __fusion_3_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 8
+    - id: 6
+      type: Operation
+      schema: T
+      operation: |
+        query testQuery_4942b8a6_6($__fusion_6_id: Int!) {
+          productById(id: $__fusion_6_id) {
+            rating
+          }
+        }
+      source: $.productById
+      target: $.product
+      requirements:
+        - name: __fusion_6_id
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 8
+    - id: 4
+      type: Operation
+      schema: S
+      operation: |
+        query testQuery_4942b8a6_4($__fusion_4_upc: String!) {
+          productByUpc(upc: $__fusion_4_upc) {
+            id
+          }
+        }
+      source: $.productByUpc
+      target: $.product
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_4_upc
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 7
+      type: Operation
+      schema: S
+      operation: |
+        query testQuery_4942b8a6_7($__fusion_7_upc: String!) {
+          productByUpc(upc: $__fusion_7_upc) {
+            id
+          }
+        }
+      source: $.productByUpc
+      target: $.product
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_7_upc
+          selectionMap: >-
+            upc
+      dependencies:
+        - id: 1
