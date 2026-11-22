@@ -118,7 +118,7 @@ internal sealed partial class SinglePlanDeliveryState
     /// <summary>
     /// Marks the instance of a group at an anchor object as failed, also when it is announced later. The instance
     /// reports <paramref name="failure"/>, the error whose null left the group, instead of the other errors of its
-    /// rows, or all of them when <paramref name="failure"/> is <c>null</c>.
+    /// rows, and none of them when <paramref name="failure"/> is <c>null</c>.
     /// </summary>
     public void FailInstance(int groupId, CompositeResultDocument.Cursor anchor, GroupError? failure)
     {
@@ -214,13 +214,23 @@ internal sealed partial class SinglePlanDeliveryState
             errors = _failureErrors[key] = [];
         }
 
-        if (!errors.Contains(error))
+        // A step that merges into a list that another step failed reports the same error again.
+        foreach (var existing in errors)
         {
-            errors.Add(error);
+            if (existing == error
+                || (existing.Error.Path is { } path
+                    && path.Equals(error.Error.Path)
+                    && existing.Error.Message == error.Error.Message))
+            {
+                return;
+            }
         }
+
+        errors.Add(error);
     }
 
-    // The errors that the instance reports: the errors that failed it, or else all errors recorded for its rows.
+    // The errors that the instance reports: the errors that failed it, or else all errors recorded for its rows. An
+    // instance that a null failed reports the errors that failed it only.
     private List<GroupError>? GetReportedErrors(int instance)
     {
         var key = CreateKey(_instanceGroups[instance], _instanceAnchors[instance]);
@@ -228,6 +238,11 @@ internal sealed partial class SinglePlanDeliveryState
         if (_failureErrors is not null && _failureErrors.TryGetValue(key, out var failures))
         {
             return failures;
+        }
+
+        if ((_instanceFlags[instance] & (FailedFlag | StepFailedFlag)) == FailedFlag)
+        {
+            return null;
         }
 
         return _groupErrors is not null && _groupErrors.TryGetValue(key, out var errors) ? errors : null;
@@ -495,16 +510,19 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Records that a step of <paramref name="groups"/> answered <c>null</c>, an error or a missing entity for a
-    /// value that held an object or a list, or that no step had written yet.
+    /// value that held an object or a list, or that no step had written yet, or <c>null</c> with an error for a
+    /// leaf. <paramref name="holdsRowError"/> tells that the error is also recorded for the row of the value.
     /// </summary>
     public void AddDeniedAnswer(
         CompositeResultDocument.Cursor container,
         ImmutableArray<int> groups,
-        IError? error)
+        IError? error,
+        bool holdsRowError)
     {
         AssertOnLoop();
 
-        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error, IsWritten: false));
+        (_deniedAnswers ??= []).Add(
+            new DeniedAnswer(container, groups, error, holdsRowError, IsWritten: false));
     }
 
     /// <summary>
@@ -518,7 +536,8 @@ internal sealed partial class SinglePlanDeliveryState
     {
         AssertOnLoop();
 
-        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error, IsWritten: true));
+        (_deniedAnswers ??= []).Add(
+            new DeniedAnswer(container, groups, error, HoldsRowError: false, IsWritten: true));
     }
 
     /// <summary>
@@ -716,7 +735,7 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     // The requirements are taken in their order in the step, the requirements of the field first. A nullable field
-    // takes no error that a sent payload already carries.
+    // takes no error that a sent payload already carries and no error that a row holds.
     private IError? GetDeniedRequirementError(
         CompositeResultDocument document,
         int group,
@@ -724,12 +743,12 @@ internal sealed partial class SinglePlanDeliveryState
         Selection selection,
         ReadOnlySpan<OperationRequirement> requirements)
     {
-        var skipSent = !selection.IsNonNull;
+        var isNullable = !selection.IsNonNull;
 
         for (var i = 0; i < requirements.Length; i++)
         {
             if (IsRequirementOf(requirements[i], selection)
-                && GetDeniedError(document, group, entity, requirements.Slice(i, 1), skipSent) is { } error)
+                && GetDeniedError(document, group, entity, requirements.Slice(i, 1), isNullable) is { } error)
             {
                 return error;
             }
@@ -738,7 +757,7 @@ internal sealed partial class SinglePlanDeliveryState
         for (var i = 0; i < requirements.Length; i++)
         {
             if (!IsRequirementOf(requirements[i], selection)
-                && GetDeniedError(document, group, entity, requirements.Slice(i, 1), skipSent) is { } error)
+                && GetDeniedError(document, group, entity, requirements.Slice(i, 1), isNullable) is { } error)
             {
                 return error;
             }
@@ -775,15 +794,15 @@ internal sealed partial class SinglePlanDeliveryState
 
     // Gets the error of the denied answer below the entity for a value that the requirement reads and that holds a
     // row without a result, taking the selection with the lowest id and, for one selection, the first recorded, a
-    // denied answer before an error that a step wrote. With skipSent an answer is left out when a sent payload carries
-    // an error at the path of its value, or on the way from there down to a row without a result that the requirement
-    // reads.
+    // denied answer before an error that a step wrote. For a nullable field an answer is left out when a sent payload
+    // carries an error at the path of its value, or on the way from there down to a row without a result that the
+    // requirement reads, and when a row holds its error.
     private IError? GetDeniedError(
         CompositeResultDocument document,
         int group,
         CompositeResultElement entity,
         ReadOnlySpan<OperationRequirement> requirement,
-        bool skipSent)
+        bool isNullable)
     {
         var requirementReads = _requirementReads ??= new(ReferenceEqualityComparer.Instance);
 
@@ -818,8 +837,9 @@ internal sealed partial class SinglePlanDeliveryState
                 && (deniedSelection.Id < lowest || (deniedSelection.Id == lowest && isWritten && !answer.IsWritten))
                 && read.Contains(deniedSelection.Id)
                 && IsBelow(denied, entity)
+                && !(isNullable && answer.HoldsRowError)
                 && LacksReadRow(denied, read)
-                && !(skipSent && _sentErrors is not null && IsReadValueSent(denied, read, denied.Path)))
+                && !(isNullable && _sentErrors is not null && IsReadValueSent(denied, read, denied.Path)))
             {
                 error = answer.Error;
                 lowest = deniedSelection.Id;
@@ -1548,13 +1568,16 @@ internal readonly record struct SourceError(GroupError Error, ImmutableArray<int
 
 /// <summary>
 /// A value that held an object or a list, or that no step had written yet, when a step of the delivery groups
-/// answered <c>null</c>, an error or a missing entity for it. <paramref name="IsWritten"/> is set when the step wrote
-/// the error as the result of the value, and <paramref name="Groups"/> is then empty for a step without groups.
+/// answered <c>null</c>, an error or a missing entity for it, or a leaf that a step answered <c>null</c> with an
+/// error. <paramref name="HoldsRowError"/> is set when the error is also recorded for the row of the value.
+/// <paramref name="IsWritten"/> is set when the step wrote the error as the result of the value, and
+/// <paramref name="Groups"/> is then empty for a step without groups.
 /// </summary>
 internal readonly record struct DeniedAnswer(
     CompositeResultDocument.Cursor Container,
     ImmutableArray<int> Groups,
     IError? Error,
+    bool HoldsRowError,
     bool IsWritten)
 {
     /// <summary>

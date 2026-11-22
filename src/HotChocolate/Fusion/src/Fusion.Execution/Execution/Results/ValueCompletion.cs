@@ -536,7 +536,11 @@ internal sealed class ValueCompletion
                     && !fieldResult.IsNullOrInvalidated
                     && fieldResult.ValueKind is JsonValueKind.Undefined or JsonValueKind.Object or JsonValueKind.Array)
                 {
-                    _writeFilterDocument.Delivery!.AddDeniedAnswer(fieldResult.Cursor, _writeFilterGroups, error);
+                    _writeFilterDocument.Delivery!.AddDeniedAnswer(
+                        fieldResult.Cursor,
+                        _writeFilterGroups,
+                        error,
+                        holdsRowError: false);
                 }
 
                 continue;
@@ -1015,7 +1019,11 @@ internal sealed class ValueCompletion
             && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
                 || (value.ValueKind is JsonValueKind.Undefined && !value.AssertSelection().IsLeaf)))
         {
-            _writeFilterDocument!.Delivery!.AddDeniedAnswer(value.Cursor, _writeFilterGroups, error);
+            _writeFilterDocument!.Delivery!.AddDeniedAnswer(
+                value.Cursor,
+                _writeFilterGroups,
+                error,
+                holdsRowError: false);
         }
     }
 
@@ -1619,6 +1627,34 @@ internal sealed class ValueCompletion
         return TMode.HasDelivery ? _store.Result.RecordGroupError(element, error) : null;
     }
 
+    // Records the error of a leaf that the client did not select as the answer for the groups that hold the leaf, so
+    // that a field that requires the leaf reports the error as the reason for its missing value.
+    private void RecordUnselectedLeafError(CompositeResultElement leaf, IError error)
+    {
+        var document = _store.Result;
+
+        if (!leaf.IsInternal || !document.TryGetDestination(leaf, out var destination))
+        {
+            return;
+        }
+
+        var groups = ImmutableArray.CreateBuilder<int>(destination.Groups.Length);
+
+        foreach (var group in destination.Groups)
+        {
+            groups.Add(group.Id);
+        }
+
+        document.Delivery!.AddDeniedAnswer(leaf.Cursor, groups.MoveToImmutable(), error, holdsRowError: true);
+    }
+
+    // Creates the non-null error of a null list item. The error is the one that fails the groups that hold the item,
+    // and is reported nowhere else. Returns null when no group holds the item.
+    private GroupError? CreateNonNullViolation(CompositeResultElement item)
+        => _store.Result.TryGetDestination(item, out _)
+            ? new GroupError(_errorHandler.Handle(ErrorHelper.DeniedNonNullField(item.Path)))
+            : null;
+
     private void PocketErrors(Path path, ResultSelectionSet resultSelectionSet, IError error)
     {
         foreach (var responseName in resultSelectionSet.ResponseNames)
@@ -1833,6 +1869,11 @@ internal sealed class ValueCompletion
             }
 
             AddError<TMode>(errorWithPath, target);
+
+            if (TMode.HasDelivery && selection.IsLeaf)
+            {
+                RecordUnselectedLeafError(target, nullErrorFromPath);
+            }
         }
         else
         {
@@ -1983,10 +2024,12 @@ internal sealed class ValueCompletion
 
                 if (isNonNull && _propagateNullValues)
                 {
-                    // The null of the item has no recorded error.
+                    // An item without an error at or below it fails the groups with the non-null error.
                     if (TMode.HasDelivery)
                     {
-                        _returnedNullError = null;
+                        _returnedNullError = errorTrieForIndex?.FindFirstError() is null
+                            ? CreateNonNullViolation(targetEnumerator.Current)
+                            : null;
                     }
 
                     return false;

@@ -5657,7 +5657,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private static partial Regex FirstReview();
 
     [Fact]
-    public async Task Defer_Should_NotReportTheErrorOfAnotherFragment_When_ANullItemFailsItAfterAStepOfTheOtherFailed()
+    public async Task Defer_Should_FailTheFragmentWithTheItemError_When_ANullItemFailsItAfterAStepOfAnotherFailed()
     {
         // arrange
         // the step of a (B:3) fails first, then C answers null without an error for the first review
@@ -5786,6 +5786,163 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
         // assert
         MatchPayloads(run);
+    }
+
+    private const string PackageStrictSource =
+        """
+        type Query { productByIdForPackage(id: ID!): Product @lookup }
+        type Product @key(fields: "id") { id: ID! package: Package! }
+        type Package { parts: [Part]! strict: [Part!]! }
+        type Part { weight: Float! }
+        """;
+
+    // The source schema B answers null for the first strict item.
+    private static string NullTheFirstStrictItem(string schema, string body, string text)
+        => schema is "B" ? FirstStrictItem().Replace(text, "\"strict\":[null") : text;
+
+    // The source schema B answers null for the weight of the first part and for the first strict item.
+    private static string NullTheFirstPartWeightAndTheFirstStrictItem(string schema, string body, string text)
+        => schema is "B"
+            ? FirstStrictItem().Replace(WeightValue().Replace(text, "\"weight\":null", 1), "\"strict\":[null")
+            : text;
+
+    // The source schema B answers null for the weight of every part and for the first strict item.
+    private static string NullEveryPartWeightAndTheFirstStrictItem(string schema, string body, string text)
+        => schema is "B"
+            ? FirstStrictItem().Replace(
+                PartsList().Replace(text, parts => WeightValue().Replace(parts.Value, "\"weight\":null")),
+                "\"strict\":[null")
+            : text;
+
+    [GeneratedRegex("\"strict\":\\[\\{[^}]*\\}")]
+    private static partial Regex FirstStrictItem();
+
+    [GeneratedRegex("\"parts\":\\[[^\\]]*\\]")]
+    private static partial Regex PartsList();
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheItemError_When_ANullItemOfANonNullItemListHasNoError()
+    {
+        // arrange
+        // the step of b (B:2) answers first, so that b completes in its own payload
+        var gateway = await CreateGatewayAsync(
+            ["B:2>", "B:3"],
+            NullTheFirstStrictItem,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageStrictSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { package { parts { weight } } }
+                    ... @defer(label: "b") { package { strict { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportOnlyTheItemError_When_ANullItemFailsAFragmentThatAlsoHoldsInnerErrors()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NullEveryPartWeightAndTheFirstStrictItem,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageStrictSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "b") { package { parts { weight } strict { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ReportTheItemErrorOnce_When_TwoFragmentsHoldTheListWithTheNullItem()
+    {
+        // arrange
+        // the step of c (C:2) answers first, so that c completes in its own payload before the step of b answers
+        var gateway = await CreateGatewayAsync(
+            ["C:2>", "C:3"],
+            NullTheFirstReview,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "b") { reviews { body } }
+                    ... @defer(label: "c") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheInnerErrorWithTheDeliveringFragment_When_AFailedFragmentHoldsTheSameRow(
+        bool failedFirst)
+    {
+        // arrange
+        // the step of b (B:2) holds the part list and the strict list, the step of a (B:3) holds the part list
+        var gateway = await CreateGatewayAsync(
+            failedFirst ? ["B:2>", "B:3"] : ["B:3>", "B:2"],
+            NullTheFirstPartWeightAndTheFirstStrictItem,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageStrictSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { package { parts { weight } } }
+                    ... @defer(label: "b") { package { parts { weight } strict { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"failedFirst={failedFirst}");
     }
 
     private const string NickSource =
@@ -8294,6 +8451,33 @@ public partial class SinglePlanDeferTests : FusionTestBase
             """
             { product(id: "1") { name ... @defer(label: "a") { weight } ... @defer(label: "b") { shipping } } }
             """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string NonNullShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(weight: Float @require(field: "weight")): Float!
+        }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheRequirementError_When_TheStepOfANonNullFieldIsSkipped()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", RequirementWithErrorSource),
+            ("C", NonNullShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ product(id: "1") { name ... @defer(label: "b") { shipping } } }""",
             []);
 
         // assert

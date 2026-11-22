@@ -1,4 +1,4 @@
-# Defer_Should_NotReportTheErrorOfAnotherFragment_When_ANullItemFailsItAfterAStepOfTheOtherFailed
+# Defer_Should_FailTheFragmentWithTheItemError_When_ANullItemFailsItAfterAStepOfAnotherFailed
 
 ## Payload 1
 
@@ -15,7 +15,7 @@
 ## Payload 3
 
 ```json
-{"completed":[{"id":"1"}],"hasNext":false}
+{"completed":[{"id":"1","errors":[{"message":"Cannot return null for non-nullable field.","path":["product","reviews",0],"extensions":{"code":"HC0018"}}]}],"hasNext":false}
 ```
 
 ## Requests
