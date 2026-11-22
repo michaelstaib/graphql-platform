@@ -176,6 +176,27 @@ public sealed partial class CompositeResultDocument
             => selectionAndFlags & OperationReferenceIdMask;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static OperationReferenceType ReadOperationReferenceType(int selectionAndFlags)
+            => (OperationReferenceType)(
+                (selectionAndFlags >>> OperationReferenceTypeShift) & OperationReferenceTypeMask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static ElementTokenType ReadTokenType(int sourceAndType)
+            => (ElementTokenType)((sourceAndType >>> 15) & 0x0F);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int ReadSourceDocumentId(int sourceAndType)
+            => sourceAndType & 0x7FFF;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int ReadLocationOrRows(int locationOrRows)
+            => locationOrRows & 0x1FFFFFFF;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int ReadSizeOrLength(int sizeOrLength)
+            => sizeOrLength & int.MaxValue;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal static ElementFlags ReadFlags(int selectionAndFlags)
             => (ElementFlags)((selectionAndFlags >>> FlagsShift) & FlagsMask);
 
