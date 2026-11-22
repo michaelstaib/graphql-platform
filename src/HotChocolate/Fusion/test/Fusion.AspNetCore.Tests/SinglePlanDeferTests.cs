@@ -4979,6 +4979,75 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnce_When_TheCompletionOfAnotherFragmentReportsTheRequiredField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:3", "B:6"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick inner { c } ... @defer { cA } ... @defer(label: "q") { inner { a } } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheDeniedError_When_APayloadReportsAnotherFieldOfTheRequiredObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2", "B:5"],
+            FailTheFieldCOfInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { c } ... @defer { cA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheDeniedError_When_AnotherFragmentReportsAnotherFieldOfTheRequiredObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ["B:2>", "B:5"],
+            FailTheFieldCOfInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick ... @defer { cA } ... @defer(label: "q") { inner { c } } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string BoxSource =
         """
         type Query { userById(id: ID!): User @lookup @internal }
@@ -5027,6 +5096,14 @@ public partial class SinglePlanDeferTests : FusionTestBase
             "F" => text.Replace("Unexpected Execution Error", "F failed", StringComparison.Ordinal),
             _ => text
         };
+
+    // The source schema B answers null with the error "B c failed" for the field c of inner, and its source error
+    // reads "B failed".
+    private static string FailTheFieldCOfInner(string schema, string body, string text)
+        => schema is "B" && body.Contains("inner { c }", StringComparison.Ordinal)
+            ? """{"errors":[{"message":"B c failed","path":["userById","inner","c"]}],"data":"""
+                + """{"userById":{"inner":{"c":null}}}}"""
+            : NameTheSourceError(schema, body, text);
 
     // The source schema D answers without the field dC.
     private static string OmitTheFieldDC(string schema, string body, string text)

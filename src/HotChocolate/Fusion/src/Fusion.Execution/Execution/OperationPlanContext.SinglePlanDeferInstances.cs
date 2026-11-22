@@ -395,7 +395,7 @@ internal sealed partial class SinglePlanDeliveryState
 
         for (var i = errors.Count - 1; i >= 0; i--)
         {
-            if (errors[i].Path is { } path && IsSent(path, includeBelow: false))
+            if (errors[i].Path is { } path && IsSent(path, bottom: null))
             {
                 errors = errors.RemoveAt(i);
             }
@@ -404,8 +404,8 @@ internal sealed partial class SinglePlanDeliveryState
         return errors;
     }
 
-    // A sent payload carries an error at the path, or below it when includeBelow is set.
-    private bool IsSent(Path path, bool includeBelow)
+    // A sent payload carries an error at the path, or at a path on the way from it down to bottom.
+    private bool IsSent(Path path, Path? bottom)
     {
         if (_sentErrors is null)
         {
@@ -419,7 +419,29 @@ internal sealed partial class SinglePlanDeliveryState
                 continue;
             }
 
-            while (includeBelow && errorPath.Length > path.Length)
+            if (errorPath.Equals(path))
+            {
+                return true;
+            }
+
+            if (bottom is null || errorPath.Length <= path.Length || errorPath.Length > bottom.Length)
+            {
+                continue;
+            }
+
+            var below = bottom;
+
+            while (below.Length > errorPath.Length)
+            {
+                below = below.Parent;
+            }
+
+            if (!below.Equals(errorPath))
+            {
+                continue;
+            }
+
+            while (errorPath.Length > path.Length)
             {
                 errorPath = errorPath.Parent;
             }
@@ -737,9 +759,9 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     // Gets the error of the denied answer below the entity for a value that the requirement reads and that holds a
-    // row without a result. Of several answers the one for the selection with the lowest id is taken, and of
-    // several for one selection the first recorded. With skipSent an answer is left out when a sent payload carries
-    // an error at or below the path of its value.
+    // row without a result, taking the selection with the lowest id and, for one selection, the first recorded. With
+    // skipSent an answer is left out when a sent payload carries an error at the path of its value, or on the way
+    // from there down to a row without a result that the requirement reads.
     private IError? GetDeniedError(
         CompositeResultDocument document,
         int group,
@@ -780,7 +802,7 @@ internal sealed partial class SinglePlanDeliveryState
                 && read.Contains(deniedSelection.Id)
                 && IsBelow(denied, entity)
                 && LacksReadRow(denied, read)
-                && !(skipSent && IsSent(denied.Path, includeBelow: true)))
+                && !(skipSent && _sentErrors is not null && IsReadValueSent(denied, read, denied.Path)))
             {
                 error = answer.Error;
                 lowest = deniedSelection.Id;
@@ -788,6 +810,43 @@ internal sealed partial class SinglePlanDeliveryState
         }
 
         return error;
+    }
+
+    // A sent payload carries an error at the path of the denied value, or on the way from it down to a row without
+    // a result that the requirement reads.
+    private bool IsReadValueSent(CompositeResultElement value, HashSet<int> read, Path denied)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Undefined:
+                return IsSent(denied, value.Path);
+
+            case JsonValueKind.Object:
+                foreach (var selection in value.AssertSelectionSet().Selections)
+                {
+                    if (read.Contains(selection.Id)
+                        && IsReadValueSent(value.GetPropertyBySelectionId(selection.Id), read, denied))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            case JsonValueKind.Array:
+                foreach (var element in value.EnumerateArray())
+                {
+                    if (IsReadValueSent(element, read, denied))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
     }
 
     // The value is a row without a result, or holds one for a selection that the requirement reads.
