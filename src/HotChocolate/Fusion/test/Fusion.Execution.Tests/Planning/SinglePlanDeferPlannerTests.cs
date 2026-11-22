@@ -3318,6 +3318,307 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_RemoveTheKeyStep_When_ThePassRemovedItsOnlyReader()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            KeyHopIdSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc ... @defer { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_RemoveTheKeyFromTheRootRequest_When_ThePassRemovedItsOnlyReader()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            IdCatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc ... @defer { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_RemoveTheVariableOfTheRootRequest_When_TheKeyWasItsOnlyUse()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            IdCatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            "query($a: Boolean!) { products { upc ... @defer(if: $a) { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_RemoveEveryKeyStep_When_ThreeNestedSwitchesLoseTheirReaders()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            KeyHopIdSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+                products { upc ... @defer(if: $a) { ... @defer(if: $b) { ... @defer(if: $c) { eur } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheKeyStep_When_AStepOfAnotherGroupReadsTheKey()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            KeyHopIdSchema,
+            ProductIdLookupSchema,
+            KeyHopRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            { products { upc ... @defer(label: "x") { eur } ... @defer(label: "y") { rating } } }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheKeyStep_When_TheOperationSelectsTheKeyInTheGroup()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            KeyHopIdSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc ... @defer { eur id } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheKeyInTheRootRequest_When_TheOperationSelectsItInAGroup()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            IdCatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc ... @defer { eur id } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheAliasedField_When_TheKeyLostItsReader()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            IdCatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc myId: id ... @defer { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheKeyInTheRootRequest_When_AStepThatRemainsReadsIt()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            IdCatalogSchema,
+            PriceListSchema,
+            ForeignRequirementSchema,
+            ProductIdLookupSchema,
+            KeyHopRatingSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            { products { upc ... @defer(label: "x") { eur } ... @defer(label: "y") { rating } } }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_FindEachSupplierById_When_ThePassRemovedAnEarlierStep()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            FriendUserRootSchema,
+            SharedKeyUserWeightSchema,
+            SharedKeyUserShippingSchema,
+            SharedKeyUserTaxSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!) {
+                user { ... @defer(if: $a) { tax friend { ... @defer { shipping } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_RemoveEveryStepOfTheChain_When_TheKeyOfARemovedStepCameFromAStepThatLostItsReader()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            CatalogSchema,
+            PriceListSchema,
+            UpcToSkuSchema,
+            SkuToIdSchema,
+            ProductIdLookupSchema);
+
+        // act
+        var result = Plan(schema, "{ products { upc ... @defer { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    private const string UpcToSkuSchema =
+        """
+        # name: q
+        type Query {
+            productByUpcQ(upc: String!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            sku: String! @shareable
+        }
+        """;
+
+    private const string SkuToIdSchema =
+        """
+        # name: s
+        type Query {
+            productBySkuS(sku: String!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "sku") {
+            sku: String! @shareable
+            id: ID! @shareable
+        }
+        """;
+
+    private const string FriendUserRootSchema =
+        """
+        # name: a
+        type Query {
+            user: User!
+            userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+            id: ID!
+            friend: User!
+        }
+        """;
+
+    private const string IdCatalogSchema =
+        """
+        # name: a
+        type Query {
+            products: [Product!]!
+            product: Product
+            productByUpc(upc: String!): Product @lookup
+        }
+
+        type Product @key(fields: "upc") {
+            upc: String!
+            id: ID! @shareable
+            name: String!
+            eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            usd(price: Int @require(field: "price(cur: \"USD\")")): Int
+            both(price: Int @require(field: "price(cur: \"EUR\", tax: true)")): Int
+            netWeight(weight: Int @require(field: "weight")): Int
+            related: Product!
+        }
+        """;
+
+    private const string ProductIdLookupSchema =
+        """
+        # name: r
+        type Query {
+            productById(id: ID!): Product @lookup @internal
+        }
+
+        type Product @key(fields: "id") {
+            id: ID! @shareable
+            upc: String! @shareable
+        }
+        """;
+
     private const string KeyHopRootSchema =
         """
         # name: a

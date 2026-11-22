@@ -1110,6 +1110,101 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendNoKeyRequest_When_ThePassRemovedTheReaderOfTheKey()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_catalogSources);
+
+        // act
+        var run = await RunWithTwinAsync(gateway, "{ products { upc ... @defer { eur } } }", []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal("A=2, B=1", run.Deferred.RequestSummary);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_ResolveTheFieldOfTheOtherGroup_When_TheSharedKeyStepLostOneReader()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_catalogRatingSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            { products { upc ... @defer(label: "x") { eur } ... @defer(label: "y") { rating } } }
+            """,
+            []);
+
+        // assert
+        run.AssertMatchesTwin(compareValues: false);
+        Assert.Equal("A=2, B=1, S=1, T=1", run.Deferred.RequestSummary);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_DeliverTheAliasedKey_When_TheKeyStepLostItsOtherReader()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_catalogRatingSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ products { upc myId: id ... @defer { eur } } }",
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendNoKeyRequest_When_TheEntityIsBelowAList()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_catalogSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "{ products { upc related { upc ... @defer { eur } } } }",
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_EqualTheTwin_When_NestedSwitchesShareTheKeyStep(bool a, bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_catalogRatingSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                products { upc ... @defer(if: $a) { eur ... @defer(if: $b) { rating } } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        run.AssertMatchesTwin(compareValues: false);
+        Assert.Equal("A=2, B=1, S=1, T=1", run.Deferred.RequestSummary);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Fact]
     public async Task Defer_Should_SkipThePlainLookup_When_TheSwitchIsOnAndItsProducerHoldsItsKey()
     {
         // arrange
@@ -1595,6 +1690,52 @@ public partial class SinglePlanDeferTests : FusionTestBase
 
     private Task<Gateway> CreateSkuChainGatewayAsync()
         => CreateGatewayAsync(s_skuChainSources);
+
+    private static readonly (string Name, string Sdl)[] s_catalogSources =
+    [
+        ("A", """
+            type Query { products: [Product!]! product: Product productByUpc(upc: String!): Product @lookup }
+            type Product @key(fields: "upc") {
+                upc: String!
+                name: String!
+                eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+                usd(price: Int @require(field: "price(cur: \"USD\")")): Int
+                both(price: Int @require(field: "price(cur: \"EUR\", tax: true)")): Int
+                netWeight(weight: Int @require(field: "weight")): Int
+                related: Product!
+            }
+            """),
+        ("B", """
+            type Query { productByUpcB(upc: String!): Product @lookup }
+            type Product @key(fields: "upc") { upc: String! price(cur: String, tax: Boolean): Int weight: Int }
+            """),
+        ("C", """
+            type Query { productByUpcC(upc: String!): Product @lookup }
+            type Product @key(fields: "upc") {
+                upc: String!
+                eurC(price: Int @require(field: "price(cur: \"EUR\")")): Int
+                weightC(weight: Int @require(field: "weight")): Int
+                chained(eur: Int @require(field: "eur")): Int
+            }
+            """),
+        ("S", """
+            type Query { productByUpcS(upc: String!): Product @lookup @internal }
+            type Product @key(fields: "upc") { upc: String! id: ID! @shareable }
+            """),
+        ("R", """
+            type Query { productById(id: ID!): Product @lookup @internal }
+            type Product @key(fields: "id") { id: ID! @shareable upc: String! @shareable }
+            """)
+    ];
+
+    private static readonly (string Name, string Sdl)[] s_catalogRatingSources =
+    [
+        .. s_catalogSources,
+        ("T", """
+            type Query { productById(id: ID!): Product @lookup @internal }
+            type Product @key(fields: "id") { id: ID! @shareable rating: Int! }
+            """)
+    ];
 
     [Fact]
     public async Task Defer_Should_SendOuterDataBeforeInnerData_When_TheLookupsOfAnOuterAndAnInnerGroupShareARequest()

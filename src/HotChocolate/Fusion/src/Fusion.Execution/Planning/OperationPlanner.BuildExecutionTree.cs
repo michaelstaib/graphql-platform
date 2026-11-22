@@ -13,6 +13,14 @@ using HotChocolate.Fusion.Types.Metadata;
 using HotChocolate.Language;
 using HotChocolate.Language.Visitors;
 using HotChocolate.Types;
+using ChoiceValueSelectionNode = HotChocolate.Fusion.Language.ChoiceValueSelectionNode;
+using IValueSelectionNode = HotChocolate.Fusion.Language.IValueSelectionNode;
+using ListValueSelectionNode = HotChocolate.Fusion.Language.ListValueSelectionNode;
+using ObjectValueSelectionNode = HotChocolate.Fusion.Language.ObjectValueSelectionNode;
+using PathListValueSelectionNode = HotChocolate.Fusion.Language.PathListValueSelectionNode;
+using PathNode = HotChocolate.Fusion.Language.PathNode;
+using PathObjectValueSelectionNode = HotChocolate.Fusion.Language.PathObjectValueSelectionNode;
+using PathSegmentNode = HotChocolate.Fusion.Language.PathSegmentNode;
 using ThrowHelper = HotChocolate.Fusion.Execution.ThrowHelper;
 
 namespace HotChocolate.Fusion.Planning;
@@ -917,7 +925,8 @@ public sealed partial class OperationPlanner
     /// the same response path whenever the step runs, and makes the dependents of the step depend on that step.
     /// A step without delivery groups only gives up the entry key that its producer fetches. A step keeps the fields
     /// that the operation selects for its groups, and no source schema gets more requests than the plan build
-    /// creates for the steps before the pass.
+    /// creates for the steps before the pass. The steps and key fields that lost their last reader to the pass are
+    /// removed afterwards under the same request check.
     /// </summary>
     private static ImmutableList<PlanStep> TakeSelectionsFromHolders(
         ImmutableList<PlanStep> planSteps,
@@ -928,13 +937,285 @@ public sealed partial class OperationPlanner
         using var pass = new HolderPass(planSteps, operation, requestCheck, forwardVariableContext);
         var taken = TakeSelections(planSteps, pass, checkEveryStep: false);
 
-        if (ReferenceEquals(taken, planSteps) || pass.TryAccept(planSteps, taken))
+        if (!ReferenceEquals(taken, planSteps) && !pass.TryAccept(planSteps, taken))
+        {
+            // The result sends a source more requests, so the steps are taken again with a check per step.
+            taken = TakeSelections(planSteps, pass, checkEveryStep: true);
+        }
+
+        if (ReferenceEquals(taken, planSteps))
         {
             return taken;
         }
 
-        // The result sends a source more requests, so the steps are taken again with a check per step.
-        return TakeSelections(planSteps, pass, checkEveryStep: true);
+        var removed = RemoveSelectionsWithoutReader(planSteps, taken, pass);
+
+        return !ReferenceEquals(removed, taken) && pass.TryAccept(taken, removed) ? removed : taken;
+    }
+
+    /// <summary>
+    /// Removes the lookup steps of delivery groups and the key fields that had a reader before the pass and have
+    /// none after it. Selections without a reader before the pass stay.
+    /// </summary>
+    private static ImmutableList<PlanStep> RemoveSelectionsWithoutReader(
+        ImmutableList<PlanStep> before,
+        ImmutableList<PlanStep> planSteps,
+        HolderPass pass)
+    {
+        pass.BeginRemoval(before, planSteps);
+
+        var removedStep = true;
+
+        while (removedStep)
+        {
+            removedStep = false;
+
+            for (var i = 0; i < planSteps.Count; i++)
+            {
+                if (planSteps[i] is not OperationPlanStep
+                    {
+                        Lookup.Path.Length: 0,
+                        DeliveryGroups.IsDefaultOrEmpty: false
+                    } step
+                    || step.Definition.SelectionSet.Selections is not [FieldNode { SelectionSet: { } entry }]
+                    || !pass.HadDependent(step.Id)
+                    || pass.HasDependent(step)
+                    || IsReferencedByNodeStep(planSteps, step.Id)
+                    || IsParentDependency(planSteps, step.Id)
+                    || !HasAnotherStepPerGroup(planSteps, step)
+                    || DeliversField(pass, step, entry))
+                {
+                    continue;
+                }
+
+                planSteps = planSteps.RemoveAt(i);
+                pass.Remove(step.Id);
+
+                for (var j = 0; j < planSteps.Count; j++)
+                {
+                    if (planSteps[j] is OperationPlanStep producer && producer.Dependents.Contains(step.Id))
+                    {
+                        var updated = producer with { Dependents = producer.Dependents.Remove(step.Id) };
+                        planSteps = planSteps.SetItem(j, updated);
+                        pass.Update(updated);
+                    }
+                }
+
+                i--;
+                removedStep = true;
+            }
+        }
+
+        return RemoveKeysWithoutReader(before, planSteps, pass);
+    }
+
+    // Checks that a step of the list names the step as a dependency in the enclosing plan scope.
+    private static bool IsParentDependency(ImmutableList<PlanStep> planSteps, int stepId)
+    {
+        foreach (var planStep in planSteps)
+        {
+            if (planStep is not OperationPlanStep step)
+            {
+                continue;
+            }
+
+            foreach (var parent in step.ParentDependencies)
+            {
+                if (parent.StepId == stepId)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Checks that the operation selects a field of the entry selection set inside a delivery group of the step.
+    private static bool DeliversField(HolderPass pass, OperationPlanStep step, SelectionSetNode selectionSet)
+    {
+        for (var i = 0; i < selectionSet.Selections.Count; i++)
+        {
+            switch (selectionSet.Selections[i])
+            {
+                case FieldNode field
+                    when !field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal)
+                        && pass.IsSelectedForGroups(step, field):
+                    return true;
+
+                case InlineFragmentNode fragment when DeliversField(pass, step, fragment.SelectionSet):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Takes the key fields of every lookup step that the pass removed out of the steps that supplied them.
+    private static ImmutableList<PlanStep> RemoveKeysWithoutReader(
+        ImmutableList<PlanStep> before,
+        ImmutableList<PlanStep> planSteps,
+        HolderPass pass)
+    {
+        foreach (var planStep in before)
+        {
+            if (planStep is not OperationPlanStep { Lookup: not null } removed || pass.IsListed(removed.Id))
+            {
+                continue;
+            }
+
+            foreach (var supplier in before)
+            {
+                if (supplier is not OperationPlanStep original
+                    || !original.Dependents.Contains(removed.Id)
+                    || !original.Target.IsParentOfOrSame(removed.Target)
+                    || pass.Find(original.Id) is not { } producer
+                    || IsReferencedByNodeStep(planSteps, producer.Id)
+                    || RemoveKeyFields(producer, removed, pass) is not { } updated)
+                {
+                    continue;
+                }
+
+                var index = IndexOfStep(planSteps, producer.Id);
+
+                if (index >= 0)
+                {
+                    planSteps = planSteps.SetItem(index, updated);
+                    pass.Update(updated);
+                }
+            }
+        }
+
+        return planSteps;
+    }
+
+    // Returns the position of the step in the list, or -1 when the list has no step with the id.
+    private static int IndexOfStep(ImmutableList<PlanStep> planSteps, int stepId)
+    {
+        for (var i = 0; i < planSteps.Count; i++)
+        {
+            if (planSteps[i].Id == stepId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // Returns the producer without the key fields of the removed step that nothing reads, or null when no field goes.
+    private static OperationPlanStep? RemoveKeyFields(
+        OperationPlanStep producer,
+        OperationPlanStep removed,
+        HolderPass pass)
+    {
+        var path = removed.Target.RelativeTo(producer.Target);
+        var definition = producer.Definition;
+
+        if (producer.Lookup is not null)
+        {
+            if (producer.Lookup.Path.Length > 0
+                || definition.SelectionSet.Selections is not [FieldNode { SelectionSet: { } entry } entryField])
+            {
+                return null;
+            }
+
+            var updatedEntry = RemoveKeyFields(entry, path, 0, removed, pass);
+
+            if (ReferenceEquals(updatedEntry, entry) || IsPlaceholderOnly(updatedEntry))
+            {
+                return null;
+            }
+
+            definition = definition.WithSelectionSet(
+                new SelectionSetNode([entryField.WithSelectionSet(updatedEntry)]));
+        }
+        else
+        {
+            var updatedRoot = RemoveKeyFields(definition.SelectionSet, path, 0, removed, pass);
+
+            if (ReferenceEquals(updatedRoot, definition.SelectionSet) || IsPlaceholderOnly(updatedRoot))
+            {
+                return null;
+            }
+
+            definition = definition.WithSelectionSet(updatedRoot);
+        }
+
+        return producer with { Definition = definition };
+    }
+
+    private static SelectionSetNode RemoveKeyFields(
+        SelectionSetNode current,
+        SelectionPath path,
+        int pathIndex,
+        OperationPlanStep removed,
+        HolderPass pass)
+    {
+        List<ISelectionNode>? rewritten = null;
+
+        for (var i = 0; i < current.Selections.Count; i++)
+        {
+            var selection = current.Selections[i];
+            var replacement = selection;
+
+            switch (selection)
+            {
+                case InlineFragmentNode { TypeCondition: null } wrapper:
+                    var inner = RemoveKeyFields(wrapper.SelectionSet, path, pathIndex, removed, pass);
+                    replacement = ReferenceEquals(inner, wrapper.SelectionSet)
+                        ? selection
+                        : IsPlaceholderOnly(inner) ? null : wrapper.WithSelectionSet(inner);
+                    break;
+
+                case InlineFragmentNode { TypeCondition: { } condition } fragment
+                    when pathIndex < path.Length
+                        && path[pathIndex].Kind is SelectionPathSegmentKind.InlineFragment
+                        && condition.Name.Value.Equals(path[pathIndex].Name, StringComparison.Ordinal):
+                    var typed = RemoveKeyFields(fragment.SelectionSet, path, pathIndex + 1, removed, pass);
+                    replacement = ReferenceEquals(typed, fragment.SelectionSet)
+                        ? selection
+                        : IsPlaceholderOnly(typed) ? null : fragment.WithSelectionSet(typed);
+                    break;
+
+                case FieldNode { SelectionSet: { } child } parent
+                    when pathIndex < path.Length
+                        && path[pathIndex].Kind is SelectionPathSegmentKind.Field
+                        && (parent.Alias?.Value ?? parent.Name.Value)
+                            .Equals(path[pathIndex].Name, StringComparison.Ordinal):
+                    var below = RemoveKeyFields(child, path, pathIndex + 1, removed, pass);
+                    replacement = ReferenceEquals(below, child)
+                        ? selection
+                        : IsPlaceholderOnly(below) ? null : parent.WithSelectionSet(below);
+                    break;
+
+                case FieldNode field when pathIndex == path.Length && pass.IsKeyWithoutReader(removed, field):
+                    replacement = null;
+                    break;
+            }
+
+            if (rewritten is null)
+            {
+                if (ReferenceEquals(replacement, selection))
+                {
+                    continue;
+                }
+
+                rewritten = new List<ISelectionNode>(current.Selections.Count);
+
+                for (var j = 0; j < i; j++)
+                {
+                    rewritten.Add(current.Selections[j]);
+                }
+            }
+
+            if (replacement is not null)
+            {
+                rewritten.Add(replacement);
+            }
+        }
+
+        return rewritten is null ? current : new SelectionSetNode(rewritten);
     }
 
     private static ImmutableList<PlanStep> TakeSelections(
@@ -1139,6 +1420,8 @@ public sealed partial class OperationPlanner
         private readonly int[] _remaining;
         private readonly int[] _queue;
         private readonly int[] _visited;
+        private bool[]? _listed;
+        private bool[]? _hadDependent;
         private int[] _acceptedCounts;
         private int[] _candidateCounts;
         private ImmutableArray<int> _stepGroups;
@@ -1225,7 +1508,184 @@ public sealed partial class OperationPlanner
         public bool IsSelectedForGroups(OperationPlanStep step, FieldNode field)
         {
             _stepGroups = step.DeliveryGroups;
-            return IsSelectedAt(_operation.SelectionSet, step.Target, 0, -1, field);
+            return IsSelectedAt(_operation.SelectionSet, step.Target, 0, -1, anyGroup: false, field);
+        }
+
+        // Indexes the steps of the list that the removal starts from and notes which of the steps of the list
+        // before the pass had a dependent.
+        public void BeginRemoval(ImmutableList<PlanStep> before, ImmutableList<PlanStep> planSteps)
+        {
+            _listed ??= ArrayPool<bool>.Shared.Rent(_maxId + 1);
+            _hadDependent ??= ArrayPool<bool>.Shared.Rent(_maxId + 1);
+            _hadDependent.AsSpan(0, _maxId + 1).Clear();
+
+            IndexById(before);
+
+            foreach (var planStep in before)
+            {
+                if (planStep is OperationPlanStep step)
+                {
+                    _hadDependent[step.Id] = HasDependent(step);
+                }
+            }
+
+            IndexById(planSteps);
+        }
+
+        public bool HadDependent(int stepId) => _hadDependent![stepId];
+
+        // Checks that a step of the indexed list is one of the dependents of the step.
+        public bool HasDependent(OperationPlanStep step)
+        {
+            foreach (var dependentId in step.Dependents)
+            {
+                if (IsListed(dependentId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool IsListed(int stepId) => stepId >= 0 && stepId <= _maxId && _listed![stepId];
+
+        public OperationPlanStep? Find(int stepId) => stepId >= 0 && stepId <= _maxId ? _byId[stepId] : null;
+
+        public void Update(OperationPlanStep step) => _byId[step.Id] = step;
+
+        public void Remove(int stepId)
+        {
+            _byId[stepId] = null;
+            _listed![stepId] = false;
+        }
+
+        // Checks that the field is a plain field of the key of the removed lookup step that no step of the indexed
+        // list reads and the operation does not select at the target of the removed step.
+        public bool IsKeyWithoutReader(OperationPlanStep removed, FieldNode field)
+        {
+            if (field is not { Alias: null, SelectionSet: null, Directives: [], Arguments: [] }
+                || field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var keys = removed.Lookup!.Requirements.Selections;
+
+            for (var i = 0; i < keys.Count; i++)
+            {
+                if (keys[i] is FieldNode { Alias: null, SelectionSet: null } key
+                    && key.Name.Value.Equals(field.Name.Value, StringComparison.Ordinal))
+                {
+                    return !IsRead(field.Name.Value)
+                        && !IsSelectedAt(_operation.SelectionSet, removed.Target, 0, -1, anyGroup: true, key);
+                }
+            }
+
+            return false;
+        }
+
+        private void IndexById(ImmutableList<PlanStep> planSteps)
+        {
+            var listed = _listed!;
+            _byId.AsSpan(0, _maxId + 1).Clear();
+            listed.AsSpan(0, _maxId + 1).Clear();
+
+            foreach (var planStep in planSteps)
+            {
+                listed[planStep.Id] = true;
+
+                if (planStep is OperationPlanStep step)
+                {
+                    _byId[step.Id] = step;
+                }
+            }
+        }
+
+        // Checks that a requirement of a step of the indexed list reads a field with the name.
+        private bool IsRead(string fieldName)
+        {
+            for (var id = 0; id <= _maxId; id++)
+            {
+                if (_byId[id] is not { } step)
+                {
+                    continue;
+                }
+
+                foreach (var (_, requirement) in step.Requirements)
+                {
+                    if (ReadsField(requirement.Map, fieldName))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ReadsField(IValueSelectionNode map, string fieldName)
+        {
+            switch (map)
+            {
+                case PathNode path:
+                    return ReadsField(path.PathSegment, fieldName);
+
+                case ChoiceValueSelectionNode choice:
+                    foreach (var branch in choice.Branches)
+                    {
+                        if (ReadsField(branch, fieldName))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+
+                case ListValueSelectionNode list:
+                    return ReadsField(list.ElementSelection, fieldName);
+
+                case ObjectValueSelectionNode objectSelection:
+                    return ReadsField(objectSelection, fieldName);
+
+                case PathListValueSelectionNode pathList:
+                    return ReadsField(pathList.Path, fieldName)
+                        || ReadsField(pathList.ListValueSelection, fieldName);
+
+                case PathObjectValueSelectionNode pathObject:
+                    return ReadsField(pathObject.Path, fieldName)
+                        || ReadsField(pathObject.ObjectValueSelection, fieldName);
+
+                default:
+                    return true;
+            }
+        }
+
+        private static bool ReadsField(ObjectValueSelectionNode map, string fieldName)
+        {
+            foreach (var field in map.Fields)
+            {
+                if (field.Name.Value.Equals(fieldName, StringComparison.Ordinal)
+                    || (field.ValueSelection is { } selection && ReadsField(selection, fieldName)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ReadsField(PathSegmentNode path, string fieldName)
+        {
+            for (var segment = path; segment is not null; segment = segment.PathSegment)
+            {
+                if (segment.FieldName.Value.Equals(fieldName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public bool TryFindHolder(
@@ -1391,6 +1851,16 @@ public sealed partial class OperationPlanner
             ArrayPool<int>.Shared.Return(_remaining);
             ArrayPool<int>.Shared.Return(_queue);
             ArrayPool<int>.Shared.Return(_visited);
+
+            if (_listed is not null)
+            {
+                ArrayPool<bool>.Shared.Return(_listed);
+            }
+
+            if (_hadDependent is not null)
+            {
+                ArrayPool<bool>.Shared.Return(_hadDependent);
+            }
         }
 
         // Computes the dependency depth of every operation step, the longest chain of dependencies in front of it.
@@ -1617,17 +2087,18 @@ public sealed partial class OperationPlanner
             SelectionPath path,
             int pathIndex,
             int group,
+            bool anyGroup,
             FieldNode field)
         {
             if (pathIndex == path.Length)
             {
-                return IsFieldSelected(current, group, field);
+                return IsFieldSelected(current, group, anyGroup, field);
             }
 
             var segment = path[pathIndex];
 
             if (segment.Kind is SelectionPathSegmentKind.InlineFragment
-                && IsSelectedAt(current, path, pathIndex + 1, group, field))
+                && IsSelectedAt(current, path, pathIndex + 1, group, anyGroup, field))
             {
                 return true;
             }
@@ -1640,11 +2111,17 @@ public sealed partial class OperationPlanner
                         when segment.Kind is SelectionPathSegmentKind.Field
                             && (parentField.Alias?.Value ?? parentField.Name.Value)
                                 .Equals(segment.Name, StringComparison.Ordinal)
-                            && IsSelectedAt(child, path, pathIndex + 1, group, field):
+                            && IsSelectedAt(child, path, pathIndex + 1, group, anyGroup, field):
                         return true;
 
                     case InlineFragmentNode fragment
-                        when IsSelectedAt(fragment.SelectionSet, path, pathIndex, GetGroup(fragment, group), field):
+                        when IsSelectedAt(
+                            fragment.SelectionSet,
+                            path,
+                            pathIndex,
+                            GetGroup(fragment, group),
+                            anyGroup,
+                            field):
                         return true;
                 }
             }
@@ -1652,8 +2129,9 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        // Checks that the selection set selects a leaf of the field inside one of the groups of the step.
-        private bool IsFieldSelected(SelectionSetNode current, int group, FieldNode field)
+        // Checks that the selection set selects a leaf of the field inside one of the groups of the step, or inside
+        // any group or the initial response when anyGroup is set.
+        private bool IsFieldSelected(SelectionSetNode current, int group, bool anyGroup, FieldNode field)
         {
             for (var i = 0; i < current.Selections.Count; i++)
             {
@@ -1663,13 +2141,13 @@ public sealed partial class OperationPlanner
                         when (selected.Alias?.Value ?? selected.Name.Value)
                             .Equals(field.Alias?.Value ?? field.Name.Value, StringComparison.Ordinal)
                             && (field.SelectionSet is null
-                                ? _stepGroups.Contains(group)
+                                ? anyGroup || _stepGroups.Contains(group)
                                 : selected.SelectionSet is not null
-                                    && AreLeavesSelected(selected.SelectionSet, group, field.SelectionSet)):
+                                    && AreLeavesSelected(selected.SelectionSet, group, anyGroup, field.SelectionSet)):
                         return true;
 
                     case InlineFragmentNode fragment
-                        when IsFieldSelected(fragment.SelectionSet, GetGroup(fragment, group), field):
+                        when IsFieldSelected(fragment.SelectionSet, GetGroup(fragment, group), anyGroup, field):
                         return true;
                 }
             }
@@ -1677,16 +2155,17 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        private bool AreLeavesSelected(SelectionSetNode current, int group, SelectionSetNode required)
+        private bool AreLeavesSelected(SelectionSetNode current, int group, bool anyGroup, SelectionSetNode required)
         {
             for (var i = 0; i < required.Selections.Count; i++)
             {
                 switch (required.Selections[i])
                 {
-                    case FieldNode requiredField when IsFieldSelected(current, group, requiredField):
+                    case FieldNode requiredField when IsFieldSelected(current, group, anyGroup, requiredField):
                         return true;
 
-                    case InlineFragmentNode fragment when AreLeavesSelected(current, group, fragment.SelectionSet):
+                    case InlineFragmentNode fragment
+                        when AreLeavesSelected(current, group, anyGroup, fragment.SelectionSet):
                         return true;
                 }
             }
