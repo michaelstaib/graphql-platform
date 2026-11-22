@@ -3655,6 +3655,42 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         MatchSnapshot(result.Plan);
     }
 
+    [Fact]
+    public void Plan_Should_KeepTheLookupsOfTwoSwitchesApart_When_BothFragmentsSelectAFieldWithARequirement()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!, $w: Boolean!) {
+                product { ... @defer(if: $v) { eur } ... @defer(if: $w) { usd } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheLookupOfTheSwitchApart_When_AFieldWithARequirementIsIncludedByItsVariable()
+    {
+        // arrange
+        var schema = ComposeSchema(CatalogSchema, PriceListSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            "query($v: Boolean!) { product { usd @include(if: $v) ... @defer(if: $v) { eur } } }");
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
     private const string ShelfRootSchema =
         """
         # name: a

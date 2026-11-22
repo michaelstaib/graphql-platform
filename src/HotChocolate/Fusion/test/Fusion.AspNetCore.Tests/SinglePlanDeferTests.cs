@@ -2713,6 +2713,44 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchRunWithValues(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_MatchThePlainTwin_When_AFieldWithARequirementIsIncludedByTheSwitchOfTheFragment()
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "query($v: Boolean!) { product { usd @include(if: $v) ... @defer(if: $v) { eur } } }",
+            new Dictionary<string, object?> { ["v"] = false });
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_MatchThePlainTwin_When_TwoFragmentsWithSwitchesSelectFieldsWithRequirements(
+        bool v,
+        bool w)
+    {
+        // arrange
+        var gateway = await CreateRequirementAliasGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "query($v: Boolean!, $w: Boolean!) { product { ... @defer(if: $v) { eur } ... @defer(if: $w) { usd } } }",
+            new Dictionary<string, object?> { ["v"] = v, ["w"] = w });
+
+        // assert
+        run.AssertMatchesTwin(compareValues: true);
+        MatchPayloads(run.Deferred, $"v={v}_w={w}");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

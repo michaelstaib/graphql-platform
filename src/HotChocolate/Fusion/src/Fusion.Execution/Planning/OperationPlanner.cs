@@ -2781,7 +2781,9 @@ public sealed partial class OperationPlanner
             SelectionSets = SelectionSetIndexer.CreateIdSet(definition.SelectionSet, indexBuilder),
             Requirements = requirements,
             // The consumer step lists this lookup as a dependent when it provides the lookup key.
-            Dependents = currentStep.Dependents.Remove(stepId),
+            Dependents = backlog.DeferredFragments is null
+                ? currentStep.Dependents.Remove(stepId)
+                : RemoveStepsWithoutConditions(currentStep.Dependents.Remove(stepId), workItem.Conditions, steps),
             Conditions = workItem.Conditions,
             Target = workItem.Selection.Path,
             Source = source,
@@ -2819,6 +2821,34 @@ public sealed partial class OperationPlanner
         };
 
         possiblePlans.EnqueueBranches(next);
+    }
+
+    /// <summary>
+    /// Returns <paramref name="stepIds"/> without the operation steps that lack one of
+    /// <paramref name="conditions"/>.
+    /// </summary>
+    private static ImmutableHashSet<int> RemoveStepsWithoutConditions(
+        ImmutableHashSet<int> stepIds,
+        ExecutionNodeCondition[] conditions,
+        ImmutableList<PlanStep> steps)
+    {
+        if (conditions.Length == 0)
+        {
+            return stepIds;
+        }
+
+        var remaining = stepIds;
+
+        foreach (var stepId in stepIds)
+        {
+            if (steps.ById(stepId) is OperationPlanStep step
+                && HasConditionNotIn(conditions, step.Conditions))
+            {
+                remaining = remaining.Remove(stepId);
+            }
+        }
+
+        return remaining;
     }
 
     private static bool TryFindMergeableRequirementLookupStep(
