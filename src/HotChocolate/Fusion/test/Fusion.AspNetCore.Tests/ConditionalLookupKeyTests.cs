@@ -151,7 +151,7 @@ public sealed class ConditionalLookupKeyTests : FusionTestBase
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(false, false)]
-    public async Task Lookup_Should_NotBeRequested_When_EverySelectionOfLookupIsSkipped(
+    public async Task KeyLookup_Should_NotBeRequested_When_EverySelectionOfLookupReadingKeyIsSkipped(
         bool skip,
         bool include)
     {

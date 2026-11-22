@@ -1,4 +1,4 @@
-title: Lookup_Should_NotBeRequested_When_EverySelectionOfLookupIsSkipped
+title: KeyLookup_Should_NotBeRequested_When_EverySelectionOfLookupReadingKeyIsSkipped
 request:
   document: |
     query testQuery($a: Boolean!, $b: Boolean!) {
