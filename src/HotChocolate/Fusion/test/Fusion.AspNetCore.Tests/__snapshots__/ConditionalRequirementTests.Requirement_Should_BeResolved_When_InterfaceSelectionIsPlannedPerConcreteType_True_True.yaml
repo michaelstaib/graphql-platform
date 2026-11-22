@@ -1,0 +1,173 @@
+title: Requirement_Should_BeResolved_When_InterfaceSelectionIsPlannedPerConcreteType
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      user @skip(if: $a) {
+        item {
+          shipping
+          tax @skip(if: $b)
+        }
+      }
+    }
+  variables: |
+    {
+      "a": true,
+      "b": true
+    }
+response:
+  body: |
+    {
+      "data": {}
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+      }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: Int!): User @lookup @internal
+        productById(id: Int!): Product @lookup @internal
+      }
+
+      type Product implements Item @key(fields: "id") {
+        id: Int!
+        weight: Int!
+        total: Int!
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+        item: Item!
+      }
+
+      interface Item {
+        id: Int!
+        weight: Int!
+        total: Int!
+      }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: Int!): Product @lookup @internal
+      }
+
+      type Product implements Item @key(fields: "id") {
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+        id: Int!
+      }
+
+      interface Item {
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+        id: Int!
+      }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          user @skip(if: $a) {
+            item {
+              __typename @fusion__requirement
+              shipping
+              id @fusion__requirement
+              total @fusion__requirement
+              weight @fusion__requirement
+              tax @skip(if: $b)
+            }
+            id @fusion__requirement
+          }
+        }
+      name: testQuery
+      hash: 1202fcdc2ad27829a7110953f41ae377
+      searchSpace: 1
+      expandedNodes: 3
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_dd228edd_1 {
+          user {
+            id
+          }
+        }
+      conditions:
+        - variable: $a
+          passingValue: false
+    - id: 2
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_dd228edd_2($__fusion_1_id: Int!) {
+          userById(id: $__fusion_1_id) {
+            item {
+              __typename
+              id
+              total
+              weight
+            }
+          }
+        }
+      source: $.userById
+      target: $.user
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_dd228edd_3(
+          $b: Boolean!
+          $__fusion_2_id: Int!
+          $__fusion_3_total: Int
+          $__fusion_4_weight: Int
+        ) {
+          productById(id: $__fusion_2_id) {
+            tax(total: $__fusion_3_total) @skip(if: $b)
+            shipping(weight: $__fusion_4_weight)
+          }
+        }
+      source: $.productById
+      target: $.user.item<Product>
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+        - name: __fusion_3_total
+          selectionMap: >-
+            total
+        - name: __fusion_4_weight
+          selectionMap: >-
+            weight
+      forwardedVariables:
+        - b
+      dependencies:
+        - id: 2

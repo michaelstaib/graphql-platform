@@ -1,0 +1,73 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user @skip(if: $a) {
+          item {
+            __typename @fusion__requirement
+            shipping
+            id @fusion__requirement
+            weight @fusion__requirement
+          }
+          id @fusion__requirement
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          id
+        }
+      }
+    conditions:
+      - variable: $a
+        passingValue: false
+  - id: 2
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          item {
+            __typename
+            id
+            weight
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!, $__fusion_3_weight: Int) {
+        productById(id: $__fusion_2_id) {
+          shipping(weight: $__fusion_3_weight)
+        }
+      }
+    source: $.productById
+    target: $.user.item<Product>
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+      - name: __fusion_3_weight
+        selectionMap: >-
+          weight
+    dependencies:
+      - id: 2

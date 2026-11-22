@@ -1,0 +1,259 @@
+title: Requirement_Should_BeResolved_When_ConditionSitsOnInterfaceTypeConditionBelowNode
+request:
+  document: |
+    query testQuery($a: Boolean!) {
+      node(id: "UHJvZHVjdDox") {
+        ... on Item @skip(if: $a) {
+          weight
+          shipping
+        }
+      }
+    }
+  variables: |
+    {
+      "a": false
+    }
+response:
+  body: |
+    {
+      "data": {
+        "node": {
+          "weight": 123,
+          "shipping": 123
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        node(id: ID!): Node @lookup
+      }
+
+      type Product implements Node @key(fields: "id") {
+        id: ID!
+        name: String
+      }
+
+      interface Node {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_92d6ed34_3($a: Boolean!) {
+              node(id: "UHJvZHVjdDox") {
+                __typename
+                ... on Product {
+                  __typename
+                  ... @skip(if: $a) {
+                    id
+                  }
+                }
+              }
+            }
+          variables: |
+            {
+              "a": false
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "node": {
+                    "__typename": "Product",
+                    "id": "UHJvZHVjdDox"
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product implements Item @key(fields: "id") {
+        id: ID!
+        weight: Int!
+        total: Int!
+      }
+
+      interface Item {
+        id: ID!
+        weight: Int!
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_92d6ed34_4($__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                weight
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "UHJvZHVjdDox"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "weight": 123
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product implements Item @key(fields: "id") {
+        id: ID!
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+      }
+
+      interface Item {
+        id: ID!
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_92d6ed34_5($__fusion_2_id: ID!, $__fusion_3_weight: Int) {
+              productById(id: $__fusion_2_id) {
+                shipping(weight: $__fusion_3_weight)
+              }
+            }
+          variables: |
+            {
+              "__fusion_2_id": "UHJvZHVjdDox",
+              "__fusion_3_weight": 123
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "shipping": 123
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query testQuery($a: Boolean!) {
+          node(id: "UHJvZHVjdDox") {
+            __typename @fusion__requirement
+            ... on Item @skip(if: $a) {
+              weight
+              weight @fusion__requirement
+              shipping
+              id @fusion__requirement
+            }
+          }
+        }
+      name: testQuery
+      hash: e58167b1722c170ed7bcdb9e65b43e01
+      searchSpace: 2
+      expandedNodes: 7
+  nodes:
+    - id: 1
+      type: Node
+      idValue: "UHJvZHVjdDox"
+      responseName: node
+      branches:
+        - Product: 3
+      fallback: 2
+    - id: 2
+      type: Operation
+      operation: |
+        query testQuery_92d6ed34_2 {
+          node(id: "UHJvZHVjdDox") {
+            __typename
+          }
+        }
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: A
+      operation: |
+        query testQuery_92d6ed34_3($a: Boolean!) {
+          node(id: "UHJvZHVjdDox") {
+            __typename
+            ... on Product {
+              __typename
+              ... @skip(if: $a) {
+                id
+              }
+            }
+          }
+        }
+      forwardedVariables:
+        - a
+      dependencies:
+        - id: 1
+    - id: 4
+      type: Operation
+      schema: D
+      operation: |
+        query testQuery_92d6ed34_4($__fusion_1_id: ID!) {
+          productById(id: $__fusion_1_id) {
+            weight
+          }
+        }
+      source: $.productById
+      target: $.node<Product>
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 3
+    - id: 5
+      type: Operation
+      schema: B
+      operation: |
+        query testQuery_92d6ed34_5($__fusion_2_id: ID!, $__fusion_3_weight: Int) {
+          productById(id: $__fusion_2_id) {
+            shipping(weight: $__fusion_3_weight)
+          }
+        }
+      source: $.productById
+      target: $.node<Product>
+      requirements:
+        - name: __fusion_2_id
+          selectionMap: >-
+            id
+        - name: __fusion_3_weight
+          selectionMap: >-
+            weight
+      dependencies:
+        - id: 3
+        - id: 4

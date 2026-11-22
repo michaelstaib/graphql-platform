@@ -3123,29 +3123,45 @@ public sealed partial class OperationPlanner
     }
 
     /// <summary>
-    /// Gets the conditions of the requiring field together with the conditions of the fields and
+    /// Returns the conditions of the requiring field together with the conditions of the fields and
     /// inline fragments that enclose its selection set in <paramref name="operation"/>.
-    /// Returns the conditions of the requiring field alone when its selection set is not found.
+    /// Returns the conditions of the requiring field alone when its selection set is not found in
+    /// <paramref name="operation"/>.
     /// </summary>
     private static ExecutionNodeCondition[] GetEffectiveConditions(
         OperationDefinitionNode operation,
         SelectionSetIndexBuilder index,
         FieldRequirementWorkItem workItem)
     {
+        var path = workItem.Selection.Path;
+        var selectionSetId = workItem.Selection.SelectionSetId;
+
+        // A cloned selection set is found under the id of its original.
+        if (index.TryGetOriginalIdFromCloned(selectionSetId, out var originalId))
+        {
+            selectionSetId = originalId;
+        }
+
         var conditions = new List<ExecutionNodeCondition>(workItem.Conditions);
 
-        if (!TryCollect(operation.SelectionSet, SelectionPath.Root))
+        if (!TryCollect(operation.SelectionSet, 0))
         {
             return workItem.Conditions;
         }
 
         return conditions.ToArray();
 
-        bool TryCollect(SelectionSetNode selectionSet, SelectionPath path)
+        bool TryCollect(SelectionSetNode selectionSet, int segment)
         {
-            if (index.IsRegistered(selectionSet)
-                && index.GetId(selectionSet) == workItem.Selection.SelectionSetId
-                && path.Equals(workItem.Selection.Path))
+            // Only the field segments of the path are matched.
+            while (segment < path.Length && path[segment].Kind is SelectionPathSegmentKind.InlineFragment)
+            {
+                segment++;
+            }
+
+            if (segment == path.Length
+                && index.IsRegistered(selectionSet)
+                && index.GetId(selectionSet) == selectionSetId)
             {
                 return true;
             }
@@ -3153,22 +3169,24 @@ public sealed partial class OperationPlanner
             foreach (var selection in selectionSet.Selections)
             {
                 SelectionSetNode child;
-                SelectionPath childPath;
+                int childSegment;
                 IReadOnlyList<DirectiveNode> directives;
 
                 switch (selection)
                 {
-                    case FieldNode { SelectionSet: { } fieldSelectionSet } field:
+                    case FieldNode { SelectionSet: { } fieldSelectionSet } field
+                        when segment < path.Length
+                            && path[segment].Name.Equals(
+                                field.Alias?.Value ?? field.Name.Value,
+                                StringComparison.Ordinal):
                         child = fieldSelectionSet;
-                        childPath = path.AppendField(field.Alias?.Value ?? field.Name.Value);
+                        childSegment = segment + 1;
                         directives = field.Directives;
                         break;
 
                     case InlineFragmentNode fragment:
                         child = fragment.SelectionSet;
-                        childPath = fragment.TypeCondition is null
-                            ? path
-                            : path.AppendFragment(fragment.TypeCondition.Name.Value);
+                        childSegment = segment;
                         directives = fragment.Directives;
                         break;
 
@@ -3183,7 +3201,7 @@ public sealed partial class OperationPlanner
                     conditions.AddRange(enclosing);
                 }
 
-                if (TryCollect(child, childPath))
+                if (TryCollect(child, childSegment))
                 {
                     return true;
                 }

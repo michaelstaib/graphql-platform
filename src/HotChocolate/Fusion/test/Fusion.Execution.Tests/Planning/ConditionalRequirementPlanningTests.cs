@@ -318,7 +318,7 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_InlineRequirementIntoAncestorStep_When_ConditionSitsAboveTypeCondition()
+    public void Plan_Should_InlineRequirementIntoParentLookup_When_ConditionSitsAboveTypeCondition()
     {
         // arrange
         var schema = ComposeSchema(
@@ -407,6 +407,190 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_InlineRequirementIntoParentLookup_When_InterfaceSelectionIsPlannedPerConcreteType()
+    {
+        // arrange
+        var schema = ComposeItemSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user @skip(if: $a) {
+                item {
+                  shipping
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_FetchRequirementInOwnLookup_When_SiblingFieldIsSkippedBelowSharedInterfaceField()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              item: Item! @shareable
+            }
+
+            interface Item {
+              id: ID!
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              item: Item! @shareable
+            }
+
+            interface Item {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            interface Item {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+              user @skip(if: $a) {
+                item {
+                  shipping
+                  tax @skip(if: $b)
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_InlineRequirementIntoBranchLookup_When_ConditionSitsOnInterfaceTypeConditionBelowNode()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: a
+            type Query {
+              node(id: ID!): Node @lookup
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Product implements Node @key(fields: "id") {
+              id: ID!
+              name: String
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            interface Item {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            interface Item {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              node(id: "UHJvZHVjdDox") {
+                ... on Item @skip(if: $a) {
+                  weight
+                  shipping
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
     public void Plan_Should_FetchRequirementThroughParentLookup_When_SourceOfRequirementHasNoLookupForTheEntity()
     {
         // arrange
@@ -474,6 +658,62 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
         // assert
         MatchSnapshot(plan);
     }
+
+    private static FusionSchemaDefinition ComposeItemSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              item: Item!
+            }
+
+            interface Item {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            interface Item {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
 
     private static FusionSchemaDefinition ComposeUserSchema()
         => ComposeSchema(

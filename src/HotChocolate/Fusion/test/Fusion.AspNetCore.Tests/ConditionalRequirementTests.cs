@@ -1,5 +1,6 @@
 using HotChocolate.Transport;
 using HotChocolate.Transport.Http;
+using HotChocolate.Types;
 using HotChocolate.Types.Composite;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -232,6 +233,192 @@ public sealed class ConditionalRequirementTests : FusionTestBase
 
         // assert
         await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Requirement_Should_BeResolved_When_InterfaceSelectionIsPlannedPerConcreteType(
+        bool skipUser,
+        bool skipTax)
+    {
+        // arrange
+        using var gateway = await CreateItemGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user @skip(if: $a) { item { shipping tax @skip(if: $b) } }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skipUser, ["b"] = skipTax });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skipUser}_{skipTax}");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Requirement_Should_BeResolved_When_SiblingFieldIsSkippedBelowSharedInterfaceField(
+        bool skipUser,
+        bool skipTax)
+    {
+        // arrange
+        using var gateway = await CreateSharedItemGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user @skip(if: $a) { item { shipping tax @skip(if: $b) } }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skipUser, ["b"] = skipTax });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skipUser}_{skipTax}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Requirement_Should_BeResolved_When_ConditionSitsOnInterfaceTypeConditionBelowNode(bool skip)
+    {
+        // arrange
+        using var serverA = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+              node(id: ID!): Node @lookup
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Product implements Node @key(fields: "id") {
+              id: ID!
+              name: String
+            }
+            """);
+        using var serverD = CreateSourceSchema(
+            "D",
+            """
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            interface Item {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """);
+        using var serverB = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+              productById(id: ID!): Product @lookup @internal
+            }
+
+            interface Item {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+
+            type Product implements Item @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+            }
+            """);
+        using var gateway = await CreateCompositeSchemaAsync([("A", serverA), ("D", serverD), ("B", serverB)]);
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              # Product:1
+              node(id: "UHJvZHVjdDox") { ... on Item @skip(if: $a) { weight shipping } }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    private async Task<Gateway> CreateItemGatewayAsync()
+    {
+        var serverA = CreateSourceSchema(
+            "A",
+            builder => builder.AddQueryType<ItemSchemas.A.Query>(d => d.Name("Query")));
+        var serverD = CreateSourceSchema(
+            "D",
+            builder => builder
+                .AddQueryType<ItemSchemas.D.Query>(d => d.Name("Query"))
+                .AddType<ItemSchemas.D.Product>());
+        var serverB = CreateSourceSchema(
+            "B",
+            builder => builder
+                .AddQueryType<ItemSchemas.B.Query>(d => d.Name("Query"))
+                .AddType<ItemSchemas.B.IItem>()
+                .AddType<ItemSchemas.B.Product>());
+
+        return await CreateCompositeSchemaAsync([("A", serverA), ("D", serverD), ("B", serverB)]);
+    }
+
+    private async Task<Gateway> CreateSharedItemGatewayAsync()
+    {
+        var serverA = CreateSourceSchema(
+            "A",
+            builder => builder
+                .AddQueryType<SharedItemSchemas.A.Query>(d => d.Name("Query"))
+                .AddType<SharedItemSchemas.A.Product>());
+        var serverD = CreateSourceSchema(
+            "D",
+            builder => builder
+                .AddQueryType<SharedItemSchemas.D.Query>(d => d.Name("Query"))
+                .AddType<SharedItemSchemas.D.Product>());
+        var serverB = CreateSourceSchema(
+            "B",
+            builder => builder
+                .AddQueryType<ItemSchemas.B.Query>(d => d.Name("Query"))
+                .AddType<ItemSchemas.B.IItem>()
+                .AddType<ItemSchemas.B.Product>());
+
+        return await CreateCompositeSchemaAsync([("A", serverA), ("D", serverD), ("B", serverB)]);
     }
 
     private async Task<Gateway> CreateOrderGatewayAsync()
@@ -473,6 +660,153 @@ public sealed class ConditionalRequirementTests : FusionTestBase
                 public int? GetShipping([Require("weight")] int? weight) => weight * 101;
 
                 public int? GetTax([Require("total")] int? total) => total + 7;
+            }
+        }
+    }
+
+    private static class ItemSchemas
+    {
+        public static class A
+        {
+            public class Query
+            {
+                public User GetUser() => new(1);
+
+                [Lookup, Internal]
+                public User? GetUserById(int id) => new(id);
+            }
+
+            [EntityKey("id")]
+            public record User(int Id);
+        }
+
+        public static class D
+        {
+            public class Query
+            {
+                [Lookup, Internal]
+                public User? GetUserById(int id) => new(id);
+
+                [Lookup, Internal]
+                public Product? GetProductById(int id) => new(id);
+            }
+
+            [EntityKey("id")]
+            public record User(int Id)
+            {
+                public IItem Item => new Product(Id);
+            }
+
+            [InterfaceType("Item")]
+            public interface IItem
+            {
+                int Id { get; }
+
+                int Weight { get; }
+
+                int Total { get; }
+            }
+
+            [EntityKey("id")]
+            public record Product(int Id) : IItem
+            {
+                public int Weight => Id * 10;
+
+                public int Total => Id * 100;
+            }
+        }
+
+        public static class B
+        {
+            public class Query
+            {
+                [Lookup, Internal]
+                public Product? GetProductById(int id) => new(id);
+            }
+
+            [InterfaceType("Item")]
+            public interface IItem
+            {
+                int Id { get; }
+
+                int? GetShipping([Require("weight")] int? weight);
+
+                int? GetTax([Require("total")] int? total);
+            }
+
+            [EntityKey("id")]
+            public record Product(int Id) : IItem
+            {
+                public int? GetShipping([Require("weight")] int? weight) => weight * 101;
+
+                public int? GetTax([Require("total")] int? total) => total + 7;
+            }
+        }
+    }
+
+    private static class SharedItemSchemas
+    {
+        public static class A
+        {
+            public class Query
+            {
+                public User GetUser() => new(1);
+
+                [Lookup, Internal]
+                public User? GetUserById(int id) => new(id);
+            }
+
+            [EntityKey("id")]
+            public record User(int Id)
+            {
+                [Shareable]
+                public IItem Item => new Product(Id);
+            }
+
+            [InterfaceType("Item")]
+            public interface IItem
+            {
+                int Id { get; }
+            }
+
+            [EntityKey("id")]
+            public record Product(int Id) : IItem;
+        }
+
+        public static class D
+        {
+            public class Query
+            {
+                [Lookup, Internal]
+                public User? GetUserById(int id) => new(id);
+
+                [Lookup, Internal]
+                public Product? GetProductById(int id) => new(id);
+            }
+
+            [EntityKey("id")]
+            public record User(int Id)
+            {
+                [Shareable]
+                public IItem Item => new Product(Id);
+            }
+
+            [InterfaceType("Item")]
+            public interface IItem
+            {
+                int Id { get; }
+
+                int Weight { get; }
+
+                int Total { get; }
+            }
+
+            [EntityKey("id")]
+            public record Product(int Id) : IItem
+            {
+                public int Weight => Id * 10;
+
+                public int Total => Id * 100;
             }
         }
     }
