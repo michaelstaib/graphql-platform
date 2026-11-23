@@ -6219,7 +6219,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_TwoHoldersCoverBothValues()
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_OneStepHoldsTheValueForBothValues()
     {
         // arrange
         var gateway = await CreateGatewayAsync(
@@ -6237,6 +6237,115 @@ public partial class SinglePlanDeferTests : FusionTestBase
             }
             """,
             new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    // The source schema B without an error on the field a, so only a failed request leaves the value out.
+    private const string InnerValueSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inner: Inner }
+        type Inner { a: String! c: String }
+        """;
+
+    private const string InnerValueRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            cA(a: String @require(field: "inner.a")): String
+            nnA(a: String @require(field: "inner.a")): String!
+        }
+        """;
+
+    private const string TwoHoldersQuery =
+        """
+        query($v: Boolean!) {
+            user { nick inner @include(if: $v) { a c } ... @defer { inner { a } ... @defer { nnA } } }
+        }
+        """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_EqualTheTwin_When_TwoStepsHoldTheValueForOneVariableValueEach(bool v)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(gateway, TwoHoldersQuery, new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        Assert.Equal("A=1, B=1, C=1", run.Deferred.RequestSummary);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        run.AssertMatchesTwin(compareValues: true);
+    }
+
+    [Theory]
+    [InlineData(false, "B:3")]
+    [InlineData(true, "B:2")]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_TheOnlyHolderThatRanFailed(
+        bool v,
+        string failingStep)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+        _gate!.FailingStep = failingStep;
+
+        // act
+        var run = await RunDeferredAsync(gateway, TwoHoldersQuery, new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run, $"v={v}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheProvider_When_TheStepOfTheOtherValueFailed()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+        _gate!.FailingStep = "B:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { nnA } } }",
+            new Dictionary<string, object?> { ["v"] = false });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheNullableFieldWithTheErrorOfTheProvider_When_TheStepOfTheOtherValueFailed()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+        _gate!.FailingStep = "B:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { cA } } }",
+            new Dictionary<string, object?> { ["v"] = false });
 
         // assert
         Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
@@ -7027,7 +7136,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // arrange
         // the initial step of inners holds the list under a condition, and the fragment reads its requirement from it
         var gateway = await CreateGatewayAsync(
-            ["B:2", "B:5"],
+            [],
             FailTheSecondInner,
             failingSchema: null,
             configure: null,
