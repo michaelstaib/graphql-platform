@@ -78,6 +78,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     conditionAlternatives:
@@ -154,6 +156,8 @@ nodes:
           id
     conditions:
       - variable: $a
+        passingValue: true
+      - variable: $b
         passingValue: true
     conditionAlternatives:
       -

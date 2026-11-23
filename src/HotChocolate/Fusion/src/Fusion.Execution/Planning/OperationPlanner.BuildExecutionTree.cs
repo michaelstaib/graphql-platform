@@ -923,8 +923,10 @@ public sealed partial class OperationPlanner
     /// <summary>
     /// Returns the steps without the entry selections that another step fetches at the same response path
     /// whenever the step runs, with the dependents moved to that step, and without the steps and key fields
-    /// that lost their last reader by this. A step without delivery groups gives up only its entry key, and a
-    /// change that would send a source schema more requests than the plan build created is not made.
+    /// that lost their last reader by this. A step of delivery groups also takes an entry selection from a step that
+    /// runs only for some values of one Boolean variable, and fetches it itself for the other values. A step without
+    /// delivery groups gives up only its entry key, and a change that would put two steps that share a request into
+    /// different requests is not made.
     /// </summary>
     private static ImmutableList<PlanStep> TakeSelectionsFromHolders(
         ImmutableList<PlanStep> planSteps,
@@ -933,12 +935,12 @@ public sealed partial class OperationPlanner
         ForwardVariableRewriter.Context forwardVariableContext)
     {
         using var pass = new HolderPass(planSteps, operation, requestCheck, forwardVariableContext);
-        var taken = TakeSelections(planSteps, pass, checkEveryStep: false);
+        var taken = TakeSelections(planSteps, pass);
 
-        if (!ReferenceEquals(taken, planSteps) && !pass.TryAccept(planSteps, taken))
+        while (!ReferenceEquals(taken, planSteps) && !pass.TryAccept(planSteps, taken))
         {
-            // The result sends a source more requests, so the steps are taken again with a check per step.
-            taken = TakeSelections(planSteps, pass, checkEveryStep: true);
+            // The result splits a pair of steps, so the steps are taken again without any change to that pair.
+            taken = pass.TryFreezeSplitPair() ? TakeSelections(planSteps, pass) : planSteps;
         }
 
         if (ReferenceEquals(taken, planSteps))
@@ -1218,16 +1220,14 @@ public sealed partial class OperationPlanner
         return rewritten is null ? current : new SelectionSetNode(rewritten);
     }
 
-    private static ImmutableList<PlanStep> TakeSelections(
-        ImmutableList<PlanStep> planSteps,
-        HolderPass pass,
-        bool checkEveryStep)
+    private static ImmutableList<PlanStep> TakeSelections(ImmutableList<PlanStep> planSteps, HolderPass pass)
     {
         for (var i = 0; i < planSteps.Count; i++)
         {
             if (planSteps[i] is not OperationPlanStep { Lookup.Path.Length: 0 } step
                 || step.Definition.SelectionSet.Selections is not [FieldNode { SelectionSet: { } entry } entryField]
-                || IsReferencedByNodeStep(planSteps, step.Id))
+                || IsReferencedByNodeStep(planSteps, step.Id)
+                || pass.IsFixed(step))
             {
                 continue;
             }
@@ -1241,21 +1241,48 @@ public sealed partial class OperationPlanner
 
                 if (selection is FieldNode field
                     && !field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal)
-                    && (hasGroups || IsEntryKey(step, field))
-                    && pass.TryFindHolder(
+                    && (hasGroups || IsEntryKey(step, field)))
+                {
+                    var delivered = hasGroups && pass.IsSelectedForGroups(step, field);
+
+                    if (pass.TryFindHolder(
                         planSteps,
                         step,
                         field,
                         onlyProducers: !hasGroups,
-                        delivered: hasGroups && pass.IsSelectedForGroups(step, field),
+                        delivered,
                         out var holderId))
-                {
-                    pass.AddHolder(holderId);
+                    {
+                        pass.AddHolder(holderId, conditional: false);
+                        continue;
+                    }
+
+                    if (hasGroups
+                        && pass.TryFindConditionalHolder(
+                            planSteps,
+                            step,
+                            field,
+                            delivered,
+                            out var firstId,
+                            out var secondId,
+                            out var holderCondition))
+                    {
+                        pass.AddHolder(firstId, conditional: true);
+
+                        if (secondId >= 0)
+                        {
+                            pass.AddHolder(secondId, conditional: true);
+                        }
+                        else
+                        {
+                            pass.KeepWhenHolderIsSkipped(field, holderCondition);
+                        }
+
+                        continue;
+                    }
                 }
-                else
-                {
-                    pass.Keep(selection);
-                }
+
+                pass.Keep(selection);
             }
 
             if (pass.HolderCount == 0
@@ -1293,15 +1320,13 @@ public sealed partial class OperationPlanner
 
             if (!hasGroups)
             {
-                var plainCandidate = planSteps.SetItem(i, updated);
-
-                if (checkEveryStep && !pass.TryAccept(planSteps, plainCandidate))
-                {
-                    continue;
-                }
-
-                planSteps = plainCandidate;
+                planSteps = planSteps.SetItem(i, updated);
                 continue;
+            }
+
+            if (pass.KeptCount > 0 && pass.KeptConditionallyCount > 0)
+            {
+                updated = updated with { OptionalDependents = updated.OptionalDependents.Union(step.Dependents) };
             }
 
             var candidate = planSteps;
@@ -1314,30 +1339,34 @@ public sealed partial class OperationPlanner
                 }
 
                 var dependents = other.Dependents;
+                var optionalDependents = other.OptionalDependents;
 
                 if (pass.IsHolder(other.Id))
                 {
+                    if (pass.IsOnlyConditionalHolder(other.Id))
+                    {
+                        optionalDependents = optionalDependents.Union(step.Dependents.Except(dependents));
+                    }
+
                     dependents = dependents.Union(step.Dependents);
                 }
 
                 if (pass.KeptCount == 0)
                 {
                     dependents = dependents.Remove(step.Id);
+                    optionalDependents = optionalDependents.Remove(step.Id);
                 }
 
-                if (!ReferenceEquals(dependents, other.Dependents))
+                if (!ReferenceEquals(dependents, other.Dependents)
+                    || !ReferenceEquals(optionalDependents, other.OptionalDependents))
                 {
-                    candidate = candidate.SetItem(j, other with { Dependents = dependents });
+                    candidate = candidate.SetItem(
+                        j,
+                        other with { Dependents = dependents, OptionalDependents = optionalDependents });
                 }
             }
 
             candidate = pass.KeptCount == 0 ? candidate.RemoveAt(i) : candidate.SetItem(i, updated);
-
-            if (checkEveryStep && !pass.TryAccept(planSteps, candidate))
-            {
-                continue;
-            }
-
             planSteps = candidate;
 
             if (pass.KeptCount == 0)
@@ -1399,35 +1428,41 @@ public sealed partial class OperationPlanner
 
     /// <summary>
     /// Finds the steps that hold the entry selections of a lookup step and checks that taking them does not
-    /// send a source schema more requests. The buffers are rented once for the pass.
+    /// put two steps that share a request into different requests. The buffers are rented once for the pass.
     /// </summary>
     private sealed class HolderPass : IDisposable
     {
         private const int ConditionCapacity = 64;
+        private const int NoRequest = -1;
+
+        private static readonly ExecutionNodeCondition[][] s_noAlternative = [[]];
 
         private readonly OperationDefinitionNode _operation;
         private readonly ImmutableArray<DeliveryGroup> _deliveryGroups;
         private readonly RequestCheck _requestCheck;
         private readonly ForwardVariableRewriter.Context _forwardVariableContext;
         private readonly int _maxId;
-        private readonly int _schemaCapacity;
-        private readonly string?[] _schemaNames;
         private readonly ConditionKey[] _allowed;
+        private readonly ConditionKey[] _oppositeConditions;
         private readonly ISelectionNode[] _kept;
         private readonly int[] _holders;
+        private readonly bool[] _plainHolders;
         private readonly OperationPlanStep?[] _byId;
         private readonly int[] _depth;
         private readonly int[] _remaining;
         private readonly int[] _queue;
         private readonly int[] _visited;
+        private readonly int[] _requestBefore;
+        private readonly int[] _requestAfter;
+        private readonly OperationPlanStep?[] _candidateById;
         private bool[]? _listed;
         private bool[]? _hadDependent;
-        private int[] _acceptedCounts;
-        private int[] _candidateCounts;
+        private bool[]? _frozen;
         private ImmutableArray<int> _stepGroups;
-        private int _schemaCount;
         private int _allowedCount;
         private int _visitStamp;
+        private int _splitFirstId = -1;
+        private int _splitSecondId = -1;
 
         public HolderPass(
             ImmutableList<PlanStep> planSteps,
@@ -1454,30 +1489,39 @@ public sealed partial class OperationPlanner
             _operation = operation;
             _deliveryGroups = requestCheck.DeliveryGroups;
             _maxId = maxId;
-            _schemaCapacity = planSteps.Count + 1;
-            _schemaNames = ArrayPool<string?>.Shared.Rent(_schemaCapacity);
-            _acceptedCounts = ArrayPool<int>.Shared.Rent(_schemaCapacity);
-            _candidateCounts = ArrayPool<int>.Shared.Rent(_schemaCapacity);
             _allowed = ArrayPool<ConditionKey>.Shared.Rent(ConditionCapacity);
+            _oppositeConditions = ArrayPool<ConditionKey>.Shared.Rent(Math.Max(maxEntry, 1));
             _kept = ArrayPool<ISelectionNode>.Shared.Rent(Math.Max(maxEntry, 1));
-            _holders = ArrayPool<int>.Shared.Rent(Math.Max(maxEntry, 1));
+            _holders = ArrayPool<int>.Shared.Rent(Math.Max(maxEntry * 2, 2));
+            _plainHolders = ArrayPool<bool>.Shared.Rent(_holders.Length);
             _byId = ArrayPool<OperationPlanStep?>.Shared.Rent(maxId + 1);
             _depth = ArrayPool<int>.Shared.Rent(maxId + 1);
             _remaining = ArrayPool<int>.Shared.Rent(maxId + 1);
             _queue = ArrayPool<int>.Shared.Rent(maxId + 1);
             _visited = ArrayPool<int>.Shared.Rent(maxId + 1);
             _visited.AsSpan(0, maxId + 1).Clear();
+            _requestBefore = ArrayPool<int>.Shared.Rent(maxId + 1);
+            _requestBefore.AsSpan(0, maxId + 1).Fill(NoRequest);
+            _requestAfter = ArrayPool<int>.Shared.Rent(maxId + 1);
+            _candidateById = ArrayPool<OperationPlanStep?>.Shared.Rent(maxId + 1);
         }
 
         public int KeptCount { get; private set; }
 
         public int HolderCount { get; private set; }
 
+        /// <summary>
+        /// Gets the number of kept selections that the step fetches only for the values of a variable for
+        /// which its holder does not run.
+        /// </summary>
+        public int KeptConditionallyCount { get; private set; }
+
         public void Begin(ImmutableList<PlanStep> planSteps, OperationPlanStep step)
         {
             Index(planSteps);
             KeptCount = 0;
             HolderCount = 0;
+            KeptConditionallyCount = 0;
             _allowedCount = 0;
 
             foreach (var condition in step.Conditions)
@@ -1491,17 +1535,106 @@ public sealed partial class OperationPlanner
 
         public void Keep(ISelectionNode selection) => _kept[KeptCount++] = selection;
 
+        // Keeps the field under the opposite of the condition that its holder runs under.
+        public void KeepWhenHolderIsSkipped(FieldNode field, ConditionKey holderCondition)
+        {
+            var directive = new DirectiveNode(
+                holderCondition.PassingValue ? "skip" : "include",
+                new ArgumentNode("if", new VariableNode(holderCondition.VariableName)));
+            var hasDirective = false;
+
+            for (var i = 0; i < field.Directives.Count; i++)
+            {
+                hasDirective |= field.Directives[i].Name.Value.Equals(directive.Name.Value, StringComparison.Ordinal);
+            }
+
+            // A directive occurs once per location, so a second one goes on a fragment around the field.
+            Keep(
+                hasDirective
+                    ? new InlineFragmentNode(null, null, [directive], new SelectionSetNode([field]))
+                    : field.WithDirectives([.. field.Directives, directive]));
+            _oppositeConditions[KeptConditionallyCount++] =
+                new ConditionKey(holderCondition.VariableName, !holderCondition.PassingValue);
+        }
+
         public ISelectionNode[] GetKeptSelections() => _kept.AsSpan(0, KeptCount).ToArray();
 
-        public void AddHolder(int holderId)
+        public void AddHolder(int holderId, bool conditional)
         {
-            if (!IsHolder(holderId))
+            var index = Array.IndexOf(_holders, holderId, 0, HolderCount);
+
+            if (index < 0)
             {
-                _holders[HolderCount++] = holderId;
+                index = HolderCount++;
+                _holders[index] = holderId;
+                _plainHolders[index] = false;
             }
+
+            _plainHolders[index] |= !conditional;
         }
 
         public bool IsHolder(int stepId) => Array.IndexOf(_holders, stepId, 0, HolderCount) >= 0;
+
+        // Checks that the step holds only selections that it fetches for some values of a variable.
+        public bool IsOnlyConditionalHolder(int stepId)
+        {
+            var index = Array.IndexOf(_holders, stepId, 0, HolderCount);
+            return index >= 0 && !_plainHolders[index];
+        }
+
+        // Checks that the step or one of its dependents is a step of a split pair, so the pass does not change it.
+        public bool IsFixed(OperationPlanStep step)
+        {
+            if (_frozen is null)
+            {
+                return false;
+            }
+
+            if (_frozen[step.Id])
+            {
+                return true;
+            }
+
+            foreach (var dependentId in step.Dependents)
+            {
+                if (dependentId <= _maxId && _frozen[dependentId])
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Fixes the two steps that the last refused result split. Returns false when no pair was split or both
+        // were fixed before.
+        public bool TryFreezeSplitPair()
+        {
+            var first = _splitFirstId;
+            var second = _splitSecondId;
+            _splitFirstId = NoRequest;
+            _splitSecondId = NoRequest;
+
+            if (first < 0)
+            {
+                return false;
+            }
+
+            if (_frozen is null)
+            {
+                _frozen = ArrayPool<bool>.Shared.Rent(_maxId + 1);
+                _frozen.AsSpan(0, _maxId + 1).Clear();
+            }
+
+            if (_frozen[first] && _frozen[second])
+            {
+                return false;
+            }
+
+            _frozen[first] = true;
+            _frozen[second] = true;
+            return true;
+        }
 
         // Checks that the operation selects the field, or a leaf below it, at the target of the step inside one of
         // the delivery groups of the step.
@@ -1730,11 +1863,112 @@ public sealed partial class OperationPlanner
             return best is not null;
         }
 
+        // Looks for a holder of the field that runs for one value of a Boolean variable that the step has no
+        // condition on. A variable with a holder for both values gives secondId and wins over every variable with a
+        // holder for one value. Among those, the first variable in the order of the variable definitions wins and
+        // gives the condition that the holder runs under.
+        public bool TryFindConditionalHolder(
+            ImmutableList<PlanStep> planSteps,
+            OperationPlanStep step,
+            FieldNode field,
+            bool delivered,
+            out int firstId,
+            out int secondId,
+            out ConditionKey holderCondition)
+        {
+            firstId = -1;
+            secondId = -1;
+            holderCondition = default;
+
+            foreach (var definition in _operation.VariableDefinitions)
+            {
+                if (!definition.Type.NamedType().Name.Value.Equals("Boolean", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var name = definition.Variable.Name.Value;
+                var whenTrue = new ConditionKey(name, true);
+                var whenFalse = new ConditionKey(name, false);
+
+                if (IsAllowed(whenTrue)
+                    || IsAllowed(whenFalse)
+                    || _allowedCount + 1 >= _allowed.Length
+                    || HasConditionOn(field, name))
+                {
+                    continue;
+                }
+
+                var foundTrue = TryFindHolderWhen(whenTrue, planSteps, step, field, delivered, out var trueId);
+                var foundFalse = TryFindHolderWhen(whenFalse, planSteps, step, field, delivered, out var falseId);
+
+                if (foundTrue && foundFalse)
+                {
+                    firstId = trueId;
+                    secondId = falseId;
+                    return true;
+                }
+
+                if ((foundTrue || foundFalse) && firstId < 0)
+                {
+                    firstId = foundTrue ? trueId : falseId;
+                    holderCondition = foundTrue ? whenTrue : whenFalse;
+                }
+            }
+
+            return firstId >= 0;
+        }
+
+        private bool TryFindHolderWhen(
+            ConditionKey condition,
+            ImmutableList<PlanStep> planSteps,
+            OperationPlanStep step,
+            FieldNode field,
+            bool delivered,
+            out int holderId)
+        {
+            _allowed[_allowedCount++] = condition;
+            var found = TryFindHolder(planSteps, step, field, onlyProducers: false, delivered, out holderId);
+            _allowedCount--;
+            return found;
+        }
+
+        private static bool HasConditionOn(FieldNode field, string variableName)
+        {
+            for (var i = 0; i < field.Directives.Count; i++)
+            {
+                if (TryReadCondition(field.Directives[i], out var condition)
+                    && condition.VariableName.Equals(variableName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsOpposite(ExecutionNodeCondition condition)
+        {
+            var key = new ConditionKey(condition.VariableName, condition.PassingValue);
+
+            for (var i = 0; i < KeptConditionallyCount; i++)
+            {
+                if (_oppositeConditions[i] == key)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public bool DependentsHoldPromotedConditions(OperationPlanStep step, OperationPlanStep updated)
         {
             foreach (var dependentId in step.Dependents)
             {
-                if (dependentId > _maxId || _byId[dependentId] is not { } dependent)
+                if (dependentId > _maxId
+                    || _byId[dependentId] is not { } dependent
+                    || step.OptionalDependents.Contains(dependentId))
                 {
                     continue;
                 }
@@ -1742,7 +1976,8 @@ public sealed partial class OperationPlanner
                 foreach (var condition in updated.Conditions)
                 {
                     if (Array.IndexOf(step.Conditions, condition) < 0
-                        && Array.IndexOf(dependent.Conditions, condition) < 0)
+                        && Array.IndexOf(dependent.Conditions, condition) < 0
+                        && !IsOpposite(condition))
                     {
                         return false;
                     }
@@ -1775,14 +2010,15 @@ public sealed partial class OperationPlanner
             return true;
         }
 
-        // Accepts the list when the plan build creates no more requests for any source schema than for the list
-        // accepted before, and keeps its build. Returns false when the list is not accepted or the build limit is hit.
+        // Accepts the list when every two steps that share a request in the build of the list before the pass also
+        // share a request in the build of this list, and keeps its build. Returns false when the list is not
+        // accepted or the build limit is hit, and notes the first two steps that the list splits.
         public bool TryAccept(ImmutableList<PlanStep> before, ImmutableList<PlanStep> after)
         {
             if (_requestCheck.Accepted is null)
             {
                 _requestCheck.Accepted = _requestCheck.Build(before, _forwardVariableContext);
-                Count(_requestCheck.Accepted.Context, _acceptedCounts);
+                ReadRequestsBefore(_requestCheck.Accepted);
             }
 
             Debug.Assert(ReferenceEquals(_requestCheck.Accepted.Source, before));
@@ -1793,64 +2029,144 @@ public sealed partial class OperationPlanner
             }
 
             var candidate = _requestCheck.Build(after, _forwardVariableContext);
-            Count(candidate.Context, _candidateCounts);
 
-            for (var i = 0; i < _schemaCount; i++)
+            if (SplitsRequest(candidate))
             {
-                if (_candidateCounts[i] > _acceptedCounts[i])
-                {
-                    return false;
-                }
+                return false;
             }
 
             _requestCheck.Accepted = candidate;
-            (_acceptedCounts, _candidateCounts) = (_candidateCounts, _acceptedCounts);
             return true;
         }
 
-        // Counts the execution nodes that send a request to each source schema.
-        private void Count(ExecutionPlanBuildContext ctx, int[] counts)
+        // Notes the request of every step of the build, identified by the node that sends it.
+        private void ReadRequestsBefore(StepBuild build)
         {
-            counts.AsSpan(0, _schemaCapacity).Clear();
-
-            foreach (var node in ctx.ExecutionNodes.Values)
+            foreach (var planStep in build.Steps)
             {
-                if (node is NodeFieldExecutionNode)
+                if (planStep is OperationPlanStep)
+                {
+                    _requestBefore[planStep.Id] = GetRequest(build.Context, planStep.Id);
+                }
+            }
+        }
+
+        // Checks that two steps of the build had a request together before the pass, have different ones now, and
+        // can run for the same values of the variables.
+        private bool SplitsRequest(StepBuild build)
+        {
+            _candidateById.AsSpan(0, _maxId + 1).Clear();
+
+            foreach (var planStep in build.Steps)
+            {
+                if (planStep is OperationPlanStep step)
+                {
+                    _candidateById[step.Id] = step;
+                    _requestAfter[step.Id] = GetRequest(build.Context, step.Id);
+                }
+            }
+
+            for (var i = 0; i <= _maxId; i++)
+            {
+                if (_candidateById[i] is not { } first || _requestBefore[i] == NoRequest || _requestAfter[i] == NoRequest)
                 {
                     continue;
                 }
 
-                counts[GetSchemaIndex(node.SchemaName ?? DynamicSchemaNameMarker)]++;
-            }
-        }
-
-        private int GetSchemaIndex(string schemaName)
-        {
-            for (var i = 0; i < _schemaCount; i++)
-            {
-                if (schemaName.Equals(_schemaNames[i], StringComparison.Ordinal))
+                for (var j = i + 1; j <= _maxId; j++)
                 {
-                    return i;
+                    if (_candidateById[j] is { } second
+                        && _requestBefore[j] == _requestBefore[i]
+                        && _requestAfter[j] != NoRequest
+                        && _requestAfter[j] != _requestAfter[i]
+                        && CanRunTogether(first, second))
+                    {
+                        _splitFirstId = i;
+                        _splitSecondId = j;
+                        return true;
+                    }
                 }
             }
 
-            _schemaNames[_schemaCount] = schemaName;
-            return _schemaCount++;
+            return false;
+        }
+
+        // Checks that the conditions of the two steps pass for the same values of the variables.
+        private static bool CanRunTogether(OperationPlanStep first, OperationPlanStep second)
+        {
+            foreach (var firstTerm in GetTerms(first))
+            {
+                foreach (var secondTerm in GetTerms(second))
+                {
+                    if (AreCompatible(first.Conditions, firstTerm, second.Conditions, secondTerm))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+
+            static ExecutionNodeCondition[][] GetTerms(OperationPlanStep step)
+                => step.ConditionAlternatives.Length == 0 ? s_noAlternative : step.ConditionAlternatives;
+        }
+
+        private static bool AreCompatible(
+            ExecutionNodeCondition[] firstConditions,
+            ExecutionNodeCondition[] firstTerm,
+            ExecutionNodeCondition[] secondConditions,
+            ExecutionNodeCondition[] secondTerm)
+            => !Contradicts(firstConditions, secondConditions)
+                && !Contradicts(firstConditions, secondTerm)
+                && !Contradicts(firstTerm, secondConditions)
+                && !Contradicts(firstTerm, secondTerm);
+
+        private static bool Contradicts(ExecutionNodeCondition[] first, ExecutionNodeCondition[] second)
+        {
+            foreach (var condition in first)
+            {
+                foreach (var other in second)
+                {
+                    if (condition.PassingValue != other.PassingValue
+                        && condition.VariableName.Equals(other.VariableName, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static int GetRequest(ExecutionPlanBuildContext ctx, int stepId)
+        {
+            var nodeId = ResolveRedirectedStepId(stepId, ctx.RedirectedStepIds);
+
+            return ctx.ExecutionNodes.TryGetValue(nodeId, out var node) && node is not NodeFieldExecutionNode
+                ? nodeId
+                : NoRequest;
         }
 
         public void Dispose()
         {
-            ArrayPool<string?>.Shared.Return(_schemaNames, clearArray: true);
-            ArrayPool<int>.Shared.Return(_acceptedCounts);
-            ArrayPool<int>.Shared.Return(_candidateCounts);
             ArrayPool<ConditionKey>.Shared.Return(_allowed, clearArray: true);
+            ArrayPool<ConditionKey>.Shared.Return(_oppositeConditions, clearArray: true);
             ArrayPool<ISelectionNode>.Shared.Return(_kept, clearArray: true);
             ArrayPool<int>.Shared.Return(_holders);
+            ArrayPool<bool>.Shared.Return(_plainHolders);
             ArrayPool<OperationPlanStep?>.Shared.Return(_byId, clearArray: true);
             ArrayPool<int>.Shared.Return(_depth);
             ArrayPool<int>.Shared.Return(_remaining);
             ArrayPool<int>.Shared.Return(_queue);
             ArrayPool<int>.Shared.Return(_visited);
+            ArrayPool<int>.Shared.Return(_requestBefore);
+            ArrayPool<int>.Shared.Return(_requestAfter);
+            ArrayPool<OperationPlanStep?>.Shared.Return(_candidateById, clearArray: true);
+
+            if (_frozen is not null)
+            {
+                ArrayPool<bool>.Shared.Return(_frozen);
+            }
 
             if (_listed is not null)
             {
@@ -2411,6 +2727,11 @@ public sealed partial class OperationPlanner
                     }
 
                     dependencies.Add(step.Id);
+
+                    if (operationPlanStep.OptionalDependents.Contains(dependent))
+                    {
+                        ctx.AddOptionalEdge(dependent, step.Id);
+                    }
                 }
             }
             else if (step is NodeFieldPlanStep nodePlanStep)
@@ -3757,7 +4078,9 @@ public sealed partial class OperationPlanner
         {
             foreach (var dependencyId in dependencyIds)
             {
-                if (!members.TryGetValue(dependencyId, out var member) || member.DeliveryGroups.IsDefaultOrEmpty)
+                if (!members.TryGetValue(dependencyId, out var member)
+                    || member.DeliveryGroups.IsDefaultOrEmpty
+                    || ctx.IsOptionalEdge(dependentId, dependencyId))
                 {
                     continue;
                 }
@@ -4039,7 +4362,8 @@ public sealed partial class OperationPlanner
                                         apolloBatch,
                                         location.Index,
                                         dependencyNode,
-                                        apolloDefinitions)))
+                                        apolloDefinitions))
+                                || ctx.IsOptionalEdge(operationId, dependencyId))
                             {
                                 operationDefinition.AddOptionalDependency(dependencyNode);
                             }
@@ -4365,6 +4689,7 @@ public sealed partial class OperationPlanner
             if (entry is OperationBatchExecutionNode batchEntry)
             {
                 WireBatchNodeDependencies(
+                    ctx,
                     batchEntry,
                     batchEntry.Operations.Length > 1 || batchEntry.Operations[0] is BatchOperationDefinition,
                     stepDependencies,
@@ -4375,6 +4700,7 @@ public sealed partial class OperationPlanner
             if (entry is ApolloOperationBatchExecutionNode apolloBatchEntry)
             {
                 WireBatchNodeDependencies(
+                    ctx,
                     apolloBatchEntry,
                     apolloBatchEntry.Operations.Length > 1
                         || apolloBatchEntry.Operations[0] is BatchOperationDefinition,
@@ -4400,7 +4726,7 @@ public sealed partial class OperationPlanner
 
                 childEntry.AddDependent(entry);
 
-                if (IsEntityReuseOrderingDependency(entry, childEntry))
+                if (IsEntityReuseOrderingDependency(entry, childEntry) || ctx.IsOptionalEdge(nodeId, dependencyId))
                 {
                     entry.AddOptionalDependency(childEntry);
                 }
@@ -4413,6 +4739,7 @@ public sealed partial class OperationPlanner
     }
 
     private static void WireBatchNodeDependencies(
+        ExecutionPlanBuildContext ctx,
         ExecutionNode batchEntry,
         bool useOptionalDependencies,
         HashSet<int> stepDependencies,
@@ -4444,7 +4771,7 @@ public sealed partial class OperationPlanner
             // nodes with multiple operations or a single merged multi-target
             // operation take optional dependencies. Single-target operation
             // nodes require strict dependencies.
-            if (useOptionalDependencies)
+            if (useOptionalDependencies || ctx.IsOptionalEdge(batchEntry.Id, dependencyId))
             {
                 batchEntry.AddOptionalDependency(dependencyExecutionNode);
             }
@@ -6232,6 +6559,53 @@ public sealed partial class OperationPlanner
         public Dictionary<int, Dictionary<string, int>> BranchesByNodeId { get; } = [];
         public Dictionary<int, int> FallbackByNodeId { get; } = [];
         public Dictionary<int, int> RedirectedStepIds { get; } = [];
+
+        private HashSet<(int DependentId, int DependencyId)>? _optionalEdges;
+
+        /// <summary>
+        /// Notes that a step needs the dependency or another provider of the same value to run.
+        /// </summary>
+        public void AddOptionalEdge(int dependentId, int dependencyId)
+            => (_optionalEdges ??= []).Add((dependentId, dependencyId));
+
+        /// <summary>
+        /// Checks that an edge of the plan steps that were merged into the dependent and the dependency is optional.
+        /// </summary>
+        public bool IsOptionalEdge(int dependentId, int dependencyId)
+        {
+            if (_optionalEdges is null)
+            {
+                return false;
+            }
+
+            foreach (var (dependent, dependency) in _optionalEdges)
+            {
+                if (Reaches(dependent, dependentId) && Reaches(dependency, dependencyId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool Reaches(int id, int targetId)
+        {
+            for (var hops = 0; hops <= RedirectedStepIds.Count; hops++)
+            {
+                if (id == targetId)
+                {
+                    return true;
+                }
+
+                if (!RedirectedStepIds.TryGetValue(id, out id))
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// The delivery groups of a plan with single plan defer, indexed by group id, or the default

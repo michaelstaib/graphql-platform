@@ -35,6 +35,12 @@ public record OperationPlanStep : PlanStep
 
     public ImmutableHashSet<int> Dependents { get; init; } = [];
 
+    /// <summary>
+    /// Gets the ids of the dependents that read a value from this step or from another provider of it, so that
+    /// one provider that ran is enough. Each id is also in <see cref="Dependents"/>.
+    /// </summary>
+    internal ImmutableHashSet<int> OptionalDependents { get; init; } = [];
+
     public ImmutableHashSet<ParentStepRef> ParentDependencies { get; init; } = [];
 
     public ImmutableDictionary<string, OperationRequirement> Requirements { get; init; }

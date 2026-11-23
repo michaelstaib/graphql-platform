@@ -453,7 +453,12 @@ internal sealed class ExecutionState
                 // whose dependencies failed.
                 if (dependent is not ExecutionNode)
                 {
-                    MarkNodeAsSkipped(dependent.Id);
+                    // An operation that has another provider of its value keeps running.
+                    if (!IsOptionalProvider(dependent, current))
+                    {
+                        MarkNodeAsSkipped(dependent.Id);
+                    }
+
                     continue;
                 }
 
@@ -532,6 +537,31 @@ internal sealed class ExecutionState
         }
 
         return true;
+    }
+
+    // Checks that the node, or an operation of it, is an optional dependency of the dependent.
+    private static bool IsOptionalProvider(IOperationPlanNode dependent, ExecutionNode provider)
+    {
+        foreach (var optional in dependent.OptionalDependencies)
+        {
+            if (ReferenceEquals(optional, provider))
+            {
+                return true;
+            }
+
+            if (provider is OperationBatchExecutionNode batch)
+            {
+                foreach (var operation in batch.Operations)
+                {
+                    if (ReferenceEquals(optional, operation))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool IsOptionalDependency(ExecutionNode dependent, ExecutionNode dependency)

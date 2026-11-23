@@ -507,7 +507,88 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_KeepTwoSteps_When_UnlabelledSiblingsHaveDifferentSwitches()
+    public void Plan_Should_TakeTheSelections_When_OnlyStepsThatCannotRunTogetherSplitTheirRequests()
+    {
+        // arrange
+        var schema = ComposeSchema(FriendRootSchema, HolderTotalSchema, HolderCodeSchema, HolderSkuByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                current {
+                    user {
+                        ... @defer(if: $a) {
+                            friend { code }
+                            ... @defer(if: $b) { sku total }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepTheStepsOfOneRequest_When_TheyCouldRunForTheSameValuesAfterASplit()
+    {
+        // arrange
+        var schema = ComposeSchema(FriendRootSchema, HolderTotalSchema, HolderCodeSchema, HolderSkuByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!, $s: Boolean!) {
+                current {
+                    user {
+                        code @skip(if: $s)
+                        ... @defer(if: $a) {
+                            friend { code }
+                            ... @defer(if: $b) { sku total }
+                        }
+                    }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_TakeTheFieldFromTwoHolders_When_ALaterVariableHasAHolderForBothValues()
+    {
+        // arrange
+        var schema = ComposeSchema(ProductSchema, PriceSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($y: Boolean!, $x: Boolean!) {
+                product(id: "1") {
+                    name
+                    price @include(if: $y)
+                    price @include(if: $x)
+                    price @skip(if: $x)
+                    ... @defer { price rating }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_FetchTheFieldOnceForBothGroups_When_UnlabelledSiblingsHaveDifferentSwitches()
     {
         // arrange
         var schema = ComposeSchema(ProductSchema, PriceSchema);

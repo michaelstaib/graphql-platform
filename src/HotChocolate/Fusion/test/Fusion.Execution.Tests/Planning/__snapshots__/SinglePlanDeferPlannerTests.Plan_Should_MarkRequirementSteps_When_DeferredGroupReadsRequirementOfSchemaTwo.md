@@ -372,6 +372,9 @@ nodes:
       - name: __fusion_2_id
         selectionMap: >-
           id
+    conditions:
+      - variable: $c
+        passingValue: false
     deliveryGroups:
       - 0
     dependencies:
@@ -398,6 +401,7 @@ nodes:
       - 0
     dependencies:
       - id: 1
+      - id: 2
       - id: 3
 deliveryGroups:
   - id: 0

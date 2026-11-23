@@ -60,6 +60,8 @@ nodes:
     conditions:
       - variable: $d
         passingValue: true
+      - variable: $x
+        passingValue: false
     deliveryGroups:
       - 0
     dependencies:
