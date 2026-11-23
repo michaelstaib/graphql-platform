@@ -588,6 +588,55 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_DependOnTheOneHolderWithoutOptionalEdge_When_OneStepHoldsTheFieldForBothValues()
+    {
+        // arrange
+        var schema = ComposeSchema(UserNickSchema, UserInnerSchema, UserInnerRequirementSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                user {
+                    nick
+                    inner @include(if: $v) { a c }
+                    inner @skip(if: $v) { a c }
+                    ... @defer { nnA }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
+    public void Plan_Should_DependOnBothHoldersOptionally_When_TwoStepsHoldTheFieldForOneValueEach()
+    {
+        // arrange
+        var schema = ComposeSchema(UserNickSchema, UserInnerSchema, UserInnerRequirementSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            query($v: Boolean!) {
+                user {
+                    nick
+                    inner @include(if: $v) { a c }
+                    ... @defer { inner { a } ... @defer { nnA } }
+                }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_FetchTheFieldOnceForBothGroups_When_UnlabelledSiblingsHaveDifferentSwitches()
     {
         // arrange
@@ -4588,6 +4637,31 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
         type Inner {
             a: String!
             c: String
+        }
+        """;
+
+    private const string UserNickSchema =
+        """
+        # name: a
+        type Query { user: User }
+        type User @key(fields: "id") { id: ID! nick: String }
+        """;
+
+    private const string UserInnerSchema =
+        """
+        # name: b
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inner: Inner }
+        type Inner { a: String! c: String }
+        """;
+
+    private const string UserInnerRequirementSchema =
+        """
+        # name: c
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            nnA(a: String @require(field: "inner.a")): String!
         }
         """;
 

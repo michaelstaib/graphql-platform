@@ -1,0 +1,89 @@
+operation:
+  - document: |
+      query($v: Boolean!) {
+        user {
+          nick
+          id @fusion__requirement
+          inner @include(if: $v) {
+            a
+            c
+          }
+          inner @skip(if: $v) {
+            a
+            c
+          }
+          ... @defer(__group: 0, __parent: -1) {
+            nnA
+            id @fusion__requirement
+            inner @fusion__requirement {
+              a @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 7
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          nick
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($v: Boolean!, $__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          inner @include(if: $v) {
+            a
+            c
+          }
+          inner @skip(if: $v) {
+            a
+            c
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - v
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_a: String, $__fusion_4_id: ID!) {
+        userById(id: $__fusion_4_id) {
+          nnA(a: $__fusion_3_a)
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_3_a
+        selectionMap: >-
+          inner.a
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 2
+deliveryGroups:
+  - id: 0
+    path: $.user

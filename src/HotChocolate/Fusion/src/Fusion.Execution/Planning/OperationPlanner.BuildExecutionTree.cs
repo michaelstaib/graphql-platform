@@ -939,7 +939,8 @@ public sealed partial class OperationPlanner
 
         while (!ReferenceEquals(taken, planSteps) && !pass.TryAccept(planSteps, taken))
         {
-            // The result splits a pair of steps, so the steps are taken again without any change to that pair.
+            // The result splits a pair of steps, so the steps are taken again. The pair keeps its selections, but its
+            // steps can still hold a field for another step, so their dependents grow.
             taken = pass.TryFreezeSplitPair() ? TakeSelections(planSteps, pass) : planSteps;
         }
 
@@ -1267,6 +1268,12 @@ public sealed partial class OperationPlanner
                             out var secondId,
                             out var holderCondition))
                     {
+                        if (firstId == secondId)
+                        {
+                            pass.AddHolder(firstId, conditional: false);
+                            continue;
+                        }
+
                         pass.AddHolder(firstId, conditional: true);
 
                         if (secondId >= 0)
@@ -2068,7 +2075,9 @@ public sealed partial class OperationPlanner
 
             for (var i = 0; i <= _maxId; i++)
             {
-                if (_candidateById[i] is not { } first || _requestBefore[i] == NoRequest || _requestAfter[i] == NoRequest)
+                if (_candidateById[i] is not { } first
+                    || _requestBefore[i] == NoRequest
+                    || _requestAfter[i] == NoRequest)
                 {
                     continue;
                 }
