@@ -2343,7 +2343,7 @@ public sealed partial class OperationPlanner
             // nodes with multiple operations or a single merged multi-target
             // operation take optional dependencies. Single-target operation
             // nodes require strict dependencies.
-            if (useOptionalDependencies || IsConditionalRequirementDependency(batchEntry, dependencyExecutionNode))
+            if (useOptionalDependencies)
             {
                 batchEntry.AddOptionalDependency(dependencyExecutionNode);
             }
