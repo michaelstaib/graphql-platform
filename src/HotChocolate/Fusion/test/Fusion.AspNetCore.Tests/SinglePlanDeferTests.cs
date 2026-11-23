@@ -5792,8 +5792,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_ReportTheLengthErrorForEachFragment_When_ASharedListFailsAfterAStepOfAnotherFailed()
     {
         // arrange
-        // C answers the shared list one part shorter than B, then the steps of E fail, so that neither a nor b is
-        // complete when the lengths differ, and b completes in its own payload
+        // C answers the shared list one part shorter than B before the steps of E fail, b completes in its own payload
         var gateway = await CreateGatewayAsync(
             ["C:4", "B:2", "E:5>", "E:3"],
             rewrite: (schema, body, text) => schema is "C" ? FirstPart().Replace(text, "\"parts\":[") : text,
@@ -5849,6 +5848,22 @@ public partial class SinglePlanDeferTests : FusionTestBase
             ? FirstStrictItem().Replace(
                 PartsList().Replace(text, parts => WeightValue().Replace(parts.Value, "\"weight\":null")),
                 "\"strict\":[null")
+            : text;
+
+    // The source schema B answers null with the error "B failed s0" for the first strict item.
+    private static string FailTheFirstStrictItem(string schema, string body, string text)
+        => schema is "B"
+            ? """{"errors":[{"message":"B failed s0","path":["productByIdForPackage","package","strict",0]}],"""
+                + NullTheFirstStrictItem(schema, body, text)[1..]
+            : text;
+
+    // The source schema B answers null for the weight of every part and fails the first strict item.
+    private static string NullEveryPartWeightAndFailTheFirstStrictItem(string schema, string body, string text)
+        => schema is "B"
+            ? FailTheFirstStrictItem(
+                schema,
+                body,
+                PartsList().Replace(text, parts => WeightValue().Replace(parts.Value, "\"weight\":null")))
             : text;
 
     [GeneratedRegex("\"strict\":\\[\\{[^}]*\\}")]
@@ -5918,6 +5933,35 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_ReportOnlyTheItemError_When_AFailedItemFailsAFragmentThatAlsoHoldsInnerErrors()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NullEveryPartWeightAndFailTheFirstStrictItem,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageStrictSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "b") { package { parts { weight } strict { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_ReportTheItemErrorOnce_When_TwoFragmentsHoldTheListWithTheNullItem()
     {
         // arrange
@@ -5942,6 +5986,150 @@ public partial class SinglePlanDeferTests : FusionTestBase
                 }
             }
             """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    // The source schema C answers null for the first review with the error "C failed 0" at its body.
+    private static string FailTheBodyOfTheFirstReview(string schema, string body, string text)
+        => schema is "C"
+            ? FirstReview().Replace(
+                text,
+                """{"errors":[{"message":"C failed 0","path":["productByIdForReviews","reviews",0,"body"]}],"""
+                    + "\"data\":$1null")
+            : text;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_FailEachFragmentWithTheItemError_When_OnlyOneStepAnswersTheNullItemWithAnError(
+        bool errorBelowItem)
+    {
+        // arrange
+        // only the step of c (C:2) answers null with an error for the first review, and c completes in its own payload
+        var gateway = await CreateGatewayAsync(
+            ["C:2>", "C:3"],
+            rewrite: (schema, body, text) => StepId().Match(body).Groups[1].Value is not "2"
+                ? text
+                : errorBelowItem
+                    ? FailTheBodyOfTheFirstReview(schema, body, text)
+                    : FailTheFirstReview(schema, body, text),
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "b") { reviews { body } }
+                    ... @defer(label: "c") { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run, $"errorBelowItem={errorBelowItem}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailEachFragmentWithTheItemError_When_OneStepHoldsTheListOfBothFragments()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheFirstReview,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer { reviews { body } }
+                    ... @defer { reviews { body } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    // The source schema C answers null with the error "C failed 0" for the first review of the second product.
+    private static string FailTheFirstReviewOfTheSecondProduct(string schema, string body, string text)
+        => schema is "C"
+            ? FirstReviewOfTheSecondProduct().Replace(
+                text,
+                """{"variableIndex":1,"errors":[{"message":"C failed 0","path":"""
+                    + """["productByIdForReviews","reviews",0]}],"data":$1null""")
+            : text;
+
+    [GeneratedRegex("""(?m)^\{"variableIndex":1,"data":(\{"productByIdForReviews":\{"reviews":\[)\{[^}]*\}""")]
+    private static partial Regex FirstReviewOfTheSecondProduct();
+
+    [Fact]
+    public async Task Defer_Should_SendTheItemErrorWithTheFailedFragment_When_AnotherObjectOfTheListDelivers()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheFirstReviewOfTheSecondProduct,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductListSource),
+            ("C", ReviewsSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ products { name ... @defer(label: "b") { reviews { body } } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string StrictShippingSource =
+        """
+        type Query { productByIdForShipping(id: ID!): Product @lookup }
+        type Product @key(fields: "id") {
+            id: ID!
+            shipping(weights: [Float!]! @require(field: "package.strict[weight]")): Float
+        }
+        """;
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheItemError_When_AnInitialStepHoldsTheListWithTheFailedItem()
+    {
+        // arrange
+        // the initial step of the requirement of shipping holds the strict list that only the fragment selects
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheFirstStrictItem,
+            failingSchema: null,
+            configure: null,
+            ("A", ProductSource),
+            ("B", PackageStrictSource),
+            ("C", StrictShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ product(id: "1") { name shipping ... @defer(label: "b") { package { strict { weight } } } } }""",
             []);
 
         // assert
@@ -6514,9 +6702,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
         bool selectsC)
     {
         // arrange
-        // the step of q (B:4) answers before the step of d (B:5)
+        // the step of d (B:4) answers first, so that d completes in its own payload before the step of q (B:5) answers
         var gateway = await CreateGatewayAsync(
-            ["B:4", "B:5"],
+            ["B:4@1>", "B:5"],
             NameTheSourceError,
             failingSchema: null,
             configure: null,

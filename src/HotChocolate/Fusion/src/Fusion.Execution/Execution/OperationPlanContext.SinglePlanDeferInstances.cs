@@ -131,6 +131,7 @@ internal sealed partial class SinglePlanDeliveryState
             if (failure is not null)
             {
                 MarkFailure(key, failure);
+                (_groupOwnedErrors ??= new HashSet<IError>(ReferenceEqualityComparer.Instance)).Add(failure.Error);
             }
         }
 
@@ -214,7 +215,7 @@ internal sealed partial class SinglePlanDeliveryState
             errors = _failureErrors[key] = [];
         }
 
-        // A step that merges into a list that another step failed reports the same error again.
+        // An error with the path and the message of a recorded failure is not recorded again.
         foreach (var existing in errors)
         {
             if (existing == error
@@ -526,9 +527,9 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     /// <summary>
-    /// Records that a step wrote an error as the result of a value that held an object or a list, or that no step
-    /// had written yet, or <c>null</c> for a leaf. <paramref name="groups"/> is empty for a step without delivery
-    /// groups. <paramref name="holdsRowError"/> tells that the error is also recorded for the row of the value.
+    /// Records that a step wrote an error as the result of a value that held an object or a list or that no step had
+    /// written yet, or <c>null</c> with an error for a leaf. <paramref name="groups"/> is empty for a step without
+    /// delivery groups, and <paramref name="holdsRowError"/> is set when the error is also recorded for the row.
     /// </summary>
     public void AddWrittenAnswer(
         CompositeResultDocument.Cursor container,
@@ -1570,8 +1571,8 @@ internal readonly record struct SourceError(GroupError Error, ImmutableArray<int
 /// <summary>
 /// A value that held an object or a list, or that no step had written yet, when a step of the delivery groups
 /// answered <c>null</c>, an error or a missing entity for it, or a leaf that a step answered <c>null</c> with an
-/// error. <paramref name="HoldsRowError"/> is set when the error is also recorded for the row of the value.
-/// <paramref name="IsWritten"/> is set when the step wrote the error as the result of the value, and
+/// error. <paramref name="HoldsRowError"/> is set when the error is also recorded for the row of the value,
+/// <paramref name="IsWritten"/> when the step wrote the error as the result of the value, and
 /// <paramref name="Groups"/> is then empty for a step without groups.
 /// </summary>
 internal readonly record struct DeniedAnswer(
@@ -1582,9 +1583,9 @@ internal readonly record struct DeniedAnswer(
     bool IsWritten)
 {
     /// <summary>
-    /// Determines whether a field of the group that requires the value reports the error of the answer. That holds
-    /// for a group of the step of a denied answer, and for every other group when the step wrote the error. A
-    /// non-null field reports the error of a step that wrote it for the groups of that step too.
+    /// Determines whether a field of the group that requires the value reports the error of the answer: a group of
+    /// the step for a denied answer, every other group for an error that the step wrote. A field that is not
+    /// nullable also reports an error that a step of its own group wrote.
     /// </summary>
     public bool IsReportedBy(int group, bool isNullable)
         => IsWritten ? !isNullable || !Groups.Contains(group) : Groups.Contains(group);

@@ -1627,9 +1627,8 @@ internal sealed class ValueCompletion
         return TMode.HasDelivery ? _store.Result.RecordGroupError(element, error) : null;
     }
 
-    // Records the error of a leaf as the answer for the fields that require the leaf, so that they report the error
-    // as the reason for their missing value. A leaf that the client selected is answered for every group, a leaf that
-    // the client did not select for the groups that hold it.
+    // Records the error of a null leaf as the answer for the fields that require the leaf. A leaf that the client
+    // selected is answered for every group, any other leaf for the groups that hold it.
     private void RecordLeafError<TMode>(CompositeResultElement leaf, IError error)
         where TMode : struct, IMode
     {
@@ -1660,12 +1659,20 @@ internal sealed class ValueCompletion
         document.Delivery!.AddDeniedAnswer(leaf.Cursor, groups.MoveToImmutable(), error, holdsRowError: true);
     }
 
-    // Creates the non-null error of a null list item. The error is the one that fails the groups that hold the item,
-    // and is reported nowhere else. Returns null when no group holds the item.
-    private GroupError? CreateNonNullViolation(CompositeResultElement item)
-        => _store.Result.TryGetDestination(item, out _)
-            ? new GroupError(_errorHandler.Handle(ErrorHelper.DeniedNonNullField(item.Path)))
-            : null;
+    // Creates the error that fails the groups that hold a null list item: the error of the result at errorIndex, or
+    // the non-null error when the result holds no error there. Returns null when no group holds the item.
+    private GroupError? CreateItemFailure(CompositeResultElement item, int errorIndex)
+    {
+        if (!_store.Result.TryGetDestination(item, out _))
+        {
+            return null;
+        }
+
+        return new GroupError(
+            _store.Errors is { } errors && errorIndex < errors.Count
+                ? errors[errorIndex]
+                : _errorHandler.Handle(ErrorHelper.DeniedNonNullField(item.Path)));
+    }
 
     private void PocketErrors(Path path, ResultSelectionSet resultSelectionSet, IError error)
     {
@@ -2021,6 +2028,11 @@ internal sealed class ValueCompletion
                     goto TryCompleteList_MoveNext;
                 }
 
+                // The index of the first error of the result at or below the item.
+                var errorIndex = TMode.HasDelivery
+                    ? (_store.Errors?.Count ?? 0) - (errorTrieForIndex?.Error is null ? 0 : 1)
+                    : 0;
+
                 // The element might have been nulled due to a down-stream null propagation,
                 // so the errors below it are forwarded with their paths.
                 if (errorTrieForIndex is { Count: > 0 })
@@ -2030,12 +2042,9 @@ internal sealed class ValueCompletion
 
                 if (isNonNull && _propagateNullValues)
                 {
-                    // An item without an error at or below it fails the groups with the non-null error.
                     if (TMode.HasDelivery)
                     {
-                        _returnedNullError = errorTrieForIndex?.FindFirstError() is null
-                            ? CreateNonNullViolation(targetEnumerator.Current)
-                            : null;
+                        _returnedNullError = CreateItemFailure(targetEnumerator.Current, errorIndex);
                     }
 
                     return false;
