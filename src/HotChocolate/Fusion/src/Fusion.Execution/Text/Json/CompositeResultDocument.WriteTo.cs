@@ -781,9 +781,9 @@ public sealed partial class CompositeResultDocument : IRawJsonFormatter
         }
 
         /// <summary>
-        /// Gets a reference to the first byte of the source data chunk that holds
-        /// <paramref name="location"/>. Of <paramref name="sourceAndType"/> only the source
-        /// document id is read. <paramref name="length"/> is the size of the chunk in bytes.
+        /// Gets a reference to the first byte of the data chunk that holds
+        /// <paramref name="location"/> in the source document of <paramref name="sourceAndType"/>.
+        /// <paramref name="length"/> is the size of the chunk in bytes.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private ref byte GetSourceChunk(int sourceAndType, int location, out int length)
