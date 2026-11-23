@@ -7025,7 +7025,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendTheErrorOnlyInTheInitialPayload_When_AnElementOfTheRequiredListFailedThere()
     {
         // arrange
-        // the initial step of inners (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
+        // the initial step of inners holds the list under a condition, and the fragment reads its requirement from it
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
             FailTheSecondInner,
