@@ -2599,12 +2599,6 @@ public sealed partial class OperationPlanner
             case OperationExecutionNode node:
                 return IsSkippedOnlyByRequirementConditions(supplier, node.Conditions, node.Requirements);
 
-            case OperationBatchExecutionNode { Operations.Length: 1 } batch:
-                return IsSkippedOnlyByRequirementConditions(
-                    supplier,
-                    batch.Operations[0].Conditions,
-                    batch.Operations[0].Requirements);
-
             case OperationDefinition operation:
                 return IsSkippedOnlyByRequirementConditions(supplier, operation.Conditions, operation.Requirements);
 
