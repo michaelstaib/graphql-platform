@@ -39,7 +39,25 @@ internal sealed class OperationPlanMiddleware
             return next(context);
         }
 
-        PlanOperation(context, operationDocumentInfo, context.GetNormalizedOperation());
+        // An operation whose argument literals were extracted is planned with variables in their place.
+        if (context.Features.Get<ArgumentLiteralExtraction>() is { } extraction)
+        {
+            PlanOperation(
+                context,
+                operationDocumentInfo,
+                extraction.OperationId,
+                extraction.OperationHash,
+                extraction.Operation);
+        }
+        else
+        {
+            PlanOperation(
+                context,
+                operationDocumentInfo,
+                context.GetOperationId(),
+                operationDocumentInfo.Hash.Value,
+                context.GetNormalizedOperation());
+        }
 
         return next(context);
     }
@@ -47,10 +65,10 @@ internal sealed class OperationPlanMiddleware
     private void PlanOperation(
         RequestContext context,
         OperationDocumentInfo operationDocumentInfo,
+        string operationId,
+        string operationHash,
         OperationDefinitionNode operation)
     {
-        var operationId = context.GetOperationId();
-        var operationHash = context.OperationDocumentInfo.Hash.Value;
         var operationShortHash = operationHash[..8];
 
         using var scope = _diagnosticsEvents.PlanOperation(context, operationId);

@@ -117,6 +117,23 @@ public sealed class FusionOptions : IFusionSchemaOptions, ICloneable
     } = true;
 
     /// <summary>
+    /// Gets or sets whether the literal values of field arguments are replaced by variables
+    /// before an operation is planned, so operations that differ only in these values share
+    /// one operation plan.
+    /// <c>false</c> by default.
+    /// </summary>
+    public bool EnableArgumentLiteralExtraction
+    {
+        get;
+        set
+        {
+            ExpectMutableOptions();
+
+            field = value;
+        }
+    }
+
+    /// <summary>
     /// Gets or sets whether the request executor should be initialized lazily.
     /// <c>false</c> by default.
     /// </summary>

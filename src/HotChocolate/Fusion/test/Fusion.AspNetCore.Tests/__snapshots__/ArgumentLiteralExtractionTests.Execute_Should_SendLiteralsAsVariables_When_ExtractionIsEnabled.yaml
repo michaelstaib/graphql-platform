@@ -1,0 +1,266 @@
+title: Execute_Should_SendLiteralsAsVariables_When_ExtractionIsEnabled
+request:
+  document: |
+    query GetProducts {
+      products(first: 2, filter: { namePrefix: "Ta" }, tags: ["wood", "tech"]) {
+        name
+        weight(unit: LB)
+        reviews(first: 1) {
+          body
+        }
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "products": [
+          {
+            "name": "Table",
+            "weight": 200,
+            "reviews": [
+              {
+                "body": "Review 1 of product 1"
+              }
+            ]
+          },
+          {
+            "name": "Tablet",
+            "weight": 2,
+            "reviews": [
+              {
+                "body": "Review 1 of product 2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+sourceSchemas:
+  - name: products-api
+    schema: |
+      schema {
+        query: Query
+        mutation: Mutation
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup
+        products(first: Int!, filter: ProductFilterInput, tags: [String!]): [Product!]!
+      }
+
+      type Mutation {
+        renameProduct(input: RenameProductInput!): Product!
+      }
+
+      type Product @key(fields: "id") {
+        weight(unit: WeightUnit!): Float!
+        id: ID!
+        name: String!
+      }
+
+      input ProductFilterInput {
+        namePrefix: String
+      }
+
+      input RenameProductInput {
+        id: ID!
+        name: String!
+      }
+
+      enum WeightUnit {
+        KG
+        LB
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query GetProducts_545661b1_1(
+              $__fusion_literal_0: Int!
+              $__fusion_literal_1: ProductFilterInput
+              $__fusion_literal_2: [String!]
+              $__fusion_literal_3: WeightUnit!
+            ) {
+              products(
+                first: $__fusion_literal_0
+                filter: $__fusion_literal_1
+                tags: $__fusion_literal_2
+              ) {
+                name
+                weight(unit: $__fusion_literal_3)
+                id
+              }
+            }
+          variables: |
+            {
+              "__fusion_literal_0": 2,
+              "__fusion_literal_1": {
+                "namePrefix": "Ta"
+              },
+              "__fusion_literal_2": [
+                "wood",
+                "tech"
+              ],
+              "__fusion_literal_3": "LB"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "products": [
+                    {
+                      "name": "Table",
+                      "weight": 200,
+                      "id": "1"
+                    },
+                    {
+                      "name": "Tablet",
+                      "weight": 2,
+                      "id": "2"
+                    }
+                  ]
+                }
+              }
+  - name: reviews-api
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        reviews(first: Int!): [Review!]!
+        id: ID!
+      }
+
+      type Review {
+        body: String!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query GetProducts_545661b1_2($__fusion_literal_4: Int!, $__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                reviews(first: $__fusion_literal_4) {
+                  body
+                }
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_literal_4": 1,
+                "__fusion_1_id": "1"
+              },
+              {
+                "__fusion_literal_4": 1,
+                "__fusion_1_id": "2"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "reviews": [
+                      {
+                        "body": "Review 1 of product 1"
+                      }
+                    ]
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "reviews": [
+                      {
+                        "body": "Review 1 of product 2"
+                      }
+                    ]
+                  }
+                }
+              }
+operationPlan:
+  operation:
+    - document: |
+        query GetProducts(
+          $__fusion_literal_0: Int!
+          $__fusion_literal_1: ProductFilterInput
+          $__fusion_literal_2: [String!]
+          $__fusion_literal_3: WeightUnit!
+          $__fusion_literal_4: Int!
+        ) {
+          products(
+            first: $__fusion_literal_0
+            filter: $__fusion_literal_1
+            tags: $__fusion_literal_2
+          ) {
+            name
+            weight(unit: $__fusion_literal_3)
+            reviews(first: $__fusion_literal_4) {
+              body
+            }
+            id @fusion__requirement
+          }
+        }
+      name: GetProducts
+      hash: 545661b18807702fad6d4cd6e204b585.literals
+      searchSpace: 1
+      expandedNodes: 2
+  nodes:
+    - id: 1
+      type: Operation
+      schema: products-api
+      operation: |
+        query GetProducts_545661b1_1(
+          $__fusion_literal_0: Int!
+          $__fusion_literal_1: ProductFilterInput
+          $__fusion_literal_2: [String!]
+          $__fusion_literal_3: WeightUnit!
+        ) {
+          products(
+            first: $__fusion_literal_0
+            filter: $__fusion_literal_1
+            tags: $__fusion_literal_2
+          ) {
+            name
+            weight(unit: $__fusion_literal_3)
+            id
+          }
+        }
+      forwardedVariables:
+        - __fusion_literal_0
+        - __fusion_literal_1
+        - __fusion_literal_2
+        - __fusion_literal_3
+    - id: 2
+      type: Operation
+      schema: reviews-api
+      operation: |
+        query GetProducts_545661b1_2($__fusion_literal_4: Int!, $__fusion_1_id: ID!) {
+          productById(id: $__fusion_1_id) {
+            reviews(first: $__fusion_literal_4) {
+              body
+            }
+          }
+        }
+      source: $.productById
+      target: $.products
+      requirements:
+        - name: __fusion_1_id
+          selectionMap: >-
+            id
+      forwardedVariables:
+        - __fusion_literal_4
+      dependencies:
+        - id: 1
