@@ -189,6 +189,48 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
         Assert.Null(result.Exception);
     }
 
+    [Fact]
+    public async Task SkipNode_Should_NotSkipOperation_When_SkippedNodeIsOptionalDependencyOfOperation()
+    {
+        // arrange
+        var source = new TestExecutionNode(0, TestOutcome.Success);
+        var operation = new TestOperationNode(100, [], [source]);
+        source.AddDependent(operation);
+        source.Seal();
+
+        await using var fixture = await ExecutionTestFixture.CreateAsync(false, source);
+        fixture.State.FillBacklog(fixture.Plan);
+
+        // act
+        fixture.State.SkipNode(fixture.Plan, source);
+
+        // assert
+        Assert.Equal(
+            [true, false],
+            [fixture.State.IsNodeSkipped(source.Id), fixture.State.IsNodeSkipped(operation.Id)]);
+    }
+
+    [Fact]
+    public async Task SkipNode_Should_SkipOperation_When_SkippedNodeIsRequiredDependencyOfOperation()
+    {
+        // arrange
+        var source = new TestExecutionNode(0, TestOutcome.Success);
+        var operation = new TestOperationNode(100, [source], []);
+        source.AddDependent(operation);
+        source.Seal();
+
+        await using var fixture = await ExecutionTestFixture.CreateAsync(false, source);
+        fixture.State.FillBacklog(fixture.Plan);
+
+        // act
+        fixture.State.SkipNode(fixture.Plan, source);
+
+        // assert
+        Assert.Equal(
+            [true, true],
+            [fixture.State.IsNodeSkipped(source.Id), fixture.State.IsNodeSkipped(operation.Id)]);
+    }
+
     private static async Task<ExecutionNodeResult> ExecuteNodeAsync(
         ExecutionTestFixture fixture,
         TestExecutionNode node,
@@ -216,6 +258,30 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
         Skipped,
         Failed,
         Canceled
+    }
+
+    private sealed class TestOperationNode : IOperationPlanNode
+    {
+        private readonly IOperationPlanNode[] _dependencies;
+        private readonly IOperationPlanNode[] _optionalDependencies;
+
+        public TestOperationNode(
+            int id,
+            IOperationPlanNode[] dependencies,
+            IOperationPlanNode[] optionalDependencies)
+        {
+            Id = id;
+            _dependencies = dependencies;
+            _optionalDependencies = optionalDependencies;
+        }
+
+        public int Id { get; }
+
+        public ReadOnlySpan<IOperationPlanNode> Dependents => [];
+
+        public ReadOnlySpan<IOperationPlanNode> Dependencies => _dependencies;
+
+        public ReadOnlySpan<IOperationPlanNode> OptionalDependencies => _optionalDependencies;
     }
 
     private sealed class TestExecutionNode : ExecutionNode

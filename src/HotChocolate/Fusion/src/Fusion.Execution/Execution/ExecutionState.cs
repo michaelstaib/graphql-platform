@@ -414,7 +414,11 @@ internal sealed class ExecutionState
                 // whose dependencies failed.
                 if (dependent is not ExecutionNode)
                 {
-                    MarkNodeAsSkipped(dependent.Id);
+                    if (!IsOptionalDependency(dependent, current))
+                    {
+                        MarkNodeAsSkipped(dependent.Id);
+                    }
+
                     continue;
                 }
 
@@ -495,7 +499,7 @@ internal sealed class ExecutionState
         return true;
     }
 
-    private static bool IsOptionalDependency(ExecutionNode dependent, ExecutionNode dependency)
+    private static bool IsOptionalDependency(IOperationPlanNode dependent, ExecutionNode dependency)
     {
         foreach (var optDep in dependent.OptionalDependencies)
         {

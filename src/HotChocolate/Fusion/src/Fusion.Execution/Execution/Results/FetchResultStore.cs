@@ -2253,6 +2253,7 @@ AddErrors_Next:
         var nextIndex = 0;
         var forwardedVariables = SerializeForwardedVariablesUnsafe(requestVariables, elements.Length);
         var anchorSegments = RentRequirementAnchorSegments(requiredData, targetPathLength, anchorSegmentCount);
+        var hasConditions = TryGetOffRequirements(requiredData, requestVariables, out var offRequirements);
 
         foreach (var result in elements)
         {
@@ -2277,6 +2278,15 @@ AddErrors_Next:
                 anchorSegmentOffset += requirementAnchorSegmentCount;
 
                 _jsonWriter.WritePropertyName(requirement.Key);
+
+                if (hasConditions
+                    && (i < 64
+                        ? (offRequirements & (1UL << i)) != 0
+                        : IsRequirementOff(requirement, requestVariables)))
+                {
+                    _jsonWriter.WriteNullValue();
+                    continue;
+                }
 
                 if (!TryGetRequirementAnchor(result, requirementAnchorSegments, out var anchor)
                     || !ResultDataMapper.TryMap(
@@ -2325,6 +2335,70 @@ AddErrors_Next:
         }
 
         return FinalizeVariableValueSetsUnsafe(variableValueSets, ref additionalPaths, nextIndex);
+    }
+
+    /// <summary>
+    /// Finds whether a requirement has conditions and, if so, sets one bit per requirement whose
+    /// conditions do not pass. Requirements from index 64 on have no bit and are checked with
+    /// <see cref="IsRequirementOff"/>.
+    /// </summary>
+    private static bool TryGetOffRequirements(
+        ReadOnlySpan<OperationRequirement> requiredData,
+        IReadOnlyList<ObjectFieldNode> requestVariables,
+        out ulong offRequirements)
+    {
+        var hasConditions = false;
+        offRequirements = 0;
+
+        for (var i = 0; i < requiredData.Length; i++)
+        {
+            var requirement = requiredData[i];
+
+            if (requirement.Conditions is null)
+            {
+                continue;
+            }
+
+            hasConditions = true;
+
+            if (i < 64 && IsRequirementOff(requirement, requestVariables))
+            {
+                offRequirements |= 1UL << i;
+            }
+        }
+
+        return hasConditions;
+    }
+
+    /// <summary>
+    /// Determines whether a condition of the requirement does not pass. A condition whose
+    /// variable is not in <paramref name="requestVariables"/> passes.
+    /// </summary>
+    private static bool IsRequirementOff(
+        OperationRequirement requirement,
+        IReadOnlyList<ObjectFieldNode> requestVariables)
+    {
+        if (requirement.Conditions is not { } conditions)
+        {
+            return false;
+        }
+
+        foreach (var condition in conditions)
+        {
+            for (var i = 0; i < requestVariables.Count; i++)
+            {
+                var variable = requestVariables[i];
+
+                if (variable.Name.Value.Equals(condition.VariableName, StringComparison.Ordinal)
+                    && variable.Value is BooleanValueNode value
+                    && value.Value != condition.PassingValue)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static int CountRequirementAnchorSegments(

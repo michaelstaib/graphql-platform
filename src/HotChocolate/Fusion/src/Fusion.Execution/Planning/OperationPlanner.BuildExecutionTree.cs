@@ -1934,7 +1934,8 @@ public sealed partial class OperationPlanner
                         if (planNodeById.TryGetValue(dependencyId, out var dependencyNode))
                         {
                             if ((batchNode is OperationBatchExecutionNode
-                                    && IsEntityReuseOrderingDependency(operationDefinition, dependencyNode))
+                                    && (IsEntityReuseOrderingDependency(operationDefinition, dependencyNode)
+                                        || IsConditionalRequirementDependency(operationDefinition, dependencyNode)))
                                 || (batchNode is ApolloOperationBatchExecutionNode apolloBatch
                                     && apolloDefinitions.TryGetValue(operationDefinition.Id, out var location)
                                     && ReferenceEquals(location.Batch, apolloBatch)
@@ -2297,7 +2298,8 @@ public sealed partial class OperationPlanner
 
                 childEntry.AddDependent(entry);
 
-                if (IsEntityReuseOrderingDependency(entry, childEntry))
+                if (IsEntityReuseOrderingDependency(entry, childEntry)
+                    || IsConditionalRequirementDependency(entry, childEntry))
                 {
                     entry.AddOptionalDependency(childEntry);
                 }
@@ -2341,7 +2343,7 @@ public sealed partial class OperationPlanner
             // nodes with multiple operations or a single merged multi-target
             // operation take optional dependencies. Single-target operation
             // nodes require strict dependencies.
-            if (useOptionalDependencies)
+            if (useOptionalDependencies || IsConditionalRequirementDependency(batchEntry, dependencyExecutionNode))
             {
                 batchEntry.AddOptionalDependency(dependencyExecutionNode);
             }
@@ -2581,6 +2583,126 @@ public sealed partial class OperationPlanner
             && string.Equals(lookupTypeName, dependencyLookupTypeName, StringComparison.Ordinal)
             && SelectsOnlyReusableFields(dependent)
             && ComputeLookupSignature(dependent).Equals(ComputeLookupSignature(dependency), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="dependent"/> depends on <paramref name="supplier"/> optionally.
+    /// That is the case when the supplier carries a condition that the dependent does not carry, and every
+    /// such condition is a condition of a requirement of the dependent.
+    /// </summary>
+    internal static bool IsConditionalRequirementDependency(
+        IOperationPlanNode dependent,
+        IOperationPlanNode supplier)
+    {
+        switch (dependent)
+        {
+            case OperationExecutionNode node:
+                return IsSkippedOnlyByRequirementConditions(supplier, node.Conditions, node.Requirements);
+
+            case OperationBatchExecutionNode { Operations.Length: 1 } batch:
+                return IsSkippedOnlyByRequirementConditions(
+                    supplier,
+                    batch.Operations[0].Conditions,
+                    batch.Operations[0].Requirements);
+
+            case OperationDefinition operation:
+                return IsSkippedOnlyByRequirementConditions(supplier, operation.Conditions, operation.Requirements);
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsSkippedOnlyByRequirementConditions(
+        IOperationPlanNode supplier,
+        ReadOnlySpan<ExecutionNodeCondition> dependentConditions,
+        ReadOnlySpan<OperationRequirement> requirements)
+    {
+        switch (supplier)
+        {
+            case OperationBatchExecutionNode { Operations.Length: > 0 } batch:
+                // A batch is skipped when each of its operations is skipped.
+                var operations = batch.Operations;
+                var common = new List<ExecutionNodeCondition>();
+
+                foreach (var condition in operations[0].Conditions)
+                {
+                    var carriedByAll = true;
+
+                    for (var i = 1; i < operations.Length && carriedByAll; i++)
+                    {
+                        carriedByAll = ContainsCondition(operations[i].Conditions, condition);
+                    }
+
+                    if (carriedByAll)
+                    {
+                        common.Add(condition);
+                    }
+                }
+
+                return AreRequirementConditions(common.ToArray(), dependentConditions, requirements);
+
+            case OperationDefinition operation:
+                return AreRequirementConditions(operation.Conditions, dependentConditions, requirements);
+
+            case ExecutionNode node:
+                return AreRequirementConditions(node.Conditions, dependentConditions, requirements);
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool AreRequirementConditions(
+        ReadOnlySpan<ExecutionNodeCondition> supplierConditions,
+        ReadOnlySpan<ExecutionNodeCondition> dependentConditions,
+        ReadOnlySpan<OperationRequirement> requirements)
+    {
+        var hasForeignCondition = false;
+
+        foreach (var condition in supplierConditions)
+        {
+            if (ContainsCondition(dependentConditions, condition))
+            {
+                continue;
+            }
+
+            var isRequirementCondition = false;
+
+            foreach (var requirement in requirements)
+            {
+                if (requirement.Conditions is { } requirementConditions
+                    && ContainsCondition(requirementConditions, condition))
+                {
+                    isRequirementCondition = true;
+                    break;
+                }
+            }
+
+            if (!isRequirementCondition)
+            {
+                return false;
+            }
+
+            hasForeignCondition = true;
+        }
+
+        return hasForeignCondition;
+    }
+
+    private static bool ContainsCondition(
+        ReadOnlySpan<ExecutionNodeCondition> conditions,
+        ExecutionNodeCondition condition)
+    {
+        foreach (var candidate in conditions)
+        {
+            if (candidate.Equals(condition))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

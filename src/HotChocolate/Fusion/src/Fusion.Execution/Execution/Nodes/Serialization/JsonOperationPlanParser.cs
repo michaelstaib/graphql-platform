@@ -621,7 +621,8 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                         {
                             node.AddOptionalDependency(dependencyNode);
                         }
-                        else if (OperationPlanner.IsEntityReuseOrderingDependency(node, dependencyNode))
+                        else if (OperationPlanner.IsEntityReuseOrderingDependency(node, dependencyNode)
+                            || OperationPlanner.IsConditionalRequirementDependency(node, dependencyNode))
                         {
                             node.AddOptionalDependency(dependencyNode);
                         }
@@ -736,7 +737,8 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                             if (planNodeMap.TryGetValue(depId, out var depNode))
                             {
                                 if ((groupNode is OperationBatchExecutionNode
-                                        && OperationPlanner.IsEntityReuseOrderingDependency(opDef, depNode))
+                                        && (OperationPlanner.IsEntityReuseOrderingDependency(opDef, depNode)
+                                            || OperationPlanner.IsConditionalRequirementDependency(opDef, depNode)))
                                     || (groupNode is ApolloOperationBatchExecutionNode apolloGroup
                                         && OperationPlanner.IsEntityReuseOrderingDependency(
                                             apolloGroup,
