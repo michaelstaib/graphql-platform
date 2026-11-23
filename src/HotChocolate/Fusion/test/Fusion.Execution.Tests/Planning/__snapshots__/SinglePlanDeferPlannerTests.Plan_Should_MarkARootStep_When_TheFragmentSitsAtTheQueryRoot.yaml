@@ -1,0 +1,40 @@
+operation:
+  - document: |
+      {
+        product(id: "1") {
+          name
+        }
+        ... @defer(label: "root", __group: 0, __parent: -1) {
+          other: product(id: "2") {
+            name
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2 {
+        other: product(id: "2") {
+          name
+        }
+      }
+    deliveryGroups:
+      - 0
+deliveryGroups:
+  - id: 0
+    path: $
+    label: root

@@ -1337,7 +1337,7 @@ public class FusionActivityExecutionDiagnosticListenerTests : FusionTestBase
         var pool = new DefaultObjectPool<OrderedDictionary<string, List<FieldSelectionNode>>>(
             new DefaultPooledObjectPolicy<OrderedDictionary<string, List<FieldSelectionNode>>>());
         var operationDocument = Utf8GraphQLParser.Parse(operationText);
-        var rewriter = new DocumentRewriter(schema);
+        var rewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var rewritten = rewriter.RewriteDocument(operationDocument, operationName: null);
         var operation = rewritten.Definitions.OfType<OperationDefinitionNode>().First();
         var compiler = new OperationCompiler(schema, pool);

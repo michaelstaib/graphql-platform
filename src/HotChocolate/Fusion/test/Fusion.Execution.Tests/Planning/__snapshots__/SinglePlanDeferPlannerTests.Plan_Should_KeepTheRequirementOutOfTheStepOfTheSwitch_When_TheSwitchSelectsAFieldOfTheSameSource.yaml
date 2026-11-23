@@ -1,0 +1,169 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user {
+          shipping
+          id @fusion__requirement
+          total @fusion__requirement
+          weight @fusion__requirement
+          tax @skip(if: $a)
+          ... @include(if: $a) {
+            ... @defer(if: $a, __group: 0, __parent: -1) {
+              tax
+              id @fusion__requirement
+              total @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 12
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          id
+        }
+      }
+  - id: 8
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_8($__fusion_10_id: ID!, $__fusion_9_total: Int) {
+        userById(id: $__fusion_10_id) {
+          tax(total: $__fusion_9_total)
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_10_id
+        selectionMap: >-
+          id
+      - name: __fusion_9_total
+        selectionMap: >-
+          total
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 9
+  - id: 9
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_9($__fusion_11_id: ID!) {
+        userById(id: $__fusion_11_id) {
+          total
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_11_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_4($__fusion_4_id: ID!) {
+        userById(id: $__fusion_4_id) {
+          total
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 10
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_6($__fusion_7_id: ID!) {
+        userById(id: $__fusion_7_id) {
+          weight
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 10
+    requirements:
+      - name: __fusion_7_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_total: Int, $__fusion_3_id: ID!) {
+        userById(id: $__fusion_3_id) {
+          tax(total: $__fusion_2_total)
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 11
+    requirements:
+      - name: __fusion_2_total
+        selectionMap: >-
+          total
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_5_weight: Int, $__fusion_6_id: ID!) {
+        userById(id: $__fusion_6_id) {
+          shipping(weight: $__fusion_5_weight)
+        }
+      }
+    source: $.userById
+    target: $.user
+    batchingGroupId: 11
+    requirements:
+      - name: __fusion_5_weight
+        selectionMap: >-
+          weight
+      - name: __fusion_6_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+      - id: 6
+deliveryGroups:
+  - id: 0
+    path: $.user
+    ifVariable: $a

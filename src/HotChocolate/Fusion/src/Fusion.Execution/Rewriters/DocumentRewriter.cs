@@ -8,8 +8,20 @@ using HotChocolate.Types;
 
 namespace HotChocolate.Fusion.Execution.Rewriters;
 
+/// <summary>
+/// Inlines fragment spreads and merges the selections of an operation document.
+/// </summary>
+/// <param name="schema">The schema the documents are rewritten against.</param>
+/// <param name="mergeAcrossDefer">
+/// <c>true</c> merges a selection inside a <c>@defer</c> fragment with the same selection outside of it.
+/// <c>false</c> merges it only with selections of the same fragment and keeps every <c>@defer</c> where it is.
+/// </param>
+/// <param name="removeStaticallyExcludedSelections">
+/// <c>true</c> removes selections that a literal <c>@skip</c> or <c>@include</c> excludes.
+/// </param>
 public sealed partial class DocumentRewriter(
     FusionSchemaDefinition schema,
+    bool mergeAcrossDefer,
     bool removeStaticallyExcludedSelections = false)
 {
     private static readonly FieldNode s_typeNameField =
@@ -249,10 +261,20 @@ public sealed partial class DocumentRewriter(
         CollectSelections(selectionSet, fragmentContext);
     }
 
-    private static Context? GetOrAddContextForField(Context context, FieldNode fieldNode, ITypeDefinition? fieldType)
+    private Context? GetOrAddContextForField(Context context, FieldNode fieldNode, ITypeDefinition? fieldType)
     {
         if (context.IsDeferContext)
         {
+            if (!mergeAcrossDefer)
+            {
+                if (!context.HasField(fieldNode, out var deferFieldContext))
+                {
+                    deferFieldContext = context.AddField(fieldNode, fieldType);
+                }
+
+                return deferFieldContext;
+            }
+
             // Walk the full ancestor chain (through defer/conditional scopes, up to and
             // including the nearest non-scope ancestor) and check whether any of them
             // already contains the field.
@@ -400,13 +422,23 @@ public sealed partial class DocumentRewriter(
         }
     }
 
-    private static Context GetOrAddContextForFragment(
+    private Context GetOrAddContextForFragment(
         Context context,
         InlineFragmentNode inlineFragmentNode,
         ITypeDefinition typeCondition)
     {
         if (context.IsDeferContext)
         {
+            if (!mergeAcrossDefer)
+            {
+                if (!context.HasFragment(inlineFragmentNode, out var deferFragmentContext))
+                {
+                    deferFragmentContext = context.AddFragment(inlineFragmentNode, typeCondition);
+                }
+
+                return deferFragmentContext;
+            }
+
             var ancestor = context.Parent;
             while (ancestor is not null)
             {
@@ -562,7 +594,7 @@ public sealed partial class DocumentRewriter(
         return targetContext;
     }
 
-    private static void MergeContexts(Context source, Context target)
+    private void MergeContexts(Context source, Context target)
     {
         if (source.Conditionals is not null)
         {
@@ -676,6 +708,9 @@ public sealed partial class DocumentRewriter(
             {
                 StringValueNode? label = null;
                 IValueNode? ifValue = null;
+                IntValueNode? group = null;
+                IntValueNode? parent = null;
+                IntValueNode? levels = null;
                 var dropDirective = false;
 
                 foreach (var argument in directive.Arguments)
@@ -702,6 +737,21 @@ public sealed partial class DocumentRewriter(
                     {
                         label = labelValue;
                     }
+                    else if (argument.Value is IntValueNode intValue)
+                    {
+                        if (argument.Name.Value.Equals(DeferArguments.Group, StringComparison.Ordinal))
+                        {
+                            group = intValue;
+                        }
+                        else if (argument.Name.Value.Equals(DeferArguments.Parent, StringComparison.Ordinal))
+                        {
+                            parent = intValue;
+                        }
+                        else if (argument.Name.Value.Equals(DeferArguments.Levels, StringComparison.Ordinal))
+                        {
+                            levels = intValue;
+                        }
+                    }
                 }
 
                 if (dropDirective)
@@ -709,7 +759,7 @@ public sealed partial class DocumentRewriter(
                     continue;
                 }
 
-                defer = new Defer { Label = label, If = ifValue };
+                defer = new Defer { Label = label, If = ifValue, Group = group, Parent = parent, Levels = levels };
 
                 continue;
             }
@@ -1563,6 +1613,21 @@ public sealed partial class DocumentRewriter(
         /// </summary>
         public IValueNode? If { get; init; }
 
+        /// <summary>
+        /// The internal <c>__group</c> argument, or <c>null</c> when the directive has none.
+        /// </summary>
+        public IntValueNode? Group { get; init; }
+
+        /// <summary>
+        /// The internal <c>__parent</c> argument, or <c>null</c> when the directive has none.
+        /// </summary>
+        public IntValueNode? Parent { get; init; }
+
+        /// <summary>
+        /// The internal <c>__levels</c> argument, or <c>null</c> when the directive has none.
+        /// </summary>
+        public IntValueNode? Levels { get; init; }
+
         public DirectiveNode ToDirective()
         {
             List<ArgumentNode>? arguments = null;
@@ -1579,8 +1644,47 @@ public sealed partial class DocumentRewriter(
                 arguments.Add(new ArgumentNode(DirectiveNames.Defer.Arguments.Label, Label));
             }
 
+            if (Group is not null)
+            {
+                arguments ??= [];
+                arguments.Add(new ArgumentNode(DeferArguments.Group, Group));
+            }
+
+            if (Parent is not null)
+            {
+                arguments ??= [];
+                arguments.Add(new ArgumentNode(DeferArguments.Parent, Parent));
+            }
+
+            if (Levels is not null)
+            {
+                arguments ??= [];
+                arguments.Add(new ArgumentNode(DeferArguments.Levels, Levels));
+            }
+
             return new DirectiveNode(DirectiveNames.Defer.Name, arguments?.ToArray() ?? []);
         }
+    }
+
+    /// <summary>
+    /// The names of the internal arguments that <c>@defer</c> carries after the defer lowering.
+    /// </summary>
+    internal static class DeferArguments
+    {
+        /// <summary>
+        /// The number of the delivery group of the fragment.
+        /// </summary>
+        public const string Group = "__group";
+
+        /// <summary>
+        /// The number of the parent delivery group, or <c>-1</c> when there is none.
+        /// </summary>
+        public const string Parent = "__parent";
+
+        /// <summary>
+        /// The number of field levels between a part and the place of its fragment.
+        /// </summary>
+        public const string Levels = "__levels";
     }
 
     #region Comparers

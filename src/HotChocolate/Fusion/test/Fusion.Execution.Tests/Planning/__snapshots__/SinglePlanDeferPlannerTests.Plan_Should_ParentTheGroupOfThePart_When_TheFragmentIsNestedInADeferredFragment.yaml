@@ -1,0 +1,101 @@
+operation:
+  - document: |
+      {
+        product(id: "1") {
+          name
+          reviews {
+            id
+            ... @defer(label: "inner", __group: 1, __parent: 0, __levels: 1) {
+              rating
+              id @fusion__requirement
+            }
+          }
+          id @fusion__requirement
+          ... @defer(label: "outer", __group: 0, __parent: -1) {
+            price
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productByIdForReviews(id: $__fusion_1_id) {
+          reviews {
+            id
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.productByIdForReviews
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        reviewById(id: $__fusion_2_id) {
+          rating
+        }
+      }
+    source: $.reviewById
+    target: $.product.reviews
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        productById(id: $__fusion_3_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: outer
+  - id: 1
+    path: $.product
+    label: inner
+    parentId: 0

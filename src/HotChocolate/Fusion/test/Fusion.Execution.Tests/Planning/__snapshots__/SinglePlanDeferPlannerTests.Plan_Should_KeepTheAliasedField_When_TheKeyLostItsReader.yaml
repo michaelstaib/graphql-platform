@@ -1,0 +1,73 @@
+operation:
+  - document: |
+      {
+        products {
+          upc
+          myId: id
+          ... @defer(__group: 0, __parent: -1) {
+            eur
+            upc @fusion__requirement
+            price(cur: "EUR") @fusion__requirement
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 7
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        products {
+          upc
+          myId: id
+        }
+      }
+  - id: 3
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_3($__fusion_2_price: Int, $__fusion_3_upc: String!) {
+        productByUpc(upc: $__fusion_3_upc) {
+          eur(price: $__fusion_2_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    requirements:
+      - name: __fusion_2_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_3_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_4_upc: String!) {
+        productByUpcB(upc: $__fusion_4_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    requirements:
+      - name: __fusion_4_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.products

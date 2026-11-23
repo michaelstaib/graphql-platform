@@ -1,0 +1,131 @@
+operation:
+  - document: |
+      {
+        current {
+          user {
+            friend {
+              sku
+              code @fusion__requirement
+              id @fusion__requirement
+            }
+            ... @defer(label: "x", __group: 0, __parent: -1) {
+              friend {
+                code
+                id @fusion__requirement
+                ... @defer(label: "y", __group: 1, __parent: 0) {
+                  total
+                  sku @fusion__requirement
+                  code @fusion__requirement
+                  id @fusion__requirement
+                }
+              }
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 11
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        current {
+          user {
+            friend {
+              id
+            }
+            ... {
+              id
+            }
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: Int!) {
+        userById(id: $__fusion_1_id) {
+          friend {
+            ... {
+              id
+            }
+            id
+          }
+        }
+      }
+    source: $.userById
+    target: $.current.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_sku: String!) {
+        userBySku(sku: $__fusion_3_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    target: $.current.user.friend
+    requirements:
+      - name: __fusion_3_sku
+        selectionMap: >-
+          sku
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 7
+  - id: 7
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_7($__fusion_6_code: String!) {
+        userByCode(code: $__fusion_6_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.current.user.friend
+    requirements:
+      - name: __fusion_6_code
+        selectionMap: >-
+          code
+    dependencies:
+      - id: 8
+  - id: 8
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_8($__fusion_7_id: Int!) {
+        userByIdC(id: $__fusion_7_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user.friend
+    requirements:
+      - name: __fusion_7_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.current.user
+    label: x
+  - id: 1
+    path: $.current.user.friend
+    label: y
+    parentId: 0

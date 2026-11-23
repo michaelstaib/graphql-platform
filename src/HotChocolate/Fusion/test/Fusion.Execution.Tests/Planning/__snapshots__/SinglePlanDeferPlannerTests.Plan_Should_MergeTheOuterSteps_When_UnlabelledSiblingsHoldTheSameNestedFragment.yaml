@@ -1,0 +1,121 @@
+operation:
+  - document: |
+      {
+        product(id: "1") {
+          name
+          ... @defer(__group: 0, __parent: -1) {
+            author {
+              ... @defer(__group: 1, __parent: 0) {
+                bio
+                id @fusion__requirement
+              }
+            }
+            id @fusion__requirement
+          }
+          ... @defer(__group: 2, __parent: -1) {
+            author {
+              ... @defer(__group: 3, __parent: 2) {
+                bio
+                id @fusion__requirement
+              }
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          ... {
+            id
+          }
+          ... {
+            id
+          }
+        }
+      }
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        authorById(id: $__fusion_2_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    batchingGroupId: 6
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 3
+    dependencies:
+      - id: 2
+  - id: 5
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: ID!) {
+        authorById(id: $__fusion_4_id) {
+          bio
+        }
+      }
+    source: $.authorById
+    target: $.product.author
+    batchingGroupId: 6
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+  - id: 2
+    type: OperationBatch
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          author {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.productById
+    targets:
+      - $.product
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+      - 2
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+  - id: 1
+    path: $.product.author
+    parentId: 0
+  - id: 2
+    path: $.product
+  - id: 3
+    path: $.product.author
+    parentId: 2

@@ -18,11 +18,15 @@ internal readonly struct ObjectTemplate
 {
     private readonly byte[] _rows;
     private readonly int[] _conditionalSelections;
+    private readonly bool _hasGroupRows;
+    private readonly bool _isRequestInvariant;
 
-    private ObjectTemplate(byte[] rows, int[] conditionalSelections)
+    private ObjectTemplate(byte[] rows, int[] conditionalSelections, bool hasGroupRows)
     {
         _rows = rows;
         _conditionalSelections = conditionalSelections;
+        _hasGroupRows = hasGroupRows;
+        _isRequestInvariant = conditionalSelections.Length == 0 && !hasGroupRows;
     }
 
     /// <summary>
@@ -38,11 +42,23 @@ internal readonly struct ObjectTemplate
     /// </summary>
     public ReadOnlySpan<int> ConditionalSelections => _conditionalSelections;
 
+    /// <summary>
+    /// Gets a value indicating whether a selection of the block has a syntax node in a delivery group.
+    /// </summary>
+    public bool HasGroupRows => _hasGroupRows;
+
+    /// <summary>
+    /// Gets a value indicating whether the block has no conditional selection and no selection with a syntax node
+    /// in a delivery group.
+    /// </summary>
+    public bool IsRequestInvariant => _isRequestInvariant;
+
     public static ObjectTemplate Create(SelectionSet selectionSet)
     {
         var selections = selectionSet.Selections;
         var rows = new byte[((selections.Length * 2) + 2) * DbRow.Size];
         var conditionalCount = 0;
+        var hasGroupRows = false;
 
         foreach (var selection in selections)
         {
@@ -50,6 +66,8 @@ internal readonly struct ObjectTemplate
             {
                 conditionalCount++;
             }
+
+            hasGroupRows |= selection.HasDeliveryGroupNode;
         }
 
         var conditionalSelections = conditionalCount == 0 ? [] : new int[conditionalCount];
@@ -99,7 +117,7 @@ internal readonly struct ObjectTemplate
         var endObjectRow = new DbRow(ElementTokenType.EndObject);
         MemoryMarshal.Write(rows.AsSpan(offset), in endObjectRow);
 
-        return new ObjectTemplate(rows, conditionalSelections);
+        return new ObjectTemplate(rows, conditionalSelections, hasGroupRows);
     }
 
     /// <summary>

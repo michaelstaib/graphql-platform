@@ -5,6 +5,11 @@ using HotChocolate.Execution;
 using HotChocolate.Execution.Pipeline;
 using HotChocolate.Fusion.Execution.CostAnalysis;
 using HotChocolate.Fusion.Diagnostics;
+using HotChocolate.Fusion.Execution.Rewriters;
+using HotChocolate.Fusion.Planning;
+using HotChocolate.Fusion.Types;
+using HotChocolate.Language;
+using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HotChocolate.Fusion.Execution.Pipeline;
@@ -15,17 +20,20 @@ internal sealed class CostAnalysisMiddleware
     private readonly Cache<CostPlan> _cache;
     private readonly FusionCostOptions _options;
     private readonly IFusionExecutionDiagnosticEvents _diagnosticEvents;
+    private readonly DocumentRewriter? _mergeAcrossDeferRewriter;
 
     private CostAnalysisMiddleware(
         CostSchemaIndex schemaIndex,
         Cache<CostPlan> cache,
         FusionCostOptions options,
-        IFusionExecutionDiagnosticEvents diagnosticEvents)
+        IFusionExecutionDiagnosticEvents diagnosticEvents,
+        DocumentRewriter? mergeAcrossDeferRewriter)
     {
         _schemaIndex = schemaIndex;
         _cache = cache;
         _options = options;
         _diagnosticEvents = diagnosticEvents;
+        _mergeAcrossDeferRewriter = mergeAcrossDeferRewriter;
     }
 
     public ValueTask InvokeAsync(RequestContext context, RequestDelegate next)
@@ -73,11 +81,18 @@ internal sealed class CostAnalysisMiddleware
                     analyses |= CostAnalyses.ResponseSize;
                 }
 
-                plan = CostPlanCompiler.Compile(
-                    _schemaIndex,
-                    context.GetNormalizedDocument(),
-                    context.GetNormalizedOperation(),
-                    analyses);
+                var document = context.GetNormalizedDocument();
+                var operation = context.GetNormalizedOperation();
+
+                // An operation with @defer is costed like the same operation without @defer.
+                if (_mergeAcrossDeferRewriter is not null && DeferOperationRewriter.HasDeferDirective(operation))
+                {
+                    var withoutDefer = document.WithDefinitions([RemoveDeferDirectives(operation)]);
+                    document = _mergeAcrossDeferRewriter.RewriteDocument(withoutDefer);
+                    operation = (OperationDefinitionNode)document.Definitions[0];
+                }
+
+                plan = CostPlanCompiler.Compile(_schemaIndex, document, operation, analyses);
                 _cache.TryAdd(operationId, plan);
             }
 
@@ -152,6 +167,52 @@ internal sealed class CostAnalysisMiddleware
         }
 
         return default;
+    }
+
+    private static OperationDefinitionNode RemoveDeferDirectives(OperationDefinitionNode operation)
+        => operation.WithSelectionSet(RemoveDeferDirectives(operation.SelectionSet));
+
+    private static SelectionSetNode RemoveDeferDirectives(SelectionSetNode selectionSet)
+    {
+        var selections = new List<ISelectionNode>(selectionSet.Selections.Count);
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            switch (selection)
+            {
+                case InlineFragmentNode fragment:
+                    selections.Add(
+                        fragment
+                            .WithDirectives(RemoveDeferDirectives(fragment.Directives))
+                            .WithSelectionSet(RemoveDeferDirectives(fragment.SelectionSet)));
+                    break;
+
+                case FieldNode { SelectionSet: { } fieldSelectionSet } field:
+                    selections.Add(field.WithSelectionSet(RemoveDeferDirectives(fieldSelectionSet)));
+                    break;
+
+                default:
+                    selections.Add(selection);
+                    break;
+            }
+        }
+
+        return selectionSet.WithSelections(selections);
+    }
+
+    private static List<DirectiveNode> RemoveDeferDirectives(IReadOnlyList<DirectiveNode> directives)
+    {
+        var remaining = new List<DirectiveNode>(directives.Count);
+
+        foreach (var directive in directives)
+        {
+            if (!directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+            {
+                remaining.Add(directive);
+            }
+        }
+
+        return remaining;
     }
 
     private static bool TryGetViolation(
@@ -326,7 +387,19 @@ internal sealed class CostAnalysisMiddleware
                 var options = fc.SchemaServices.GetRequiredService<FusionCostOptions>();
                 var diagnosticEvents =
                     fc.SchemaServices.GetRequiredService<IFusionExecutionDiagnosticEvents>();
-                var middleware = new CostAnalysisMiddleware(schemaIndex, cache, options, diagnosticEvents);
+                var mergeAcrossDeferRewriter =
+                    fc.SchemaServices.GetRequiredService<OperationPlannerOptions>().EnableSinglePlanDefer
+                        ? new DocumentRewriter(
+                            fc.SchemaServices.GetRequiredService<FusionSchemaDefinition>(),
+                            mergeAcrossDefer: true,
+                            removeStaticallyExcludedSelections: true)
+                        : null;
+                var middleware = new CostAnalysisMiddleware(
+                    schemaIndex,
+                    cache,
+                    options,
+                    diagnosticEvents,
+                    mergeAcrossDeferRewriter);
                 return context => middleware.InvokeAsync(context, next);
             },
             WellKnownRequestMiddleware.CostAnalyzerMiddleware);

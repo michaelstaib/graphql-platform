@@ -58,6 +58,43 @@ public sealed record FieldSelectionNode
     public ConditionFlags PathConditionFlags { get; }
 
     /// <summary>
+    /// Determines whether every condition flag of <see cref="PathConditionFlags"/> is set in
+    /// <paramref name="includeFlags"/>.
+    /// </summary>
+    /// <param name="includeFlags">The include condition flags of the request.</param>
+    internal bool IsIncluded(ConditionFlags includeFlags)
+    {
+        var path = PathConditionFlags;
+
+        if ((path.Word0 & includeFlags.Word0) != path.Word0)
+        {
+            return false;
+        }
+
+        var pathOverflow = path.Overflow;
+
+        if (pathOverflow is null)
+        {
+            return true;
+        }
+
+        var requestOverflow = includeFlags.Overflow;
+
+        for (var i = 0; i < pathOverflow.Length; i++)
+        {
+            var pathWord = pathOverflow[i];
+            var requestWord = requestOverflow is not null && i < requestOverflow.Length ? requestOverflow[i] : 0ul;
+
+            if ((pathWord & requestWord) != pathWord)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Deconstructs this field selection node.
     /// </summary>
     /// <param name="node">The syntax node that represents the field selection.</param>

@@ -1,0 +1,113 @@
+operation:
+  - document: |
+      {
+        user {
+          ... @defer(__group: 0, __parent: -1) {
+            tax
+            sku @fusion__requirement
+            total @fusion__requirement
+            code @fusion__requirement
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 9
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          ... {
+            id
+          }
+        }
+      }
+  - id: 3
+    type: Operation
+    schema: e
+    operation: |
+      query Op_123456789101112_3($__fusion_2_total: Int, $__fusion_3_sku: String!) {
+        userBySku(sku: $__fusion_3_sku) {
+          tax(total: $__fusion_2_total)
+        }
+      }
+    source: $.userBySku
+    target: $.user
+    requirements:
+      - name: __fusion_2_total
+        selectionMap: >-
+          total
+      - name: __fusion_3_sku
+        selectionMap: >-
+          sku
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 4
+      - id: 5
+      - id: 6
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_4_sku: String!) {
+        userBySku(sku: $__fusion_4_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    target: $.user
+    requirements:
+      - name: __fusion_4_sku
+        selectionMap: >-
+          sku
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 5
+      - id: 6
+  - id: 5
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_5($__fusion_5_code: String!) {
+        userByCode(code: $__fusion_5_code) {
+          sku
+        }
+      }
+    source: $.userByCode
+    target: $.user
+    requirements:
+      - name: __fusion_5_code
+        selectionMap: >-
+          code
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 6
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_6_id: ID!) {
+        userById(id: $__fusion_6_id) {
+          code
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_6_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.user

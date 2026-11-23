@@ -1,0 +1,117 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        product(id: "1") {
+          name
+          id @fusion__requirement
+          price @skip(if: $a)
+          ... @include(if: $a) {
+            ... @defer(if: $a, __group: 0, __parent: -1) {
+              price
+              id @fusion__requirement
+            }
+          }
+          price @skip(if: $b)
+          ... @include(if: $b) {
+            ... @defer(if: $b, __group: 1, __parent: -1) {
+              price
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product(id: "1") {
+          name
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($a: Boolean!, $b: Boolean!, $__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          price @skip(if: $a)
+          price @skip(if: $b)
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditionAlternatives:
+      -
+        - variable: $a
+          passingValue: false
+      -
+        - variable: $b
+          passingValue: false
+    forwardedVariables:
+      - a
+      - b
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        productById(id: $__fusion_2_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    batchingGroupId: 5
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $b
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        productById(id: $__fusion_3_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.product
+    batchingGroupId: 5
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    ifVariable: $a
+  - id: 1
+    path: $.product
+    ifVariable: $b

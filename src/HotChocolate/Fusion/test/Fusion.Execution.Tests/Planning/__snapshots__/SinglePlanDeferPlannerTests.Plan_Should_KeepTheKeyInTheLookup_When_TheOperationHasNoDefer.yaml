@@ -1,0 +1,64 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        current {
+          user {
+            sku
+            sku @fusion__requirement
+            id @fusion__requirement
+            total @skip(if: $a)
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 5
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        current {
+          user {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($a: Boolean!, $__fusion_1_sku: String!) {
+        userBySku(sku: $__fusion_1_sku) {
+          sku
+          total @skip(if: $a)
+        }
+      }
+    source: $.userBySku
+    target: $.current.user
+    requirements:
+      - name: __fusion_1_sku
+        selectionMap: >-
+          sku
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: Int!) {
+        userByIdC(id: $__fusion_2_id) {
+          sku
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1

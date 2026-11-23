@@ -66,6 +66,12 @@ public sealed class OperationExecutionNode : ExecutionNode
     public override ReadOnlySpan<ExecutionNodeCondition[]> ConditionAlternatives => _conditionAlternatives;
 
     /// <summary>
+    /// Gets the ids of the delivery groups this operation belongs to, or an empty array
+    /// when it belongs to the initial response.
+    /// </summary>
+    internal ImmutableArray<int> DeliveryGroups { get; init; } = [];
+
+    /// <summary>
     /// Gets the operation definition that this execution node represents.
     /// </summary>
     public OperationSourceText Operation => _operation;

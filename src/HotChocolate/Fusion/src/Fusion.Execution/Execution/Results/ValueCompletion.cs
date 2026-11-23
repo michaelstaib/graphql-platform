@@ -25,6 +25,13 @@ internal sealed class ValueCompletion
     private IErrorHandler _errorHandler = default!;
     private ErrorHandlingMode _errorHandlingMode;
     private bool _propagateNullValues;
+    private CompletionMode _mode;
+    private CompositeResultDocument? _writeFilterDocument;
+    private ImmutableArray<int> _writeFilterGroups;
+    private bool _stoppedAtGroupBoundary;
+    private CompositeResultElement? _nullLeavingGroups;
+    // The recorded error of the null that a completion returned last, null when that null has none.
+    private GroupError? _returnedNullError;
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
@@ -51,9 +58,45 @@ internal sealed class ValueCompletion
         _errorHandler = errorHandler;
         _errorHandlingMode = errorHandlingMode;
         _propagateNullValues = errorHandlingMode is not ErrorHandlingMode.Null;
+        _nullLeavingGroups = null;
+        _returnedNullError = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
+
+    /// <summary>
+    /// Makes the completions of this request aware of delivery groups. Without it, completions never read
+    /// the delivery state of the result document.
+    /// </summary>
+    internal void EnableDelivery()
+    {
+        _mode = CompletionMode.Delivery;
+        _store.Result.Delivery!.AttachCompletion(this);
+    }
+
+    /// <summary>
+    /// Restricts the rows that completions write to the rows that resolve to one of the delivery groups.
+    /// </summary>
+    internal void SetWriteFilter(CompositeResultDocument document, ImmutableArray<int> deliveryGroups)
+    {
+        _writeFilterGroups = deliveryGroups;
+        _writeFilterDocument = document;
+        _mode = CompletionMode.Filtered;
+    }
+
+    internal void ClearWriteFilter()
+    {
+        _mode = CompletionMode.Delivery;
+        _writeFilterDocument = null;
+        _writeFilterGroups = default;
+    }
+
+    private bool IsWriteDenied(CompositeResultElement field, Selection selection, JsonValueKind sourceKind)
+        => !_writeFilterDocument!.AllowsMarkedWrite(
+            field,
+            selection,
+            _writeFilterGroups,
+            sourceKind is JsonValueKind.Object or JsonValueKind.Array);
 
     /// <summary>
     /// Releases the request state so that the value completion can be initialized again.
@@ -64,6 +107,9 @@ internal sealed class ValueCompletion
         _errorHandler = default!;
         _errorHandlingMode = default;
         _propagateNullValues = false;
+        _mode = CompletionMode.Plain;
+        _nullLeavingGroups = null;
+        _returnedNullError = null;
         _typeMemoA = null;
         _typeMemoB = null;
     }
@@ -81,6 +127,19 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ErrorTrie? errorTrie,
         ResultSelectionSet resultSelectionSet)
+        => _mode switch
+        {
+            CompletionMode.Plain => BuildResult<PlainMode>(source, target, errorTrie, resultSelectionSet),
+            CompletionMode.Delivery => BuildResult<DeliveryMode>(source, target, errorTrie, resultSelectionSet),
+            _ => BuildResult<FilteredMode>(source, target, errorTrie, resultSelectionSet)
+        };
+
+    private bool BuildResult<TMode>(
+        SourceResultElement source,
+        CompositeResultElement target,
+        ErrorTrie? errorTrie,
+        ResultSelectionSet resultSelectionSet)
+        where TMode : struct, IMode
     {
         var sourceSnapshot = source.CreateSnapshot();
 
@@ -88,7 +147,7 @@ internal sealed class ValueCompletion
         {
             var error = errorTrie?.FindFirstError();
             var canExecutionContinue =
-                BuildResultForInvalidSource(
+                BuildResultForInvalidSource<TMode>(
                     sourceSnapshot,
                     target,
                     resultSelectionSet,
@@ -99,7 +158,7 @@ internal sealed class ValueCompletion
                 return false;
             }
 
-            return ApplyPocketedErrors(target);
+            return ApplyPocketedErrors<TMode>(target);
         }
 
         if (!target.TryGetObjectContext(out var objectContext))
@@ -151,6 +210,16 @@ internal sealed class ValueCompletion
                 var propertyValueSnapshot = property.Value.CreateSnapshot();
                 var propertyValueKind = propertyValueSnapshot.ValueKind;
 
+                if (TMode.IsFiltered && IsWriteDenied(resultField, selection, propertyValueKind))
+                {
+                    if (propertyValueKind is JsonValueKind.Null)
+                    {
+                        RecordDeniedNull(resultField, errorTrie, sourceResponseName);
+                    }
+
+                    continue;
+                }
+
                 if (errorTrie is null && propertyValueKind.IsScalarValue())
                 {
                     if (propertyValueKind is JsonValueKind.String && selection.IsEnumValue)
@@ -170,7 +239,7 @@ internal sealed class ValueCompletion
                 errorTrie?.TryGetValue(sourceResponseName, out errorTrieForResponseName);
 
                 var childSet = resultSelectionSet.TryGetChild(selection.ResponseName);
-                if (!TryCompleteValue(
+                if (!TryCompleteValue<TMode>(
                         propertyValueSnapshot,
                         resultField,
                         errorTrieForResponseName,
@@ -179,13 +248,18 @@ internal sealed class ValueCompletion
                         childSet)
                     && _errorHandlingMode is ErrorHandlingMode.Propagate)
                 {
-                    var didPropagateToRoot = PropagateNullValues(resultField);
+                    var didPropagateToRoot = PropagateNullValues<TMode>(resultField);
                     if (didPropagateToRoot)
                     {
                         return false;
                     }
 
-                    return ApplyPocketedErrors(target);
+                    if (TMode.HasDelivery && _stoppedAtGroupBoundary && !target.IsNullOrInvalidated)
+                    {
+                        continue;
+                    }
+
+                    return ApplyPocketedErrors<TMode>(target);
                 }
             }
         }
@@ -202,6 +276,16 @@ internal sealed class ValueCompletion
 
                 var propertyValueSnapshot = properties.Value;
                 var propertyValueKind = propertyValueSnapshot.ValueKind;
+
+                if (TMode.IsFiltered && IsWriteDenied(resultField, selection, propertyValueKind))
+                {
+                    if (propertyValueKind is JsonValueKind.Null)
+                    {
+                        RecordDeniedNull(resultField, errorTrie, selection.ResponseName);
+                    }
+
+                    continue;
+                }
 
                 // Fast path: when there are no errors and the source value is a
                 // scalar (string, number, bool) we can set it directly without
@@ -225,7 +309,7 @@ internal sealed class ValueCompletion
                 errorTrie?.TryGetValue(selection.ResponseName, out errorTrieForResponseName);
 
                 var childSet = resultSelectionSet.TryGetChild(selection.ResponseName);
-                if (!TryCompleteValue(
+                if (!TryCompleteValue<TMode>(
                         propertyValueSnapshot,
                         resultField,
                         errorTrieForResponseName,
@@ -236,20 +320,25 @@ internal sealed class ValueCompletion
                     switch (_errorHandlingMode)
                     {
                         case ErrorHandlingMode.Propagate:
-                            var didPropagateToRoot = PropagateNullValues(resultField);
+                            var didPropagateToRoot = PropagateNullValues<TMode>(resultField);
                             if (didPropagateToRoot)
                             {
                                 return false;
                             }
 
-                            return ApplyPocketedErrors(target);
+                            if (TMode.HasDelivery && _stoppedAtGroupBoundary && !target.IsNullOrInvalidated)
+                            {
+                                continue;
+                            }
+
+                            return ApplyPocketedErrors<TMode>(target);
 
                     }
                 }
             }
         }
 
-        return ApplyPocketedErrors(target);
+        return ApplyPocketedErrors<TMode>(target);
     }
 
     private CompositeObjectContext InitializeTargetObject(
@@ -311,7 +400,8 @@ internal sealed class ValueCompletion
 
     /// <summary>
     /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path
-    /// of each field selected by <paramref name="resultSelectionSet"/>.
+    /// of each field selected by <paramref name="resultSelectionSet"/>. Under a write filter only the fields
+    /// that the filter allows are written.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the execution can continue.
@@ -322,6 +412,25 @@ internal sealed class ValueCompletion
         ResultSelectionSet resultSelectionSet,
         IError error,
         CompactPath path)
+        => _mode switch
+        {
+            CompletionMode.Plain => BuildErrorResult<PlainMode>(target, resultSelectionSet, error, path),
+            CompletionMode.Delivery => BuildErrorResult<DeliveryMode>(target, resultSelectionSet, error, path),
+            _ => BuildErrorResult(
+                target,
+                resultSelectionSet,
+                error,
+                path,
+                _writeFilterDocument!,
+                _writeFilterGroups)
+        };
+
+    private bool BuildErrorResult<TMode>(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        IError error,
+        CompactPath path)
+        where TMode : struct, IMode
     {
         var operation = target.Operation;
         var errorPath = path.ToPath(operation);
@@ -337,15 +446,131 @@ internal sealed class ValueCompletion
                 return true;
             }
 
-            if (!target.TryGetProperty(responseName, out var fieldResult)
-                || fieldResult.IsInternal)
+            if (!target.TryGetProperty(responseName, out var fieldResult))
             {
+                continue;
+            }
+
+            if (fieldResult.IsInternal)
+            {
+                if (TMode.HasDelivery)
+                {
+                    RecordWrittenAnswer(fieldResult, isLeaf: false, groups: [], error);
+                }
+
                 continue;
             }
 
             var selection = fieldResult.AssertSelection();
 
-            if (!ApplyFieldError(fieldResult, selection, error, errorPath.Append(responseName)))
+            if (TMode.HasDelivery)
+            {
+                RecordWrittenAnswer(fieldResult, selection.IsLeaf, groups: [], error);
+            }
+
+            if (TMode.HasDelivery
+                && IsLeftOutsideGroups(fieldResult, selection)
+                && NullLeavesGroups(fieldResult, selection, out var nullStop))
+            {
+                // The failure is the result of the row, so that no step of a delivery group writes it later.
+                _store.Result.MarkWritten(fieldResult);
+
+                if (!ApplyFieldErrorOutsideGroups(
+                        fieldResult,
+                        selection,
+                        error,
+                        errorPath.Append(responseName),
+                        nullStop))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!ApplyFieldError<TMode>(fieldResult, selection, error, errorPath.Append(responseName)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Tries to <c>null</c> and assign the <paramref name="error"/> to the path of each field selected by
+    /// <paramref name="resultSelectionSet"/> that a step of <paramref name="deliveryGroups"/> may write.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the execution can continue.
+    /// <c>false</c>, if the execution needs to be halted.
+    /// </returns>
+    public bool BuildErrorResult(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet,
+        IError error,
+        CompactPath path,
+        CompositeResultDocument document,
+        ImmutableArray<int> deliveryGroups)
+    {
+        var operation = target.Operation;
+        var errorPath = path.ToPath(operation);
+
+        foreach (var responseName in resultSelectionSet.ResponseNames)
+        {
+            if (target.IsNullOrInvalidated)
+            {
+                return true;
+            }
+
+            if (!target.TryGetProperty(responseName, out var fieldResult))
+            {
+                continue;
+            }
+
+            if (fieldResult.IsInternal)
+            {
+                // A field the client did not select keeps the answer for the rows below it and for the fields that
+                // require it.
+                if (_writeFilterDocument is not null
+                    && !fieldResult.IsNullOrInvalidated
+                    && fieldResult.ValueKind is JsonValueKind.Undefined or JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    _writeFilterDocument.Delivery!.AddDeniedAnswer(
+                        fieldResult.Cursor,
+                        _writeFilterGroups,
+                        error,
+                        holdsRowError: false);
+                }
+
+                continue;
+            }
+
+            var selection = fieldResult.AssertSelection();
+
+            if (!document.AllowsMarkedWrite(fieldResult, selection, deliveryGroups, sourceIsContainer: false))
+            {
+                // A merge records the answer for the rows below the value. A failed step records the error, but
+                // only for a row that no other group holds.
+                if (_writeFilterDocument is not null)
+                {
+                    RecordDeniedAnswer(fieldResult, error);
+                }
+                else if (document.HoldsOnlyRowsOf(fieldResult, deliveryGroups))
+                {
+                    var deniedError = ErrorBuilder.FromError(error)
+                        .SetPath(errorPath.Append(responseName))
+                        .Build();
+
+                    document.RecordDeniedError(fieldResult, deliveryGroups, _errorHandler.Handle(deniedError));
+                }
+
+                continue;
+            }
+
+            RecordWrittenAnswer(fieldResult, selection.IsLeaf, deliveryGroups, error);
+
+            if (!ApplyFieldError<DeliveryMode>(fieldResult, selection, error, errorPath.Append(responseName)))
             {
                 return false;
             }
@@ -355,6 +580,12 @@ internal sealed class ValueCompletion
     }
 
     public bool BuildErrorResult(Path path, IError error)
+        => _mode is CompletionMode.Plain
+            ? BuildErrorResult<PlainMode>(path, error)
+            : BuildErrorResult<DeliveryMode>(path, error);
+
+    private bool BuildErrorResult<TMode>(Path path, IError error)
+        where TMode : struct, IMode
     {
         var reachablePath = path;
 
@@ -363,7 +594,7 @@ internal sealed class ValueCompletion
             if (_store.TryGetResult(reachablePath, out var fieldResult)
                 && fieldResult.Selection is { } selection)
             {
-                return ApplyFieldError(fieldResult, selection, error, path);
+                return ApplyFieldError<TMode>(fieldResult, selection, error, path);
             }
 
             reachablePath = reachablePath.Parent;
@@ -379,6 +610,14 @@ internal sealed class ValueCompletion
     public bool CompleteErrorResult(
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
+        => _mode is CompletionMode.Plain
+            ? CompleteErrorResult<PlainMode>(target, resultSelectionSet)
+            : CompleteErrorResult<DeliveryMode>(target, resultSelectionSet);
+
+    private bool CompleteErrorResult<TMode>(
+        CompositeResultElement target,
+        ResultSelectionSet resultSelectionSet)
+        where TMode : struct, IMode
     {
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -395,7 +634,7 @@ internal sealed class ValueCompletion
             }
 
             if (_errorHandlingMode is ErrorHandlingMode.Propagate
-                && PropagateNullValues(fieldResult))
+                && PropagateNullValues<TMode>(fieldResult, failure: null))
             {
                 return false;
             }
@@ -411,7 +650,20 @@ internal sealed class ValueCompletion
             return;
         }
 
-        if (!ApplyPocketedErrors(resultData))
+        if (_mode is CompletionMode.Plain)
+        {
+            FinalizePocketedErrors<PlainMode>(resultData);
+        }
+        else
+        {
+            FinalizePocketedErrors<DeliveryMode>(resultData);
+        }
+    }
+
+    private void FinalizePocketedErrors<TMode>(CompositeResultElement resultData)
+        where TMode : struct, IMode
+    {
+        if (!ApplyPocketedErrors<TMode>(resultData))
         {
             return;
         }
@@ -442,7 +694,7 @@ internal sealed class ValueCompletion
                 var promotedError = ErrorBuilder.FromError(error)
                     .SetPath(parentPath);
 
-                _store.AddError(_errorHandler.Handle(promotedError.Build()));
+                AddError<TMode>(_errorHandler.Handle(promotedError.Build()), parentResult);
                 parentResult.SetNullValue();
                 _store.RemovePocketedErrorsInSubtree(parentPath);
                 continue;
@@ -499,7 +751,16 @@ internal sealed class ValueCompletion
     public void FinalizeDeniedSelections(
         CompositeResultElement resultData,
         PolicyEvaluationResult policyResult)
-        => VisitDeniedSelections(resultData, policyResult);
+    {
+        if (_mode is CompletionMode.Plain)
+        {
+            VisitDeniedSelections<PlainMode>(resultData, policyResult);
+        }
+        else
+        {
+            VisitDeniedSelections<DeliveryMode>(resultData, policyResult);
+        }
+    }
 
     /// <summary>
     /// Applies the denial of every denied selection below <paramref name="current"/>.
@@ -507,9 +768,10 @@ internal sealed class ValueCompletion
     /// <returns>
     /// <c>false</c>, if the null propagation reached the root and the walk must stop.
     /// </returns>
-    private bool VisitDeniedSelections(
+    private bool VisitDeniedSelections<TMode>(
         CompositeResultElement current,
         PolicyEvaluationResult policyResult)
+        where TMode : struct, IMode
     {
         if (current.IsNullOrInvalidated || current.IsNullMarker)
         {
@@ -534,8 +796,8 @@ internal sealed class ValueCompletion
                     }
 
                     var canExecutionContinue = selection.HasPolicies && policyResult.IsDenied(selection)
-                        ? ApplyDenial(field, selection, policyResult)
-                        : VisitDeniedSelections(field, policyResult);
+                        ? ApplyDenial<TMode>(field, selection, policyResult)
+                        : VisitDeniedSelections<TMode>(field, policyResult);
 
                     if (!canExecutionContinue)
                     {
@@ -553,7 +815,7 @@ internal sealed class ValueCompletion
             case JsonValueKind.Array:
                 foreach (var element in current.EnumerateArray())
                 {
-                    if (!VisitDeniedSelections(element, policyResult))
+                    if (!VisitDeniedSelections<TMode>(element, policyResult))
                     {
                         return false;
                     }
@@ -571,10 +833,11 @@ internal sealed class ValueCompletion
         }
     }
 
-    private bool ApplyDenial(
+    private bool ApplyDenial<TMode>(
         CompositeResultElement field,
         Selection selection,
         PolicyEvaluationResult policyResult)
+        where TMode : struct, IMode
     {
         var path = field.Path;
         var error = policyResult.CreateError(selection, path);
@@ -582,12 +845,12 @@ internal sealed class ValueCompletion
         // A propagated null invalidates the parents of the field instead of nulling the field.
         if (_errorHandlingMode is ErrorHandlingMode.Propagate && selection.IsNonNull)
         {
-            return error is null || ApplyFieldError(field.Parent, selection, error, path);
+            return error is null || ApplyFieldError<TMode>(field.Parent, selection, error, path);
         }
 
         field.SetNullValue();
 
-        return error is null || ApplyFieldError(field, selection, error, path);
+        return error is null || ApplyFieldError<TMode>(field, selection, error, path);
     }
 
     private static void SetNullMarker(CompositeResultElement result)
@@ -605,10 +868,55 @@ internal sealed class ValueCompletion
     /// <summary>
     /// Invalidates the current result and its parents,
     /// until reaching a parent that can be set to <c>null</c>.
+    /// The null is the one that a completion returned last.
     /// </summary>
     /// <returns>
     /// <c>true</c>, if the null propagated up to the root.
     /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool PropagateNullValues<TMode>(CompositeResultElement result)
+        where TMode : struct, IMode
+    {
+        if (TMode.HasDelivery)
+        {
+            return PropagateNullValuesWithDelivery(result, _returnedNullError);
+        }
+
+        return PropagateNullValues(result);
+    }
+
+    /// <summary>
+    /// Invalidates the current result and its parents,
+    /// until reaching a parent that can be set to <c>null</c>.
+    /// The groups that the null fails report <paramref name="failure"/>, the recorded error of the null, if any.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the null propagated up to the root.
+    /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool PropagateNullValues<TMode>(CompositeResultElement result, GroupError? failure)
+        where TMode : struct, IMode
+    {
+        if (TMode.HasDelivery)
+        {
+            return PropagateNullValuesWithDelivery(result, failure);
+        }
+
+        return PropagateNullValues(result);
+    }
+
+    private bool PropagateNullValuesWithDelivery(CompositeResultElement result, GroupError? failure)
+    {
+        _stoppedAtGroupBoundary = false;
+
+        var leavesGroups = IsAtOrBelow(_nullLeavingGroups, result);
+        _nullLeavingGroups = null;
+
+        return !leavesGroups && _store.Result.TryGetDestination(result, out var destination)
+            ? PropagateNullValuesInGroups(result, destination, failure)
+            : PropagateNullValues(result);
+    }
+
     private static bool PropagateNullValues(CompositeResultElement result)
     {
         var current = result;
@@ -628,11 +936,420 @@ internal sealed class ValueCompletion
         return true;
     }
 
-    private bool BuildResultForInvalidSource(
+    /// <summary>
+    /// Invalidates the field and its parents, but stops before an object that is delivered elsewhere than the
+    /// field. The groups of the field fail at that object with <paramref name="failure"/> as their error.
+    /// </summary>
+    /// <returns>
+    /// <c>false</c>, because the null never propagates up to the root.
+    /// </returns>
+    private bool PropagateNullValuesInGroups(
+        CompositeResultElement result,
+        SelectionDelivery destination,
+        GroupError? failure)
+    {
+        if (TryFindGroupBoundary(result, destination, propagate: true, out _))
+        {
+            _store.Result.FailGroups(result, destination, failure);
+            _stoppedAtGroupBoundary = true;
+        }
+
+        return false;
+    }
+
+    // Determines whether the null of the field reaches an object that is delivered elsewhere than the field before a
+    // nullable element stops it, and gets that object. The null is only applied when propagate is set.
+    private bool TryFindGroupBoundary(
+        CompositeResultElement field,
+        SelectionDelivery destination,
+        bool propagate,
+        out CompositeResultElement boundary)
+    {
+        var document = _store.Result;
+        var current = field;
+
+        do
+        {
+            if (current.Cursor.Value != field.Cursor.Value && document.HasOtherDestination(current, destination))
+            {
+                boundary = current;
+                return true;
+            }
+
+            if (current.IsNullable)
+            {
+                if (propagate)
+                {
+                    current.SetNullValue();
+                }
+
+                break;
+            }
+
+            if (propagate)
+            {
+                current.Invalidate();
+            }
+
+            current = current.Parent;
+        } while (!current.IsNullOrInvalidated);
+
+        boundary = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Records the <c>null</c> that a step answered for a field that already holds an object or a list.
+    /// </summary>
+    private void RecordDeniedNull(CompositeResultElement field, ErrorTrie? errorTrie, string sourceResponseName)
+    {
+        ErrorTrie? errorTrieForResponseName = null;
+        errorTrie?.TryGetValue(sourceResponseName, out errorTrieForResponseName);
+
+        RecordDeniedAnswer(field, errorTrieForResponseName?.FindFirstError());
+    }
+
+    /// <summary>
+    /// Records that a step answered <c>null</c>, an error or a missing entity for a value that holds an object or
+    /// a list, or that no step wrote yet.
+    /// </summary>
+    private void RecordDeniedAnswer(CompositeResultElement value, IError? error)
+    {
+        if (!value.IsNullOrInvalidated
+            && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                || (value.ValueKind is JsonValueKind.Undefined && !value.AssertSelection().IsLeaf)))
+        {
+            _writeFilterDocument!.Delivery!.AddDeniedAnswer(
+                value.Cursor,
+                _writeFilterGroups,
+                error,
+                holdsRowError: false);
+        }
+    }
+
+    /// <summary>
+    /// Records the error that the step writes as the result of a value that holds an object or a list, or that no
+    /// step wrote yet. <paramref name="isLeaf"/> is <c>false</c> for a field that the client did not select, and
+    /// <paramref name="groups"/> is empty for a step without delivery groups.
+    /// </summary>
+    private void RecordWrittenAnswer(
+        CompositeResultElement value,
+        bool isLeaf,
+        ImmutableArray<int> groups,
+        IError error)
+    {
+        if (!value.IsNullOrInvalidated
+            && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                || (value.ValueKind is JsonValueKind.Undefined && !isLeaf)))
+        {
+            _store.Result.Delivery!.AddWrittenAnswer(value.Cursor, groups, error, holdsRowError: false);
+        }
+    }
+
+    /// <summary>
+    /// Completes a field that no step wrote the way a <c>null</c> source completes it, or with
+    /// <paramref name="error"/> when there is one.
+    /// </summary>
+    internal void CompleteUnwrittenField(CompositeResultElement field, Selection selection, IError? error)
+    {
+        if (error is not null)
+        {
+            ApplyFieldError<DeliveryMode>(field, selection, error, field.Path);
+            return;
+        }
+
+        if (!TryCompleteNullValue<DeliveryMode>(
+                JsonValueKind.Null,
+                field,
+                errorTrie: null,
+                selection,
+                resultSelectionSet: null))
+        {
+            PropagateNullValues<DeliveryMode>(field);
+        }
+    }
+
+    /// <summary>
+    /// Adds <paramref name="error"/> to the result for a field that no step wrote, without writing the field. The
+    /// error has the path of the field only when <paramref name="withPath"/> is set.
+    /// </summary>
+    internal IError AddUnwrittenFieldError(CompositeResultElement field, IError error, bool withPath)
+    {
+        var errorWithPath = ErrorBuilder.FromError(error)
+            .SetPath(withPath ? field.Path : null)
+            .Build();
+        errorWithPath = _errorHandler.Handle(errorWithPath);
+
+        _store.AddError(errorWithPath);
+        return errorWithPath;
+    }
+
+    /// <summary>
+    /// Stops the <c>null</c> of a failed field before its parent object when the parent is delivered elsewhere than
+    /// the field. The null of a step without delivery groups does not stop when a step that delivers outside the
+    /// groups of the field reads the field as a key or a requirement.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c>, if the null stopped and the parent is kept.
+    /// </returns>
+    private bool StopsAtGroupBoundary<TMode>(
+        CompositeResultElement field,
+        Selection selection,
+        CompositeResultElement parent)
+        where TMode : struct, IMode
+    {
+        var document = _store.Result;
+
+        if (!document.TryGetDestination(field, out var destination)
+            || !document.HasOtherDestination(parent, destination)
+            || (!TMode.IsFiltered && IsReadOutsideGroups(document.Delivery!, selection, destination)))
+        {
+            return false;
+        }
+
+        PropagateNullValues<TMode>(field);
+        return true;
+    }
+
+    // Determines whether a step that delivers outside the groups reads the selection as a key or a requirement.
+    private static bool IsReadOutsideGroups(
+        SinglePlanDeliveryState delivery,
+        Selection selection,
+        SelectionDelivery groups)
+    {
+        if (!delivery.IsKeyOrRequirement(selection))
+        {
+            return false;
+        }
+
+        var plan = delivery.Plan;
+        var readers = ImmutableArray.CreateBuilder<ExecutionNode>();
+
+        foreach (var node in plan.AllNodes)
+        {
+            if (DeliversOutsideGroups(delivery, node, groups))
+            {
+                readers.Add(node);
+            }
+        }
+
+        return SinglePlanDeliveryState
+            .CollectKeyAndRequirementSelectionIds(plan.Operation, readers.ToImmutable())
+            .Contains(selection.Id);
+    }
+
+    // Determines whether the step delivers outside the groups: it has no delivery group, or one that is neither
+    // one of the groups nor nested in one of them. A step that a defer condition switches off delivers nothing.
+    private static bool DeliversOutsideGroups(
+        SinglePlanDeliveryState delivery,
+        ExecutionNode node,
+        SelectionDelivery groups)
+    {
+        var plan = delivery.Plan;
+
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                return !FailsDeferCondition(delivery, operation.Conditions, operation.ConditionAlternatives)
+                    && !IsWithinGroups(plan, operation.DeliveryGroups, groups);
+
+            case OperationBatchExecutionNode batch:
+                foreach (var definition in batch.Operations)
+                {
+                    if (!FailsDeferCondition(delivery, definition.Conditions, definition.ConditionAlternatives)
+                        && !IsWithinGroups(plan, definition.DeliveryGroups, groups))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    // Determines whether a condition on the if variable of a delivery group switches the step off, the other
+    // conditions of the step are not evaluated.
+    private static bool FailsDeferCondition(
+        SinglePlanDeliveryState delivery,
+        ReadOnlySpan<ExecutionNodeCondition> conditions,
+        ReadOnlySpan<ExecutionNodeCondition[]> alternatives)
+    {
+        if (AnyFails(delivery, conditions))
+        {
+            return true;
+        }
+
+        foreach (var alternative in alternatives)
+        {
+            if (!AnyFails(delivery, alternative))
+            {
+                return false;
+            }
+        }
+
+        return !alternatives.IsEmpty;
+    }
+
+    private static bool AnyFails(SinglePlanDeliveryState delivery, ReadOnlySpan<ExecutionNodeCondition> conditions)
+    {
+        foreach (var condition in conditions)
+        {
+            foreach (var group in delivery.Plan.DeliveryGroups)
+            {
+                if (group.IfVariable == condition.VariableName
+                    && delivery.ActiveGroups.IsSet(group.Id) != condition.PassingValue)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsWithinGroups(OperationPlan plan, ImmutableArray<int> groupIds, SelectionDelivery groups)
+    {
+        if (groupIds.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        foreach (var group in plan.DeliveryGroups)
+        {
+            if (!groupIds.Contains(group.Id))
+            {
+                continue;
+            }
+
+            var current = group;
+
+            while (current is not null && !SinglePlanDeliveryState.Contains(groups, current.Id))
+            {
+                current = current.Parent;
+            }
+
+            if (current is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Remembers the failed field when its null propagates as it does without delivery groups.
+    private bool LeavesGroups(CompositeResultElement field, Selection selection)
+    {
+        _nullLeavingGroups = IsLeftOutsideGroups(field, selection) ? field : null;
+
+        return _nullLeavingGroups is not null;
+    }
+
+    // Determines whether the failure of the field is handled as it is without delivery groups. That holds before the
+    // initial payload exists, when no delivery group holds the field back or a step outside its groups reads it.
+    private bool IsLeftOutsideGroups(CompositeResultElement field, Selection selection)
+    {
+        var document = _store.Result;
+        var delivery = document.Delivery!;
+
+        return delivery.InstanceCount == 0
+            && (!document.TryGetDestination(field, out var groups)
+                || IsReadOutsideGroups(delivery, selection, groups));
+    }
+
+    // Returns true when no delivery group holds the failed field or its null propagates past every object delivered
+    // with the field, and false when the field is nullable, the error mode is not propagate or a nullable element
+    // delivered with the field stops the null. When true, stop is the element where the null stops, or null when no
+    // delivery group holds the field or nothing stops the null.
+    private bool NullLeavesGroups(CompositeResultElement field, Selection selection, out CompositeResultElement? stop)
+    {
+        var document = _store.Result;
+        stop = null;
+
+        if (!document.TryGetDestination(field, out var destination))
+        {
+            return true;
+        }
+
+        if (_errorHandlingMode is not ErrorHandlingMode.Propagate || !selection.IsNonNull)
+        {
+            return false;
+        }
+
+        if (!TryFindGroupBoundary(field, destination, propagate: false, out var current))
+        {
+            return false;
+        }
+
+        do
+        {
+            if (current.IsNullable)
+            {
+                stop = current;
+                break;
+            }
+
+            current = current.Parent;
+        } while (!current.IsNullOrInvalidated);
+
+        return true;
+    }
+
+    // Applies the error of a field whose null propagates as it does without delivery groups. The delivery groups that
+    // hold nullStop send the error, the initial payload sends it when nullStop is null or no group holds it.
+    private bool ApplyFieldErrorOutsideGroups(
+        CompositeResultElement field,
+        Selection selection,
+        IError error,
+        Path path,
+        CompositeResultElement? nullStop)
+    {
+        var errorWithPath = ErrorBuilder.FromError(error)
+            .SetPath(path)
+            .Build();
+        errorWithPath = _errorHandler.Handle(errorWithPath);
+
+        _store.AddError(errorWithPath);
+
+        if (nullStop is { } stop)
+        {
+            _store.Result.RecordGroupError(stop, errorWithPath);
+        }
+
+        return _errorHandlingMode is not ErrorHandlingMode.Propagate
+            || !selection.IsNonNull
+            || !PropagateNullValues(field);
+    }
+
+    private static bool IsAtOrBelow(CompositeResultElement? element, CompositeResultElement ancestor)
+    {
+        if (element is not { } current)
+        {
+            return false;
+        }
+
+        while (current.Cursor.Value != ancestor.Cursor.Value)
+        {
+            if (current.Cursor.IsZero)
+            {
+                return false;
+            }
+
+            current = current.Parent;
+        }
+
+        return true;
+    }
+
+    private bool BuildResultForInvalidSource<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet,
         IError? error)
+        where TMode : struct, IMode
     {
         var sourceValueKind = source.ValueKind;
 
@@ -652,7 +1369,7 @@ internal sealed class ValueCompletion
         // instead of surfacing an unexpected execution error.
         if (sourceValueKind is JsonValueKind.Null && error is null)
         {
-            return CompleteNullSource(source, target, resultSelectionSet);
+            return CompleteNullSource<TMode>(source, target, resultSelectionSet);
         }
 
         var fallbackError = error ??
@@ -682,10 +1399,11 @@ internal sealed class ValueCompletion
     /// <c>true</c>, if the execution can continue.
     /// <c>false</c>, if the execution needs to be halted.
     /// </returns>
-    private bool CompleteNullSource(
+    private bool CompleteNullSource<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ResultSelectionSet resultSelectionSet)
+        where TMode : struct, IMode
     {
         foreach (var responseName in resultSelectionSet.ResponseNames)
         {
@@ -696,9 +1414,16 @@ internal sealed class ValueCompletion
             }
 
             var selection = fieldResult.AssertSelection();
+
+            if (TMode.IsFiltered && IsWriteDenied(fieldResult, selection, JsonValueKind.Null))
+            {
+                RecordDeniedAnswer(fieldResult, error: null);
+                continue;
+            }
+
             var childSet = resultSelectionSet.TryGetChild(selection.ResponseName);
 
-            if (!TryCompleteValue(
+            if (!TryCompleteValue<TMode>(
                     source,
                     fieldResult,
                     errorTrie: null,
@@ -709,18 +1434,23 @@ internal sealed class ValueCompletion
                 switch (_errorHandlingMode)
                 {
                     case ErrorHandlingMode.Propagate:
-                        var didPropagateToRoot = PropagateNullValues(fieldResult);
+                        var didPropagateToRoot = PropagateNullValues<TMode>(fieldResult);
                         if (didPropagateToRoot)
                         {
                             return false;
                         }
 
-                        return ApplyPocketedErrors(target);
+                        if (TMode.HasDelivery && _stoppedAtGroupBoundary && !target.IsNullOrInvalidated)
+                        {
+                            continue;
+                        }
+
+                        return ApplyPocketedErrors<TMode>(target);
                 }
             }
         }
 
-        return ApplyPocketedErrors(target);
+        return ApplyPocketedErrors<TMode>(target);
     }
 
     private static bool TryInitializeTargetObject(CompositeResultElement target)
@@ -812,7 +1542,8 @@ internal sealed class ValueCompletion
         return true;
     }
 
-    private bool ApplyPocketedErrors(CompositeResultElement target)
+    private bool ApplyPocketedErrors<TMode>(CompositeResultElement target)
+        where TMode : struct, IMode
     {
         if (!_store.HasPocketedErrors)
         {
@@ -828,7 +1559,7 @@ internal sealed class ValueCompletion
                 continue;
             }
 
-            if (!TryApplyPocketedError(path, error))
+            if (!TryApplyPocketedError<TMode>(path, error))
             {
                 return false;
             }
@@ -837,7 +1568,8 @@ internal sealed class ValueCompletion
         return true;
     }
 
-    private bool TryApplyPocketedError(Path path, IError error)
+    private bool TryApplyPocketedError<TMode>(Path path, IError error)
+        where TMode : struct, IMode
     {
         if (!_store.TryGetResult(path, out var fieldResult))
         {
@@ -856,32 +1588,90 @@ internal sealed class ValueCompletion
             return true;
         }
 
-        var canExecutionContinue = ApplyFieldError(fieldResult, selection, error, path);
+        var canExecutionContinue = ApplyFieldError<TMode>(fieldResult, selection, error, path);
         _store.RemovePocketedError(path);
         return canExecutionContinue;
     }
 
-    private bool ApplyFieldError(
+    private bool ApplyFieldError<TMode>(
         CompositeResultElement fieldResult,
         Selection selection,
         IError error,
         Path path)
+        where TMode : struct, IMode
     {
         var errorWithPath = ErrorBuilder.FromError(error)
             .SetPath(path)
             .Build();
         errorWithPath = _errorHandler.Handle(errorWithPath);
 
-        _store.AddError(errorWithPath);
+        var failure = AddError<TMode>(errorWithPath, fieldResult);
 
         switch (_errorHandlingMode)
         {
             case ErrorHandlingMode.Propagate when selection.IsNonNull:
-                var didPropagateToRoot = PropagateNullValues(fieldResult);
+                var didPropagateToRoot = PropagateNullValues<TMode>(fieldResult, failure);
                 return !didPropagateToRoot;
         }
 
         return true;
+    }
+
+    // An error of a field that a delivery group holds back is also recorded for the group, so that the group
+    // sends it and the initial payload does not. Returns the recorded error, or null when no group holds the field.
+    private GroupError? AddError<TMode>(IError error, CompositeResultElement element)
+        where TMode : struct, IMode
+    {
+        _store.AddError(error);
+
+        return TMode.HasDelivery ? _store.Result.RecordGroupError(element, error) : null;
+    }
+
+    // Records the error of a null leaf as the answer for the fields that require the leaf. A leaf that the client
+    // selected is answered for every group, any other leaf for the groups that hold it.
+    private void RecordLeafError<TMode>(CompositeResultElement leaf, IError error)
+        where TMode : struct, IMode
+    {
+        var document = _store.Result;
+
+        if (!leaf.IsInternal)
+        {
+            document.Delivery!.AddWrittenAnswer(
+                leaf.Cursor,
+                TMode.IsFiltered ? _writeFilterGroups : [],
+                error,
+                holdsRowError: true);
+            return;
+        }
+
+        if (!document.TryGetDestination(leaf, out var destination))
+        {
+            return;
+        }
+
+        var groups = ImmutableArray.CreateBuilder<int>(destination.Groups.Length);
+
+        foreach (var group in destination.Groups)
+        {
+            groups.Add(group.Id);
+        }
+
+        document.Delivery!.AddDeniedAnswer(leaf.Cursor, groups.MoveToImmutable(), error, holdsRowError: true);
+    }
+
+    // Creates the error that fails the groups that hold a null list item: the error of the result at errorIndex, or
+    // the non-null error when the result holds no error there. Returns null when no group holds the item.
+    private GroupError? CreateItemFailure(CompositeResultElement item, int errorIndex)
+    {
+        if (!_store.Result.TryGetDestination(item, out _))
+        {
+            return null;
+        }
+
+        return new GroupError(
+            _store.Errors is { } errors && errorIndex < errors.Count
+                ? errors[errorIndex]
+                : _errorHandler.Handle(ErrorHelper.DeniedNonNullField(item.Path)));
     }
 
     private void PocketErrors(Path path, ResultSelectionSet resultSelectionSet, IError error)
@@ -918,19 +1708,20 @@ internal sealed class ValueCompletion
     /// The type shape is read from facts precomputed on the selection, so a call
     /// site completing a value against any other type must not use this method.
     /// </summary>
-    private bool TryCompleteValue(
+    private bool TryCompleteValue<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ErrorTrie? errorTrie,
         Selection selection,
         int depth,
         ResultSelectionSet? resultSelectionSet)
+        where TMode : struct, IMode
     {
         var sourceValueKind = source.ValueKind;
 
         if (sourceValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
-            return TryCompleteNullValue(
+            return TryCompleteNullValue<TMode>(
                 sourceValueKind,
                 target,
                 errorTrie,
@@ -941,7 +1732,7 @@ internal sealed class ValueCompletion
         // An error on a field that still has a value is forwarded without nulling the value.
         if (errorTrie?.Error is { } fieldError)
         {
-            AddFieldError(fieldError, target);
+            AddFieldError<TMode>(fieldError, target);
         }
 
         switch (selection.UnwrappedKind)
@@ -949,7 +1740,7 @@ internal sealed class ValueCompletion
             case TypeKind.List:
                 // The element shape of the first list level is precomputed on the
                 // selection, so it is guaranteed to be present here.
-                return TryCompleteList(
+                return TryCompleteList<TMode>(
                     source,
                     target,
                     errorTrie,
@@ -961,7 +1752,7 @@ internal sealed class ValueCompletion
                     resultSelectionSet);
 
             case TypeKind.Object:
-                return TryCompleteObjectValue(
+                return TryCompleteObjectValue<TMode>(
                     selection,
                     source,
                     errorTrie,
@@ -970,7 +1761,7 @@ internal sealed class ValueCompletion
                     resultSelectionSet);
 
             case TypeKind.Interface or TypeKind.Union:
-                return TryCompleteAbstractValue(
+                return TryCompleteAbstractValue<TMode>(
                     source,
                     target,
                     errorTrie,
@@ -999,12 +1790,13 @@ internal sealed class ValueCompletion
     /// <c>false</c>, if the null must propagate to the parent.
     /// </returns>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool TryCompleteNullValue(
+    private bool TryCompleteNullValue<TMode>(
         JsonValueKind sourceValueKind,
         CompositeResultElement target,
         ErrorTrie? errorTrie,
         Selection selection,
         ResultSelectionSet? resultSelectionSet)
+        where TMode : struct, IMode
     {
         if (selection.IsNonNull)
         {
@@ -1028,7 +1820,36 @@ internal sealed class ValueCompletion
 
             error = _errorHandler.Handle(error);
 
-            _store.AddError(error);
+            GroupError? recorded = null;
+
+            if (TMode.HasDelivery && !TMode.IsFiltered && _propagateNullValues && LeavesGroups(target, selection))
+            {
+                // The groups that hold the element where the null stops send the error, the initial payload sends it
+                // when no group holds that element. A null that stays inside the groups of the field is a group error.
+                if (NullLeavesGroups(target, selection, out var nullStop))
+                {
+                    _store.AddError(error);
+
+                    if (nullStop is { } stop)
+                    {
+                        _store.Result.RecordGroupError(stop, error);
+                    }
+                }
+                else
+                {
+                    _nullLeavingGroups = null;
+                    recorded = AddError<TMode>(error, target);
+                }
+            }
+            else
+            {
+                recorded = AddError<TMode>(error, target);
+            }
+
+            if (TMode.HasDelivery)
+            {
+                _returnedNullError = recorded;
+            }
 
             return !_propagateNullValues;
         }
@@ -1057,7 +1878,21 @@ internal sealed class ValueCompletion
                 .Build();
             errorWithPath = _errorHandler.Handle(errorWithPath);
 
-            _store.AddError(errorWithPath);
+            if (TMode.HasDelivery)
+            {
+                RecordWrittenAnswer(
+                    target,
+                    selection.IsLeaf,
+                    TMode.IsFiltered ? _writeFilterGroups : [],
+                    nullErrorFromPath);
+            }
+
+            AddError<TMode>(errorWithPath, target);
+
+            if (TMode.HasDelivery && selection.IsLeaf)
+            {
+                RecordLeafError<TMode>(target, nullErrorFromPath);
+            }
         }
         else
         {
@@ -1068,14 +1903,15 @@ internal sealed class ValueCompletion
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AddFieldError(IError fieldError, CompositeResultElement target)
+    private void AddFieldError<TMode>(IError fieldError, CompositeResultElement target)
+        where TMode : struct, IMode
     {
         var errorWithPath = ErrorBuilder.FromError(fieldError)
             .SetPath(target.Path)
             .Build();
         errorWithPath = _errorHandler.Handle(errorWithPath);
 
-        _store.AddError(errorWithPath);
+        AddError<TMode>(errorWithPath, target);
     }
 
     /// <summary>
@@ -1083,7 +1919,7 @@ internal sealed class ValueCompletion
     /// levels is not precomputed on the selection, so it is derived from
     /// <paramref name="type"/> per invocation.
     /// </summary>
-    private bool TryCompleteNestedList(
+    private bool TryCompleteNestedList<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ErrorTrie? errorTrie,
@@ -1091,6 +1927,7 @@ internal sealed class ValueCompletion
         IType type,
         int depth,
         ResultSelectionSet? resultSelectionSet)
+        where TMode : struct, IMode
     {
         var elementType = type.ElementType();
         var elementTypeKind = elementType.Kind;
@@ -1101,7 +1938,7 @@ internal sealed class ValueCompletion
             elementTypeKind = Unsafe.As<IType, NonNullType>(ref elementType).NullableType.Kind;
         }
 
-        return TryCompleteList(
+        return TryCompleteList<TMode>(
             source,
             target,
             errorTrie,
@@ -1113,7 +1950,7 @@ internal sealed class ValueCompletion
             resultSelectionSet);
     }
 
-    private bool TryCompleteList(
+    private bool TryCompleteList<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ErrorTrie? errorTrie,
@@ -1123,6 +1960,7 @@ internal sealed class ValueCompletion
         bool isNonNull,
         int depth,
         ResultSelectionSet? resultSelectionSet)
+        where TMode : struct, IMode
     {
         AssertDepthAllowed(ref depth);
 
@@ -1135,6 +1973,7 @@ internal sealed class ValueCompletion
         // result. Create the array only on the first write; otherwise reuse it
         // so sibling contributions accumulate through the positional merge below.
         CompositeResultElement.ArrayEnumerator targetEnumerator;
+        var mergesIntoList = false;
 
         if (target.ValueKind is JsonValueKind.Undefined)
         {
@@ -1143,11 +1982,12 @@ internal sealed class ValueCompletion
         else if (target.ValueKind is not JsonValueKind.Array
             || target.GetArrayLength() != source.GetArrayLength())
         {
-            return ReportSharedListLengthMismatch(target);
+            return ReportSharedListLengthMismatch<TMode>(target);
         }
         else
         {
             targetEnumerator = target.EnumerateArray().GetEnumerator();
+            mergesIntoList = true;
         }
 
         var listObjectType = elementTypeKind is TypeKind.Object
@@ -1173,6 +2013,26 @@ internal sealed class ValueCompletion
             var elementValueKind = elementSnapshot.ValueKind;
             if (elementValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             {
+                if (TMode.IsFiltered
+                    && mergesIntoList
+                    && targetEnumerator.Current.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    // GetListElementErrorTrie added the error of the item as the last error of the result just now.
+                    // The remembered answer sends it with the rows below the item.
+                    if (errorTrieForIndex?.Error is not null && _store.Errors is { Count: > 0 } storeErrors)
+                    {
+                        _writeFilterDocument!.Delivery!.KeepWithDeniedAnswer(storeErrors[^1]);
+                    }
+
+                    RecordDeniedAnswer(targetEnumerator.Current, errorTrieForIndex?.FindFirstError());
+                    goto TryCompleteList_MoveNext;
+                }
+
+                // The index of the first error of the result at or below the item.
+                var errorIndex = TMode.HasDelivery
+                    ? (_store.Errors?.Count ?? 0) - (errorTrieForIndex?.Error is null ? 0 : 1)
+                    : 0;
+
                 // The element might have been nulled due to a down-stream null propagation,
                 // so the errors below it are forwarded with their paths.
                 if (errorTrieForIndex is { Count: > 0 })
@@ -1182,6 +2042,11 @@ internal sealed class ValueCompletion
 
                 if (isNonNull && _propagateNullValues)
                 {
+                    if (TMode.HasDelivery)
+                    {
+                        _returnedNullError = CreateItemFailure(targetEnumerator.Current, errorIndex);
+                    }
+
                     return false;
                 }
 
@@ -1195,7 +2060,7 @@ internal sealed class ValueCompletion
             switch (elementTypeKind)
             {
                 case TypeKind.List:
-                    completed = TryCompleteNestedList(
+                    completed = TryCompleteNestedList<TMode>(
                         elementSnapshot,
                         targetElement,
                         errorTrieForIndex,
@@ -1216,7 +2081,7 @@ internal sealed class ValueCompletion
                     break;
 
                 case TypeKind.Interface or TypeKind.Union:
-                    completed = TryCompleteAbstractValue(
+                    completed = TryCompleteAbstractValue<TMode>(
                         elementSnapshot,
                         targetElement,
                         errorTrieForIndex,
@@ -1227,7 +2092,7 @@ internal sealed class ValueCompletion
 
                 default:
                     listObjectSelectionSet ??= selection.GetSelectionSet(listObjectType!);
-                    completed = TryCompleteObjectValue(
+                    completed = TryCompleteObjectValue<TMode>(
                         elementSnapshot,
                         targetElement,
                         errorTrieForIndex,
@@ -1244,6 +2109,12 @@ internal sealed class ValueCompletion
                 if (isNonNull)
                 {
                     return false;
+                }
+
+                // The item takes the null, so no field below it leaves its groups any more.
+                if (TMode.HasDelivery)
+                {
+                    _nullLeavingGroups = null;
                 }
 
                 targetElement.SetNullValue();
@@ -1266,7 +2137,8 @@ TryCompleteList_MoveNext:
     /// <c>false</c>, if the null must propagate to the parent.
     /// </returns>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool ReportSharedListLengthMismatch(CompositeResultElement target)
+    private bool ReportSharedListLengthMismatch<TMode>(CompositeResultElement target)
+        where TMode : struct, IMode
     {
         // Non-keyed sibling lists can only be merged by position, which
         // requires an identical length. A differing shape cannot be
@@ -1277,7 +2149,13 @@ TryCompleteList_MoveNext:
             .SetPath(target.CompactPath.ToPath(target.Operation))
             .Build();
         error = _errorHandler.Handle(error);
-        _store.AddError(error);
+
+        var failure = AddError<TMode>(error, target);
+
+        if (TMode.HasDelivery)
+        {
+            _returnedNullError = _propagateNullValues ? failure : null;
+        }
 
         return !_propagateNullValues;
     }
@@ -1464,18 +2342,19 @@ TryCompleteList_MoveNext:
         }
     }
 
-    private bool TryCompleteObjectValue(
+    private bool TryCompleteObjectValue<TMode>(
         Selection parentSelection,
         SourceResultElementSnapshot source,
         ErrorTrie? errorTrie,
         int depth,
         CompositeResultElement target,
         ResultSelectionSet? resultSelectionSet)
+        where TMode : struct, IMode
     {
         var namedType = parentSelection.NamedType;
         var objectType = Unsafe.As<ITypeDefinition, IObjectTypeDefinition>(ref namedType);
 
-        return TryCompleteObjectValue(
+        return TryCompleteObjectValue<TMode>(
             source,
             target,
             errorTrie,
@@ -1486,7 +2365,7 @@ TryCompleteList_MoveNext:
             preparedSelectionSet: null);
     }
 
-    private bool TryCompleteObjectValue(
+    private bool TryCompleteObjectValue<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ErrorTrie? errorTrie,
@@ -1495,6 +2374,7 @@ TryCompleteList_MoveNext:
         int depth,
         ResultSelectionSet? resultSelectionSet,
         SelectionSet? preparedSelectionSet)
+        where TMode : struct, IMode
     {
         AssertDepthAllowed(ref depth);
 
@@ -1516,8 +2396,9 @@ TryCompleteList_MoveNext:
 
         if (resultSelectionSet is { HasSourceResponseNameMappings: true })
         {
-            return TryCompleteMappedObjectProperties(
+            return TryCompleteMappedObjectProperties<TMode>(
                 source,
+                target,
                 errorTrie,
                 objectType,
                 depth,
@@ -1536,6 +2417,16 @@ TryCompleteList_MoveNext:
 
             var propertyValueSnapshot = properties.Value;
             var propertyValueKind = propertyValueSnapshot.ValueKind;
+
+            if (TMode.IsFiltered && IsWriteDenied(targetProperty, selection, propertyValueKind))
+            {
+                if (propertyValueKind is JsonValueKind.Null)
+                {
+                    RecordDeniedNull(targetProperty, errorTrie, selection.ResponseName);
+                }
+
+                continue;
+            }
 
             if (errorTrie is null)
             {
@@ -1562,7 +2453,7 @@ TryCompleteList_MoveNext:
                 {
                     var namedType = selection.NamedType;
 
-                    if (!TryCompleteObjectValue(
+                    if (!TryCompleteObjectValue<TMode>(
                         propertyValueSnapshot,
                         targetProperty,
                         errorTrie: null,
@@ -1572,6 +2463,11 @@ TryCompleteList_MoveNext:
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
                         preparedSelectionSet: null))
                     {
+                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
+                        {
+                            continue;
+                        }
+
                         return false;
                     }
 
@@ -1581,7 +2477,7 @@ TryCompleteList_MoveNext:
                 if (propertyValueKind is JsonValueKind.Array
                     && selection.UnwrappedKind is TypeKind.List)
                 {
-                    if (!TryCompleteList(
+                    if (!TryCompleteList<TMode>(
                         propertyValueSnapshot,
                         targetProperty,
                         errorTrie: null,
@@ -1592,6 +2488,11 @@ TryCompleteList_MoveNext:
                         depth,
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType)))
                     {
+                        if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
+                        {
+                            continue;
+                        }
+
                         return false;
                     }
 
@@ -1603,7 +2504,7 @@ TryCompleteList_MoveNext:
             errorTrie?.TryGetValue(selection.ResponseName, out errorTrieForResponseName);
 
             var childSet = resultSelectionSet?.TryGetChild(selection.ResponseName, objectType);
-            if (!TryCompleteValue(
+            if (!TryCompleteValue<TMode>(
                     propertyValueSnapshot,
                     targetProperty,
                     errorTrieForResponseName,
@@ -1611,6 +2512,11 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
+                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
+                {
+                    continue;
+                }
+
                 return false;
             }
         }
@@ -1627,13 +2533,15 @@ TryCompleteList_MoveNext:
     /// <c>false</c>, if a non-null violation must propagate to the parent.
     /// </returns>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool TryCompleteMappedObjectProperties(
+    private bool TryCompleteMappedObjectProperties<TMode>(
         SourceResultElementSnapshot source,
+        CompositeResultElement target,
         ErrorTrie? errorTrie,
         IComplexTypeDefinition objectType,
         int depth,
         ResultSelectionSet resultSelectionSet,
         CompositeObjectContext objectContext)
+        where TMode : struct, IMode
     {
         foreach (var property in source.EnumerateObject())
         {
@@ -1673,6 +2581,16 @@ TryCompleteList_MoveNext:
             var propertyValueSnapshot = property.Value.CreateSnapshot();
             var propertyValueKind = propertyValueSnapshot.ValueKind;
 
+            if (TMode.IsFiltered && IsWriteDenied(targetProperty, selection, propertyValueKind))
+            {
+                if (propertyValueKind is JsonValueKind.Null)
+                {
+                    RecordDeniedNull(targetProperty, errorTrie, sourceResponseName);
+                }
+
+                continue;
+            }
+
             if (errorTrie is null && propertyValueKind.IsScalarValue())
             {
                 if (propertyValueKind is JsonValueKind.String && selection.IsEnumValue)
@@ -1692,7 +2610,7 @@ TryCompleteList_MoveNext:
             errorTrie?.TryGetValue(sourceResponseName, out errorTrieForResponseName);
 
             var childSet = resultSelectionSet.TryGetChild(selection.ResponseName, objectType);
-            if (!TryCompleteValue(
+            if (!TryCompleteValue<TMode>(
                     propertyValueSnapshot,
                     targetProperty,
                     errorTrieForResponseName,
@@ -1700,6 +2618,11 @@ TryCompleteList_MoveNext:
                     depth,
                     childSet))
             {
+                if (TMode.HasDelivery && StopsAtGroupBoundary<TMode>(targetProperty, selection, target))
+                {
+                    continue;
+                }
+
                 return false;
             }
         }
@@ -1707,13 +2630,14 @@ TryCompleteList_MoveNext:
         return true;
     }
 
-    private bool TryCompleteAbstractValue(
+    private bool TryCompleteAbstractValue<TMode>(
         SourceResultElementSnapshot source,
         CompositeResultElement target,
         ErrorTrie? errorTrie,
         Selection selection,
         int depth,
         ResultSelectionSet? resultSelectionSet)
+        where TMode : struct, IMode
     {
         var isOpaque = resultSelectionSet?.ProducesOpaqueElements ?? false;
         var objectType = GetType(selection.NamedType, source.Element, isOpaque);
@@ -1724,7 +2648,7 @@ TryCompleteList_MoveNext:
             _store.Result.RequireNullMarkerFinalization();
         }
 
-        return TryCompleteObjectValue(
+        return TryCompleteObjectValue<TMode>(
             source,
             target,
             errorTrie,
@@ -1880,6 +2804,50 @@ TryCompleteList_MoveNext:
         {
             throw ThrowHelper.ValueCompletionDepthNotAllowed(depth);
         }
+    }
+
+    private enum CompletionMode : byte
+    {
+        Plain,
+        Delivery,
+        Filtered
+    }
+
+    /// <summary>
+    /// Describes whether a completion reads the delivery state of the result document.
+    /// </summary>
+    private interface IMode
+    {
+        /// <summary>
+        /// Gets a value that indicates whether the result document has delivery groups.
+        /// </summary>
+        static abstract bool HasDelivery { get; }
+
+        /// <summary>
+        /// Gets a value that indicates whether the completion writes only the rows of a write filter.
+        /// </summary>
+        static abstract bool IsFiltered { get; }
+    }
+
+    private readonly struct PlainMode : IMode
+    {
+        public static bool HasDelivery => false;
+
+        public static bool IsFiltered => false;
+    }
+
+    private readonly struct DeliveryMode : IMode
+    {
+        public static bool HasDelivery => true;
+
+        public static bool IsFiltered => false;
+    }
+
+    private readonly struct FilteredMode : IMode
+    {
+        public static bool HasDelivery => true;
+
+        public static bool IsFiltered => true;
     }
 
     private struct ErrorTrieFrame(

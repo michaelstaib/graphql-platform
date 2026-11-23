@@ -1,0 +1,86 @@
+operation:
+  - document: |
+      query($x: Boolean!) {
+        products {
+          price
+          reviews {
+            rating
+            id @fusion__requirement
+            id @include(if: $x)
+          }
+          id @fusion__requirement
+          name @include(if: $x)
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 5
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($x: Boolean!) {
+        products {
+          name @include(if: $x)
+          id
+        }
+      }
+    forwardedVariables:
+      - x
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_2($x: Boolean!, $__fusion_1_id: ID!) {
+        productByIdForReviews(id: $__fusion_1_id) {
+          reviews {
+            id @include(if: $x)
+            id
+          }
+        }
+      }
+    source: $.productByIdForReviews
+    target: $.products
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - x
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        productById(id: $__fusion_2_id) {
+          price
+        }
+      }
+    source: $.productById
+    target: $.products
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: d
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: ID!) {
+        reviewById(id: $__fusion_3_id) {
+          rating
+        }
+      }
+    source: $.reviewById
+    target: $.products.reviews
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 2

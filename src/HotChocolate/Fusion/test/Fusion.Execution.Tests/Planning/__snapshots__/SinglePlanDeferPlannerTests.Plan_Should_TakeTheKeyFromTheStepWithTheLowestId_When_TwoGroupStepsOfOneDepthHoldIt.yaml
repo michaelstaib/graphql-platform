@@ -1,0 +1,145 @@
+operation:
+  - document: |
+      query($c: Boolean!, $d: Boolean!) {
+        current {
+          user {
+            ... @defer(label: "x", __group: 0, __parent: -1) {
+              sku @fusion__requirement
+              id @fusion__requirement
+              sku @include(if: $c)
+              ... @defer(label: "y", __group: 1, __parent: 0) {
+                nick
+                sku @fusion__requirement
+                id @fusion__requirement
+                sku @include(if: $d)
+                ... @defer(label: "z", __group: 2, __parent: 1) {
+                  sku @fusion__requirement
+                  id @fusion__requirement
+                  ... @include(if: $c) {
+                    total @include(if: $d)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        current {
+          user {
+            ... {
+              ... {
+                ... {
+                  id
+                }
+                id
+              }
+              id
+            }
+          }
+        }
+      }
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: Int!) {
+        userByIdC(id: $__fusion_2_id) {
+          sku
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: e
+    operation: |
+      query Op_123456789101112_5($__fusion_4_id: Int!) {
+        userByIdE(id: $__fusion_4_id) {
+          nick
+        }
+      }
+    source: $.userByIdE
+    target: $.current.user
+    requirements:
+      - name: __fusion_4_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: Int!) {
+        userByIdC(id: $__fusion_5_id) {
+          sku
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 7
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_7($__fusion_6_sku: String!) {
+        userBySku(sku: $__fusion_6_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    target: $.current.user
+    requirements:
+      - name: __fusion_6_sku
+        selectionMap: >-
+          sku
+    conditions:
+      - variable: $c
+        passingValue: true
+      - variable: $d
+        passingValue: true
+    deliveryGroups:
+      - 2
+    dependencies:
+      - id: 3
+deliveryGroups:
+  - id: 0
+    path: $.current.user
+    label: x
+  - id: 1
+    path: $.current.user
+    label: y
+    parentId: 0
+  - id: 2
+    path: $.current.user
+    label: z
+    parentId: 1

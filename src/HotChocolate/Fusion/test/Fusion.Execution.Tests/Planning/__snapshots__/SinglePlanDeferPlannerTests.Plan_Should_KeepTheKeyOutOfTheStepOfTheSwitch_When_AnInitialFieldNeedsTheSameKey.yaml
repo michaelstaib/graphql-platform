@@ -1,0 +1,163 @@
+operation:
+  - document: |
+      query($a: Boolean!) {
+        product {
+          upc
+          upc @fusion__requirement
+          rating
+          price @fusion__requirement
+          id @fusion__requirement
+          eur @skip(if: $a)
+          ... @include(if: $a) {
+            ... @defer(if: $a, __group: 0, __parent: -1) {
+              eur
+              upc @fusion__requirement
+              price @fusion__requirement
+              id @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 5
+    expandedNodes: 40
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product {
+          upc
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+        productByUpc(upc: $__fusion_2_upc) {
+          eur(price: $__fusion_1_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.product
+    requirements:
+      - name: __fusion_1_price
+        selectionMap: >-
+          price
+      - name: __fusion_2_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_3_id: ID!) {
+        productByIdB(id: $__fusion_3_id) {
+          price
+        }
+      }
+    source: $.productByIdB
+    target: $.product
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: s
+    operation: |
+      query Op_123456789101112_4($__fusion_4_upc: String!) {
+        productByUpcS(upc: $__fusion_4_upc) {
+          id
+        }
+      }
+    source: $.productByUpcS
+    target: $.product
+    requirements:
+      - name: __fusion_4_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: t
+    operation: |
+      query Op_123456789101112_6($__fusion_6_id: ID!) {
+        productById(id: $__fusion_6_id) {
+          rating
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_6_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 4
+  - id: 9
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_9($__fusion_10_upc: String!, $__fusion_9_price: Int) {
+        productByUpc(upc: $__fusion_10_upc) {
+          eur(price: $__fusion_9_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.product
+    requirements:
+      - name: __fusion_10_upc
+        selectionMap: >-
+          upc
+      - name: __fusion_9_price
+        selectionMap: >-
+          price
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 10
+  - id: 10
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_10($__fusion_11_id: ID!) {
+        productByIdB(id: $__fusion_11_id) {
+          price
+        }
+      }
+    source: $.productByIdB
+    target: $.product
+    requirements:
+      - name: __fusion_11_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 4
+deliveryGroups:
+  - id: 0
+    path: $.product
+    ifVariable: $a

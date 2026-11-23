@@ -2276,7 +2276,7 @@ public sealed partial class OperationPlanner
 
         var ctx = new ExecutionPlanBuildContext(nextNodeId);
 
-        planSteps = TransformPlanSteps(planSteps, deferredOperation, marker);
+        planSteps = TransformPlanSteps(planSteps, deferredOperation, marker, requestCheck: null);
 
         var hasVariables = deferredOperation.VariableDefinitions.Count > 0
             || marker is { HasVariables: true };

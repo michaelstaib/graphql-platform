@@ -1,0 +1,99 @@
+operation:
+  - document: |
+      query($c: Boolean!) {
+        product(id: "1") {
+          name
+          ... @defer(label: "o", __group: 0, __parent: -1) {
+            price
+            id @fusion__requirement
+            ... @include(if: $c) {
+              rating
+              ... @defer(label: "i", __group: 1, __parent: 0) {
+                reviews {
+                  body
+                }
+                id @fusion__requirement
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($c: Boolean!) {
+        product(id: "1") {
+          name
+          ... {
+            ... @include(if: $c) {
+              ... {
+                id
+              }
+            }
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - c
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($c: Boolean!, $__fusion_1_id: ID!) {
+        productById(id: $__fusion_1_id) {
+          price
+          ... @include(if: $c) {
+            rating
+          }
+        }
+      }
+    source: $.productById
+    target: $.product
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    forwardedVariables:
+      - c
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        productByIdForReviews(id: $__fusion_2_id) {
+          reviews {
+            body
+          }
+        }
+      }
+    source: $.productByIdForReviews
+    target: $.product
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product
+    label: o
+  - id: 1
+    path: $.product
+    label: i
+    parentId: 0

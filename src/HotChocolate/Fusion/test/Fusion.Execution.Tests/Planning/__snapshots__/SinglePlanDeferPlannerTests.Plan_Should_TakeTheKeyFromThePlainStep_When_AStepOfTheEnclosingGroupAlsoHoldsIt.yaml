@@ -1,0 +1,103 @@
+operation:
+  - document: |
+      query($c: Boolean!) {
+        current {
+          user {
+            id @fusion__requirement
+            sku @include(if: $c)
+            ... @defer(label: "x", __group: 0, __parent: -1) {
+              sku
+              id @fusion__requirement
+              ... @defer(label: "y", __group: 1, __parent: 0) {
+                sku @fusion__requirement
+                id @fusion__requirement
+                total @include(if: $c)
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 3
+    expandedNodes: 9
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        current {
+          user {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: Int!) {
+        userByIdC(id: $__fusion_1_id) {
+          sku
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $c
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: Int!) {
+        userByIdC(id: $__fusion_2_id) {
+          sku
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_3_sku: String!) {
+        userBySku(sku: $__fusion_3_sku) {
+          total
+        }
+      }
+    source: $.userBySku
+    target: $.current.user
+    requirements:
+      - name: __fusion_3_sku
+        selectionMap: >-
+          sku
+    conditions:
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+deliveryGroups:
+  - id: 0
+    path: $.current.user
+    label: x
+  - id: 1
+    path: $.current.user
+    label: y
+    parentId: 0

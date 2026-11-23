@@ -1,0 +1,570 @@
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+        products {
+          upc
+          ... @skip(if: $a) {
+            ... @skip(if: $b) {
+              upc @fusion__requirement
+              price(cur: "EUR") @fusion__requirement
+              eur @skip(if: $c)
+              ... @include(if: $c) {
+                ... @defer(if: $c, __group: 0, __parent: -1) {
+                  eur
+                  upc @fusion__requirement
+                  price(cur: "EUR") @fusion__requirement
+                  id @fusion__requirement
+                }
+              }
+            }
+            ... @include(if: $b) {
+              ... @defer(if: $b, __group: 1, __parent: -1) {
+                upc @fusion__requirement
+                price(cur: "EUR") @fusion__requirement
+                id @fusion__requirement
+                eur @skip(if: $c)
+                ... @include(if: $c) {
+                  ... @defer(if: $c, __group: 2, __parent: 1) {
+                    eur
+                    upc @fusion__requirement
+                    price(cur: "EUR") @fusion__requirement
+                    id @fusion__requirement
+                  }
+                }
+              }
+            }
+          }
+          ... @include(if: $a) {
+            ... @defer(if: $a, __group: 3, __parent: -1) {
+              upc @fusion__requirement
+              ... @skip(if: $b) {
+                upc @fusion__requirement
+                price(cur: "EUR") @fusion__requirement
+                id @fusion__requirement
+                eur @skip(if: $c)
+                ... @include(if: $c) {
+                  ... @defer(if: $c, __group: 4, __parent: 3) {
+                    eur
+                    upc @fusion__requirement
+                    price(cur: "EUR") @fusion__requirement
+                    id @fusion__requirement
+                  }
+                }
+              }
+              ... @include(if: $b) {
+                ... @defer(if: $b, __group: 5, __parent: 3) {
+                  upc @fusion__requirement
+                  price(cur: "EUR") @fusion__requirement
+                  id @fusion__requirement
+                  eur @skip(if: $c)
+                  ... @include(if: $c) {
+                    ... @defer(if: $c, __group: 6, __parent: 5) {
+                      eur
+                      upc @fusion__requirement
+                      price(cur: "EUR") @fusion__requirement
+                      id @fusion__requirement
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 5
+    expandedNodes: 172
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        products {
+          upc
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+        productByUpc(upc: $__fusion_2_upc) {
+          eur(price: $__fusion_1_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    requirements:
+      - name: __fusion_1_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_2_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 3
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_3_upc: String!) {
+        productByUpcB(upc: $__fusion_3_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    requirements:
+      - name: __fusion_3_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 7
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_7($__fusion_8_upc: String!) {
+        productByUpcB(upc: $__fusion_8_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_8_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: false
+    deliveryGroups:
+      - 3
+    dependencies:
+      - id: 1
+  - id: 12
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_12($__fusion_14_upc: String!) {
+        productByUpcB(upc: $__fusion_14_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_14_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: false
+    deliveryGroups:
+      - 5
+    dependencies:
+      - id: 1
+  - id: 17
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_17($__fusion_20_upc: String!) {
+        productByUpcB(upc: $__fusion_20_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_20_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 6
+    dependencies:
+      - id: 1
+  - id: 22
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_22($__fusion_26_upc: String!) {
+        productByUpcB(upc: $__fusion_26_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_26_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 4
+    dependencies:
+      - id: 1
+  - id: 27
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_27($__fusion_32_upc: String!) {
+        productByUpcB(upc: $__fusion_32_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_32_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: false
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 32
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_32($__fusion_38_upc: String!) {
+        productByUpcB(upc: $__fusion_38_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_38_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 2
+    dependencies:
+      - id: 1
+  - id: 37
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_37($__fusion_44_upc: String!) {
+        productByUpcB(upc: $__fusion_44_upc) {
+          price(cur: "EUR")
+        }
+      }
+    source: $.productByUpcB
+    target: $.products
+    batchingGroupId: 40
+    requirements:
+      - name: __fusion_44_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_6($__fusion_6_price: Int, $__fusion_7_upc: String!) {
+        productByUpc(upc: $__fusion_7_upc) {
+          eur(price: $__fusion_6_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_6_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_7_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: false
+    deliveryGroups:
+      - 3
+    dependencies:
+      - id: 1
+      - id: 7
+  - id: 11
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_11($__fusion_12_price: Int, $__fusion_13_upc: String!) {
+        productByUpc(upc: $__fusion_13_upc) {
+          eur(price: $__fusion_12_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_12_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_13_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: false
+    deliveryGroups:
+      - 5
+    dependencies:
+      - id: 1
+      - id: 12
+  - id: 16
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_16($__fusion_18_price: Int, $__fusion_19_upc: String!) {
+        productByUpc(upc: $__fusion_19_upc) {
+          eur(price: $__fusion_18_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_18_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_19_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 6
+    dependencies:
+      - id: 1
+      - id: 17
+  - id: 21
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_21($__fusion_24_price: Int, $__fusion_25_upc: String!) {
+        productByUpc(upc: $__fusion_25_upc) {
+          eur(price: $__fusion_24_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_24_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_25_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: true
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 4
+    dependencies:
+      - id: 1
+      - id: 22
+  - id: 26
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_26($__fusion_30_price: Int, $__fusion_31_upc: String!) {
+        productByUpc(upc: $__fusion_31_upc) {
+          eur(price: $__fusion_30_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_30_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_31_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: false
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+      - id: 27
+  - id: 31
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_31($__fusion_36_price: Int, $__fusion_37_upc: String!) {
+        productByUpc(upc: $__fusion_37_upc) {
+          eur(price: $__fusion_36_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_36_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_37_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: true
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 2
+    dependencies:
+      - id: 1
+      - id: 32
+  - id: 36
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_36($__fusion_42_price: Int, $__fusion_43_upc: String!) {
+        productByUpc(upc: $__fusion_43_upc) {
+          eur(price: $__fusion_42_price)
+        }
+      }
+    source: $.productByUpc
+    target: $.products
+    batchingGroupId: 41
+    requirements:
+      - name: __fusion_42_price
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_43_upc
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: false
+      - variable: $c
+        passingValue: true
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 37
+deliveryGroups:
+  - id: 0
+    path: $.products
+    ifVariable: $c
+  - id: 1
+    path: $.products
+    ifVariable: $b
+  - id: 2
+    path: $.products
+    ifVariable: $c
+    parentId: 1
+  - id: 3
+    path: $.products
+    ifVariable: $a
+  - id: 4
+    path: $.products
+    ifVariable: $c
+    parentId: 3
+  - id: 5
+    path: $.products
+    ifVariable: $b
+    parentId: 3
+  - id: 6
+    path: $.products
+    ifVariable: $c
+    parentId: 5

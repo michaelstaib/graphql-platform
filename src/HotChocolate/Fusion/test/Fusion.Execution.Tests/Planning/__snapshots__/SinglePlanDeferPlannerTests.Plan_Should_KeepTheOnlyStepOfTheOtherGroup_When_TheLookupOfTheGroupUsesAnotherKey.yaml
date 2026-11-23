@@ -1,0 +1,82 @@
+operation:
+  - document: |
+      {
+        products {
+          name
+          ... @defer(label: "d", __group: 0, __parent: -1) {
+            id
+            id @fusion__requirement
+            price
+            sku @fusion__requirement
+          }
+          ... @defer(label: "e", __group: 1, __parent: -1) {
+            id
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        products {
+          name
+          ... {
+            id
+            sku
+          }
+          ... {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        product(id: $__fusion_1_id) {
+          id
+        }
+      }
+    source: $.product
+    target: $.products
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_sku: String!) {
+        productBySku(sku: $__fusion_2_sku) {
+          price
+        }
+      }
+    source: $.productBySku
+    target: $.products
+    requirements:
+      - name: __fusion_2_sku
+        selectionMap: >-
+          sku
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.products
+    label: d
+  - id: 1
+    path: $.products
+    label: e

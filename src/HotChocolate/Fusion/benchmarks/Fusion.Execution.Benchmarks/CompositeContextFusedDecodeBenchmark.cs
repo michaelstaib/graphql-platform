@@ -105,7 +105,7 @@ public class CompositeContextFusedDecodeBenchmark : FusionBenchmarkBase
         _disposedGuard = 0;
 
         var schema = CreateFusionSchema();
-        var documentRewriter = new DocumentRewriter(schema);
+        var documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operationDefinition = documentRewriter
             .RewriteDocument(
                 Utf8GraphQLParser.Parse(

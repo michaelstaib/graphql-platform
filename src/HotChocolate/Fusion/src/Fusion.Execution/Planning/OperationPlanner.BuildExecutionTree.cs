@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using HotChocolate.Buffers;
@@ -11,6 +13,14 @@ using HotChocolate.Fusion.Types.Metadata;
 using HotChocolate.Language;
 using HotChocolate.Language.Visitors;
 using HotChocolate.Types;
+using ChoiceValueSelectionNode = HotChocolate.Fusion.Language.ChoiceValueSelectionNode;
+using IValueSelectionNode = HotChocolate.Fusion.Language.IValueSelectionNode;
+using ListValueSelectionNode = HotChocolate.Fusion.Language.ListValueSelectionNode;
+using ObjectValueSelectionNode = HotChocolate.Fusion.Language.ObjectValueSelectionNode;
+using PathListValueSelectionNode = HotChocolate.Fusion.Language.PathListValueSelectionNode;
+using PathNode = HotChocolate.Fusion.Language.PathNode;
+using PathObjectValueSelectionNode = HotChocolate.Fusion.Language.PathObjectValueSelectionNode;
+using PathSegmentNode = HotChocolate.Fusion.Language.PathSegmentNode;
 using ThrowHelper = HotChocolate.Fusion.Execution.ThrowHelper;
 
 namespace HotChocolate.Fusion.Planning;
@@ -19,6 +29,7 @@ public sealed partial class OperationPlanner
 {
     private const string UploadScalarName = "Upload";
     private const string DynamicSchemaNameMarker = "__dynamic__";
+    private const string UnlabelledBatchMark = "unlabelled";
 
     /// <summary>
     /// Converts the planner's intermediate plan steps into a final execution plan
@@ -34,6 +45,7 @@ public sealed partial class OperationPlanner
         int expandedNodes,
         int nextNodeId,
         PolicyPlanContext? policyContext,
+        bool singlePlanDefer,
         CancellationToken cancellationToken)
     {
         if (operation.IsIntrospectionOnly())
@@ -61,37 +73,56 @@ public sealed partial class OperationPlanner
             return introspectionPlan;
         }
 
-        var ctx = new ExecutionPlanBuildContext(nextNodeId);
+        var ctx = new ExecutionPlanBuildContext(nextNodeId)
+        {
+            DeliveryGroups = singlePlanDefer ? deliveryGroups : default
+        };
         var marker = policyContext is null
             ? null
             : PolicyMarker.TryCreate(_schema, policyContext, operation);
 
-        planSteps = TransformPlanSteps(planSteps, operationDefinition, marker);
+        var splitForEntityReuse = _options.EnableEntityReuseSplitting
+            && operationDefinition.Operation is OperationType.Query
+            && deliveryGroups.IsDefaultOrEmpty
+            && incrementalPlans.IsDefaultOrEmpty;
 
-        var hasVariables = operationDefinition.VariableDefinitions.Count > 0
-            || marker is { HasVariables: true };
+        var requestCheck = ctx.DeliveryGroups.IsDefaultOrEmpty
+            ? null
+            : new RequestCheck(
+                this,
+                operationDefinition,
+                marker,
+                ctx.DeliveryGroups,
+                nextNodeId,
+                splitForEntityReuse,
+                singlePlanDefer,
+                cancellationToken);
+
+        planSteps = TransformPlanSteps(planSteps, operationDefinition, marker, requestCheck);
+
+        var hasVariables = HasVariables(operationDefinition, marker);
 
         if (policyContext is not null && marker is not null)
         {
             policyContext.AddRoot(marker);
         }
 
-        IndexDependencies(planSteps, ctx);
-        BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);
-        var splitForEntityReuse = _options.EnableEntityReuseSplitting
-            && operationDefinition.Operation is OperationType.Query
-            && deliveryGroups.IsDefaultOrEmpty
-            && incrementalPlans.IsDefaultOrEmpty;
-        var serialScopes = operationDefinition.Operation is OperationType.Mutation
-            ? CreateSerialScopes(planSteps, ctx)
-            : null;
-        MergeAndBatchOperations(
-            ctx,
-            _options.EnableRequestGrouping,
-            _options.MergePolicy,
-            splitForEntityReuse,
-            serialScopes,
-            _schema);
+        if (requestCheck?.TryTakeBuild(planSteps) is { } checkedContext)
+        {
+            ctx = checkedContext;
+        }
+        else
+        {
+            BuildMergedExecutionNodes(
+                planSteps,
+                ctx,
+                operationDefinition,
+                hasVariables,
+                splitForEntityReuse,
+                singlePlanDefer,
+                cancellationToken);
+        }
+
         WireExecutionDependencies(ctx);
 
         var rootNodes = planSteps
@@ -134,6 +165,104 @@ public sealed partial class OperationPlanner
         AssignIncrementalPlanAnchors(operationPlan, allNodes, incrementalPlans);
 
         return operationPlan;
+    }
+
+    private static bool HasVariables(OperationDefinitionNode operationDefinition, PolicyMarker? marker)
+        => operationDefinition.VariableDefinitions.Count > 0 || marker is { HasVariables: true };
+
+    // Builds the execution nodes of the plan steps and merges and batches them into the requests of the plan.
+    private void BuildMergedExecutionNodes(
+        ImmutableList<PlanStep> planSteps,
+        ExecutionPlanBuildContext ctx,
+        OperationDefinitionNode operationDefinition,
+        bool hasVariables,
+        bool splitForEntityReuse,
+        bool singlePlanDefer,
+        CancellationToken cancellationToken)
+    {
+        IndexDependencies(planSteps, ctx);
+        BuildExecutionNodes(planSteps, ctx, _schema, hasVariables, cancellationToken);
+        var serialScopes = operationDefinition.Operation is OperationType.Mutation
+            ? CreateSerialScopes(planSteps, ctx)
+            : null;
+
+        if (singlePlanDefer)
+        {
+            MergeOperationsThatDifferInConditions(ctx, _options.MergePolicy, serialScopes);
+        }
+
+        MergeAndBatchOperations(
+            ctx,
+            _options.EnableRequestGrouping,
+            _options.MergePolicy,
+            splitForEntityReuse,
+            serialScopes,
+            _schema);
+    }
+
+    /// <summary>
+    /// Builds the execution nodes of the step lists that the pass taking selections from other steps checks, at
+    /// most <see cref="MaxBuilds"/> times, and keeps the build of the list the pass accepted last.
+    /// </summary>
+    private sealed class RequestCheck(
+        OperationPlanner planner,
+        OperationDefinitionNode operationDefinition,
+        PolicyMarker? marker,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        int nextNodeId,
+        bool splitForEntityReuse,
+        bool singlePlanDefer,
+        CancellationToken cancellationToken)
+    {
+        public const int MaxBuilds = 8;
+
+        public ImmutableArray<DeliveryGroup> DeliveryGroups => deliveryGroups;
+
+        public bool CanBuild => BuildCount < MaxBuilds;
+
+        public int BuildCount { get; private set; }
+
+        public StepBuild? Accepted { get; set; }
+
+        public StepBuild Build(
+            ImmutableList<PlanStep> planSteps,
+            ForwardVariableRewriter.Context forwardVariableContext)
+        {
+            BuildCount++;
+
+            var completed = CompletePlanSteps(planSteps, forwardVariableContext);
+            var ctx = new ExecutionPlanBuildContext(nextNodeId) { DeliveryGroups = deliveryGroups };
+
+            planner.BuildMergedExecutionNodes(
+                completed,
+                ctx,
+                operationDefinition,
+                HasVariables(operationDefinition, marker),
+                splitForEntityReuse,
+                singlePlanDefer,
+                cancellationToken);
+
+            return new StepBuild(planSteps, completed, ctx);
+        }
+
+        public ExecutionPlanBuildContext? TryTakeBuild(ImmutableList<PlanStep> completedSteps)
+        {
+            return Accepted is { } accepted && ReferenceEquals(accepted.Steps, completedSteps)
+                ? accepted.Context
+                : null;
+        }
+    }
+
+    private sealed class StepBuild(
+        ImmutableList<PlanStep> source,
+        ImmutableList<PlanStep> steps,
+        ExecutionPlanBuildContext context)
+    {
+        public ImmutableList<PlanStep> Source { get; } = source;
+
+        public ImmutableList<PlanStep> Steps { get; } = steps;
+
+        public ExecutionPlanBuildContext Context { get; } = context;
     }
 
     /// <summary>
@@ -469,6 +598,7 @@ public sealed partial class OperationPlanner
     private static SelectionSetNode StripDeferFromSelectionSet(SelectionSetNode selectionSet)
     {
         List<ISelectionNode>? rewritten = null;
+        List<int>? removed = null;
 
         for (var i = 0; i < selectionSet.Selections.Count; i++)
         {
@@ -486,6 +616,14 @@ public sealed partial class OperationPlanner
                     rewritten[i] = inlineFragment
                         .WithDirectives(strippedDirectives)
                         .WithSelectionSet(strippedInner);
+
+                    // A fragment that only held a deferred fragment, which a lookup resolves,
+                    // has nothing left to select.
+                    if (IsPlaceholderOnly(strippedInner))
+                    {
+                        removed ??= [];
+                        removed.Add(i);
+                    }
                 }
             }
             else if (selection is FieldNode { SelectionSet: not null } field)
@@ -500,7 +638,32 @@ public sealed partial class OperationPlanner
             }
         }
 
-        return rewritten is null ? selectionSet : new SelectionSetNode(rewritten);
+        if (rewritten is null)
+        {
+            return selectionSet;
+        }
+
+        if (removed is not null)
+        {
+            for (var i = removed.Count - 1; i >= 0; i--)
+            {
+                rewritten.RemoveAt(removed[i]);
+            }
+        }
+
+        return new SelectionSetNode(rewritten);
+    }
+
+    private static bool IsPlaceholderOnly(SelectionSetNode selectionSet)
+    {
+        if (selectionSet.Selections.Count == 0)
+        {
+            return true;
+        }
+
+        return selectionSet.Selections is [FieldNode { Alias: null } field]
+            && field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal)
+            && field.Directives is [{ Name.Value: "fusion__empty" }];
     }
 
     private static IReadOnlyList<DirectiveNode> StripDeferDirective(IReadOnlyList<DirectiveNode> directives)
@@ -531,7 +694,8 @@ public sealed partial class OperationPlanner
     private static ImmutableList<PlanStep> TransformPlanSteps(
         ImmutableList<PlanStep> planSteps,
         OperationDefinitionNode originalOperation,
-        PolicyMarker? marker)
+        PolicyMarker? marker,
+        RequestCheck? requestCheck)
     {
         var forwardVariableContext = new ForwardVariableRewriter.Context();
 
@@ -551,6 +715,7 @@ public sealed partial class OperationPlanner
         }
 
         var updatedPlanSteps = planSteps;
+        var hasDeliveryGroups = requestCheck is not null;
 
         foreach (var step in planSteps)
         {
@@ -566,42 +731,78 @@ public sealed partial class OperationPlanner
             }
 
             // Attach variable definitions so the operation is syntactically valid
-            // when sent to the downstream service.
+            // when sent to the downstream service. A plan with delivery groups attaches them
+            // after the pass that takes selections from other steps.
             updatedPlanSteps = updatedPlanSteps.Replace(
                 step,
-                AddVariableDefinitions(transformed, forwardVariableContext));
+                hasDeliveryGroups ? transformed : AddVariableDefinitions(transformed, forwardVariableContext));
+        }
+
+        if (requestCheck is not null)
+        {
+            updatedPlanSteps = TakeSelectionsFromHolders(
+                updatedPlanSteps,
+                originalOperation,
+                requestCheck,
+                forwardVariableContext);
+
+            // The pass leaves the build of the list it ends with in the check, unless it changed nothing.
+            return requestCheck.Accepted is { } accepted && ReferenceEquals(accepted.Source, updatedPlanSteps)
+                ? accepted.Steps
+                : CompletePlanSteps(updatedPlanSteps, forwardVariableContext);
         }
 
         return RemoveKeyOnlyLookupSteps(updatedPlanSteps);
+    }
 
-        static OperationPlanStep AddVariableDefinitions(
-            OperationPlanStep step,
-            ForwardVariableRewriter.Context forwardVariableContext)
+    // Attaches the variable definitions to the steps of a plan with delivery groups and removes the lookup steps
+    // that select nothing but their entry key.
+    private static ImmutableList<PlanStep> CompletePlanSteps(
+        ImmutableList<PlanStep> planSteps,
+        ForwardVariableRewriter.Context forwardVariableContext)
+    {
+        var updatedPlanSteps = planSteps;
+
+        foreach (var step in planSteps)
         {
-            forwardVariableContext.Reset();
-
-            foreach (var (key, requirement) in step.Requirements.OrderBy(t => t.Key))
+            if (step is OperationPlanStep operationPlanStep)
             {
-                forwardVariableContext.Requirements[key] =
-                    new VariableDefinitionNode(
-                        null,
-                        new VariableNode(null, new NameNode(key)),
-                        description: null,
-                        requirement.Type,
-                        null,
-                        []);
+                updatedPlanSteps = updatedPlanSteps.Replace(
+                    step,
+                    AddVariableDefinitions(operationPlanStep, forwardVariableContext));
             }
-
-            var rewrittenNode = s_forwardVariableRewriter.Rewrite(step.Definition, forwardVariableContext);
-
-            if (rewrittenNode is OperationDefinitionNode rewrittenOperationNode
-                && !ReferenceEquals(rewrittenOperationNode, step.Definition))
-            {
-                return step with { Definition = rewrittenOperationNode };
-            }
-
-            return step;
         }
+
+        return RemoveKeyOnlyLookupSteps(updatedPlanSteps);
+    }
+
+    private static OperationPlanStep AddVariableDefinitions(
+        OperationPlanStep step,
+        ForwardVariableRewriter.Context forwardVariableContext)
+    {
+        forwardVariableContext.Reset();
+
+        foreach (var (key, requirement) in step.Requirements.OrderBy(t => t.Key))
+        {
+            forwardVariableContext.Requirements[key] =
+                new VariableDefinitionNode(
+                    null,
+                    new VariableNode(null, new NameNode(key)),
+                    description: null,
+                    requirement.Type,
+                    null,
+                    []);
+        }
+
+        var rewrittenNode = s_forwardVariableRewriter.Rewrite(step.Definition, forwardVariableContext);
+
+        if (rewrittenNode is OperationDefinitionNode rewrittenOperationNode
+            && !ReferenceEquals(rewrittenOperationNode, step.Definition))
+        {
+            return step with { Definition = rewrittenOperationNode };
+        }
+
+        return step;
     }
 
     /// <summary>
@@ -653,32 +854,6 @@ public sealed partial class OperationPlanner
                 && SyntaxComparer.BySyntax.Equals(entrySelectionSet, step.Lookup!.Requirements);
         }
 
-        static bool IsReferencedByNodeStep(ImmutableList<PlanStep> planSteps, int stepId)
-        {
-            foreach (var step in planSteps)
-            {
-                if (step is not NodeFieldPlanStep nodeStep)
-                {
-                    continue;
-                }
-
-                if (nodeStep.FallbackQuery.Id == stepId)
-                {
-                    return true;
-                }
-
-                foreach (var branch in nodeStep.Branches.Values)
-                {
-                    if (branch.Id == stepId)
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
         static bool TryGetKeyProducers(
             ImmutableList<PlanStep> planSteps,
             OperationPlanStep candidate,
@@ -709,13 +884,1510 @@ public sealed partial class OperationPlanner
 
             return providesKey;
         }
+    }
 
-        static SelectionSetNode GetEntrySelectionSet(OperationPlanStep step)
+    private static bool IsReferencedByNodeStep(ImmutableList<PlanStep> planSteps, int stepId)
+    {
+        foreach (var step in planSteps)
         {
-            return step.Lookup is not null
-                && step.Definition.SelectionSet.Selections is [FieldNode { SelectionSet: { } entrySelectionSet }]
-                    ? entrySelectionSet
-                    : step.Definition.SelectionSet;
+            if (step is not NodeFieldPlanStep nodeStep)
+            {
+                continue;
+            }
+
+            if (nodeStep.FallbackQuery.Id == stepId)
+            {
+                return true;
+            }
+
+            foreach (var branch in nodeStep.Branches.Values)
+            {
+                if (branch.Id == stepId)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static SelectionSetNode GetEntrySelectionSet(OperationPlanStep step)
+    {
+        return step.Lookup is not null
+            && step.Definition.SelectionSet.Selections is [FieldNode { SelectionSet: { } entrySelectionSet }]
+                ? entrySelectionSet
+                : step.Definition.SelectionSet;
+    }
+
+    /// <summary>
+    /// Returns the steps without the entry selections that another step fetches at the same response path
+    /// whenever the step runs, with the dependents moved to that step, and without the steps and key fields
+    /// that lost their last reader by this. A step without delivery groups gives up only its entry key, and a
+    /// change that would send a source schema more requests than the plan build created is not made.
+    /// </summary>
+    private static ImmutableList<PlanStep> TakeSelectionsFromHolders(
+        ImmutableList<PlanStep> planSteps,
+        OperationDefinitionNode operation,
+        RequestCheck requestCheck,
+        ForwardVariableRewriter.Context forwardVariableContext)
+    {
+        using var pass = new HolderPass(planSteps, operation, requestCheck, forwardVariableContext);
+        var taken = TakeSelections(planSteps, pass, checkEveryStep: false);
+
+        if (!ReferenceEquals(taken, planSteps) && !pass.TryAccept(planSteps, taken))
+        {
+            // The result sends a source more requests, so the steps are taken again with a check per step.
+            taken = TakeSelections(planSteps, pass, checkEveryStep: true);
+        }
+
+        if (ReferenceEquals(taken, planSteps))
+        {
+            return taken;
+        }
+
+        var removed = RemoveSelectionsWithoutReader(planSteps, taken, pass);
+
+        return !ReferenceEquals(removed, taken) && pass.TryAccept(taken, removed) ? removed : taken;
+    }
+
+    /// <summary>
+    /// Removes the lookup steps of delivery groups and the key fields that had a reader before the pass and have
+    /// none after it. Selections without a reader before the pass stay.
+    /// </summary>
+    private static ImmutableList<PlanStep> RemoveSelectionsWithoutReader(
+        ImmutableList<PlanStep> before,
+        ImmutableList<PlanStep> planSteps,
+        HolderPass pass)
+    {
+        pass.BeginRemoval(before, planSteps);
+
+        var removedStep = true;
+
+        while (removedStep)
+        {
+            removedStep = false;
+
+            for (var i = 0; i < planSteps.Count; i++)
+            {
+                if (planSteps[i] is not OperationPlanStep
+                    {
+                        Lookup.Path.Length: 0,
+                        DeliveryGroups.IsDefaultOrEmpty: false
+                    } step
+                    || step.Definition.SelectionSet.Selections is not [FieldNode { SelectionSet: { } entry }]
+                    || !pass.HadDependent(step.Id)
+                    || pass.HasDependent(step)
+                    || IsReferencedByNodeStep(planSteps, step.Id)
+                    || IsParentDependency(planSteps, step.Id)
+                    || !HasAnotherStepPerGroup(planSteps, step)
+                    || DeliversField(pass, step, entry))
+                {
+                    continue;
+                }
+
+                planSteps = planSteps.RemoveAt(i);
+                pass.Remove(step.Id);
+
+                for (var j = 0; j < planSteps.Count; j++)
+                {
+                    if (planSteps[j] is OperationPlanStep producer && producer.Dependents.Contains(step.Id))
+                    {
+                        var updated = producer with { Dependents = producer.Dependents.Remove(step.Id) };
+                        planSteps = planSteps.SetItem(j, updated);
+                        pass.Update(updated);
+                    }
+                }
+
+                i--;
+                removedStep = true;
+            }
+        }
+
+        return RemoveKeysWithoutReader(before, planSteps, pass);
+    }
+
+    // Checks that a step of the list names the step as a dependency in the enclosing plan scope.
+    private static bool IsParentDependency(ImmutableList<PlanStep> planSteps, int stepId)
+    {
+        foreach (var planStep in planSteps)
+        {
+            if (planStep is not OperationPlanStep step)
+            {
+                continue;
+            }
+
+            foreach (var parent in step.ParentDependencies)
+            {
+                if (parent.StepId == stepId)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Checks that the operation selects a field of the entry selection set inside a delivery group of the step.
+    private static bool DeliversField(HolderPass pass, OperationPlanStep step, SelectionSetNode selectionSet)
+    {
+        for (var i = 0; i < selectionSet.Selections.Count; i++)
+        {
+            switch (selectionSet.Selections[i])
+            {
+                case FieldNode field
+                    when !field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal)
+                        && pass.IsSelectedForGroups(step, field):
+                    return true;
+
+                case InlineFragmentNode fragment when DeliversField(pass, step, fragment.SelectionSet):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Takes the key fields of every lookup step that the pass removed out of the steps that supplied them.
+    private static ImmutableList<PlanStep> RemoveKeysWithoutReader(
+        ImmutableList<PlanStep> before,
+        ImmutableList<PlanStep> planSteps,
+        HolderPass pass)
+    {
+        foreach (var planStep in before)
+        {
+            if (planStep is not OperationPlanStep { Lookup: not null } removed || pass.IsListed(removed.Id))
+            {
+                continue;
+            }
+
+            foreach (var supplier in before)
+            {
+                if (supplier is not OperationPlanStep original
+                    || !original.Dependents.Contains(removed.Id)
+                    || !original.Target.IsParentOfOrSame(removed.Target)
+                    || pass.Find(original.Id) is not { } producer
+                    || IsReferencedByNodeStep(planSteps, producer.Id)
+                    || RemoveKeyFields(producer, removed, pass) is not { } updated)
+                {
+                    continue;
+                }
+
+                var index = IndexOfStep(planSteps, producer.Id);
+
+                if (index >= 0)
+                {
+                    planSteps = planSteps.SetItem(index, updated);
+                    pass.Update(updated);
+                }
+            }
+        }
+
+        return planSteps;
+    }
+
+    // Returns the position of the step in the list, or -1 when the list has no step with the id.
+    private static int IndexOfStep(ImmutableList<PlanStep> planSteps, int stepId)
+    {
+        for (var i = 0; i < planSteps.Count; i++)
+        {
+            if (planSteps[i].Id == stepId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // Returns the producer without the key fields of the removed step that nothing reads, or null when no field goes.
+    private static OperationPlanStep? RemoveKeyFields(
+        OperationPlanStep producer,
+        OperationPlanStep removed,
+        HolderPass pass)
+    {
+        var path = removed.Target.RelativeTo(producer.Target);
+        var definition = producer.Definition;
+
+        if (producer.Lookup is not null)
+        {
+            if (producer.Lookup.Path.Length > 0
+                || definition.SelectionSet.Selections is not [FieldNode { SelectionSet: { } entry } entryField])
+            {
+                return null;
+            }
+
+            var updatedEntry = RemoveKeyFields(entry, path, 0, removed, pass);
+
+            if (ReferenceEquals(updatedEntry, entry) || IsPlaceholderOnly(updatedEntry))
+            {
+                return null;
+            }
+
+            definition = definition.WithSelectionSet(
+                new SelectionSetNode([entryField.WithSelectionSet(updatedEntry)]));
+        }
+        else
+        {
+            var updatedRoot = RemoveKeyFields(definition.SelectionSet, path, 0, removed, pass);
+
+            if (ReferenceEquals(updatedRoot, definition.SelectionSet) || IsPlaceholderOnly(updatedRoot))
+            {
+                return null;
+            }
+
+            definition = definition.WithSelectionSet(updatedRoot);
+        }
+
+        return producer with { Definition = definition };
+    }
+
+    // Returns the selection set without the key fields of the removed step that nothing reads.
+    // A field on the path to them stays unchanged when no other selection would be left below it.
+    private static SelectionSetNode RemoveKeyFields(
+        SelectionSetNode current,
+        SelectionPath path,
+        int pathIndex,
+        OperationPlanStep removed,
+        HolderPass pass)
+    {
+        List<ISelectionNode>? rewritten = null;
+
+        for (var i = 0; i < current.Selections.Count; i++)
+        {
+            var selection = current.Selections[i];
+            var replacement = selection;
+
+            switch (selection)
+            {
+                case InlineFragmentNode { TypeCondition: null } wrapper:
+                    var inner = RemoveKeyFields(wrapper.SelectionSet, path, pathIndex, removed, pass);
+                    replacement = ReferenceEquals(inner, wrapper.SelectionSet)
+                        ? selection
+                        : IsPlaceholderOnly(inner) ? null : wrapper.WithSelectionSet(inner);
+                    break;
+
+                case InlineFragmentNode { TypeCondition: { } condition } fragment
+                    when pathIndex < path.Length
+                        && path[pathIndex].Kind is SelectionPathSegmentKind.InlineFragment
+                        && condition.Name.Value.Equals(path[pathIndex].Name, StringComparison.Ordinal):
+                    var typed = RemoveKeyFields(fragment.SelectionSet, path, pathIndex + 1, removed, pass);
+                    replacement = ReferenceEquals(typed, fragment.SelectionSet)
+                        ? selection
+                        : IsPlaceholderOnly(typed) ? null : fragment.WithSelectionSet(typed);
+                    break;
+
+                case FieldNode { SelectionSet: { } child } parent
+                    when pathIndex < path.Length
+                        && path[pathIndex].Kind is SelectionPathSegmentKind.Field
+                        && (parent.Alias?.Value ?? parent.Name.Value)
+                            .Equals(path[pathIndex].Name, StringComparison.Ordinal):
+                    var below = RemoveKeyFields(child, path, pathIndex + 1, removed, pass);
+                    replacement = ReferenceEquals(below, child) || IsPlaceholderOnly(below)
+                        ? selection
+                        : parent.WithSelectionSet(below);
+                    break;
+
+                case FieldNode field when pathIndex == path.Length && pass.IsKeyWithoutReader(removed, field):
+                    replacement = null;
+                    break;
+            }
+
+            if (rewritten is null)
+            {
+                if (ReferenceEquals(replacement, selection))
+                {
+                    continue;
+                }
+
+                rewritten = new List<ISelectionNode>(current.Selections.Count);
+
+                for (var j = 0; j < i; j++)
+                {
+                    rewritten.Add(current.Selections[j]);
+                }
+            }
+
+            if (replacement is not null)
+            {
+                rewritten.Add(replacement);
+            }
+        }
+
+        return rewritten is null ? current : new SelectionSetNode(rewritten);
+    }
+
+    private static ImmutableList<PlanStep> TakeSelections(
+        ImmutableList<PlanStep> planSteps,
+        HolderPass pass,
+        bool checkEveryStep)
+    {
+        for (var i = 0; i < planSteps.Count; i++)
+        {
+            if (planSteps[i] is not OperationPlanStep { Lookup.Path.Length: 0 } step
+                || step.Definition.SelectionSet.Selections is not [FieldNode { SelectionSet: { } entry } entryField]
+                || IsReferencedByNodeStep(planSteps, step.Id))
+            {
+                continue;
+            }
+
+            var hasGroups = !step.DeliveryGroups.IsDefaultOrEmpty;
+            pass.Begin(planSteps, step);
+
+            for (var j = 0; j < entry.Selections.Count; j++)
+            {
+                var selection = entry.Selections[j];
+
+                if (selection is FieldNode field
+                    && !field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal)
+                    && (hasGroups || IsEntryKey(step, field))
+                    && pass.TryFindHolder(
+                        planSteps,
+                        step,
+                        field,
+                        onlyProducers: !hasGroups,
+                        delivered: hasGroups && pass.IsSelectedForGroups(step, field),
+                        out var holderId))
+                {
+                    pass.AddHolder(holderId);
+                }
+                else
+                {
+                    pass.Keep(selection);
+                }
+            }
+
+            if (pass.HolderCount == 0
+                || (pass.KeptCount == 0 && (!hasGroups || !HasAnotherStepPerGroup(planSteps, step))))
+            {
+                continue;
+            }
+
+            var updated = step;
+
+            if (pass.KeptCount > 0)
+            {
+                updated = step with
+                {
+                    Definition = step.Definition.WithSelectionSet(
+                        new SelectionSetNode(
+                            [entryField.WithSelectionSet(new SelectionSetNode(pass.GetKeptSelections()))])),
+                    ConditionAlternatives = []
+                };
+
+                if (TryExtractCommonConditionsAndRewrite(updated, out var rewritten))
+                {
+                    updated = rewritten;
+                }
+                else if (!hasGroups)
+                {
+                    continue;
+                }
+
+                if (!pass.DependentsHoldPromotedConditions(step, updated))
+                {
+                    continue;
+                }
+            }
+
+            if (!hasGroups)
+            {
+                var plainCandidate = planSteps.SetItem(i, updated);
+
+                if (checkEveryStep && !pass.TryAccept(planSteps, plainCandidate))
+                {
+                    continue;
+                }
+
+                planSteps = plainCandidate;
+                continue;
+            }
+
+            var candidate = planSteps;
+
+            for (var j = 0; j < candidate.Count; j++)
+            {
+                if (candidate[j] is not OperationPlanStep other)
+                {
+                    continue;
+                }
+
+                var dependents = other.Dependents;
+
+                if (pass.IsHolder(other.Id))
+                {
+                    dependents = dependents.Union(step.Dependents);
+                }
+
+                if (pass.KeptCount == 0)
+                {
+                    dependents = dependents.Remove(step.Id);
+                }
+
+                if (!ReferenceEquals(dependents, other.Dependents))
+                {
+                    candidate = candidate.SetItem(j, other with { Dependents = dependents });
+                }
+            }
+
+            candidate = pass.KeptCount == 0 ? candidate.RemoveAt(i) : candidate.SetItem(i, updated);
+
+            if (checkEveryStep && !pass.TryAccept(planSteps, candidate))
+            {
+                continue;
+            }
+
+            planSteps = candidate;
+
+            if (pass.KeptCount == 0)
+            {
+                i--;
+            }
+        }
+
+        return planSteps;
+    }
+
+    private static bool IsEntryKey(OperationPlanStep step, FieldNode field)
+    {
+        if (field.Directives.Count > 0)
+        {
+            return false;
+        }
+
+        var requirements = step.Lookup!.Requirements.Selections;
+
+        for (var i = 0; i < requirements.Count; i++)
+        {
+            if (SyntaxComparer.BySyntax.Equals(requirements[i], field))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasAnotherStepPerGroup(ImmutableList<PlanStep> planSteps, OperationPlanStep step)
+    {
+        foreach (var group in step.DeliveryGroups)
+        {
+            var found = false;
+
+            foreach (var planStep in planSteps)
+            {
+                if (planStep is OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: false } other
+                    && other.Id != step.Id
+                    && other.DeliveryGroups.Contains(group))
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private readonly record struct ConditionKey(string VariableName, bool PassingValue);
+
+    /// <summary>
+    /// Finds the steps that hold the entry selections of a lookup step and checks that taking them does not
+    /// send a source schema more requests. The buffers are rented once for the pass.
+    /// </summary>
+    private sealed class HolderPass : IDisposable
+    {
+        private const int ConditionCapacity = 64;
+
+        private readonly OperationDefinitionNode _operation;
+        private readonly ImmutableArray<DeliveryGroup> _deliveryGroups;
+        private readonly RequestCheck _requestCheck;
+        private readonly ForwardVariableRewriter.Context _forwardVariableContext;
+        private readonly int _maxId;
+        private readonly int _schemaCapacity;
+        private readonly string?[] _schemaNames;
+        private readonly ConditionKey[] _allowed;
+        private readonly ISelectionNode[] _kept;
+        private readonly int[] _holders;
+        private readonly OperationPlanStep?[] _byId;
+        private readonly int[] _depth;
+        private readonly int[] _remaining;
+        private readonly int[] _queue;
+        private readonly int[] _visited;
+        private bool[]? _listed;
+        private bool[]? _hadDependent;
+        private int[] _acceptedCounts;
+        private int[] _candidateCounts;
+        private ImmutableArray<int> _stepGroups;
+        private int _schemaCount;
+        private int _allowedCount;
+        private int _visitStamp;
+
+        public HolderPass(
+            ImmutableList<PlanStep> planSteps,
+            OperationDefinitionNode operation,
+            RequestCheck requestCheck,
+            ForwardVariableRewriter.Context forwardVariableContext)
+        {
+            _requestCheck = requestCheck;
+            _forwardVariableContext = forwardVariableContext;
+            var maxId = 0;
+            var maxEntry = 0;
+
+            foreach (var planStep in planSteps)
+            {
+                maxId = Math.Max(maxId, planStep.Id);
+
+                if (planStep is OperationPlanStep { Lookup: not null } step
+                    && step.Definition.SelectionSet.Selections is [FieldNode { SelectionSet: { } entry }])
+                {
+                    maxEntry = Math.Max(maxEntry, entry.Selections.Count);
+                }
+            }
+
+            _operation = operation;
+            _deliveryGroups = requestCheck.DeliveryGroups;
+            _maxId = maxId;
+            _schemaCapacity = planSteps.Count + 1;
+            _schemaNames = ArrayPool<string?>.Shared.Rent(_schemaCapacity);
+            _acceptedCounts = ArrayPool<int>.Shared.Rent(_schemaCapacity);
+            _candidateCounts = ArrayPool<int>.Shared.Rent(_schemaCapacity);
+            _allowed = ArrayPool<ConditionKey>.Shared.Rent(ConditionCapacity);
+            _kept = ArrayPool<ISelectionNode>.Shared.Rent(Math.Max(maxEntry, 1));
+            _holders = ArrayPool<int>.Shared.Rent(Math.Max(maxEntry, 1));
+            _byId = ArrayPool<OperationPlanStep?>.Shared.Rent(maxId + 1);
+            _depth = ArrayPool<int>.Shared.Rent(maxId + 1);
+            _remaining = ArrayPool<int>.Shared.Rent(maxId + 1);
+            _queue = ArrayPool<int>.Shared.Rent(maxId + 1);
+            _visited = ArrayPool<int>.Shared.Rent(maxId + 1);
+            _visited.AsSpan(0, maxId + 1).Clear();
+        }
+
+        public int KeptCount { get; private set; }
+
+        public int HolderCount { get; private set; }
+
+        public void Begin(ImmutableList<PlanStep> planSteps, OperationPlanStep step)
+        {
+            Index(planSteps);
+            KeptCount = 0;
+            HolderCount = 0;
+            _allowedCount = 0;
+
+            foreach (var condition in step.Conditions)
+            {
+                if (_allowedCount < _allowed.Length)
+                {
+                    _allowed[_allowedCount++] = new ConditionKey(condition.VariableName, condition.PassingValue);
+                }
+            }
+        }
+
+        public void Keep(ISelectionNode selection) => _kept[KeptCount++] = selection;
+
+        public ISelectionNode[] GetKeptSelections() => _kept.AsSpan(0, KeptCount).ToArray();
+
+        public void AddHolder(int holderId)
+        {
+            if (!IsHolder(holderId))
+            {
+                _holders[HolderCount++] = holderId;
+            }
+        }
+
+        public bool IsHolder(int stepId) => Array.IndexOf(_holders, stepId, 0, HolderCount) >= 0;
+
+        // Checks that the operation selects the field, or a leaf below it, at the target of the step inside one of
+        // the delivery groups of the step.
+        public bool IsSelectedForGroups(OperationPlanStep step, FieldNode field)
+        {
+            _stepGroups = step.DeliveryGroups;
+            return IsSelectedAt(_operation.SelectionSet, step.Target, 0, -1, anyGroup: false, field);
+        }
+
+        // Indexes the steps of the list that the removal starts from and notes which of the steps of the list
+        // before the pass had a dependent.
+        public void BeginRemoval(ImmutableList<PlanStep> before, ImmutableList<PlanStep> planSteps)
+        {
+            _listed ??= ArrayPool<bool>.Shared.Rent(_maxId + 1);
+            _hadDependent ??= ArrayPool<bool>.Shared.Rent(_maxId + 1);
+            _hadDependent.AsSpan(0, _maxId + 1).Clear();
+
+            IndexById(before);
+
+            foreach (var planStep in before)
+            {
+                if (planStep is OperationPlanStep step)
+                {
+                    _hadDependent[step.Id] = HasDependent(step);
+                }
+            }
+
+            IndexById(planSteps);
+        }
+
+        public bool HadDependent(int stepId) => _hadDependent![stepId];
+
+        // Checks that a step of the indexed list is one of the dependents of the step.
+        public bool HasDependent(OperationPlanStep step)
+        {
+            foreach (var dependentId in step.Dependents)
+            {
+                if (IsListed(dependentId))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool IsListed(int stepId) => stepId >= 0 && stepId <= _maxId && _listed![stepId];
+
+        public OperationPlanStep? Find(int stepId) => stepId >= 0 && stepId <= _maxId ? _byId[stepId] : null;
+
+        public void Update(OperationPlanStep step) => _byId[step.Id] = step;
+
+        public void Remove(int stepId)
+        {
+            _byId[stepId] = null;
+            _listed![stepId] = false;
+        }
+
+        // Checks that the field is a plain field of the key of the removed lookup step that no step of the indexed
+        // list reads and the operation does not select at the target of the removed step.
+        public bool IsKeyWithoutReader(OperationPlanStep removed, FieldNode field)
+        {
+            if (field is not { Alias: null, SelectionSet: null, Directives: [], Arguments: [] }
+                || field.Name.Value.Equals(IntrospectionFieldNames.TypeName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var keys = removed.Lookup!.Requirements.Selections;
+
+            for (var i = 0; i < keys.Count; i++)
+            {
+                if (keys[i] is FieldNode { Alias: null, SelectionSet: null } key
+                    && key.Name.Value.Equals(field.Name.Value, StringComparison.Ordinal))
+                {
+                    return !IsRead(field.Name.Value)
+                        && !IsSelectedAt(_operation.SelectionSet, removed.Target, 0, -1, anyGroup: true, key);
+                }
+            }
+
+            return false;
+        }
+
+        private void IndexById(ImmutableList<PlanStep> planSteps)
+        {
+            var listed = _listed!;
+            _byId.AsSpan(0, _maxId + 1).Clear();
+            listed.AsSpan(0, _maxId + 1).Clear();
+
+            foreach (var planStep in planSteps)
+            {
+                listed[planStep.Id] = true;
+
+                if (planStep is OperationPlanStep step)
+                {
+                    _byId[step.Id] = step;
+                }
+            }
+        }
+
+        // Checks that a requirement of a step of the indexed list reads a field with the name.
+        private bool IsRead(string fieldName)
+        {
+            for (var id = 0; id <= _maxId; id++)
+            {
+                if (_byId[id] is not { } step)
+                {
+                    continue;
+                }
+
+                foreach (var (_, requirement) in step.Requirements)
+                {
+                    if (ReadsField(requirement.Map, fieldName))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ReadsField(IValueSelectionNode map, string fieldName)
+        {
+            switch (map)
+            {
+                case PathNode path:
+                    return ReadsField(path.PathSegment, fieldName);
+
+                case ChoiceValueSelectionNode choice:
+                    foreach (var branch in choice.Branches)
+                    {
+                        if (ReadsField(branch, fieldName))
+                        {
+                            return true;
+                        }
+                    }
+
+                    return false;
+
+                case ListValueSelectionNode list:
+                    return ReadsField(list.ElementSelection, fieldName);
+
+                case ObjectValueSelectionNode objectSelection:
+                    return ReadsField(objectSelection, fieldName);
+
+                case PathListValueSelectionNode pathList:
+                    return ReadsField(pathList.Path, fieldName)
+                        || ReadsField(pathList.ListValueSelection, fieldName);
+
+                case PathObjectValueSelectionNode pathObject:
+                    return ReadsField(pathObject.Path, fieldName)
+                        || ReadsField(pathObject.ObjectValueSelection, fieldName);
+
+                default:
+                    return true;
+            }
+        }
+
+        private static bool ReadsField(ObjectValueSelectionNode map, string fieldName)
+        {
+            foreach (var field in map.Fields)
+            {
+                if (field.Name.Value.Equals(fieldName, StringComparison.Ordinal)
+                    || (field.ValueSelection is { } selection && ReadsField(selection, fieldName)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ReadsField(PathSegmentNode path, string fieldName)
+        {
+            for (var segment = path; segment is not null; segment = segment.PathSegment)
+            {
+                if (segment.FieldName.Value.Equals(fieldName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool TryFindHolder(
+            ImmutableList<PlanStep> planSteps,
+            OperationPlanStep step,
+            FieldNode field,
+            bool onlyProducers,
+            bool delivered,
+            out int holderId)
+        {
+            var restoreCount = _allowedCount;
+            OperationPlanStep? best = null;
+
+            if (TryPush(field.Directives))
+            {
+                foreach (var planStep in planSteps)
+                {
+                    if (planStep is not OperationPlanStep holder
+                        || holder.Id == step.Id
+                        || (onlyProducers && !holder.Dependents.Contains(step.Id))
+                        || holder.Lookup is { Path.Length: > 0 }
+                        || !holder.Target.IsParentOfOrSame(step.Target)
+                        || !CoversEveryDeliveryGroup(step.DeliveryGroups, holder.DeliveryGroups)
+                        || (delivered && !HasEveryDeliveryGroup(step.DeliveryGroups, holder.DeliveryGroups))
+                        || !AreConditionsAllowed(holder)
+                        || !FetchesAtPath(GetEntrySelectionSet(holder), step.Target, holder.Target.Length, field)
+                        || !CoversDependents(step, holder)
+                        || IsReachable(step.Id, holder.Id))
+                    {
+                        continue;
+                    }
+
+                    if (best is null || IsEarlier(holder, best))
+                    {
+                        best = holder;
+                    }
+                }
+            }
+
+            _allowedCount = restoreCount;
+            holderId = best?.Id ?? -1;
+            return best is not null;
+        }
+
+        public bool DependentsHoldPromotedConditions(OperationPlanStep step, OperationPlanStep updated)
+        {
+            foreach (var dependentId in step.Dependents)
+            {
+                if (dependentId > _maxId || _byId[dependentId] is not { } dependent)
+                {
+                    continue;
+                }
+
+                foreach (var condition in updated.Conditions)
+                {
+                    if (Array.IndexOf(step.Conditions, condition) < 0
+                        && Array.IndexOf(dependent.Conditions, condition) < 0)
+                    {
+                        return false;
+                    }
+                }
+
+                if (updated.ConditionAlternatives.Length == 0)
+                {
+                    continue;
+                }
+
+                if (dependent.ConditionAlternatives.Length == 0)
+                {
+                    if (!HoldsAlternative(dependent.Conditions, [], updated.ConditionAlternatives))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                foreach (var alternative in dependent.ConditionAlternatives)
+                {
+                    if (!HoldsAlternative(dependent.Conditions, alternative, updated.ConditionAlternatives))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        // Accepts the list when the plan build creates no more requests for any source schema than for the list
+        // accepted before, and keeps its build. Returns false when the list is not accepted or the build limit is hit.
+        public bool TryAccept(ImmutableList<PlanStep> before, ImmutableList<PlanStep> after)
+        {
+            if (_requestCheck.Accepted is null)
+            {
+                _requestCheck.Accepted = _requestCheck.Build(before, _forwardVariableContext);
+                Count(_requestCheck.Accepted.Context, _acceptedCounts);
+            }
+
+            Debug.Assert(ReferenceEquals(_requestCheck.Accepted.Source, before));
+
+            if (!_requestCheck.CanBuild)
+            {
+                return false;
+            }
+
+            var candidate = _requestCheck.Build(after, _forwardVariableContext);
+            Count(candidate.Context, _candidateCounts);
+
+            for (var i = 0; i < _schemaCount; i++)
+            {
+                if (_candidateCounts[i] > _acceptedCounts[i])
+                {
+                    return false;
+                }
+            }
+
+            _requestCheck.Accepted = candidate;
+            (_acceptedCounts, _candidateCounts) = (_candidateCounts, _acceptedCounts);
+            return true;
+        }
+
+        // Counts the execution nodes that send a request to each source schema.
+        private void Count(ExecutionPlanBuildContext ctx, int[] counts)
+        {
+            counts.AsSpan(0, _schemaCapacity).Clear();
+
+            foreach (var node in ctx.ExecutionNodes.Values)
+            {
+                if (node is NodeFieldExecutionNode)
+                {
+                    continue;
+                }
+
+                counts[GetSchemaIndex(node.SchemaName ?? DynamicSchemaNameMarker)]++;
+            }
+        }
+
+        private int GetSchemaIndex(string schemaName)
+        {
+            for (var i = 0; i < _schemaCount; i++)
+            {
+                if (schemaName.Equals(_schemaNames[i], StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+
+            _schemaNames[_schemaCount] = schemaName;
+            return _schemaCount++;
+        }
+
+        public void Dispose()
+        {
+            ArrayPool<string?>.Shared.Return(_schemaNames, clearArray: true);
+            ArrayPool<int>.Shared.Return(_acceptedCounts);
+            ArrayPool<int>.Shared.Return(_candidateCounts);
+            ArrayPool<ConditionKey>.Shared.Return(_allowed, clearArray: true);
+            ArrayPool<ISelectionNode>.Shared.Return(_kept, clearArray: true);
+            ArrayPool<int>.Shared.Return(_holders);
+            ArrayPool<OperationPlanStep?>.Shared.Return(_byId, clearArray: true);
+            ArrayPool<int>.Shared.Return(_depth);
+            ArrayPool<int>.Shared.Return(_remaining);
+            ArrayPool<int>.Shared.Return(_queue);
+            ArrayPool<int>.Shared.Return(_visited);
+
+            if (_listed is not null)
+            {
+                ArrayPool<bool>.Shared.Return(_listed);
+            }
+
+            if (_hadDependent is not null)
+            {
+                ArrayPool<bool>.Shared.Return(_hadDependent);
+            }
+        }
+
+        // Computes the dependency depth of every operation step, the longest chain of dependencies in front of it.
+        private void Index(ImmutableList<PlanStep> planSteps)
+        {
+            _byId.AsSpan(0, _maxId + 1).Clear();
+            _remaining.AsSpan(0, _maxId + 1).Fill(-1);
+
+            foreach (var planStep in planSteps)
+            {
+                if (planStep is OperationPlanStep step)
+                {
+                    _byId[step.Id] = step;
+                    _remaining[step.Id] = 0;
+                    _depth[step.Id] = 0;
+                }
+            }
+
+            foreach (var planStep in planSteps)
+            {
+                if (planStep is not OperationPlanStep step)
+                {
+                    continue;
+                }
+
+                foreach (var dependentId in step.Dependents)
+                {
+                    if (dependentId > 0 && dependentId <= _maxId && _byId[dependentId] is not null)
+                    {
+                        _remaining[dependentId]++;
+                    }
+                }
+            }
+
+            var head = 0;
+            var tail = 0;
+
+            foreach (var planStep in planSteps)
+            {
+                if (planStep is OperationPlanStep step && _remaining[step.Id] == 0)
+                {
+                    _queue[tail++] = step.Id;
+                }
+            }
+
+            while (head < tail)
+            {
+                var current = _byId[_queue[head++]]!;
+
+                foreach (var dependentId in current.Dependents)
+                {
+                    if (dependentId <= 0 || dependentId > _maxId || _byId[dependentId] is null)
+                    {
+                        continue;
+                    }
+
+                    _depth[dependentId] = Math.Max(_depth[dependentId], _depth[current.Id] + 1);
+
+                    if (--_remaining[dependentId] == 0)
+                    {
+                        _queue[tail++] = dependentId;
+                    }
+                }
+            }
+        }
+
+        private bool IsEarlier(OperationPlanStep candidate, OperationPlanStep other)
+        {
+            var candidateIsPlain = candidate.DeliveryGroups.IsDefaultOrEmpty;
+
+            if (candidateIsPlain != other.DeliveryGroups.IsDefaultOrEmpty)
+            {
+                return candidateIsPlain;
+            }
+
+            return _depth[candidate.Id] != _depth[other.Id]
+                ? _depth[candidate.Id] < _depth[other.Id]
+                : candidate.Id < other.Id;
+        }
+
+        // Checks that the holder has no delivery groups or every group of the step.
+        private static bool HasEveryDeliveryGroup(ImmutableArray<int> stepGroups, ImmutableArray<int> holderGroups)
+        {
+            if (holderGroups.IsDefaultOrEmpty)
+            {
+                return true;
+            }
+
+            foreach (var stepGroup in stepGroups)
+            {
+                if (!holderGroups.Contains(stepGroup))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // Checks that every group of the step is a group of the holder or has an ancestor that is.
+        private bool CoversEveryDeliveryGroup(ImmutableArray<int> stepGroups, ImmutableArray<int> holderGroups)
+        {
+            if (holderGroups.IsDefaultOrEmpty)
+            {
+                return true;
+            }
+
+            if (stepGroups.IsDefaultOrEmpty)
+            {
+                return false;
+            }
+
+            foreach (var stepGroup in stepGroups)
+            {
+                var covered = false;
+
+                for (var group = _deliveryGroups[stepGroup]; group is not null; group = group.Parent)
+                {
+                    if (holderGroups.Contains(group.Id))
+                    {
+                        covered = true;
+                        break;
+                    }
+                }
+
+                if (!covered)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool CoversDependents(OperationPlanStep step, OperationPlanStep holder)
+        {
+            foreach (var dependentId in step.Dependents)
+            {
+                if (dependentId <= _maxId
+                    && _byId[dependentId] is { } dependent
+                    && !CoversDeliveryGroups(dependent.DeliveryGroups, holder.DeliveryGroups, _deliveryGroups))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool IsReachable(int fromId, int toId)
+        {
+            var stamp = ++_visitStamp;
+            var count = 0;
+            _queue[count++] = fromId;
+            _visited[fromId] = stamp;
+
+            while (count > 0)
+            {
+                var current = _byId[_queue[--count]];
+
+                if (current is null)
+                {
+                    continue;
+                }
+
+                foreach (var dependentId in current.Dependents)
+                {
+                    if (dependentId == toId)
+                    {
+                        return true;
+                    }
+
+                    if (dependentId > 0 && dependentId <= _maxId && _visited[dependentId] != stamp)
+                    {
+                        _visited[dependentId] = stamp;
+                        _queue[count++] = dependentId;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool AreConditionsAllowed(OperationPlanStep holder)
+        {
+            foreach (var condition in holder.Conditions)
+            {
+                if (!IsAllowed(new ConditionKey(condition.VariableName, condition.PassingValue)))
+                {
+                    return false;
+                }
+            }
+
+            if (holder.ConditionAlternatives.Length == 0)
+            {
+                return true;
+            }
+
+            foreach (var alternative in holder.ConditionAlternatives)
+            {
+                var holds = true;
+
+                foreach (var condition in alternative)
+                {
+                    if (!IsAllowed(new ConditionKey(condition.VariableName, condition.PassingValue)))
+                    {
+                        holds = false;
+                        break;
+                    }
+                }
+
+                if (holds)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Navigates the path in the operation. A type condition of the path matches any fragment.
+        private bool IsSelectedAt(
+            SelectionSetNode current,
+            SelectionPath path,
+            int pathIndex,
+            int group,
+            bool anyGroup,
+            FieldNode field)
+        {
+            if (pathIndex == path.Length)
+            {
+                return IsFieldSelected(current, group, anyGroup, field);
+            }
+
+            var segment = path[pathIndex];
+
+            if (segment.Kind is SelectionPathSegmentKind.InlineFragment
+                && IsSelectedAt(current, path, pathIndex + 1, group, anyGroup, field))
+            {
+                return true;
+            }
+
+            for (var i = 0; i < current.Selections.Count; i++)
+            {
+                switch (current.Selections[i])
+                {
+                    case FieldNode { SelectionSet: { } child } parentField
+                        when segment.Kind is SelectionPathSegmentKind.Field
+                            && (parentField.Alias?.Value ?? parentField.Name.Value)
+                                .Equals(segment.Name, StringComparison.Ordinal)
+                            && IsSelectedAt(child, path, pathIndex + 1, group, anyGroup, field):
+                        return true;
+
+                    case InlineFragmentNode fragment
+                        when IsSelectedAt(
+                            fragment.SelectionSet,
+                            path,
+                            pathIndex,
+                            GetGroup(fragment, group),
+                            anyGroup,
+                            field):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Checks that the selection set selects a leaf of the field inside one of the groups of the step, or inside
+        // any group or the initial response when anyGroup is set.
+        private bool IsFieldSelected(SelectionSetNode current, int group, bool anyGroup, FieldNode field)
+        {
+            for (var i = 0; i < current.Selections.Count; i++)
+            {
+                switch (current.Selections[i])
+                {
+                    case FieldNode selected
+                        when (selected.Alias?.Value ?? selected.Name.Value)
+                            .Equals(field.Alias?.Value ?? field.Name.Value, StringComparison.Ordinal)
+                            && (field.SelectionSet is null
+                                ? anyGroup || _stepGroups.Contains(group)
+                                : selected.SelectionSet is not null
+                                    && AreLeavesSelected(selected.SelectionSet, group, anyGroup, field.SelectionSet)):
+                        return true;
+
+                    case InlineFragmentNode fragment
+                        when IsFieldSelected(fragment.SelectionSet, GetGroup(fragment, group), anyGroup, field):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool AreLeavesSelected(SelectionSetNode current, int group, bool anyGroup, SelectionSetNode required)
+        {
+            for (var i = 0; i < required.Selections.Count; i++)
+            {
+                switch (required.Selections[i])
+                {
+                    case FieldNode requiredField when IsFieldSelected(current, group, anyGroup, requiredField):
+                        return true;
+
+                    case InlineFragmentNode fragment
+                        when AreLeavesSelected(current, group, anyGroup, fragment.SelectionSet):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Returns the id of the delivery group that the fragment opens, or the enclosing group.
+        private static int GetGroup(InlineFragmentNode fragment, int enclosingGroup)
+        {
+            for (var i = 0; i < fragment.Directives.Count; i++)
+            {
+                var directive = fragment.Directives[i];
+
+                if (!directive.Name.Value.Equals("defer", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                for (var j = 0; j < directive.Arguments.Count; j++)
+                {
+                    if (directive.Arguments[j] is { Name.Value: "__group", Value: IntValueNode group })
+                    {
+                        return group.ToInt32();
+                    }
+                }
+            }
+
+            return enclosingGroup;
+        }
+
+        // Navigates the path below the holder, then looks for the field.
+        private bool FetchesAtPath(SelectionSetNode current, SelectionPath path, int pathIndex, FieldNode required)
+        {
+            if (pathIndex == path.Length)
+            {
+                return ContainsField(current, required);
+            }
+
+            var segment = path[pathIndex];
+
+            for (var i = 0; i < current.Selections.Count; i++)
+            {
+                switch (current.Selections[i])
+                {
+                    case InlineFragmentNode { TypeCondition: null } wrapper
+                        when AreAllowed(wrapper.Directives)
+                            && FetchesAtPath(wrapper.SelectionSet, path, pathIndex, required):
+                        return true;
+
+                    case FieldNode { SelectionSet: { } child } parentField
+                        when segment.Kind is SelectionPathSegmentKind.Field
+                            && (parentField.Alias?.Value ?? parentField.Name.Value)
+                                .Equals(segment.Name, StringComparison.Ordinal)
+                            && AreAllowed(parentField.Directives)
+                            && FetchesAtPath(child, path, pathIndex + 1, required):
+                        return true;
+
+                    case InlineFragmentNode { TypeCondition: { } condition } fragment
+                        when segment.Kind is SelectionPathSegmentKind.InlineFragment
+                            && condition.Name.Value.Equals(segment.Name, StringComparison.Ordinal)
+                            && AreAllowed(fragment.Directives)
+                            && FetchesAtPath(fragment.SelectionSet, path, pathIndex + 1, required):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Looks for the field in the selection set, also inside inline fragments without type condition.
+        private bool ContainsField(SelectionSetNode holder, FieldNode required)
+        {
+            for (var i = 0; i < holder.Selections.Count; i++)
+            {
+                switch (holder.Selections[i])
+                {
+                    case InlineFragmentNode { TypeCondition: null } wrapper
+                        when AreAllowed(wrapper.Directives) && ContainsField(wrapper.SelectionSet, required):
+                        return true;
+
+                    case FieldNode field
+                        when IsSameField(required, field)
+                            && AreAllowed(field.Directives)
+                            && (required.SelectionSet is null
+                                || (field.SelectionSet is not null
+                                    && ContainsSelections(field.SelectionSet, required.SelectionSet))):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Checks that the holder selection set fetches every selection of the required one under the allowed
+        // conditions plus the conditions of the required selection.
+        private bool ContainsSelections(SelectionSetNode holder, SelectionSetNode required)
+        {
+            for (var i = 0; i < required.Selections.Count; i++)
+            {
+                var restoreCount = _allowedCount;
+                var found = required.Selections[i] switch
+                {
+                    FieldNode field => TryPush(field.Directives) && ContainsField(holder, field),
+                    InlineFragmentNode { TypeCondition: null } wrapper
+                        => TryPush(wrapper.Directives) && ContainsSelections(holder, wrapper.SelectionSet),
+                    InlineFragmentNode fragment
+                        => TryPush(fragment.Directives) && ContainsFragment(holder, fragment),
+                    _ => false
+                };
+
+                _allowedCount = restoreCount;
+
+                if (!found)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool ContainsFragment(SelectionSetNode holder, InlineFragmentNode required)
+        {
+            for (var i = 0; i < holder.Selections.Count; i++)
+            {
+                switch (holder.Selections[i])
+                {
+                    case InlineFragmentNode { TypeCondition: null } wrapper
+                        when AreAllowed(wrapper.Directives) && ContainsFragment(wrapper.SelectionSet, required):
+                        return true;
+
+                    case InlineFragmentNode { TypeCondition: { } condition } fragment
+                        when condition.Name.Value.Equals(required.TypeCondition!.Name.Value, StringComparison.Ordinal)
+                            && AreAllowed(fragment.Directives)
+                            && ContainsSelections(fragment.SelectionSet, required.SelectionSet):
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSameField(FieldNode required, FieldNode field)
+        {
+            if (!required.Name.Value.Equals(field.Name.Value, StringComparison.Ordinal)
+                || !string.Equals(required.Alias?.Value, field.Alias?.Value, StringComparison.Ordinal)
+                || required.Arguments.Count != field.Arguments.Count)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < required.Arguments.Count; i++)
+            {
+                if (!SyntaxComparer.BySyntax.Equals(required.Arguments[i], field.Arguments[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool TryPush(IReadOnlyList<DirectiveNode> directives)
+        {
+            for (var i = 0; i < directives.Count; i++)
+            {
+                if (!TryReadCondition(directives[i], out var condition) || _allowedCount == _allowed.Length)
+                {
+                    return false;
+                }
+
+                _allowed[_allowedCount++] = condition;
+            }
+
+            return true;
+        }
+
+        private bool AreAllowed(IReadOnlyList<DirectiveNode> directives)
+        {
+            for (var i = 0; i < directives.Count; i++)
+            {
+                if (!TryReadCondition(directives[i], out var condition) || !IsAllowed(condition))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool IsAllowed(ConditionKey condition)
+        {
+            for (var i = 0; i < _allowedCount; i++)
+            {
+                if (_allowed[i] == condition)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryReadCondition(DirectiveNode directive, out ConditionKey condition)
+        {
+            var passingValue = directive.Name.Value switch
+            {
+                "skip" => false,
+                "include" => true,
+                _ => (bool?)null
+            };
+
+            if (passingValue.HasValue
+                && directive.Arguments is [{ Value: VariableNode variable }])
+            {
+                condition = new ConditionKey(variable.Name.Value, passingValue.Value);
+                return true;
+            }
+
+            condition = default;
+            return false;
         }
     }
 
@@ -979,7 +2651,10 @@ public sealed partial class OperationPlanner
             resultSelectionSet,
             operationStep.Conditions,
             operationStep.ConditionAlternatives,
-            requiresFileUpload);
+            requiresFileUpload)
+        {
+            DeliveryGroups = operationStep.DeliveryGroups
+        };
 
         foreach (var parentDependency in operationStep.ParentDependencies)
         {
@@ -1086,6 +2761,206 @@ public sealed partial class OperationPlanner
     private static int GetSerialScope(Dictionary<int, int>? serialScopes, int nodeId)
         => serialScopes is not null && serialScopes.TryGetValue(nodeId, out var scope) ? scope : 0;
 
+    /// <summary>
+    /// Replaces query operations that fetch the same selections for the same target under different
+    /// conditions by one operation that runs when the conditions of at least one of them pass.
+    /// </summary>
+    private static void MergeOperationsThatDifferInConditions(
+        ExecutionPlanBuildContext ctx,
+        OperationMergePolicy mergePolicy,
+        Dictionary<int, int>? serialScopes)
+    {
+        if (mergePolicy is OperationMergePolicy.None)
+        {
+            return;
+        }
+
+        // The pass repeats until no operations merge.
+        while (TryMergeOperationsThatDifferInConditions(ctx, mergePolicy, serialScopes))
+        {
+        }
+    }
+
+    private static bool TryMergeOperationsThatDifferInConditions(
+        ExecutionPlanBuildContext ctx,
+        OperationMergePolicy mergePolicy,
+        Dictionary<int, int>? serialScopes)
+    {
+        var merged = false;
+        var nodeFieldBoundCache = new Dictionary<int, bool>();
+        var candidates = new Dictionary<string, List<OperationExecutionNode>>(StringComparer.Ordinal);
+
+        foreach (var node in ctx.ExecutionNodes.Values.OfType<OperationExecutionNode>())
+        {
+            if (node.Operation.Type != OperationType.Query
+                || IsNodeFieldBound(node.Id, ctx, nodeFieldBoundCache))
+            {
+                continue;
+            }
+
+            var signature = ComputeCanonicalSignature(
+                node.SchemaName,
+                node.Source,
+                node.OperationDocument,
+                node.Requirements,
+                [],
+                [],
+                node.DeliveryGroups);
+            var key = $"{GetSerialScope(serialScopes, node.Id)}|{node.Target}|{signature}";
+
+            if (!candidates.TryGetValue(key, out var list))
+            {
+                list = [];
+                candidates[key] = list;
+            }
+
+            list.Add(node);
+        }
+
+        foreach (var (_, equivalentNodes) in candidates)
+        {
+            if (equivalentNodes.Count <= 1)
+            {
+                continue;
+            }
+
+            foreach (var mergeableNodes in PartitionIntoMergeableGroups(
+                equivalentNodes, ctx.DependenciesByStepId, mergePolicy))
+            {
+                foreach (var group in PartitionByDependencies(mergeableNodes, ctx.DependenciesByStepId))
+                {
+                    if (group.Count > 1 && !HaveEqualConditions(group))
+                    {
+                        MergeIntoOperationWithConditionAlternatives(ctx, group);
+                        merged = true;
+                    }
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    // Splits the nodes into groups with equal dependency sets. A node without an entry has an empty set.
+    private static List<List<OperationExecutionNode>> PartitionByDependencies(
+        List<OperationExecutionNode> nodes,
+        Dictionary<int, HashSet<int>> dependenciesByStepId)
+    {
+        var groups = new List<List<OperationExecutionNode>>();
+
+        foreach (var node in nodes)
+        {
+            dependenciesByStepId.TryGetValue(node.Id, out var dependencies);
+            var placed = false;
+
+            foreach (var group in groups)
+            {
+                dependenciesByStepId.TryGetValue(group[0].Id, out var groupDependencies);
+
+                if (HaveEqualDependencies(dependencies, groupDependencies))
+                {
+                    group.Add(node);
+                    placed = true;
+                    break;
+                }
+            }
+
+            if (!placed)
+            {
+                groups.Add([node]);
+            }
+        }
+
+        return groups;
+    }
+
+    private static bool HaveEqualDependencies(HashSet<int>? left, HashSet<int>? right)
+    {
+        if (left is null || left.Count == 0)
+        {
+            return right is null || right.Count == 0;
+        }
+
+        return right is not null && left.SetEquals(right);
+    }
+
+    private static bool HaveEqualConditions(List<OperationExecutionNode> group)
+    {
+        var signature = ComputeCanonicalSignature(group[0]);
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            if (!ComputeCanonicalSignature(group[i]).Equals(signature, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Each member contributes one term per condition alternative, or one term when it has none. The
+    // merged operation passes when one term passes, which is exactly when one member would run.
+    private static void MergeIntoOperationWithConditionAlternatives(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group)
+    {
+        group.Sort((a, b) => a.Id.CompareTo(b.Id));
+
+        var terms = new List<HashSet<ExecutionNodeCondition>>();
+
+        foreach (var member in group)
+        {
+            if (member.ConditionAlternatives.Length == 0)
+            {
+                terms.Add([.. member.Conditions]);
+                continue;
+            }
+
+            foreach (var alternative in member.ConditionAlternatives)
+            {
+                terms.Add([.. member.Conditions, .. alternative]);
+            }
+        }
+
+        var common = new HashSet<ExecutionNodeCondition>(terms[0]);
+
+        foreach (var term in terms)
+        {
+            common.IntersectWith(term);
+        }
+
+        var primary = group[0];
+        var merged = new OperationExecutionNode(
+            primary.Id,
+            primary.Operation,
+            primary.LookupTypeName,
+            primary.SchemaName,
+            primary.Target,
+            primary.Source,
+            primary.Requirements.ToArray(),
+            primary.ForwardedVariables.ToArray(),
+            primary.ResultSelectionSet,
+            SortConditions(common),
+            BuildConditionAlternatives(terms, common),
+            primary.RequiresFileUpload)
+        {
+            DeliveryGroups = primary.DeliveryGroups
+        };
+
+        foreach (var member in group)
+        {
+            foreach (var parentDependency in member.BufferedParentDependencies)
+            {
+                merged.AddParentDependency(parentDependency);
+            }
+        }
+
+        ctx.ExecutionNodes[primary.Id] = merged;
+        group[0] = merged;
+        AbsorbMergedNodes(ctx, primary.Id, group);
+    }
+
     private static void MergeAndBatchOperations(
         ExecutionPlanBuildContext ctx,
         bool enableRequestGrouping,
@@ -1161,8 +3036,14 @@ public sealed partial class OperationPlanner
         }
 
         var candidates = new Dictionary<string, List<OperationExecutionNode>>(StringComparer.Ordinal);
+        var queryNodes = ctx.ExecutionNodes.Values.OfType<OperationExecutionNode>();
 
-        foreach (var node in ctx.ExecutionNodes.Values.OfType<OperationExecutionNode>())
+        if (!ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            queryNodes = OrderByDependencyDepthDescending(ctx, queryNodes);
+        }
+
+        foreach (var node in queryNodes)
         {
             if (node.Operation.Type != OperationType.Query)
             {
@@ -1175,8 +3056,8 @@ public sealed partial class OperationPlanner
             }
 
             var signature = serialScopes is null
-                ? ComputeCanonicalSignature(node)
-                : $"{GetSerialScope(serialScopes, node.Id)}|{ComputeCanonicalSignature(node)}";
+                ? ComputeMergeSignature(ctx, node)
+                : $"{GetSerialScope(serialScopes, node.Id)}|{ComputeMergeSignature(ctx, node)}";
 
             if (!candidates.TryGetValue(signature, out var list))
             {
@@ -1233,6 +3114,28 @@ public sealed partial class OperationPlanner
 
         return mergeResults;
     }
+
+    // Orders the nodes from the deepest dependency level to the shallowest.
+    private static IEnumerable<OperationExecutionNode> OrderByDependencyDepthDescending(
+        ExecutionPlanBuildContext ctx,
+        IEnumerable<OperationExecutionNode> nodes)
+    {
+        var depthLookup = new Dictionary<int, int>();
+        var recursionStack = new HashSet<int>();
+        var ordered = nodes.ToList();
+
+        foreach (var node in ordered)
+        {
+            GetDependencyDepth(node.Id, ctx.DependenciesByStepId, depthLookup, recursionStack);
+        }
+
+        return ordered.OrderByDescending(node => depthLookup[node.Id]);
+    }
+
+    private static ImmutableArray<int> GetEffectiveDeliveryGroups(
+        OperationExecutionNode node,
+        Dictionary<int, MergeResult> mergeResults)
+        => mergeResults.TryGetValue(node.Id, out var merge) ? merge.DeliveryGroups : node.DeliveryGroups;
 
     /// <summary>
     /// Merges Apollo Federation entity lookups that are structurally identical and share
@@ -1473,6 +3376,12 @@ public sealed partial class OperationPlanner
 
         var primary = group[0];
         var (canonicalOp, canonicalRequirements) = CanonicalizeOperation(primary);
+        var deliveryGroups = UnionDeliveryGroups(group, mergeResults);
+
+        Debug.Assert(
+            deliveryGroups.Length < 2 || AreUnlabelledSiblingsWithEqualConditions(ctx, group, deliveryGroups),
+            "A step of several delivery groups must merge unlabelled sibling groups with equal conditions.");
+
         var targets = new SelectionPath[group.Count];
 
         for (var i = 0; i < group.Count; i++)
@@ -1480,12 +3389,68 @@ public sealed partial class OperationPlanner
             targets[i] = group[i].Target;
         }
 
+        // Merged operations of sibling groups keep each target once.
+        if (deliveryGroups != primary.DeliveryGroups)
+        {
+            targets = [.. targets.Distinct()];
+        }
+
         mergeResults[primary.Id] = new MergeResult(
-            targets, canonicalOp, canonicalRequirements, primary);
+            targets, canonicalOp, canonicalRequirements, primary, deliveryGroups);
 
         AbsorbMergedNodes(ctx, primary.Id, group);
 
         return primary.Id;
+    }
+
+    // Checks that the groups are unlabelled siblings and that the members hold equal conditions.
+    private static bool AreUnlabelledSiblingsWithEqualConditions(
+        ExecutionPlanBuildContext ctx,
+        List<OperationExecutionNode> group,
+        ImmutableArray<int> deliveryGroups)
+    {
+        if (!TryGetUnlabelledSite(ctx.DeliveryGroups, deliveryGroups, out _))
+        {
+            return false;
+        }
+
+        var conditions = FormatCanonicalConditions(group[0].Conditions);
+        var alternatives = FormatCanonicalConditionAlternatives(group[0].ConditionAlternatives);
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            if (FormatCanonicalConditions(group[i].Conditions) != conditions
+                || FormatCanonicalConditionAlternatives(group[i].ConditionAlternatives) != alternatives)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Returns the groups of all members, sorted by group id.
+    private static ImmutableArray<int> UnionDeliveryGroups(
+        List<OperationExecutionNode> group,
+        Dictionary<int, MergeResult> mergeResults)
+    {
+        var primaryGroups = GetEffectiveDeliveryGroups(group[0], mergeResults);
+        SortedSet<int>? union = null;
+
+        for (var i = 1; i < group.Count; i++)
+        {
+            var memberGroups = GetEffectiveDeliveryGroups(group[i], mergeResults);
+
+            if (memberGroups.IsDefaultOrEmpty || memberGroups.AsSpan().SequenceEqual(primaryGroups.AsSpan()))
+            {
+                continue;
+            }
+
+            union ??= [.. primaryGroups];
+            union.UnionWith(memberGroups);
+        }
+
+        return union is null ? primaryGroups : [.. union];
     }
 
     private static bool IsReusableLookup(OperationExecutionNode node, FusionSchemaDefinition schema)
@@ -1669,13 +3634,20 @@ public sealed partial class OperationPlanner
             GetDependencyDepth(node.Id, ctx.DependenciesByStepId, depthLookup, recursionStack);
         }
 
-        var batchGroups = new Dictionary<(string schema, int depth, int scope), List<OperationExecutionNode>>();
+        var batchGroups =
+            new Dictionary<
+                (string schema, int depth, int scope, string deliveryGroups),
+                List<OperationExecutionNode>>();
 
         foreach (var node in queryNodes)
         {
             var schemaKey = node.SchemaName ?? DynamicSchemaNameMarker;
             var depth = depthLookup.TryGetValue(node.Id, out var d) ? d : 0;
-            var key = (schemaKey, depth, GetSerialScope(serialScopes, node.Id));
+            var key = (
+                schemaKey,
+                depth,
+                GetSerialScope(serialScopes, node.Id),
+                FormatBatchMark(ctx, node.DeliveryGroups));
 
             if (!batchGroups.TryGetValue(key, out var group))
             {
@@ -1738,6 +3710,10 @@ public sealed partial class OperationPlanner
             perOperationDependencies[batchNode] = memberDependencies;
         }
 
+        Debug.Assert(
+            AreDependenciesOnBatchedGroupStepsCovered(ctx, originalDependencies),
+            "A dependency on a step of a batch must name a member of one batch whose conditions the dependent holds.");
+
         // Remove consumed merge results so the caller knows which ones still
         // need to be wrapped as standalone batch nodes.
         foreach (var id in consumedMergeIds)
@@ -1746,6 +3722,127 @@ public sealed partial class OperationPlanner
         }
 
         return perOperationDependencies;
+    }
+
+    // Checks that every dependency on a batched step of a delivery group names a member of one batch
+    // and that the dependent holds the conditions of that member.
+    private static bool AreDependenciesOnBatchedGroupStepsCovered(
+        ExecutionPlanBuildContext ctx,
+        Dictionary<int, int[]> originalDependencies)
+    {
+        if (ctx.DeliveryGroups.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        var members = new Dictionary<int, OperationDefinition>();
+
+        foreach (var node in ctx.ExecutionNodes.Values)
+        {
+            if (node is not OperationBatchExecutionNode batch)
+            {
+                continue;
+            }
+
+            foreach (var operation in batch.Operations)
+            {
+                if (!members.TryAdd(operation.Id, operation))
+                {
+                    return false;
+                }
+            }
+        }
+
+        foreach (var (dependentId, dependencyIds) in originalDependencies)
+        {
+            foreach (var dependencyId in dependencyIds)
+            {
+                if (!members.TryGetValue(dependencyId, out var member) || member.DeliveryGroups.IsDefaultOrEmpty)
+                {
+                    continue;
+                }
+
+                ExecutionNodeCondition[] conditions;
+                ExecutionNodeCondition[][] alternatives;
+
+                if (members.TryGetValue(dependentId, out var dependentMember))
+                {
+                    conditions = dependentMember.Conditions.ToArray();
+                    alternatives = dependentMember.ConditionAlternatives.ToArray();
+                }
+                else if (ctx.ExecutionNodes.TryGetValue(dependentId, out var step)
+                    && step is OperationExecutionNode dependent)
+                {
+                    conditions = dependent.Conditions.ToArray();
+                    alternatives = dependent.ConditionAlternatives.ToArray();
+                }
+                else
+                {
+                    continue;
+                }
+
+                foreach (var condition in member.Conditions)
+                {
+                    if (Array.IndexOf(conditions, condition) < 0)
+                    {
+                        return false;
+                    }
+                }
+
+                if (member.ConditionAlternatives.Length == 0)
+                {
+                    continue;
+                }
+
+                if (alternatives.Length == 0)
+                {
+                    if (!HoldsAlternative(conditions, [], member.ConditionAlternatives))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                foreach (var alternative in alternatives)
+                {
+                    if (!HoldsAlternative(conditions, alternative, member.ConditionAlternatives))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // Checks that the two condition sets together contain every condition of one of the alternatives.
+    private static bool HoldsAlternative(
+        ExecutionNodeCondition[] conditions,
+        ExecutionNodeCondition[] alternative,
+        ReadOnlySpan<ExecutionNodeCondition[]> alternatives)
+    {
+        foreach (var candidate in alternatives)
+        {
+            var holds = true;
+
+            foreach (var condition in candidate)
+            {
+                if (Array.IndexOf(conditions, condition) < 0 && Array.IndexOf(alternative, condition) < 0)
+                {
+                    holds = false;
+                    break;
+                }
+            }
+
+            if (holds)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2030,7 +4127,10 @@ public sealed partial class OperationPlanner
             primary.ResultSelectionSet,
             primary.Conditions.ToArray(),
             primary.ConditionAlternatives.ToArray(),
-            primary.RequiresFileUpload);
+            primary.RequiresFileUpload)
+        {
+            DeliveryGroups = merge.DeliveryGroups
+        };
 
         foreach (var parentDependency in primary.BufferedParentDependencies)
         {
@@ -2054,7 +4154,10 @@ public sealed partial class OperationPlanner
             member.ResultSelectionSet,
             member.Conditions.ToArray(),
             member.ConditionAlternatives.ToArray(),
-            member.RequiresFileUpload);
+            member.RequiresFileUpload)
+        {
+            DeliveryGroups = member.DeliveryGroups
+        };
 
         foreach (var parentDependency in member.BufferedParentDependencies)
         {
@@ -2522,7 +4625,8 @@ public sealed partial class OperationPlanner
             node.OperationDocument,
             node.Requirements,
             node.Conditions,
-            node.ConditionAlternatives);
+            node.ConditionAlternatives,
+            node.DeliveryGroups);
 
     private static string ComputeCanonicalSignature(
         string? schemaName,
@@ -2530,14 +4634,95 @@ public sealed partial class OperationPlanner
         Utf8OperationDocument document,
         ReadOnlySpan<OperationRequirement> requirements,
         ReadOnlySpan<ExecutionNodeCondition> conditions,
-        ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives)
+        ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives,
+        ImmutableArray<int> deliveryGroups)
+        => ComputeCanonicalSignature(
+            schemaName,
+            source,
+            document,
+            requirements,
+            conditions,
+            conditionAlternatives,
+            FormatDeliveryGroups(deliveryGroups));
+
+    // Computes the signature with the marks of unlabelled sibling groups unified.
+    private static string ComputeMergeSignature(ExecutionPlanBuildContext ctx, OperationExecutionNode node)
+        => ComputeCanonicalSignature(
+            node.SchemaName,
+            node.Source,
+            node.OperationDocument,
+            node.Requirements,
+            node.Conditions,
+            node.ConditionAlternatives,
+            FormatMergeMark(ctx, node.DeliveryGroups));
+
+    private static string ComputeCanonicalSignature(
+        string? schemaName,
+        SelectionPath source,
+        Utf8OperationDocument document,
+        ReadOnlySpan<OperationRequirement> requirements,
+        ReadOnlySpan<ExecutionNodeCondition> conditions,
+        ReadOnlySpan<ExecutionNodeCondition[]> conditionAlternatives,
+        string deliveryGroupMark)
     {
         var replacements = BuildPrefixReplacements(requirements);
         var bodyText = FormatCanonicalSelectionSet(document, replacements);
         var formattedConditions = FormatCanonicalConditions(conditions);
         var formattedAlternatives = FormatCanonicalConditionAlternatives(conditionAlternatives);
+        var signature = $"{schemaName}|{source}|{formattedConditions}|{formattedAlternatives}|{bodyText}";
 
-        return $"{schemaName}|{source}|{formattedConditions}|{formattedAlternatives}|{bodyText}";
+        return deliveryGroupMark.Length == 0
+            ? signature
+            : $"{signature}|{deliveryGroupMark}";
+    }
+
+    private static string FormatDeliveryGroups(ImmutableArray<int> deliveryGroups)
+        => deliveryGroups.IsDefaultOrEmpty
+            ? string.Empty
+            : string.Join(",", deliveryGroups.OrderBy(static id => id));
+
+    // Names the groups of a mark. Unlabelled groups with the same parent and path share one name.
+    private static string FormatMergeMark(ExecutionPlanBuildContext ctx, ImmutableArray<int> deliveryGroups)
+        => TryGetUnlabelledSite(ctx.DeliveryGroups, deliveryGroups, out var site)
+            ? $"unlabelled:{site.Parent?.Id}:{site.Path}"
+            : FormatDeliveryGroups(deliveryGroups);
+
+    // Names the groups of a batch key. Every unlabelled group shares one name, whatever its parent and path.
+    private static string FormatBatchMark(ExecutionPlanBuildContext ctx, ImmutableArray<int> deliveryGroups)
+        => TryGetUnlabelledSite(ctx.DeliveryGroups, deliveryGroups, out _)
+            ? UnlabelledBatchMark
+            : FormatDeliveryGroups(deliveryGroups);
+
+    // Checks that the groups are unlabelled and share one parent and path, and returns the first of them.
+    private static bool TryGetUnlabelledSite(
+        ImmutableArray<DeliveryGroup> allGroups,
+        ImmutableArray<int> deliveryGroups,
+        [NotNullWhen(true)] out DeliveryGroup? site)
+    {
+        site = null;
+
+        if (deliveryGroups.IsDefaultOrEmpty || allGroups.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        var first = allGroups[deliveryGroups[0]];
+
+        foreach (var id in deliveryGroups)
+        {
+            var group = allGroups[id];
+
+            if (group.Label is not null
+                || group.Path is null
+                || group.Parent?.Id != first.Parent?.Id
+                || !group.Path.Equals(first.Path))
+            {
+                return false;
+            }
+        }
+
+        site = first;
+        return true;
     }
 
     /// <summary>
@@ -2781,7 +4966,8 @@ public sealed partial class OperationPlanner
                 operation.Document,
                 operation.Requirements,
                 operation.Conditions,
-                operation.ConditionAlternatives),
+                operation.ConditionAlternatives,
+                operation.DeliveryGroups),
             _ => throw new ArgumentOutOfRangeException(nameof(node))
         };
 
@@ -4048,6 +6234,12 @@ public sealed partial class OperationPlanner
         public Dictionary<int, int> RedirectedStepIds { get; } = [];
 
         /// <summary>
+        /// The delivery groups of a plan with single plan defer, indexed by group id, or the default
+        /// array when the plan does not use them.
+        /// </summary>
+        public ImmutableArray<DeliveryGroup> DeliveryGroups { get; init; }
+
+        /// <summary>
         /// Returns a node identifier that is unique across all execution nodes
         /// and operation definitions of the plan being built.
         /// </summary>
@@ -4058,7 +6250,8 @@ public sealed partial class OperationPlanner
         SelectionPath[] Targets,
         OperationSourceText CanonicalOp,
         OperationRequirement[] CanonicalRequirements,
-        OperationExecutionNode Primary);
+        OperationExecutionNode Primary,
+        ImmutableArray<int> DeliveryGroups);
 
     /// <summary>
     /// Structurally identical Apollo lookups that merge into one lookup. The node with the

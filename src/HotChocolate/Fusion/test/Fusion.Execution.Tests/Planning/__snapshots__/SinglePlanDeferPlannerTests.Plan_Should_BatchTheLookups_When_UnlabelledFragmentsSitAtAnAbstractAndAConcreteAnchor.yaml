@@ -1,0 +1,88 @@
+operation:
+  - document: |
+      {
+        items {
+          __typename @fusion__requirement
+          id
+          ... on Book {
+            ... @defer(__group: 0, __parent: -1) {
+              rating
+              id @fusion__requirement
+            }
+          }
+        }
+        book(id: "1") {
+          id
+          ... @defer(__group: 1, __parent: -1) {
+            rating
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 2
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        items {
+          __typename
+          id
+          ... on Book {
+            ... {
+              id
+            }
+          }
+        }
+        book(id: "1") {
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        bookById(id: $__fusion_1_id) {
+          rating
+        }
+      }
+    source: $.bookById
+    target: $.book
+    batchingGroupId: 4
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        bookById(id: $__fusion_2_id) {
+          rating
+        }
+      }
+    source: $.bookById
+    target: $.items<Book>
+    batchingGroupId: 4
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.items
+  - id: 1
+    path: $.book

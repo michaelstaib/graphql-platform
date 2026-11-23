@@ -1,0 +1,124 @@
+operation:
+  - document: |
+      {
+        current {
+          user {
+            code
+            id @fusion__requirement
+            ... @defer(__group: 0, __parent: -1) {
+              nick
+              total
+              friend {
+                nick
+                total
+                id @fusion__requirement
+                code @fusion__requirement
+              }
+              id @fusion__requirement
+              code @fusion__requirement
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 8
+    expandedNodes: 25
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        current {
+          user {
+            id
+          }
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: Int!) {
+        userByIdC(id: $__fusion_1_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: f
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: Int!) {
+        userByIdF(id: $__fusion_2_id) {
+          friend {
+            id
+          }
+        }
+      }
+    source: $.userByIdF
+    target: $.current.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 4
+    type: OperationBatch
+    schema: c
+    operation: |
+      query Op_123456789101112_4($__fusion_3_id: Int!) {
+        userByIdC(id: $__fusion_3_id) {
+          nick
+          code
+        }
+      }
+    source: $.userByIdC
+    targets:
+      - $.current.user
+      - $.current.user.friend
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_3_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+      - id: 3
+  - id: 5
+    type: OperationBatch
+    schema: d
+    operation: |
+      query Op_123456789101112_5($__fusion_4_code: String!) {
+        userByCode(code: $__fusion_4_code) {
+          total
+        }
+      }
+    source: $.userByCode
+    targets:
+      - $.current.user
+      - $.current.user.friend
+    batchingGroupId: 9
+    requirements:
+      - name: __fusion_4_code
+        selectionMap: >-
+          code
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 4
+deliveryGroups:
+  - id: 0
+    path: $.current.user

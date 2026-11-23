@@ -1,0 +1,94 @@
+operation:
+  - document: |
+      {
+        product {
+          bundle
+          upc @fusion__requirement
+          price(cur: "EUR") @fusion__requirement
+          weight @fusion__requirement
+          ... @defer(__group: 0, __parent: -1) {
+            price
+            upc @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 7
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        product {
+          upc
+        }
+      }
+  - id: 3
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_3(
+        $__fusion_2_input: BundleInput!
+        $__fusion_3_upc: String!
+      ) {
+        productByUpcC(upc: $__fusion_3_upc) {
+          bundle(input: $__fusion_2_input)
+        }
+      }
+    source: $.productByUpcC
+    target: $.product
+    requirements:
+      - name: __fusion_2_input
+        selectionMap: >-
+          {
+            eur: price(cur: "EUR")
+            w: weight
+          }
+      - name: __fusion_3_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_4($__fusion_4_upc: String!) {
+        productByUpcB(upc: $__fusion_4_upc) {
+          price(cur: "EUR")
+          weight
+        }
+      }
+    source: $.productByUpcB
+    target: $.product
+    requirements:
+      - name: __fusion_4_upc
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_5($__fusion_5_upc: String!) {
+        productByUpcB(upc: $__fusion_5_upc) {
+          price
+        }
+      }
+    source: $.productByUpcB
+    target: $.product
+    requirements:
+      - name: __fusion_5_upc
+        selectionMap: >-
+          upc
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+deliveryGroups:
+  - id: 0
+    path: $.product

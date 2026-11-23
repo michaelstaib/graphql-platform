@@ -24,7 +24,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             RootPath = input.SelectionSet.Path,
             SelectionSetIndex = input.SelectionSetIndex,
             PruneUnprovidedAbstractBranches = input.PruneUnprovidedAbstractBranches,
-            TreatSourceExternalAsUnresolvable = input.TreatSourceExternalAsUnresolvable
+            TreatSourceExternalAsUnresolvable = input.TreatSourceExternalAsUnresolvable,
+            DeferredFragments = input.DeferredFragments
         };
 
         var (resolvable, _) =
@@ -53,7 +54,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             context.SelectionSetIndex);
     }
 
-    private static ExecutionNodeCondition[]? ExtractDirectiveConditions(
+    internal static ExecutionNodeCondition[]? ExtractDirectiveConditions(
         IReadOnlyList<DirectiveNode> directives)
     {
         List<ExecutionNodeCondition>? conditions = null;
@@ -110,10 +111,22 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         providedSelectionSetNode = GetProvidedSelectionSet(type, schema, providedSelectionSetNode);
 
+        var spillAll = ReferenceEquals(context.SpillSelectionSet, selectionSetNode);
+        var spillDeliveryGroup = spillAll ? context.SpillDeliveryGroup : null;
+        var returnSpilled = spillAll && context.ReturnSpilledSelections;
+
         context.Nodes.Push(selectionSetNode);
 
         for (var i = 0; i < selectionSetNode.Selections.Count; i++)
         {
+            if (spillAll
+                && !IsRootIntrospectionField(selectionSetNode.Selections[i], type, complexType)
+                && GetSpillPlacement(context, selectionSetNode.Selections[i], type) is SpillPlacement.Body)
+            {
+                CompleteSelection(selectionSetNode.Selections[i], null, selectionSetNode.Selections[i], i);
+                continue;
+            }
+
             switch (selectionSetNode.Selections[i])
             {
                 case FieldNode fieldNode:
@@ -171,6 +184,11 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                     var fragmentConditions = ExtractDirectiveConditions(inlineFragmentNode.Directives);
                     var savedCount = context.PushConditions(fragmentConditions);
 
+                    if (spillAll && GetSpillPlacement(context, inlineFragmentNode, type) is SpillPlacement.Split)
+                    {
+                        context.SpillWrapper = inlineFragmentNode;
+                    }
+
                     {
                         var (resolvable, unresolvable) =
                             RewriteFragmentNode(
@@ -187,6 +205,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                         CompleteSelection(inlineFragmentNode, resolvable, unresolvable, i);
                     }
 
+                    context.SpillWrapper = null;
                     context.PopConditions(savedCount);
                     break;
                 }
@@ -202,7 +221,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return (selectionSetNode, null);
         }
 
-        if (unresolvableSelections is not null)
+        if (unresolvableSelections is not null && !returnSpilled)
         {
             // When we have unresolvable selections on an abstract type, check if inner
             // recursive calls already pushed type-specific entries (from inline fragments)
@@ -224,7 +243,7 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 type,
                 context.BuildPath());
             context.Unresolvable = context.Unresolvable.Push(
-                new ConditionedSelectionSet(selectionSet, context.SnapshotConditions()));
+                new ConditionedSelectionSet(selectionSet, context.SnapshotConditions(), spillDeliveryGroup));
             unresolvableSelections = null;
         }
 
@@ -279,6 +298,17 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             }
 
             resolvableSelections?.Add(resolvable);
+        }
+
+        bool IsRootIntrospectionField(
+            ISelectionNode selection,
+            ITypeDefinition parentType,
+            FusionComplexTypeDefinition? parent)
+        {
+            return selection is FieldNode field
+                && !field.Name.Value.Equals(IntrospectionFieldNames.TypeName)
+                && parentType == schema.QueryType
+                && parent!.Fields.GetField(field.Name.Value, allowInaccessibleFields: true).IsIntrospectionField;
         }
 
         static FieldNode? GetProvidedField(FieldNode fieldNode, SelectionSetNode? providedSelectionSetNode)
@@ -401,7 +431,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             // start with the parent's conditions (prefix check), because the Unresolvable
             // stack is shared across sibling fragments and may contain entries from
             // unconditional siblings that must not inherit the parent's conditions.
-            if (entryPath.Length == currentPath.Length + 1
+            if (entry.DeliveryGroup is null
+                && entryPath.Length == currentPath.Length + 1
                 && entryPath[entryPath.Length - 1].Kind == SelectionPathSegmentKind.InlineFragment
                 && currentPath.IsParentOfOrSame(entryPath)
                 && IsConditionPrefix(currentConditions, entry.Conditions))
@@ -852,7 +883,14 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
             return (null, null);
         }
 
+        var isSpillWrapper = ReferenceEquals(context.SpillWrapper, inlineFragmentNode);
+
         context.Nodes.Push(inlineFragmentNode);
+        context.SpillDeliveryGroup = GetDeliveryGroup(context, inlineFragmentNode);
+        context.SpillSelectionSet = context.SpillDeliveryGroup is null && !isSpillWrapper
+            ? null
+            : inlineFragmentNode.SelectionSet;
+        context.ReturnSpilledSelections = isSpillWrapper;
 
         var (resolvable, unresolvable) =
             RewriteSelectionSet(
@@ -866,6 +904,9 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 allowedRuntimeTypes,
                 entryKeyCoverage);
 
+        context.SpillSelectionSet = null;
+        context.SpillDeliveryGroup = null;
+        context.ReturnSpilledSelections = false;
         context.Nodes.Pop();
 
         if (resolvable is null)
@@ -911,6 +952,10 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                 branchSelectionSet);
 
             context.Nodes.Push(concreteFragment);
+            context.SpillDeliveryGroup = GetDeliveryGroup(context, inlineFragmentNode);
+            context.SpillSelectionSet = context.SpillDeliveryGroup is null
+                ? null
+                : branchSelectionSet;
 
             var unresolvableBefore = context.Unresolvable;
 
@@ -925,6 +970,8 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
                     providerSchemas,
                     entryKeyCoverage: entryKeyCoverage);
 
+            context.SpillSelectionSet = null;
+            context.SpillDeliveryGroup = null;
             context.Nodes.Pop();
 
             if (resolvedSelectionSet is { Selections.Count: 0 }
@@ -1306,6 +1353,33 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         public List<ISyntaxNode> Nodes { get; } = [];
 
+        /// <summary>
+        /// The selection set whose selections are all left unresolved, or <c>null</c>.
+        /// </summary>
+        public SelectionSetNode? SpillSelectionSet { get; set; }
+
+        /// <summary>
+        /// The delivery group of the fragment that <see cref="SpillSelectionSet"/> is the content of.
+        /// </summary>
+        public int? SpillDeliveryGroup { get; set; }
+
+        /// <summary>
+        /// The fragment inside a spilled selection set that holds both own selections and a <c>@defer</c>
+        /// fragment, or <c>null</c>.
+        /// </summary>
+        public InlineFragmentNode? SpillWrapper { get; set; }
+
+        /// <summary>
+        /// Whether the unresolved selections of <see cref="SpillSelectionSet"/> are returned to the caller
+        /// instead of becoming an unresolved selection set of their own.
+        /// </summary>
+        public bool ReturnSpilledSelections { get; set; }
+
+        /// <summary>
+        /// Maps the <c>@defer</c> directive of a fragment to the id of its delivery group.
+        /// </summary>
+        public IReadOnlyDictionary<DirectiveNode, int>? DeferredFragments { get; init; }
+
         private List<ExecutionNodeCondition> ActiveConditions { get; } = [];
 
         public int PushConditions(ExecutionNodeCondition[]? conditions)
@@ -1376,6 +1450,110 @@ internal sealed class SelectionSetPartitioner(FusionSchemaDefinition schema)
 
         public SelectionSetNode CloneSelectionSet(SelectionSetNode original)
             => SelectionSetCloner.Clone(original, SelectionSetIndexBuilder);
+    }
+
+    private static int? GetDeliveryGroup(Context context, InlineFragmentNode fragment)
+    {
+        if (context.DeferredFragments is null)
+        {
+            return null;
+        }
+
+        for (var i = 0; i < fragment.Directives.Count; i++)
+        {
+            if (context.DeferredFragments.TryGetValue(fragment.Directives[i], out var deliveryGroup))
+            {
+                return deliveryGroup;
+            }
+        }
+
+        return null;
+    }
+
+    // A @defer fragment, or a fragment of the same anchor that holds one at its top, is anchored at the object
+    // of the selection set and is planned in place. Other selections of a spilled selection set stay in its body.
+    private static SpillPlacement GetSpillPlacement(Context context, ISelectionNode selection, ITypeDefinition type)
+    {
+        if (!IsFragmentOfSameAnchor(selection, type, out var fragment))
+        {
+            return SpillPlacement.Body;
+        }
+
+        if (HoldsOnlyDeferredFragments(context, fragment, type))
+        {
+            return SpillPlacement.InPlace;
+        }
+
+        return HoldsDeferredFragment(context, fragment, type)
+            ? SpillPlacement.Split
+            : SpillPlacement.Body;
+    }
+
+    private static bool HoldsDeferredFragment(Context context, InlineFragmentNode fragment, ITypeDefinition type)
+    {
+        if (GetDeliveryGroup(context, fragment) is not null)
+        {
+            return true;
+        }
+
+        foreach (var child in fragment.SelectionSet.Selections)
+        {
+            if (IsFragmentOfSameAnchor(child, type, out var childFragment)
+                && HoldsDeferredFragment(context, childFragment, type))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HoldsOnlyDeferredFragments(Context context, InlineFragmentNode fragment, ITypeDefinition type)
+    {
+        if (GetDeliveryGroup(context, fragment) is not null)
+        {
+            return true;
+        }
+
+        if (fragment.SelectionSet.Selections.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var child in fragment.SelectionSet.Selections)
+        {
+            if (!IsFragmentOfSameAnchor(child, type, out var childFragment)
+                || !HoldsOnlyDeferredFragments(context, childFragment, type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsFragmentOfSameAnchor(
+        ISelectionNode selection,
+        ITypeDefinition type,
+        [NotNullWhen(true)] out InlineFragmentNode? fragment)
+    {
+        fragment = selection as InlineFragmentNode;
+
+        return fragment is not null
+            && (fragment.TypeCondition is null
+                || fragment.TypeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal));
+    }
+
+    private enum SpillPlacement
+    {
+        /// <summary>The selection stays in the body of the spilled selection set.</summary>
+        Body,
+
+        /// <summary>The selection is planned in place and its @defer fragments become own entries.</summary>
+        InPlace,
+
+        /// <summary>The own selections stay in the body and the @defer fragments are planned in place.</summary>
+        Split
     }
 
     private bool CanMessageShapeProvideType(

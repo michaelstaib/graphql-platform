@@ -1,0 +1,86 @@
+operation:
+  - document: |
+      query($x: Boolean!) {
+        user(id: "1") {
+          bestFriend @include(if: $x) {
+            id
+          }
+          ... @defer(__group: 0, __parent: -1) {
+            bestFriend {
+              ... @defer(__group: 1, __parent: 0) {
+                name
+                id @fusion__requirement
+              }
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1($x: Boolean!) {
+        user(id: "1") {
+          bestFriend @include(if: $x) {
+            id
+          }
+          ... {
+            id
+          }
+        }
+      }
+    forwardedVariables:
+      - x
+  - id: 2
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        user(id: $__fusion_1_id) {
+          bestFriend {
+            ... {
+              id
+            }
+          }
+        }
+      }
+    source: $.user
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        userById(id: $__fusion_2_id) {
+          name
+        }
+      }
+    source: $.userById
+    target: $.user.bestFriend
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 2
+deliveryGroups:
+  - id: 0
+    path: $.user
+  - id: 1
+    path: $.user.bestFriend
+    parentId: 0

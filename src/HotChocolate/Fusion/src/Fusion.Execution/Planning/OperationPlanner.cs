@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Converters;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Rewriters;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Planning.Partitioners;
 using HotChocolate.Fusion.Policies;
@@ -29,6 +30,7 @@ public sealed partial class OperationPlanner
     private readonly SelectionSetByTypePartitioner _selectionSetByTypePartitioner;
     private readonly NodeFieldSelectionSetPartitioner _nodeFieldSelectionSetPartitioner;
     private readonly SourceSchemaNodeCandidateResolver _sourceSchemaNodeCandidateResolver;
+    private readonly DocumentRewriter? _loweredDocumentRewriter;
     private readonly OperationPlannerOptions _options;
     private readonly IPolicyResolver _policyResolver;
     private readonly FrozenSet<string>? _protectedFieldNames;
@@ -62,6 +64,14 @@ public sealed partial class OperationPlanner
         _sourceSchemaNodeCandidateResolver = new SourceSchemaNodeCandidateResolver(schema);
         _options = options;
         _policyResolver = policyResolver;
+
+        if (options.EnableSinglePlanDefer)
+        {
+            _loweredDocumentRewriter = new DocumentRewriter(
+                schema,
+                mergeAcrossDefer: false,
+                removeStaticallyExcludedSelections: true);
+        }
 
         if (schema.Features.Get<FusionPolicyUsage>() is { IsUsed: true })
         {
@@ -121,6 +131,70 @@ public sealed partial class OperationPlanner
         // so that if the caller passed in an already canceled token we don't do any unnecessary work.
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (_loweredDocumentRewriter is not null
+            && _options.EnableDefer
+            && operationDefinition.Operation is not OperationType.Subscription
+            && DeferOperationRewriter.HasDeferDirective(operationDefinition))
+        {
+            OperationPlan? singlePlan;
+            string? fallbackCause;
+
+            try
+            {
+                singlePlan = TryCreatePlan(
+                    id,
+                    hash,
+                    shortHash,
+                    operationDefinition,
+                    singlePlanDefer: true,
+                    out fallbackCause,
+                    cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                singlePlan = null;
+                fallbackCause = ex.Message;
+            }
+
+            if (singlePlan is not null)
+            {
+                return singlePlan;
+            }
+
+            SinglePlanDeferFallback?.Invoke(id, fallbackCause!);
+            operationDefinition = LowerWithEveryFragmentInlined(operationDefinition);
+        }
+
+        return TryCreatePlan(
+            id,
+            hash,
+            shortHash,
+            operationDefinition,
+            singlePlanDefer: false,
+            out _,
+            cancellationToken)!;
+    }
+
+    /// <summary>
+    /// Occurs when an operation planned with <see cref="OperationPlannerOptions.EnableSinglePlanDefer"/>
+    /// is planned with every <c>@defer</c> inlined instead. The arguments are the operation id and the cause.
+    /// </summary>
+    internal event Action<string, string>? SinglePlanDeferFallback;
+
+    private OperationDefinitionNode LowerWithEveryFragmentInlined(OperationDefinitionNode operation)
+        => NormalizeLowered(operation.WithSelectionSet(StripDeferFromSelectionSet(operation.SelectionSet)));
+
+    private OperationPlan? TryCreatePlan(
+        string id,
+        string hash,
+        string shortHash,
+        OperationDefinitionNode operationDefinition,
+        bool singlePlanDefer,
+        out string? fallbackCause,
+        CancellationToken cancellationToken)
+    {
+        fallbackCause = null;
+
         var eventSource = PlannerEventSource.Log;
         var eventSourceEnabled = eventSource.IsEnabled();
         var operationType = operationDefinition.Operation.ToString();
@@ -164,8 +238,20 @@ public sealed partial class OperationPlanner
             DeferSplitResult? deferSplit = null;
             DeferPartitioningResult? partitioning = null;
             var mainOperationDefinition = operationDefinition;
+            var singlePlanRules = false;
 
-            if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
+            if (singlePlanDefer)
+            {
+                mainOperationDefinition = LowerForSinglePlanDefer(operationDefinition);
+                partitioning = DeferPartitioner.Partition(
+                    mainOperationDefinition,
+                    new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions));
+                deliveryGroups = partitioning.AllDeliveryGroups;
+
+                // The rules apply only to a lowered operation that still has a delivery group.
+                singlePlanRules = !deliveryGroups.IsEmpty;
+            }
+            else if (_options.EnableDefer && DeferOperationRewriter.HasDeferDirective(operationDefinition))
             {
                 // The partitioner walks the original AST once and hands every
                 // @defer fragment a canonical DeliveryGroup instance (with Id,
@@ -198,6 +284,17 @@ public sealed partial class OperationPlanner
                 OperationType.Subscription => CreateSubscriptionPlanBase(mainOperationDefinition, shortHash, index),
                 _ => throw new ArgumentOutOfRangeException()
             };
+
+            if (singlePlanRules)
+            {
+                if (!TryCreateDeferredFragmentLookup(partitioning!, out var deferredFragments))
+                {
+                    fallbackCause = "Two @defer fragments share one directive.";
+                    return null;
+                }
+
+                node = node with { Backlog = node.Backlog.WithDeferredFragments(deferredFragments) };
+            }
 
             var internalOperationDefinition = mainOperationDefinition;
             ImmutableList<PlanStep> planSteps = [];
@@ -253,6 +350,12 @@ public sealed partial class OperationPlanner
 
                     if (!plan.HasValue)
                     {
+                        if (singlePlanDefer)
+                        {
+                            fallbackCause = "No possible plan was found.";
+                            return null;
+                        }
+
                         throw new InvalidOperationException("No possible plan was found.");
                     }
 
@@ -326,8 +429,25 @@ public sealed partial class OperationPlanner
                 }
             }
 
+            if (singlePlanDefer
+                && !TryValidateDeliveryGroupDependencies(planSteps, deliveryGroups, out fallbackCause))
+            {
+                return null;
+            }
+
             // Use the latest root operation definition after deferred planning.
-            var operation = _operationCompiler.Compile(id, hash, shortHash, internalOperationDefinition);
+            var operation = _operationCompiler.Compile(
+                id,
+                hash,
+                shortHash,
+                internalOperationDefinition,
+                mergeAcrossDefer: !singlePlanDefer);
+
+            if (singlePlanDefer
+                && !TryValidateCompiledDeliveryGroups(operation, deliveryGroups, out fallbackCause))
+            {
+                return null;
+            }
 
             if (deferContextGraph is not null)
             {
@@ -351,7 +471,14 @@ public sealed partial class OperationPlanner
                 expandedNodes,
                 planSteps.NextId(),
                 policyContext,
+                singlePlanRules,
                 cancellationToken);
+
+            if (singlePlanDefer
+                && !TryValidateDeliveryGroupNodes(operationPlan, deliveryGroups, partitioning!, out fallbackCause))
+            {
+                return null;
+            }
 
             if (eventSourceEnabled)
             {
@@ -368,7 +495,8 @@ public sealed partial class OperationPlanner
         }
         catch (Exception ex)
         {
-            if (eventSourceEnabled)
+            // A failed single defer plan attempt falls back and is not reported as a failed plan.
+            if (eventSourceEnabled && !(singlePlanDefer && ex is not OperationCanceledException))
             {
                 var elapsed = Stopwatch.GetElapsedTime(startedAt);
                 eventSource.PlanError(
@@ -380,6 +508,267 @@ public sealed partial class OperationPlanner
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Verifies that every step that depends on a step of a delivery group belongs to that group or to a
+    /// group nested in it.
+    /// </summary>
+    internal static bool TryValidateDeliveryGroupDependencies(
+        ImmutableList<PlanStep> steps,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        out string? cause)
+    {
+        if (!deliveryGroups.IsDefaultOrEmpty && deliveryGroups.Length > DeliveryGroup.MaxCount)
+        {
+            cause = $"The operation has more than {DeliveryGroup.MaxCount} delivery groups.";
+            return false;
+        }
+
+        foreach (var step in steps)
+        {
+            if (step is not OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: false } provider)
+            {
+                continue;
+            }
+
+            foreach (var dependentId in provider.Dependents)
+            {
+                if (steps.ById(dependentId) is OperationPlanStep dependent
+                    && !CoversDeliveryGroups(dependent.DeliveryGroups, provider.DeliveryGroups, deliveryGroups))
+                {
+                    cause = $"Step {dependent.Id} depends on step {provider.Id} of another delivery group.";
+                    return false;
+                }
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Verifies on the nodes of <paramref name="plan"/> that no node depends on a node of a delivery group
+    /// it does not belong to, and that every delivery group whose fragment selects a field has a node.
+    /// </summary>
+    internal static bool TryValidateDeliveryGroupNodes(
+        OperationPlan plan,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        DeferPartitioningResult partitioning,
+        out string? cause)
+    {
+        var groupsWithNodes = new HashSet<int>();
+
+        foreach (var node in plan.AllNodes)
+        {
+            if (node is OperationBatchExecutionNode batch)
+            {
+                foreach (var operation in batch.Operations)
+                {
+                    if (!TryValidateDeliveryGroupNode(
+                        operation,
+                        operation.DeliveryGroups,
+                        deliveryGroups,
+                        groupsWithNodes,
+                        out cause))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!TryValidateDeliveryGroupNode(
+                node,
+                GetDeliveryGroups(node),
+                deliveryGroups,
+                groupsWithNodes,
+                out cause))
+            {
+                return false;
+            }
+        }
+
+        foreach (var (_, deliveryGroup) in partitioning.ByFragment)
+        {
+            if (!groupsWithNodes.Contains(deliveryGroup.Id))
+            {
+                cause = $"Delivery group {deliveryGroup.Id} has no step.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static bool TryValidateDeliveryGroupNode(
+        IOperationPlanNode node,
+        ImmutableArray<int> nodeGroups,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        HashSet<int> groupsWithNodes,
+        out string? cause)
+    {
+        groupsWithNodes.UnionWith(nodeGroups);
+
+        foreach (var dependency in node.Dependencies)
+        {
+            if (!CoversDeliveryGroups(nodeGroups, GetDeliveryGroups(dependency), deliveryGroups))
+            {
+                cause = $"Node {node.Id} depends on node {dependency.Id} of another delivery group.";
+                return false;
+            }
+        }
+
+        foreach (var dependency in node.OptionalDependencies)
+        {
+            if (!CoversDeliveryGroups(nodeGroups, GetDeliveryGroups(dependency), deliveryGroups))
+            {
+                cause = $"Node {node.Id} depends on node {dependency.Id} of another delivery group.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static ImmutableArray<int> GetDeliveryGroups(IOperationPlanNode node)
+    {
+        switch (node)
+        {
+            case OperationExecutionNode operation:
+                return operation.DeliveryGroups;
+
+            case OperationDefinition definition:
+                return definition.DeliveryGroups;
+
+            case OperationBatchExecutionNode batch:
+                var groups = new HashSet<int>();
+
+                foreach (var operation in batch.Operations)
+                {
+                    groups.UnionWith(operation.DeliveryGroups);
+                }
+
+                return [.. groups.Order()];
+
+            default:
+                return [];
+        }
+    }
+
+    // A provider without groups covers every consumer. A provider with groups covers a consumer when one of
+    // its groups is a group of the consumer or an ancestor of one.
+    private static bool CoversDeliveryGroups(
+        ImmutableArray<int> consumerGroups,
+        ImmutableArray<int> providerGroups,
+        ImmutableArray<DeliveryGroup> deliveryGroups)
+    {
+        if (providerGroups.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        if (consumerGroups.IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        foreach (var consumerGroup in consumerGroups)
+        {
+            for (var group = deliveryGroups[consumerGroup]; group is not null; group = group.Parent)
+            {
+                if (providerGroups.Contains(group.Id))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Verifies that the compiled operation has the delivery groups that the steps were planned with.
+    /// </summary>
+    internal bool TryValidateCompiledDeliveryGroups(
+        Operation operation,
+        ImmutableArray<DeliveryGroup> deliveryGroups,
+        out string? cause)
+    {
+        var partitioning = DeferPartitioner.Partition(
+            operation.Definition,
+            new DeferConditionCollection(_operationCompiler.MaxAllowedDeferConditions));
+
+        if (partitioning.NumberingError is { } numberingError)
+        {
+            cause = numberingError;
+            return false;
+        }
+
+        var compiled = partitioning.AllDeliveryGroups;
+
+        if (compiled.Length != deliveryGroups.Length)
+        {
+            cause = $"The compiled operation has {compiled.Length} delivery groups, the planned one has "
+                + $"{deliveryGroups.Length}.";
+            return false;
+        }
+
+        foreach (var planned in deliveryGroups)
+        {
+            // The groups are numbered, so a group is found by its number.
+            if (planned.Id < 0 || planned.Id >= compiled.Length)
+            {
+                cause = $"Delivery group {planned.Id} has no counterpart in the compiled operation.";
+                return false;
+            }
+
+            var actual = compiled[planned.Id];
+
+            if (planned.Id != actual.Id
+                || !Equals(planned.Path, actual.Path)
+                || !string.Equals(planned.Label, actual.Label, StringComparison.Ordinal)
+                || !string.Equals(planned.IfVariable, actual.IfVariable, StringComparison.Ordinal)
+                || planned.Parent?.Id != actual.Parent?.Id)
+            {
+                cause = $"Delivery group {planned.Id} differs between the planned and the compiled operation.";
+                return false;
+            }
+        }
+
+        cause = null;
+        return true;
+    }
+
+    private static bool TryCreateDeferredFragmentLookup(
+        DeferPartitioningResult partitioning,
+        [NotNullWhen(true)] out Dictionary<DirectiveNode, int>? deferredFragments)
+    {
+        deferredFragments = new Dictionary<DirectiveNode, int>(ReferenceEqualityComparer.Instance);
+
+        foreach (var (fragment, deliveryGroup) in partitioning.ByFragment)
+        {
+            foreach (var directive in fragment.Directives)
+            {
+                if (directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal)
+                    && !deferredFragments.TryAdd(directive, deliveryGroup.Id))
+                {
+                    deferredFragments = null;
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private OperationDefinitionNode LowerForSinglePlanDefer(OperationDefinitionNode operationDefinition)
+        => DeferLowering.Renumber(NormalizeLowered(DeferLowering.Lower(operationDefinition, _schema)));
+
+    private OperationDefinitionNode NormalizeLowered(OperationDefinitionNode lowered)
+    {
+        var document = _loweredDocumentRewriter!.RewriteDocument(new DocumentNode([lowered]));
+        return (OperationDefinitionNode)document.Definitions[0];
     }
 
     /// <summary>
@@ -1046,6 +1435,9 @@ public sealed partial class OperationPlanner
         Backlog backlog,
         PlanQueue possiblePlans)
     {
+        var checkKeySteps = !workItem.DeliveryGroups.IsDefaultOrEmpty && !workItem.Dependents.IsEmpty;
+        var lookupStepId = checkKeySteps ? current.Steps.NextId() : 0;
+
         current = InlineLookupRequirements(
             workItem.SelectionSet,
             current,
@@ -1053,10 +1445,25 @@ public sealed partial class OperationPlanner
             workItem.EstimatedDepth,
             backlog,
             workItem.Conditions,
+            workItem.DeliveryGroups,
             workItem.AllowSourceSchemaReentry,
             workItem.SourceSchemaNodePolicy,
             consumerStep: null,
             out var unresolvedRequirements);
+
+        // A lookup of a delivery group never takes its key from a step that waits for the lookup.
+        if (checkKeySteps)
+        {
+            foreach (var step in current.Steps)
+            {
+                if (step is OperationPlanStep keyStep
+                    && keyStep.Dependents.Contains(lookupStepId)
+                    && IsOrDependsOnAny(keyStep, workItem.Dependents, current.Steps))
+                {
+                    return;
+                }
+            }
+        }
 
         // A self-cyclic lookup can proceed only when an existing step supplies its key.
         // If requirement inlining leaves the identical selection unresolved, this direct
@@ -1095,10 +1502,26 @@ public sealed partial class OperationPlanner
         var isEventStreamRoot = workItem.Kind is OperationWorkItemKind.Root
             && current.EventStreamDirective is not null;
 
+        // The leaves of a marked lookup that a step without delivery groups already fetches as the key of the
+        // lookup are left out of the work item.
+        var parentLeaves = lookup is null
+            ? null
+            : GetLeavesFetchedByParentStep(workItem, lookup, current, backlog, stepId);
+        var selectionSet = workItem.SelectionSet;
+        var unfilteredIndex = index;
+
+        if (parentLeaves is not null)
+        {
+            selectionSet = selectionSet with { Node = RemoveSelections(selectionSet.Node, parentLeaves) };
+            var filteredIndex = index.ToBuilder();
+            filteredIndex.Register(workItem.SelectionSet.Id, selectionSet.Node);
+            index = filteredIndex;
+        }
+
         var input = new SelectionSetPartitionerInput
         {
             SchemaName = current.SchemaName,
-            SelectionSet = workItem.SelectionSet,
+            SelectionSet = selectionSet,
             SelectionSetIndex = index,
             PruneUnprovidedAbstractBranches = isEventStreamRoot,
             ProvidedSelectionSet = isEventStreamRoot
@@ -1109,10 +1532,28 @@ public sealed partial class OperationPlanner
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
             // At a lookup entry root a sourceExternal field can only echo the key the lookup
             // was entered with; root work items keep today's permissive behavior.
-            EntryKeyCoverage = lookup?.Requirements
+            EntryKeyCoverage = lookup?.Requirements,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
+
+        var planNoStep = false;
+
+        if (parentLeaves is not null && resolvable is { Selections.Count: 0 })
+        {
+            planNoStep = fieldsWithRequirements.IsEmpty
+                && workItem.Dependents.IsEmpty
+                && !backlog.HasWorkItemWithDependent(stepId)
+                && KeepsAnotherStep(workItem, unresolvable, current);
+
+            if (!planNoStep)
+            {
+                // The group would lose its only step, so the step keeps its leaves.
+                (resolvable, unresolvable, fieldsWithRequirements, index) = _partitioner.Partition(
+                    input with { SelectionSet = workItem.SelectionSet, SelectionSetIndex = unfilteredIndex });
+            }
+        }
 
         if (resolvable is not { Selections.Count: > 0 }
             && workItem.SourceSchemaNodePolicy is not null
@@ -1139,6 +1580,8 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            workItem.DeliveryGroups,
+            workItem.Conditions,
             dependents: workItem.Dependents,
             allowSourceSchemaReentry: isEventStreamRoot,
             sourceSchemaNodePolicy: workItem.SourceSchemaNodePolicy is null
@@ -1149,9 +1592,28 @@ public sealed partial class OperationPlanner
             new StepConsumer(stepId),
             workItem.Dependents,
             stepDepth,
+            workItem.DeliveryGroups,
+            workItem.Conditions,
             workItem.SourceSchemaNodePolicy is null
                 ? null
                 : SourceSchemaNodePlanningPolicy.Descendant);
+
+        if (planNoStep)
+        {
+            possiblePlans.EnqueueBranches(
+                current with
+                {
+                    Steps = RemoveDependent(current.Steps, stepId),
+                    SelectionSetIndex = index,
+                    Backlog = backlog,
+                    RemainingCost = PlannerCostEstimator.EstimateRemainingCost(
+                        current.Options,
+                        current.MaxDepth,
+                        current.OpsPerLevel,
+                        backlog.Cost)
+                });
+            return;
+        }
 
         // Lookups are always queries. Root work items can also be rewritten to the query root
         // when walking shared paths (for example the viewer convention in mutations).
@@ -1218,7 +1680,8 @@ public sealed partial class OperationPlanner
             Conditions = workItem.Conditions,
             Target = workItem.SelectionSet.Path,
             Source = source,
-            Lookup = lookup
+            Lookup = lookup,
+            DeliveryGroups = workItem.DeliveryGroups
         };
 
         var costState = AddOperationStepCostState(current, stepId, stepDepth);
@@ -1252,6 +1715,185 @@ public sealed partial class OperationPlanner
         possiblePlans.EnqueueBranches(next);
     }
 
+    // Returns the leaves of a marked lookup work item that the key of the lookup selects in a step without
+    // delivery groups, or null when there are none.
+    private static List<FieldNode>? GetLeavesFetchedByParentStep(
+        OperationWorkItem workItem,
+        Lookup lookup,
+        PlanNode current,
+        Backlog backlog,
+        int lookupStepId)
+    {
+        if (backlog.DeferredFragments is null
+            || workItem.DeliveryGroups.IsDefaultOrEmpty
+            || workItem.Conditions.Length > 0
+            || workItem.SourceSchemaNodePolicy is not null
+            || workItem.SelectionSet.Type.Kind is not TypeKind.Object)
+        {
+            return null;
+        }
+
+        List<FieldNode>? leaves = null;
+
+        foreach (var selection in workItem.SelectionSet.Node.Selections)
+        {
+            if (selection is FieldNode { SelectionSet: null } leaf
+                && IsKeyFetchedByParentStep(leaf, workItem.SelectionSet.Path, lookup, current, lookupStepId))
+            {
+                leaves ??= [];
+                leaves.Add(leaf);
+            }
+        }
+
+        return leaves;
+    }
+
+    private static bool IsKeyFetchedByParentStep(
+        FieldNode leaf,
+        SelectionPath path,
+        Lookup lookup,
+        PlanNode current,
+        int lookupStepId)
+    {
+        foreach (var selection in lookup.Requirements.Selections)
+        {
+            if (selection is not FieldNode key || !FieldContains(key, leaf))
+            {
+                continue;
+            }
+
+            foreach (var step in current.Steps)
+            {
+                if (step is OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: true, Conditions.Length: 0 } parent
+                    && parent.Dependents.Contains(lookupStepId)
+                    && parent.Target.IsParentOfOrSame(path)
+                    && SelectsFieldAtPath(
+                        parent.Definition.SelectionSet,
+                        path.RelativeTo(parent.Target),
+                        pathIndex: 0,
+                        key))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool SelectsFieldAtPath(
+        SelectionSetNode current,
+        SelectionPath path,
+        int pathIndex,
+        FieldNode required)
+    {
+        foreach (var selection in current.Selections)
+        {
+            if (selection is InlineFragmentNode { TypeCondition: null } wrapper
+                && HasOnlyDeferDirectives(wrapper.Directives)
+                && SelectsFieldAtPath(wrapper.SelectionSet, path, pathIndex, required))
+            {
+                return true;
+            }
+
+            if (pathIndex == path.Length)
+            {
+                if (selection is FieldNode field && FieldContains(required, field))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            var segment = path[pathIndex];
+
+            if (segment.Kind is SelectionPathSegmentKind.Field
+                && selection is FieldNode { SelectionSet: { } child, Directives.Count: 0 } parentField
+                && (parentField.Alias?.Value ?? parentField.Name.Value).Equals(segment.Name, StringComparison.Ordinal)
+                && SelectsFieldAtPath(child, path, pathIndex + 1, required))
+            {
+                return true;
+            }
+
+            if (segment.Kind is SelectionPathSegmentKind.InlineFragment
+                && selection is InlineFragmentNode { TypeCondition: { } condition, Directives.Count: 0 } fragment
+                && condition.Name.Value.Equals(segment.Name, StringComparison.Ordinal)
+                && SelectsFieldAtPath(fragment.SelectionSet, path, pathIndex + 1, required))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasOnlyDeferDirectives(IReadOnlyList<DirectiveNode> directives)
+    {
+        foreach (var directive in directives)
+        {
+            if (!directive.Name.Value.Equals(DirectiveNames.Defer.Name, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static SelectionSetNode RemoveSelections(SelectionSetNode selectionSet, List<FieldNode> fields)
+    {
+        var selections = new List<ISelectionNode>(selectionSet.Selections.Count);
+
+        foreach (var selection in selectionSet.Selections)
+        {
+            if (selection is not FieldNode field || !fields.Contains(field))
+            {
+                selections.Add(selection);
+            }
+        }
+
+        return selectionSet.WithSelections(selections);
+    }
+
+    private static bool KeepsAnotherStep(
+        OperationWorkItem workItem,
+        ImmutableStack<ConditionedSelectionSet> unresolvable,
+        PlanNode current)
+    {
+        foreach (var entry in unresolvable)
+        {
+            if (entry.DeliveryGroup is null)
+            {
+                return true;
+            }
+        }
+
+        foreach (var step in current.Steps)
+        {
+            if (step is OperationPlanStep { DeliveryGroups.IsDefaultOrEmpty: false } marked
+                && marked.DeliveryGroups.Any(workItem.DeliveryGroups.Contains))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ImmutableList<PlanStep> RemoveDependent(ImmutableList<PlanStep> steps, int stepId)
+    {
+        for (var i = 0; i < steps.Count; i++)
+        {
+            if (steps[i] is OperationPlanStep step && step.Dependents.Contains(stepId))
+            {
+                steps = steps.SetItem(i, step with { Dependents = step.Dependents.Remove(stepId) });
+            }
+        }
+
+        return steps;
+    }
+
     private bool IsQueryRootSelection(SelectionSet selectionSet)
         => selectionSet.Type.Name.Equals(_schema.QueryType.Name, StringComparison.Ordinal);
 
@@ -1262,6 +1904,7 @@ public sealed partial class OperationPlanner
         int lookupStepDepth,
         Backlog backlog,
         ExecutionNodeCondition[]? conditions,
+        ImmutableArray<int> deliveryGroups,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy,
         OperationPlanStep? consumerStep,
@@ -1320,6 +1963,13 @@ public sealed partial class OperationPlanner
             // The lookup step inherits the dependents of the step that consumes its field, so
             // a step that already depends on the consumer cannot provide the lookup's key.
             if (consumerStep is not null && step.DependsOn(consumerStep, steps))
+            {
+                continue;
+            }
+
+            // A step that runs under a condition the lookup does not carry cannot supply its key.
+            if (backlog.DeferredFragments is not null
+                && HasConditionNotIn(step.Conditions, conditions ?? []))
             {
                 continue;
             }
@@ -1397,6 +2047,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(step.Id),
                     [lookupStepId],
                     GetOperationStepDepth(current, step.Id),
+                    deliveryGroups,
+                    conditions ?? [],
                     descendantPolicy);
 
                 if (!unresolvable.IsEmpty)
@@ -1412,6 +2064,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, step.Id),
+                        deliveryGroups,
+                        conditions ?? [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1434,6 +2088,8 @@ public sealed partial class OperationPlanner
                 workItemSelectionSet.Id,
                 workItemSelectionSet.Path) is { } ancestorMatch
             && (consumerStep is null || !ancestorMatch.Step.DependsOn(consumerStep, steps))
+            && (backlog.DeferredFragments is null
+                || !HasConditionNotIn(ancestorMatch.Step.Conditions, conditions ?? []))
             && processed.Add(ancestorMatch.Step.SchemaName!)
             && (allowSourceSchemaReentry
                 || !lookup.SchemaName.Equals(ancestorMatch.Step.SchemaName)
@@ -1457,6 +2113,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(ancestorMatch.Step.Id),
                     [lookupStepId],
                     GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                    deliveryGroups,
+                    conditions ?? [],
                     descendantPolicy);
 
                 if (!unresolvable.IsEmpty)
@@ -1472,6 +2130,8 @@ public sealed partial class OperationPlanner
                         unresolvable,
                         current.SchemaName,
                         GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                        deliveryGroups,
+                        conditions ?? [],
                         dependents: ImmutableHashSet<int>.Empty.Add(lookupStepId),
                         sourceSchemaNodePolicy: descendantPolicy);
                 }
@@ -1496,6 +2156,7 @@ public sealed partial class OperationPlanner
                 ImmutableHashSet<int>.Empty.Add(lookupStepId),
                 lookupStepDepth,
                 conditions ?? [],
+                deliveryGroups,
                 allowSourceSchemaReentry,
                 sourceSchemaNodePolicy);
         }
@@ -1747,6 +2408,8 @@ public sealed partial class OperationPlanner
                 workItem.EstimatedDepth,
                 workItem.Selection,
                 workItem.Dependents,
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 current,
                 index,
                 ref backlog,
@@ -1860,6 +2523,7 @@ public sealed partial class OperationPlanner
                 workItem.EstimatedDepth,
                 backlog,
                 workItem.Conditions,
+                workItem.DeliveryGroups,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy,
                 currentStep,
@@ -1925,6 +2589,7 @@ public sealed partial class OperationPlanner
                 ImmutableHashSet<int>.Empty.Add(stepId),
                 stepDepth,
                 workItem.Conditions,
+                workItem.DeliveryGroups,
                 allowSourceSchemaReentry: false,
                 workItem.SourceSchemaNodePolicy);
         }
@@ -1981,6 +2646,8 @@ public sealed partial class OperationPlanner
                 stepDepth,
                 workItem.Selection,
                 workItem.Dependents,
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 current,
                 indexBuilder,
                 ref backlog,
@@ -2114,11 +2781,14 @@ public sealed partial class OperationPlanner
             SelectionSets = SelectionSetIndexer.CreateIdSet(definition.SelectionSet, indexBuilder),
             Requirements = requirements,
             // The consumer step lists this lookup as a dependent when it provides the lookup key.
-            Dependents = currentStep.Dependents.Remove(stepId),
+            Dependents = backlog.DeferredFragments is null
+                ? currentStep.Dependents.Remove(stepId)
+                : RemoveStepsWithoutConditions(currentStep.Dependents.Remove(stepId), workItem.Conditions, steps),
             Conditions = workItem.Conditions,
             Target = workItem.Selection.Path,
             Source = source,
-            Lookup = lookup
+            Lookup = lookup,
+            DeliveryGroups = workItem.DeliveryGroups
         };
 
         var costState = AddOperationStepCostState(current, stepId, stepDepth);
@@ -2153,6 +2823,34 @@ public sealed partial class OperationPlanner
         possiblePlans.EnqueueBranches(next);
     }
 
+    /// <summary>
+    /// Returns <paramref name="stepIds"/> without the operation steps that lack one of
+    /// <paramref name="conditions"/>.
+    /// </summary>
+    private static ImmutableHashSet<int> RemoveStepsWithoutConditions(
+        ImmutableHashSet<int> stepIds,
+        ExecutionNodeCondition[] conditions,
+        ImmutableList<PlanStep> steps)
+    {
+        if (conditions.Length == 0)
+        {
+            return stepIds;
+        }
+
+        var remaining = stepIds;
+
+        foreach (var stepId in stepIds)
+        {
+            if (steps.ById(stepId) is OperationPlanStep step
+                && HasConditionNotIn(conditions, step.Conditions))
+            {
+                remaining = remaining.Remove(stepId);
+            }
+        }
+
+        return remaining;
+    }
+
     private static bool TryFindMergeableRequirementLookupStep(
         PlanNode current,
         FieldRequirementWorkItem workItem,
@@ -2173,6 +2871,7 @@ public sealed partial class OperationPlanner
                     workItem.Selection.Field.DeclaringType.Name,
                     StringComparison.Ordinal)
                 && ConditionsEqual(candidate.Conditions, workItem.Conditions)
+                && candidate.DeliveryGroups.SequenceEqual(workItem.DeliveryGroups)
                 && !IsOrDependsOnAny(candidate, workItem.Dependents, current.Steps))
             {
                 step = candidate;
@@ -2245,7 +2944,8 @@ public sealed partial class OperationPlanner
             SelectionSet = workItem.SelectionSet,
             SelectionSetIndex = index,
             TreatSourceExternalAsUnresolvable = workItem.SourceSchemaNodePolicy is not null,
-            EntryKeyCoverage = lookup.Requirements
+            EntryKeyCoverage = lookup.Requirements,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         (var resolvable, var unresolvable, var fieldsWithRequirements, index) = _partitioner.Partition(input);
@@ -2283,12 +2983,16 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            deliveryGroups: [],
+            conditions: [],
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
             new StepConsumer(stepId),
             workItem.Dependents,
             stepDepth,
+            deliveryGroups: [],
+            conditions: [],
             descendantPolicy);
 
         var resolvableSelections = resolvable.Selections;
@@ -2681,6 +3385,8 @@ public sealed partial class OperationPlanner
         int stepDepth,
         FieldSelection selection,
         ImmutableHashSet<int> dependents,
+        ImmutableArray<int> deliveryGroups,
+        ExecutionNodeCondition[] conditions,
         PlanNode current,
         SelectionSetIndexBuilder index,
         ref Backlog backlog,
@@ -2711,7 +3417,8 @@ public sealed partial class OperationPlanner
             SchemaName = current.SchemaName,
             SelectionSet = selectionSet,
             SelectionSetIndex = index,
-            TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null
+            TreatSourceExternalAsUnresolvable = sourceSchemaNodePolicy is not null,
+            DeferredFragments = backlog.DeferredFragments
         };
 
         var (resolvable, unresolvable, fieldsWithRequirements, _) = _partitioner.Partition(input);
@@ -2722,12 +3429,16 @@ public sealed partial class OperationPlanner
             unresolvable,
             current.SchemaName,
             stepDepth,
+            deliveryGroups,
+            conditions,
             sourceSchemaNodePolicy: descendantPolicy);
         backlog = backlog.PushRequirements(
             fieldsWithRequirements,
             new StepConsumer(stepId),
             dependents,
             stepDepth,
+            deliveryGroups,
+            conditions,
             descendantPolicy);
         return resolvable;
     }
@@ -2750,6 +3461,7 @@ public sealed partial class OperationPlanner
         ImmutableHashSet<int> dependents,
         int parentDepth,
         ExecutionNodeCondition[] conditions,
+        ImmutableArray<int> deliveryGroups,
         bool allowSourceSchemaReentry,
         SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy)
     {
@@ -2797,7 +3509,8 @@ public sealed partial class OperationPlanner
                         ParentDepth = parentDepth,
                         Conditions = conditions,
                         AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                        SourceSchemaNodePolicy = descendantPolicy
+                        SourceSchemaNodePolicy = descendantPolicy,
+                        DeliveryGroups = deliveryGroups
                     });
                 continue;
             }
@@ -2823,7 +3536,8 @@ public sealed partial class OperationPlanner
                     ParentDepth = parentDepth,
                     Conditions = conditions,
                     AllowSourceSchemaReentry = allowSourceSchemaReentry,
-                    SourceSchemaNodePolicy = descendantPolicy
+                    SourceSchemaNodePolicy = descendantPolicy,
+                    DeliveryGroups = deliveryGroups
                 });
         }
 
@@ -2882,10 +3596,22 @@ public sealed partial class OperationPlanner
         {
             var mintedAlias = false;
 
+            // The fields of the response object also conflict across its field nodes and fragments.
+            var objectFields = backlog.DeferredFragments is not null
+                ? CollectObjectFields(
+                    current.InternalOperationDefinition,
+                    index,
+                    workItem.Selection.SelectionSetId,
+                    workItem.Selection.Field.DeclaringType)
+                : null;
+
             foreach (var selection in requirements.Selections)
             {
                 if (selection is FieldNode field
-                    && HasArgumentConflict(field, siblingSelections.Selections))
+                    && (HasArgumentConflict(field, siblingSelections.Selections)
+                        || (objectFields is not null
+                            && requirementAliases.CanRecordAlias(field)
+                            && HasArgumentConflict(field, objectFields))))
                 {
                     requirementAliases.MintAlias(field);
                     mintedAlias = true;
@@ -2935,6 +3661,14 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            if (backlog.DeferredFragments is not null
+                && HasConditionNotIn(step.Conditions, workItem.Conditions))
+            {
+                // a step that runs under a condition the requiring field does not carry
+                // cannot supply the requirement.
+                continue;
+            }
+
             if (!TryInlineSelectionSetIntoStep(
                 step,
                 workItem.Selection.SelectionSetId,
@@ -2964,6 +3698,8 @@ public sealed partial class OperationPlanner
                 new StepConsumer(step.Id),
                 [dependentStepId],
                 GetOperationStepDepth(current, step.Id),
+                workItem.DeliveryGroups,
+                workItem.Conditions,
                 workItem.SourceSchemaNodePolicy is null
                     ? null
                     : SourceSchemaNodePlanningPolicy.Descendant);
@@ -2993,7 +3729,8 @@ public sealed partial class OperationPlanner
                             // resolve the parts this step could not inline.
                             Dependents = ImmutableHashSet<int>.Empty.Add(dependentStepId),
                             ParentDepth = GetOperationStepDepth(current, step.Id),
-                            Conditions = entry.Conditions,
+                            Conditions = backlog.InheritConditions(workItem.Conditions, entry.Conditions),
+                            DeliveryGroups = workItem.DeliveryGroups,
                             SourceSchemaNodePolicy = workItem.SourceSchemaNodePolicy is null
                                 ? null
                                 : SourceSchemaNodePlanningPolicy.Descendant
@@ -3024,7 +3761,8 @@ public sealed partial class OperationPlanner
         // Fallback: if no candidate step was found via exact selection set ID match,
         // walk the internal operation AST to find the nearest ancestor step and the
         // complete connector chain to the target selection set. An ancestor step of the
-        // requiring field's schema is skipped for the same reason as in the candidate loop.
+        // requiring field's schema, or one that runs under a condition the requiring field
+        // does not carry, is skipped for the same reasons as in the candidate loop.
         if (requirements is not null
             && TryFindAncestorStepForRequirement(
                 current.InternalOperationDefinition,
@@ -3034,7 +3772,9 @@ public sealed partial class OperationPlanner
                 workItem.Selection.Path) is { } ancestorMatch
             && currentStep.Id != ancestorMatch.Step.Id
             && !ancestorMatch.Step.DependsOn(currentStep, steps)
-            && !string.Equals(ancestorMatch.Step.SchemaName, current.SchemaName, StringComparison.Ordinal))
+            && !string.Equals(ancestorMatch.Step.SchemaName, current.SchemaName, StringComparison.Ordinal)
+            && (backlog.DeferredFragments is null
+                || !HasConditionNotIn(ancestorMatch.Step.Conditions, workItem.Conditions)))
         {
             if (TryInlineIntoAncestorStep(
                 ancestorMatch, requirements, workItem.Selection.Path,
@@ -3049,6 +3789,8 @@ public sealed partial class OperationPlanner
                     new StepConsumer(ancestorMatch.Step.Id),
                     [dependentStepId],
                     GetOperationStepDepth(current, ancestorMatch.Step.Id),
+                    workItem.DeliveryGroups,
+                    workItem.Conditions,
                     workItem.SourceSchemaNodePolicy is null
                         ? null
                         : SourceSchemaNodePlanningPolicy.Descendant);
@@ -3072,7 +3814,8 @@ public sealed partial class OperationPlanner
                             {
                                 Dependents = ImmutableHashSet<int>.Empty.Add(dependentStepId),
                                 ParentDepth = GetOperationStepDepth(current, ancestorMatch.Step.Id),
-                                Conditions = entry.Conditions,
+                                Conditions = backlog.InheritConditions(workItem.Conditions, entry.Conditions),
+                                DeliveryGroups = workItem.DeliveryGroups,
                                 SourceSchemaNodePolicy = workItem.SourceSchemaNodePolicy is null
                                     ? null
                                     : SourceSchemaNodePlanningPolicy.Descendant
@@ -3083,6 +3826,25 @@ public sealed partial class OperationPlanner
         }
 
         return requirements;
+    }
+
+    /// <summary>
+    /// Determines whether <paramref name="stepConditions"/> holds a condition that is not one of
+    /// <paramref name="conditions"/>.
+    /// </summary>
+    private static bool HasConditionNotIn(
+        ExecutionNodeCondition[] stepConditions,
+        ExecutionNodeCondition[] conditions)
+    {
+        foreach (var condition in stepConditions)
+        {
+            if (Array.IndexOf(conditions, condition) < 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool TryInlineSelectionSetIntoStep(
@@ -3201,7 +3963,8 @@ public sealed partial class OperationPlanner
                             collidingSelectionSet,
                             selectionSetType,
                             path),
-                        conditions));
+                        conditions,
+                        DeliveryGroup: null));
 
                 if (selectionsToInline is not { Count: > 0 })
                 {
@@ -3247,6 +4010,15 @@ public sealed partial class OperationPlanner
         SelectionSetNode selectionSet,
         SelectionSetIndexBuilder index,
         uint targetSelectionSetId)
+        => FindSelectionSet(selectionSet, index, targetSelectionSetId, responsePath: null);
+
+    // Returns the selection set with the identifier, or null when it is not found. A responsePath receives
+    // the response names of the fields around the selection set, from the root.
+    private static SelectionSetNode? FindSelectionSet(
+        SelectionSetNode selectionSet,
+        SelectionSetIndexBuilder index,
+        uint targetSelectionSetId,
+        List<string>? responsePath)
     {
         if (index.IsRegistered(selectionSet)
             && index.GetId(selectionSet) == targetSelectionSetId)
@@ -3260,16 +4032,20 @@ public sealed partial class OperationPlanner
             {
                 case FieldNode { SelectionSet: not null } field:
                 {
+                    responsePath?.Add(field.Alias?.Value ?? field.Name.Value);
+
                     var result = FindSelectionSet(
                         field.SelectionSet,
                         index,
-                        targetSelectionSetId);
+                        targetSelectionSetId,
+                        responsePath);
 
                     if (result is not null)
                     {
                         return result;
                     }
 
+                    responsePath?.RemoveAt(responsePath.Count - 1);
                     break;
                 }
 
@@ -3278,7 +4054,8 @@ public sealed partial class OperationPlanner
                     var result = FindSelectionSet(
                         inlineFragment.SelectionSet,
                         index,
-                        targetSelectionSetId);
+                        targetSelectionSetId,
+                        responsePath);
 
                     if (result is not null)
                     {
@@ -3313,6 +4090,31 @@ public sealed partial class OperationPlanner
 
         public string? GetInternalAlias(IValueSelectionNode fieldSelectionMap)
             => _aliasesByMap.GetValueOrDefault(fieldSelectionMap);
+
+        // Returns true when a selection map reads the field and every selection map can record an alias.
+        public bool CanRecordAlias(FieldNode field)
+        {
+            var isRead = false;
+
+            for (var i = 0; i < fieldSelectionMaps.Length; i++)
+            {
+                var map = fieldSelectionMaps[i];
+
+                if (map is null)
+                {
+                    continue;
+                }
+
+                if (!TryCreateRootFieldSelectionKey(map, out var mapKey))
+                {
+                    return false;
+                }
+
+                isRead |= mapKey.Matches(field);
+            }
+
+            return isRead;
+        }
 
         public string MintAlias(FieldNode field)
         {
@@ -3566,6 +4368,106 @@ public sealed partial class OperationPlanner
         }
 
         return false;
+    }
+
+    // Returns the fields that the internal operation selects on the response object of the selection set: the fields
+    // of every field node with the same response path, through every inline fragment on the path and through the
+    // inline fragments of the last selection set that can apply to the type. Returns null when the selection set is
+    // not found.
+    private List<FieldNode>? CollectObjectFields(
+        OperationDefinitionNode internalOperation,
+        SelectionSetIndexBuilder index,
+        uint selectionSetId,
+        ITypeDefinition type)
+    {
+        if (index.TryGetOriginalIdFromCloned(selectionSetId, out var originalId))
+        {
+            selectionSetId = originalId;
+        }
+
+        var responsePath = new List<string>();
+
+        if (FindSelectionSet(internalOperation.SelectionSet, index, selectionSetId, responsePath) is null)
+        {
+            return null;
+        }
+
+        List<SelectionSetNode> objectSelectionSets = [internalOperation.SelectionSet];
+
+        foreach (var responseName in responsePath)
+        {
+            List<SelectionSetNode> fieldSelectionSets = [];
+
+            foreach (var objectSelectionSet in objectSelectionSets)
+            {
+                CollectFieldSelectionSets(objectSelectionSet, responseName, fieldSelectionSets);
+            }
+
+            objectSelectionSets = fieldSelectionSets;
+        }
+
+        var fields = new List<FieldNode>();
+
+        foreach (var objectSelectionSet in objectSelectionSets)
+        {
+            CollectFields(objectSelectionSet, fields);
+        }
+
+        return fields;
+
+        void CollectFieldSelectionSets(
+            SelectionSetNode selectionSet,
+            string responseName,
+            List<SelectionSetNode> result)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode { SelectionSet: not null } field
+                        when responseName.Equals(field.Alias?.Value ?? field.Name.Value, StringComparison.Ordinal):
+                        result.Add(field.SelectionSet);
+                        break;
+
+                    case InlineFragmentNode fragment:
+                        CollectFieldSelectionSets(fragment.SelectionSet, responseName, result);
+                        break;
+                }
+            }
+        }
+
+        void CollectFields(SelectionSetNode selectionSet, List<FieldNode> fields)
+        {
+            foreach (var selection in selectionSet.Selections)
+            {
+                switch (selection)
+                {
+                    case FieldNode field:
+                        fields.Add(field);
+                        break;
+
+                    case InlineFragmentNode fragment when CanApply(fragment.TypeCondition):
+                        CollectFields(fragment.SelectionSet, fields);
+                        break;
+                }
+            }
+        }
+
+        // Returns true when an object of the type can match the type condition. A fragment without a type condition
+        // always matches.
+        bool CanApply(NamedTypeNode? typeCondition)
+        {
+            if (typeCondition is null || typeCondition.Name.Value.Equals(type.Name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var conditionType = _schema.Types.GetType(typeCondition.Name.Value, allowInaccessibleFields: true);
+
+            return (type.IsAbstractType() && conditionType.IsAbstractType())
+                || conditionType.IsAssignableFrom(type)
+                || type.IsAssignableFrom(conditionType);
+        }
     }
 
     private OperationDefinitionNode InlineSelectionsIntoOverallOperation(

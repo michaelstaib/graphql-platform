@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -23,6 +24,16 @@ internal static partial class OperationPlanExecutor
         OperationPlan operationPlan,
         CancellationToken cancellationToken)
     {
+        if (operationPlan.UsesSinglePlanDelivery && variableIndex < 0)
+        {
+            return await ExecuteWithSinglePlanDeferAsync(
+                requestContext,
+                variables,
+                policyResult,
+                operationPlan,
+                cancellationToken);
+        }
+
         await using var context = requestContext.Schema.Services.GetRequiredService<OperationPlanContextPool>().Rent();
 
         // We reuse a pooled CancellationTokenSource that can halt the execution engine without
@@ -207,6 +218,581 @@ internal static partial class OperationPlanExecutor
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Runs a plan whose steps carry delivery groups on one context and one result document. The steps
+    /// without groups run first and form the initial payload, the marked steps run after it.
+    /// </summary>
+    private static async Task<IExecutionResult> ExecuteWithSinglePlanDeferAsync(
+        RequestContext requestContext,
+        IVariableValueCollection variables,
+        PolicyEvaluationResult policyResult,
+        OperationPlan operationPlan,
+        CancellationToken cancellationToken)
+    {
+        EnsureDeferIfVariablesAreNotNull(variables, operationPlan);
+
+        var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        OperationPlanContext? context = null;
+
+        try
+        {
+            context = requestContext.Schema.Services.GetRequiredService<OperationPlanContextPool>().Rent();
+            context.Initialize(
+                requestContext,
+                variables,
+                variableIndex: -1,
+                policyResult,
+                operationPlan,
+                executionCts);
+
+            context.Begin();
+
+            var state = context.EnableSinglePlanDelivery(operationPlan);
+            var executionState = context.ExecutionState;
+            var token = executionCts.Token;
+
+            await using (var registration = token.Register(
+                static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
+                executionState.Signal))
+            {
+                executionState.FillBacklog(operationPlan);
+
+                foreach (var node in state.MarkedNodes)
+                {
+                    executionState.HoldNode(node);
+                }
+
+                var serial = operationPlan.Operation.Definition.Operation is OperationType.Mutation;
+
+                foreach (var root in operationPlan.RootNodes)
+                {
+                    if (SinglePlanDeliveryState.GetDeliveryGroups(root).IsDefaultOrEmpty)
+                    {
+                        executionState.StartNode(context, root, token);
+
+                        if (serial)
+                        {
+                            await RunSinglePlanInitialPhaseAsync(context, operationPlan, state, token);
+
+                            if (token.IsCancellationRequested)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                await RunSinglePlanInitialPhaseAsync(context, operationPlan, state, token);
+
+                await DrainActiveNodesAsync(operationPlan, executionState);
+
+                // a step that ended during the drain reported its error after the last pump
+                state.EnterLoop();
+                context.ApplyDeliveryErrors(state);
+                state.ExitLoop();
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var halted = executionCts.IsCancellationRequested;
+            var initialResult = context.CompleteSinglePlanDelivery();
+
+            context.ActivateIncrementalPlans(operationPlan, variables);
+
+            var pendingResults = ImmutableList.CreateBuilder<PendingResult>();
+
+            if (!halted)
+            {
+                state.ComputeNeeded();
+                state.AnnounceInitial(context.ResultDocument, pendingResults);
+            }
+
+            state.PublishedErrorCount = context.ErrorCount;
+
+            if (pendingResults.Count == 0)
+            {
+                context.TransferRetainedMemoryTo(initialResult);
+                executionCts.Dispose();
+                await context.DisposeAsync();
+                return initialResult;
+            }
+
+            initialResult.HasNext = true;
+            initialResult.Pending = pendingResults.ToImmutable();
+            state.AddSentErrors(initialResult.Errors);
+
+            var requestArena = context.Memory;
+            var stream = new ResponseStream(
+                () => CreateSinglePlanStream(
+                    context,
+                    operationPlan,
+                    state,
+                    initialResult,
+                    requestArena,
+                    executionCts,
+                    cancellationToken,
+                    token),
+                ExecutionResultKind.DeferredResult);
+
+            stream.RegisterForCleanup(context);
+            stream.RegisterForCleanup(executionCts);
+            return stream;
+        }
+        catch (Exception)
+        {
+            executionCts.Dispose();
+
+            if (context is not null)
+            {
+                await context.DisposeAsync();
+            }
+
+            throw;
+        }
+    }
+
+    private static async Task RunSinglePlanInitialPhaseAsync(
+        OperationPlanContext context,
+        OperationPlan operationPlan,
+        SinglePlanDeliveryState state,
+        CancellationToken token)
+    {
+        var executionState = context.ExecutionState;
+
+        while (!token.IsCancellationRequested && executionState.HasActiveNodes())
+        {
+            PumpSinglePlan(context, operationPlan, state, token);
+
+            if (token.IsCancellationRequested || !executionState.HasActiveNodes())
+            {
+                break;
+            }
+
+            await executionState.Signal;
+        }
+    }
+
+    /// <summary>
+    /// Applies the merges and the completed steps that are waiting and starts the steps that became ready.
+    /// </summary>
+    private static void PumpSinglePlan(
+        OperationPlanContext context,
+        OperationPlan plan,
+        SinglePlanDeliveryState state,
+        CancellationToken cancellationToken)
+    {
+        var executionState = context.ExecutionState;
+
+        state.EnterLoop();
+
+        while (executionState.TryDequeuePendingMerge(out var merge))
+        {
+            ApplySinglePlanMerge(context, executionState, merge);
+        }
+
+        context.ApplyDeliveryErrors(state);
+
+        while (executionState.TryDequeueCompletedResult(out var result))
+        {
+            while (executionState.TryDequeuePendingMerge(out var merge))
+            {
+                ApplySinglePlanMerge(context, executionState, merge);
+            }
+
+            context.ApplyDeliveryErrors(state);
+
+            result = executionState.ApplyPendingMergeFailure(result);
+            var node = plan.GetNodeById(result.Id);
+            executionState.CompleteNode(plan, node, result);
+            state.Finished[result.Id] = true;
+
+            // A step that cannot build its variables from the result counts as skipped.
+            var failed = result.Status is ExecutionStatus.Failed
+                && result.Exception is not InvalidSelectionMapPathException;
+            state.Failed[result.Id] = failed;
+            state.FailureExceptions[result.Id] = failed ? result.Exception : null;
+        }
+
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            executionState.EnqueueNextNodes(context, cancellationToken);
+        }
+
+        state.ExitLoop();
+    }
+
+    private static void ApplySinglePlanMerge(
+        OperationPlanContext context,
+        ExecutionState executionState,
+        PendingMerge merge)
+    {
+        context.SinglePlanDelivery!.AssertOnLoop();
+
+        var groups = SinglePlanDeliveryState.GetDeliveryGroups(merge.Node);
+
+        if (groups.IsDefaultOrEmpty)
+        {
+            executionState.ApplyMerge(context, merge);
+            return;
+        }
+
+        var errorCount = context.ErrorCount;
+
+        context.SetWriteFilter(groups);
+
+        try
+        {
+            executionState.ApplyMerge(context, merge);
+        }
+        finally
+        {
+            context.ClearWriteFilter();
+        }
+
+        if (context.ErrorCount != errorCount)
+        {
+            context.AddSourceErrorsAfter(
+                errorCount,
+                context.SinglePlanDelivery!.GetOwnDeliveryGroups(merge.ResultSelectionSet));
+        }
+    }
+
+    private static async IAsyncEnumerable<OperationResult> CreateSinglePlanStream(
+        OperationPlanContext context,
+        OperationPlan plan,
+        SinglePlanDeliveryState state,
+        OperationResult initialResult,
+        MemoryArena requestArena,
+        CancellationTokenSource executionCts,
+        CancellationToken requestCancellationToken,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var completed = false;
+
+        try
+        {
+            yield return initialResult;
+
+            // The consumer asked for the next payload, so the initial payload is written out.
+            var executionState = context.ExecutionState;
+
+            await using var registration = cancellationToken.Register(
+                static signal => Unsafe.As<AsyncAutoResetEvent>(signal)!.TryResetToIdle(),
+                executionState.Signal);
+
+            foreach (var node in state.MarkedNodes)
+            {
+                if (state.Needed[node.Id])
+                {
+                    executionState.ReleaseNode(node);
+                }
+                else if (!executionState.IsNodeSkipped(node.Id))
+                {
+                    executionState.SkipNode(plan, node);
+                }
+            }
+
+            var hasNext = true;
+            IError? fault = null;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                OperationResult? payload;
+
+                try
+                {
+                    PumpSinglePlan(context, plan, state, cancellationToken);
+                    state.EnterLoop();
+                    payload = CreateSinglePlanPayload(context, state, out hasNext);
+                    state.ExitLoop();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    state.ExitLoop();
+                    fault = ErrorHelper.UnexpectedExecutionError(ex);
+                    hasNext = true;
+                    await executionCts.CancelAsync();
+                    break;
+                }
+
+                if (payload is not null)
+                {
+                    yield return payload;
+
+                    if (!hasNext)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                if (!executionState.HasActiveNodes())
+                {
+                    // No step runs any more, so the remaining groups can never be delivered.
+                    break;
+                }
+
+                await executionState.Signal;
+            }
+
+            if (hasNext && !requestCancellationToken.IsCancellationRequested)
+            {
+                await DrainActiveNodesAsync(plan, executionState);
+                yield return CreateSinglePlanHaltedPayload(context, state, fault);
+            }
+
+            if (!hasNext && executionState.HasActiveNodes())
+            {
+                // The last payload is written, so the steps that still run are cancelled.
+                await executionCts.CancelAsync();
+            }
+
+            await DrainActiveNodesAsync(plan, executionState);
+            requestArena.Seal();
+            completed = true;
+        }
+        finally
+        {
+            if (!completed)
+            {
+                // The consumer stopped reading, so the steps that still run are cancelled.
+                await executionCts.CancelAsync();
+                await DrainActiveNodesAsync(plan, context.ExecutionState);
+            }
+        }
+    }
+
+    private static OperationResult CreateSinglePlanHaltedPayload(
+        OperationPlanContext context,
+        SinglePlanDeliveryState state,
+        IError? fault)
+    {
+        var completed = ImmutableList.CreateBuilder<CompletedResult>();
+        var errors = context.GetErrorsAfter(state.PublishedErrorCount);
+
+        if (fault is not null)
+        {
+            errors = errors.Add(fault);
+        }
+
+        for (var instance = 0; instance < state.InstanceCount; instance++)
+        {
+            if (!state.IsDone(instance))
+            {
+                state.MarkDone(instance);
+
+                var instanceErrors = state.TakeGroupErrors(instance, includeSent: true) ?? [];
+                instanceErrors = state.TakeSourceErrors(state.GetInstanceGroup(instance), instanceErrors);
+                instanceErrors = instanceErrors.AddRange(errors);
+                completed.Add(new CompletedResult(instance, instanceErrors.Count > 0 ? instanceErrors : null));
+                errors = [];
+            }
+        }
+
+        // The loop faults only while an announced instance is open, and the protocol has no place for the error
+        // of a fault when no id is open.
+        Debug.Assert(fault is null || completed.Count > 0, "The error of the fault has no open id to carry it.");
+
+        state.EndPayload();
+        state.PublishedErrorCount = context.ErrorCount;
+
+        return CreateSinglePlanPayloadResult([], [], completed.ToImmutable(), hasNext: false);
+    }
+
+    private static OperationResult CreateSinglePlanPayloadResult(
+        ImmutableList<PendingResult> pending,
+        ImmutableList<IIncrementalResult> incremental,
+        ImmutableList<CompletedResult> completed,
+        bool hasNext)
+        => new(new IncrementalDataFeature
+        {
+            Pending = pending,
+            Incremental = incremental,
+            Completed = completed,
+            HasNext = hasNext
+        });
+
+    private static OperationResult? CreateSinglePlanPayload(
+        OperationPlanContext context,
+        SinglePlanDeliveryState state,
+        out bool hasNext)
+    {
+        var executionState = context.ExecutionState;
+        var pending = ImmutableList.CreateBuilder<PendingResult>();
+        var incremental = ImmutableList.CreateBuilder<IIncrementalResult>();
+        var completed = ImmutableList.CreateBuilder<CompletedResult>();
+        var document = context.ResultDocument;
+        var unattributed = context.GetErrorsAfter(state.PublishedErrorCount);
+        var sent = ImmutableList<IError>.Empty;
+        var instanceCountBefore = state.InstanceCount;
+        var roots = new List<ClaimedObject>();
+        var progressed = true;
+
+        state.BeginPayload(document);
+
+        try
+        {
+            while (progressed)
+            {
+                progressed = false;
+                state.ResetGroupStatus();
+
+                // The announcements of this payload append to the instances, so the loop reads the count again.
+                for (var instance = 0; instance < state.InstanceCount; instance++)
+                {
+                    if (state.IsDone(instance))
+                    {
+                        continue;
+                    }
+
+                    var group = state.GetInstanceGroup(instance);
+
+                    if (!state.IsGroupSettled(group, executionState, out var groupFailed))
+                    {
+                        continue;
+                    }
+
+                    if (groupFailed)
+                    {
+                        state.MarkFailed(instance);
+                    }
+
+                    state.CompleteDeniedAnswers(document, instance);
+
+                    var open = !state.IsFailed(instance)
+                        && state.CompleteUnwrittenRows(document, instance, groupFailed);
+                    var failed = state.IsFailed(instance);
+
+                    // The instance stays open while a step that is not settled can still write one of its rows.
+                    if (!failed && open && document.HasOpenRows(instance))
+                    {
+                        continue;
+                    }
+
+                    progressed = true;
+
+                    if (failed)
+                    {
+                        // A failed instance completes with its errors and without data, and announces nothing.
+                        var failure = TakeFailureErrors(state, instance, ref unattributed);
+                        sent = sent.AddRange(failure);
+                        completed.Add(new CompletedResult(instance, failure.Count > 0 ? failure : null));
+                        state.MarkDone(instance);
+                        continue;
+                    }
+
+                    var errors = state.TakeGroupErrors(instance, includeSent: false) ?? [];
+                    errors = state.TakeSourceErrors(group, errors);
+
+                    if (unattributed.Count > 0)
+                    {
+                        errors = errors.AddRange(unattributed);
+                        unattributed = [];
+                    }
+
+                    errors = state.ExcludeSentErrors(errors);
+                    sent = sent.AddRange(errors);
+
+                    roots.Clear();
+                    document.ClaimDeliveryRows(instance, roots);
+
+                    foreach (var root in roots)
+                    {
+                        var entryErrors = errors.Count > 0 && root.Instance == instance ? errors : null;
+
+                        if (entryErrors is not null)
+                        {
+                            errors = [];
+                        }
+
+                        incremental.Add(
+                            new IncrementalObjectResult(
+                                root.Instance,
+                                entryErrors,
+                                root.SubPath.IsRoot ? null : root.SubPath,
+                                new OperationResultData(
+                                    document,
+                                    isValueNull: false,
+                                    new DeliveryPayloadDataFormatter(document, root.Cursor, root.Group),
+                                    memoryHolder: null)));
+                    }
+
+                    completed.Add(new CompletedResult(instance, errors.Count > 0 ? errors : null));
+                    state.MarkDone(instance);
+                    state.AnnounceChildren(document, instance, pending);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // The payload is never sent, so its instances are neither announced nor completed.
+            state.RollbackPayload(instanceCountBefore);
+            throw;
+        }
+
+        state.EndPayload();
+        hasNext = state.OpenCount > 0;
+
+        if (pending.Count == 0 && incremental.Count == 0 && completed.Count == 0)
+        {
+            return null;
+        }
+
+        state.AddSentErrors(sent);
+        state.PublishedErrorCount = context.ErrorCount;
+
+        return CreateSinglePlanPayloadResult(
+            pending.ToImmutable(),
+            incremental.ToImmutable(),
+            completed.ToImmutable(),
+            hasNext);
+    }
+
+    // A failed instance carries the errors of its rows, then, when a step failure failed it, the errors its steps
+    // reported for rows that already held a result or else the errors of its failed steps unless a row holds a step
+    // error. The errors its steps reported for no row and the errors without a group follow, and an instance
+    // without any error carries the error of the exception of a failed step of its group.
+    private static ImmutableList<IError> TakeFailureErrors(
+        SinglePlanDeliveryState state,
+        int instance,
+        ref ImmutableList<IError> unattributed)
+    {
+        var group = state.GetInstanceGroup(instance);
+        var errors = state.TakeGroupErrors(instance, includeSent: true) ?? [];
+
+        if (state.IsFailedByStep(instance) && state.GetDeniedErrors(instance) is { } denied)
+        {
+            errors = errors.AddRange(denied);
+        }
+        else if (state.IsFailedByStep(instance)
+            && !state.HoldsStepError(instance)
+            && state.GetStepErrors(group) is { } stepErrors)
+        {
+            errors = errors.AddRange(stepErrors);
+        }
+
+        errors = state.TakeSourceErrors(group, errors);
+
+        if (unattributed.Count > 0)
+        {
+            errors = errors.AddRange(unattributed);
+            unattributed = [];
+        }
+
+        if (errors.Count == 0 && state.CreateFailureError(group) is { } error)
+        {
+            errors = [error];
+        }
+
+        return errors;
     }
 
     private static async IAsyncEnumerable<OperationResult> CreateIncrementalStream(

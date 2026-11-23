@@ -734,7 +734,7 @@ public class SelectionTypeShapeBenchmark
             }
             """);
 
-        var documentRewriter = new DocumentRewriter(schema);
+        var documentRewriter = new DocumentRewriter(schema, mergeAcrossDefer: true);
         var operationDefinition =
             documentRewriter.RewriteDocument(document).GetOperation(operationName: null);
 
