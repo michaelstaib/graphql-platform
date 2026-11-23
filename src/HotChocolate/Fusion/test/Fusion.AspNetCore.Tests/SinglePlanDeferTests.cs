@@ -7046,6 +7046,30 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendTheErrorOnce_When_ThePayloadOfAnotherFragmentAlreadyReportedTheFailedElement()
+    {
+        // arrange
+        // the step of p (B:5) answers and its payload is written before the step of q (B:4) answers
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:4"],
+            FailTheSecondInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick ... @defer(label: "p") { inners { a } } ... @defer(label: "q") { gL } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_SendTheErrorOnlyInTheInitialPayload_When_TheInitialStepHoldsTheFailedElement()
     {
         // arrange
