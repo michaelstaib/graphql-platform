@@ -128,7 +128,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         parsedJson.MatchInlineSnapshot(
             """
             {
-              "version": "1.4.0",
+              "version": "1.5.0",
               "id": "3d4ae8bf9805fddd74ade860c3c6ed54b3421658fcd4e005ee243af2842ae9a9",
               "operation": {
                 "kind": "Query",
@@ -557,7 +557,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         parsedJson.MatchInlineSnapshot(
             """
             {
-              "version": "1.4.0",
+              "version": "1.5.0",
               "id": "ddeb9a07a1ce2925db3f619131745ad7f71a87d88becc06033d7958550dee877",
               "operation": {
                 "kind": "Query",
@@ -2183,6 +2183,71 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         Assert.Equal(2, parsedOperation.ConditionAlternatives.Length);
         GetNodes(formatter.Format(parsedPlan), "OperationBatch").MatchSnapshot(extension: ".json");
         MatchSnapshot(parsedPlan);
+    }
+
+    [Fact]
+    public void Parse_Should_RestoreRequirementConditions_When_PlanHasConditionalRequirement()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(UnionSiblingAssetSchemaA, UnionSiblingAssetSchemaB);
+        var originalPlan = PlanOperation(
+            compositeSchema,
+            """
+            query testQuery {
+              search {
+                ... on ExistingResult {
+                  asset {
+                    meterType { type }
+                    category { allowedMeterTypes { type } }
+                  }
+                }
+                ... on ConfigMatchesResult {
+                  asset {
+                    category { allowedMeterTypes { type } }
+                    meterType { type }
+                  }
+                }
+              }
+            }
+            """,
+            new OperationPlannerOptions { EnableRequestGrouping = false });
+        var formatter = new JsonOperationPlanFormatter(
+            new JsonWriterOptions
+            {
+                Indented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+        var json = JsonNode.Parse(formatter.Format(originalPlan))!;
+        var nodes = json["nodes"]!.AsArray().Select(t => t!.AsObject()).ToArray();
+        var operation = nodes.First(
+            t => t["type"]?.GetValue<string>() is "Operation" && t["requirements"] is not null);
+        var batchOperation = nodes.First(
+            t => t["type"]?.GetValue<string>() is "OperationBatch" && t["requirements"] is not null);
+        operation["requirements"]![0]!["conditions"] = new JsonArray(
+            new JsonObject { ["variable"] = "$a", ["passingValue"] = false });
+        batchOperation["requirements"]![0]!["conditions"] = new JsonArray(
+            new JsonObject { ["variable"] = "$b", ["passingValue"] = true },
+            new JsonObject { ["variable"] = "$c", ["passingValue"] = false });
+        var planSource = Encoding.UTF8.GetBytes(json.ToJsonString());
+
+        // act
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create()).Parse(planSource);
+        var formatted = formatter.Format(parsedPlan);
+        var reparsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create())
+            .Parse(Encoding.UTF8.GetBytes(formatted));
+        var reformatted = formatter.Format(reparsedPlan);
+
+        // assert
+        Assert.Equal(formatted, reformatted);
+        var formattedPlan = JsonNode.Parse(formatted)!;
+        Assert.Equal("1.5.0", formattedPlan["version"]!.GetValue<string>());
+        new JsonArray(
+            formattedPlan["nodes"]!.AsArray()
+                .Where(t => t!["requirements"]?[0]?["conditions"] is not null)
+                .Select(t => t!["requirements"]!.DeepClone())
+                .ToArray())
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true })
+            .MatchSnapshot(extension: ".json");
     }
 
     private static JsonArray CreateConditionAlternatives()

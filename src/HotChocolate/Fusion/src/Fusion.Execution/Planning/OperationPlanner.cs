@@ -1186,6 +1186,7 @@ public sealed partial class OperationPlanner
                     argument.Type,
                     workItem.SelectionSet.Path,
                     fieldSelectionMap,
+                    null,
                     null);
 
                 requirements = requirements.Add(argumentRequirementKey, operationRequirement);
@@ -1883,7 +1884,8 @@ public sealed partial class OperationPlanner
                 argument.Type,
                 workItem.Selection.Path,
                 fieldSelectionMap,
-                requirementAliases.GetInternalAlias(fieldSelectionMap));
+                requirementAliases.GetInternalAlias(fieldSelectionMap),
+                null);
 
             requirements = requirements.Add(argumentRequirementKey, operationRequirement);
         }
@@ -2059,7 +2061,8 @@ public sealed partial class OperationPlanner
                 argument.Type,
                 workItem.Selection.Path,
                 fieldSelectionMap,
-                requirementAliases.GetInternalAlias(fieldSelectionMap));
+                requirementAliases.GetInternalAlias(fieldSelectionMap),
+                null);
 
             requirements = requirements.Add(argumentRequirementKey, operationRequirement);
         }
@@ -2196,6 +2199,7 @@ public sealed partial class OperationPlanner
                 argument.Type,
                 workItem.Selection.Path,
                 fieldSelectionMap,
+                null,
                 null);
 
             requirements = requirements.Add(argumentRequirementKey, operationRequirement);

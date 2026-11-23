@@ -29,7 +29,7 @@ public sealed class JsonOperationPlanFormatter(JsonWriterOptions? options = null
     /// <summary>
     /// The version of the operation plan JSON format written by this formatter.
     /// </summary>
-    private const string FormatVersion = "1.4.0";
+    private const string FormatVersion = "1.5.0";
 
     private readonly JsonWriterOptions _writerOptions = options ?? new JsonWriterOptions
     {
@@ -481,6 +481,12 @@ public sealed class JsonOperationPlanFormatter(JsonWriterOptions? options = null
 
         jsonWriter.WritePropertyName("selectionMap");
         jsonWriter.WriteStringValue(requirement.Map.ToString());
+
+        if (requirement.Conditions is { Length: > 0 })
+        {
+            jsonWriter.WritePropertyName("conditions");
+            WriteConditionArray(jsonWriter, requirement.Conditions);
+        }
 
         jsonWriter.WriteEndObject();
     }
