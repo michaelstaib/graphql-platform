@@ -81,7 +81,9 @@ nodes:
       - 1
     dependencies:
       - id: 1
+        optional: true
       - id: 2
+        optional: true
 deliveryGroups:
   - id: 0
     path: $.user

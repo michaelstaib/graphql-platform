@@ -124,7 +124,9 @@ nodes:
       - 1
     dependencies:
       - id: 2
+        optional: true
       - id: 8
+        optional: true
   - id: 4
     type: Operation
     schema: d
@@ -199,7 +201,9 @@ nodes:
       - 0
     dependencies:
       - id: 4
+        optional: true
       - id: 6
+        optional: true
   - id: 8
     type: Operation
     schema: b

@@ -151,7 +151,9 @@ nodes:
       - 0
     dependencies:
       - id: 14
+        optional: true
       - id: 19
+        optional: true
   - id: 14
     type: Operation
     schema: c

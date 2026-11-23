@@ -402,7 +402,9 @@ nodes:
     dependencies:
       - id: 1
       - id: 2
+        optional: true
       - id: 3
+        optional: true
 deliveryGroups:
   - id: 0
     path: $.user
