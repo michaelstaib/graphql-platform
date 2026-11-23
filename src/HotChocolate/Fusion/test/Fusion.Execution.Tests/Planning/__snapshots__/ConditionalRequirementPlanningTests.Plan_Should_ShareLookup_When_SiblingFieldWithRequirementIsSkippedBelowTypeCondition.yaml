@@ -1,0 +1,125 @@
+id: a8f5a6ac737a4a5c7df8d0e8bbf303faf78ecd2574b2c003c4074aa70044c638
+operation:
+  - document: |
+      query($a: Boolean!) {
+        item {
+          __typename @fusion__requirement
+          ... on Product {
+            shipping
+            id @fusion__requirement
+            weight @fusion__requirement
+            ... @skip(if: $a) {
+              tax
+              total @fusion__requirement
+            }
+          }
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 7
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          item {
+            __typename
+            ... on Product {
+              id
+            }
+          }
+        }
+      hash: f90c125fb03ae2d9166d66cc99a585da6f30ba11de612805a02ddfdfe06fb442
+      shortHash: f90c125f
+      xxHash: 3415289652272408043
+    resultSelectionSet: >-
+      { item }
+  - id: 3
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3(
+          $a: Boolean!
+          $__fusion_2_weight: Int
+          $__fusion_3_id: ID!
+          $__fusion_5_total: Int
+        ) {
+          productById(id: $__fusion_3_id) {
+            shipping(weight: $__fusion_2_weight)
+            tax(total: $__fusion_5_total) @skip(if: $a)
+          }
+        }
+      hash: 30aec7f09f146fd555daba2a623945dbaa915f4be1be30b8f269a712b730f9dd
+      shortHash: 30aec7f0
+      xxHash: 48533125707198123
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { shipping tax }
+    source: $.productById
+    target: $.item<Product>
+    requirements:
+      - name: __fusion_2_weight
+        type: Int
+        path: $.item<Product>
+        selectionMap: >-
+          weight
+      - name: __fusion_3_id
+        type: ID!
+        path: $.item<Product>
+        selectionMap: >-
+          id
+      - name: __fusion_5_total
+        type: Int
+        path: $.item<Product>
+        selectionMap: >-
+          total
+        conditions:
+          - variable: $a
+            passingValue: false
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query Op_123456789101112_4($a: Boolean!, $__fusion_4_id: ID!) {
+          productById(id: $__fusion_4_id) {
+            weight
+            total @skip(if: $a)
+          }
+        }
+      hash: 43bb37a921ac73606258c275009d18e91f0954b91218611b9d34217cc334af48
+      shortHash: 43bb37a9
+      xxHash: 8789859739977166200
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { weight total }
+    source: $.productById
+    target: $.item<Product>
+    requirements:
+      - name: __fusion_4_id
+        type: ID!
+        path: $.item<Product>
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 1

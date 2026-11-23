@@ -1,12 +1,12 @@
-id: a228b1d7a8698674918308a094057d0e62f790187756a4e3f15168b780847612
+id: 06d71fa60b9298628900cac9c4c7de1f339eddf8ecbaaa1f20474b4f1cb0d31f
 operation:
   - document: |
       query($a: Boolean!) {
         user {
           shipping
           id @fusion__requirement
-          total @fusion__requirement
           weight @fusion__requirement
+          total @fusion__requirement
           tax @skip(if: $a)
         }
       }
@@ -15,7 +15,7 @@ operation:
     hash: "123456789101112"
     shortHash: "123456789101112"
 searchSpace: 2
-expandedNodes: 8
+expandedNodes: 7
 nodes:
   - id: 1
     type: Operation
@@ -43,52 +43,20 @@ nodes:
       document: |
         query Op_123456789101112_4($__fusion_4_id: ID!) {
           userById(id: $__fusion_4_id) {
+            weight
             total
           }
         }
-      hash: 45be7081b84fbd755fe598de77615b130a6475443f867b177943c32a79b83db7
-      shortHash: 45be7081
-      xxHash: 10998708358512705809
+      hash: 290ed60cfffff62bcd257773d74e6fd161cf00e587bc95358f6c9eb4f1ee5331
+      shortHash: 290ed60c
+      xxHash: 6603088348747948531
     lookupTypeName: User
     resultSelectionSet: >-
-      { total }
+      { weight total }
     source: $.userById
     target: $.user
-    batchingGroupId: 7
     requirements:
       - name: __fusion_4_id
-        type: ID!
-        path: $.user
-        selectionMap: >-
-          id
-    conditions:
-      - variable: $a
-        passingValue: false
-    dependencies:
-      - id: 1
-  - id: 6
-    type: Operation
-    schema: d
-    operation:
-      name: Op_123456789101112_6
-      kind: Query
-      document: |
-        query Op_123456789101112_6($__fusion_7_id: ID!) {
-          userById(id: $__fusion_7_id) {
-            weight
-          }
-        }
-      hash: 6ae0c3bd98c0d27f106dc770d96cfc49b5a853bd25a53280ae1b0b9ac8da6511
-      shortHash: 6ae0c3bd
-      xxHash: 4888144846084498517
-    lookupTypeName: User
-    resultSelectionSet: >-
-      { weight }
-    source: $.userById
-    target: $.user
-    batchingGroupId: 7
-    requirements:
-      - name: __fusion_7_id
         type: ID!
         path: $.user
         selectionMap: >-
@@ -102,34 +70,31 @@ nodes:
       name: Op_123456789101112_3
       kind: Query
       document: |
-        query Op_123456789101112_3($__fusion_2_total: Int, $__fusion_3_id: ID!) {
+        query Op_123456789101112_3($__fusion_2_weight: Int, $__fusion_3_id: ID!) {
           userById(id: $__fusion_3_id) {
-            tax(total: $__fusion_2_total)
+            shipping(weight: $__fusion_2_weight)
           }
         }
-      hash: 867e87114282afc0abf0e1a22ca7358b1787988c0a70a278123a3c7d4f923c64
-      shortHash: "867e8711"
-      xxHash: 2931330351658024004
+      hash: fd1e4a30e1bf48d9da652b5922c8f9e17850830e7df8498279fd8d9f103af54a
+      shortHash: fd1e4a30
+      xxHash: 39963108069255153
     lookupTypeName: User
     resultSelectionSet: >-
-      { tax }
+      { shipping }
     source: $.userById
     target: $.user
-    batchingGroupId: 8
+    batchingGroupId: 6
     requirements:
-      - name: __fusion_2_total
+      - name: __fusion_2_weight
         type: Int
         path: $.user
         selectionMap: >-
-          total
+          weight
       - name: __fusion_3_id
         type: ID!
         path: $.user
         selectionMap: >-
           id
-    conditions:
-      - variable: $a
-        passingValue: false
     dependencies:
       - id: 1
       - id: 4
@@ -140,31 +105,34 @@ nodes:
       name: Op_123456789101112_5
       kind: Query
       document: |
-        query Op_123456789101112_5($__fusion_5_weight: Int, $__fusion_6_id: ID!) {
+        query Op_123456789101112_5($__fusion_5_total: Int!, $__fusion_6_id: ID!) {
           userById(id: $__fusion_6_id) {
-            shipping(weight: $__fusion_5_weight)
+            tax(total: $__fusion_5_total)
           }
         }
-      hash: ea0b42c780332788451eda8616ab191a5da065a725512547bddc7f0171c49a7a
-      shortHash: ea0b42c7
-      xxHash: 6896669327089977576
+      hash: 8d30a1a7dfe8be3965a2e8a0f3e2c374c8187f3ef2872ed3d5977639f1e72e98
+      shortHash: 8d30a1a7
+      xxHash: 1861434932207742356
     lookupTypeName: User
     resultSelectionSet: >-
-      { shipping }
+      { tax }
     source: $.userById
     target: $.user
-    batchingGroupId: 8
+    batchingGroupId: 6
     requirements:
-      - name: __fusion_5_weight
-        type: Int
+      - name: __fusion_5_total
+        type: Int!
         path: $.user
         selectionMap: >-
-          weight
+          total
       - name: __fusion_6_id
         type: ID!
         path: $.user
         selectionMap: >-
           id
+    conditions:
+      - variable: $a
+        passingValue: false
     dependencies:
       - id: 1
-      - id: 6
+      - id: 4

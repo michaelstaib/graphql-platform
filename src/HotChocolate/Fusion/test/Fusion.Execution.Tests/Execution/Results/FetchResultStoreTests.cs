@@ -18,6 +18,7 @@ using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
 using FusionNameNode = HotChocolate.Fusion.Language.NameNode;
+using BooleanValueNode = HotChocolate.Language.BooleanValueNode;
 using IntValueNode = HotChocolate.Language.IntValueNode;
 using StringValueNode = HotChocolate.Language.StringValueNode;
 using ListValueNode = HotChocolate.Language.ListValueNode;
@@ -2163,6 +2164,194 @@ public sealed class FetchResultStoreTests : FusionTestBase
     }
 
     [Fact]
+    public void CreateVariableValueSets_Should_WriteNull_When_ConditionOfRequirementDoesNotPass()
+    {
+        // arrange
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        var schema = CreateWeightSchema();
+        using var store = CreateLiveStore(
+            schema,
+            "{ foos { id weight } }",
+            """{"data":{"foos":[{"id":"1","weight":null},{"id":"2","weight":5}]}}""",
+            resultArena,
+            sourceArena);
+
+        // act
+        var result = store.CreateVariableValueSets(
+            SelectionPath.Root.AppendField("foos"),
+            [Field("a", new BooleanValueNode(true))],
+            [
+                Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID")),
+                ConditionalRequirement(
+                    "__fusion_2_weight",
+                    "weight",
+                    new NonNullTypeNode(new NamedTypeNode("Int")),
+                    Condition("a", passingValue: false))
+            ]);
+
+        // assert
+        result.Select(entry => Normalize(entry.Values)).MatchInlineSnapshots(
+            [
+                """
+                {"a":true,"__fusion_1_id":"1","__fusion_2_weight":null}
+                """,
+                """
+                {"a":true,"__fusion_1_id":"2","__fusion_2_weight":null}
+                """
+            ]);
+    }
+
+    [Fact]
+    public void CreateVariableValueSets_Should_DropEntity_When_RequirementWithPassingConditionIsMissing()
+    {
+        // arrange
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        var schema = CreateWeightSchema();
+        using var store = CreateLiveStore(
+            schema,
+            "{ foos { id weight } }",
+            """{"data":{"foos":[{"id":"1","weight":null},{"id":"2","weight":5}]}}""",
+            resultArena,
+            sourceArena);
+
+        // act
+        var result = store.CreateVariableValueSets(
+            SelectionPath.Root.AppendField("foos"),
+            [Field("a", new BooleanValueNode(false))],
+            [
+                Requirement(schema, "__fusion_1_id", "id", new NamedTypeNode("ID")),
+                ConditionalRequirement(
+                    "__fusion_2_weight",
+                    "weight",
+                    new NonNullTypeNode(new NamedTypeNode("Int")),
+                    Condition("a", passingValue: false))
+            ]);
+
+        // assert
+        var entry = Assert.Single(result);
+        Normalize(entry.Values).MatchInlineSnapshot(
+            """
+            {"a":false,"__fusion_1_id":"2","__fusion_2_weight":5}
+            """);
+    }
+
+    [Fact]
+    public void CreateVariableValueSets_Should_MergeEntitiesIntoOneSet_When_TheyDifferOnlyInOffRequirement()
+    {
+        // arrange
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        var schema = CreateWeightSchema();
+        using var store = CreateLiveStore(
+            schema,
+            "{ foos { id weight } }",
+            """{"data":{"foos":[{"id":"1","weight":1},{"id":"2","weight":2},{"id":"3","weight":1}]}}""",
+            resultArena,
+            sourceArena);
+
+        // act
+        var result = store.CreateVariableValueSets(
+            SelectionPath.Root.AppendField("foos"),
+            [Field("a", new BooleanValueNode(true))],
+            [
+                ConditionalRequirement(
+                    "__fusion_1_weight",
+                    "weight",
+                    new NamedTypeNode("Int"),
+                    Condition("a", passingValue: false))
+            ]);
+
+        // assert
+        RenderVariableValueSets(store, result).MatchInlineSnapshot(
+            """
+            Path: foos[0]
+            Additional paths: [foos[1], foos[2]]
+            Variables: {"a":true,"__fusion_1_weight":null}
+            """);
+    }
+
+    [Fact]
+    public void CreateVariableValueSets_Should_WriteValue_When_ConditionVariableIsNotInRequestVariables()
+    {
+        // arrange
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        var schema = CreateWeightSchema();
+        using var store = CreateLiveStore(
+            schema,
+            "{ foos { id weight } }",
+            """{"data":{"foos":[{"id":"1","weight":5}]}}""",
+            resultArena,
+            sourceArena);
+
+        // act
+        var result = store.CreateVariableValueSets(
+            SelectionPath.Root.AppendField("foos"),
+            [Field("other", new BooleanValueNode(true))],
+            [
+                ConditionalRequirement(
+                    "__fusion_1_weight",
+                    "weight",
+                    new NamedTypeNode("Int"),
+                    Condition("a", passingValue: false))
+            ]);
+
+        // assert
+        var entry = Assert.Single(result);
+        Normalize(entry.Values).MatchInlineSnapshot(
+            """
+            {"other":true,"__fusion_1_weight":5}
+            """);
+    }
+
+    [Fact]
+    public void CreateVariableValueSets_Should_WriteNull_When_OffRequirementsExceedTheMaskWidth()
+    {
+        // arrange
+        using var resultArena = new MemoryArena();
+        using var sourceArena = new MemoryArena();
+        var schema = CreateWeightSchema();
+        using var store = CreateLiveStore(
+            schema,
+            "{ foos { id weight } }",
+            """{"data":{"foos":[{"id":"1","weight":5}]}}""",
+            resultArena,
+            sourceArena);
+        var requirements = new OperationRequirement[66];
+
+        for (var i = 0; i < requirements.Length; i++)
+        {
+            requirements[i] = i is 3 or 64
+                ? ConditionalRequirement(
+                    $"__fusion_{i}_weight",
+                    "weight",
+                    new NamedTypeNode("Int"),
+                    Condition("a", passingValue: false))
+                : Requirement(schema, $"__fusion_{i}_weight", "weight", new NamedTypeNode("Int"));
+        }
+
+        var expected = new StringBuilder("{\"a\":true");
+
+        for (var i = 0; i < requirements.Length; i++)
+        {
+            expected.Append($",\"__fusion_{i}_weight\":{(i is 3 or 64 ? "null" : "5")}");
+        }
+
+        expected.Append('}');
+
+        // act
+        var result = store.CreateVariableValueSets(
+            SelectionPath.Root.AppendField("foos"),
+            [Field("a", new BooleanValueNode(true))],
+            requirements);
+
+        // assert
+        Assert.Equal(expected.ToString(), Normalize(Assert.Single(result).Values));
+    }
+
+    [Fact]
     public void CreateVariableValueSetsFromSnapshot_Should_WriteForwardedVariablesForEveryEntry_When_MultipleEntriesAreImported()
     {
         // arrange
@@ -2637,7 +2826,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             new NamedTypeNode("String"),
             SelectionPath.Root,
             new FieldSelectionMapParser("aliasSource").Parse(),
-            "__fusion_internal_alias");
+            "__fusion_internal_alias",
+            null);
 
         // act
         var result = store.CreateVariableValueSets(
@@ -2758,7 +2948,8 @@ public sealed class FetchResultStoreTests : FusionTestBase
             new NamedTypeNode("String"),
             SelectionPath.Root,
             new FieldSelectionMapParser("id").Parse(),
-            "__fusion_internal_id");
+            "__fusion_internal_id",
+            null);
 
         // act
         var result = store.CreateVariableValueSets(
@@ -2909,12 +3100,16 @@ public sealed class FetchResultStoreTests : FusionTestBase
                     "__fusion_1_id",
                     new NonNullTypeNode(new NamedTypeNode("Int")),
                     products,
-                    new FieldSelectionMapParser("id").Parse()),
+                    new FieldSelectionMapParser("id").Parse(),
+                    null,
+                    null),
                 new OperationRequirement(
                     "__fusion_2_weight",
                     new NamedTypeNode("Int"),
                     products.AppendField("details"),
-                    new FieldSelectionMapParser("weight").Parse())
+                    new FieldSelectionMapParser("weight").Parse(),
+                    null,
+                    null)
             ]);
 
         // assert
@@ -2972,12 +3167,16 @@ public sealed class FetchResultStoreTests : FusionTestBase
                     "__fusion_1_id",
                     new NonNullTypeNode(new NamedTypeNode("Int")),
                     products,
-                    new FieldSelectionMapParser("id").Parse()),
+                    new FieldSelectionMapParser("id").Parse(),
+                    null,
+                    null),
                 new OperationRequirement(
                     "__fusion_2_weight",
                     nonNullRequirement ? new NonNullTypeNode(new NamedTypeNode("Int")) : new NamedTypeNode("Int"),
                     products.AppendField("details"),
-                    new FieldSelectionMapParser("weight").Parse())
+                    new FieldSelectionMapParser("weight").Parse(),
+                    null,
+                    null)
             ]);
 
         // assert
@@ -3034,7 +3233,9 @@ public sealed class FetchResultStoreTests : FusionTestBase
                     "__fusion_1_pages",
                     new NamedTypeNode("Int"),
                     items.AppendFragment("Book"),
-                    new FieldSelectionMapParser("pages").Parse())
+                    new FieldSelectionMapParser("pages").Parse(),
+                    null,
+                    null)
             ]);
 
         // assert
@@ -3093,7 +3294,9 @@ public sealed class FetchResultStoreTests : FusionTestBase
                     "__fusion_1_weight",
                     new NamedTypeNode("Int"),
                     products.AppendField("details"),
-                    new FieldSelectionMapParser("weight").Parse())
+                    new FieldSelectionMapParser("weight").Parse(),
+                    null,
+                    null)
             ]);
 
         // assert
@@ -3152,7 +3355,9 @@ public sealed class FetchResultStoreTests : FusionTestBase
                     "__fusion_1_weight",
                     new NamedTypeNode("Int"),
                     products.AppendField("details"),
-                    new FieldSelectionMapParser("weight").Parse())
+                    new FieldSelectionMapParser("weight").Parse(),
+                    null,
+                    null)
             ]);
 
         // assert
@@ -5055,6 +5260,7 @@ public sealed class FetchResultStoreTests : FusionTestBase
             new NamedTypeNode("String"),
             SelectionPath.Root,
             new PathNode(new PathSegmentNode(new FusionNameNode(key))),
+            null,
             null);
 
     private static OperationRequirement Requirement(
@@ -5067,7 +5273,38 @@ public sealed class FetchResultStoreTests : FusionTestBase
             type,
             SelectionPath.Root,
             new FieldSelectionMapParser(map).Parse(),
+            null,
             null);
+
+    private static OperationRequirement ConditionalRequirement(
+        string key,
+        string map,
+        ITypeNode type,
+        params ExecutionNodeCondition[] conditions)
+        => new(
+            key,
+            type,
+            SelectionPath.Root,
+            new FieldSelectionMapParser(map).Parse(),
+            null,
+            conditions);
+
+    private static ExecutionNodeCondition Condition(string variableName, bool passingValue)
+        => new() { VariableName = variableName, PassingValue = passingValue };
+
+    private static FusionSchemaDefinition CreateWeightSchema()
+        => ComposeSchema(
+            """
+            # name: test
+            type Query {
+              foos: [Foo]
+            }
+
+            type Foo {
+              id: ID!
+              weight: Int
+            }
+            """);
 
     private static HashSet<string> ImportedKeys(params string[] keys)
         => new(keys, StringComparer.Ordinal);

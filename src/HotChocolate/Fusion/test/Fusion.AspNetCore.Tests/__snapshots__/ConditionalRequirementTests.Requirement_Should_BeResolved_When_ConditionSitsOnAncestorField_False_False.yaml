@@ -88,8 +88,8 @@ sourceSchemas:
             query testQuery_dcc93276_2($__fusion_1_id: Int!) {
               userById(id: $__fusion_1_id) {
                 order {
-                  total
                   weight
+                  total
                   id
                 }
               }
@@ -105,8 +105,8 @@ sourceSchemas:
                 "data": {
                   "userById": {
                     "order": {
-                      "total": 100,
                       "weight": 10,
+                      "total": 100,
                       "id": 1
                     }
                   }
@@ -171,20 +171,20 @@ sourceSchemas:
             query testQuery_dcc93276_3(
               $b: Boolean!
               $__fusion_2_sku: Int!
-              $__fusion_3_total: Int
-              $__fusion_4_weight: Int
+              $__fusion_3_weight: Int
+              $__fusion_4_total: Int
             ) {
               orderBySku(sku: $__fusion_2_sku) {
-                tax(total: $__fusion_3_total) @skip(if: $b)
-                shipping(weight: $__fusion_4_weight)
+                shipping(weight: $__fusion_3_weight)
+                tax(total: $__fusion_4_total) @skip(if: $b)
               }
             }
           variables: |
             {
               "b": false,
               "__fusion_2_sku": 1001,
-              "__fusion_3_total": 100,
-              "__fusion_4_weight": 10
+              "__fusion_3_weight": 10,
+              "__fusion_4_total": 100
             }
         response:
           results:
@@ -192,13 +192,13 @@ sourceSchemas:
               {
                 "data": {
                   "orderBySku": {
-                    "tax": 107,
-                    "shipping": 1010
+                    "shipping": 1010,
+                    "tax": 107
                   }
                 }
               }
 operationPlan:
-  id: 38175eab16241eef5bb571cf826ee503863a69fa6765c5ac669da738e6700582
+  id: 6602365d62abf9ed0c06eae81de09c758dc3bb0ec1b38256b2d1bae6fc2d0872
   operation:
     - document: |
         query testQuery($a: Boolean!, $b: Boolean!) {
@@ -206,8 +206,8 @@ operationPlan:
             order {
               shipping
               sku @fusion__requirement
-              total @fusion__requirement
               weight @fusion__requirement
+              total @fusion__requirement
               id @fusion__requirement
               tax @skip(if: $b)
             }
@@ -252,15 +252,15 @@ operationPlan:
           query testQuery_dcc93276_2($__fusion_1_id: Int!) {
             userById(id: $__fusion_1_id) {
               order {
-                total
                 weight
+                total
                 id
               }
             }
           }
-        hash: a8baa3d6e5a1b32d5b398ce749091b7439a1f3fa0173b03f77ed40955b2bcd4a
-        shortHash: a8baa3d6
-        xxHash: 9998211288634294317
+        hash: ae44c385f0b80ec1750ca9a5d7d93a38046e156f4d44ea142e72168ee8c84baf
+        shortHash: ae44c385
+        xxHash: 597041918937825981
       lookupTypeName: User
       resultSelectionSet: >-
         { order }
@@ -287,20 +287,20 @@ operationPlan:
           query testQuery_dcc93276_3(
             $b: Boolean!
             $__fusion_2_sku: Int!
-            $__fusion_3_total: Int
-            $__fusion_4_weight: Int
+            $__fusion_3_weight: Int
+            $__fusion_4_total: Int
           ) {
             orderBySku(sku: $__fusion_2_sku) {
-              tax(total: $__fusion_3_total) @skip(if: $b)
-              shipping(weight: $__fusion_4_weight)
+              shipping(weight: $__fusion_3_weight)
+              tax(total: $__fusion_4_total) @skip(if: $b)
             }
           }
-        hash: c5dc8826baf63fad05b7b580ee5969bd4f54515ad5b4aa4922e90c6214ff555c
-        shortHash: c5dc8826
-        xxHash: 6723217017615156624
+        hash: 42a05006d41733fdcbe7779a6c7d01779b86dcc7ab0831b3515deb83c07ddffe
+        shortHash: 42a05006
+        xxHash: 10213009907442775660
       lookupTypeName: Order
       resultSelectionSet: >-
-        { tax shipping }
+        { shipping tax }
       source: $.orderBySku
       target: $.user.order
       requirements:
@@ -309,16 +309,16 @@ operationPlan:
           path: $.user.order
           selectionMap: >-
             sku
-        - name: __fusion_3_total
-          type: Int
-          path: $.user.order
-          selectionMap: >-
-            total
-        - name: __fusion_4_weight
+        - name: __fusion_3_weight
           type: Int
           path: $.user.order
           selectionMap: >-
             weight
+        - name: __fusion_4_total
+          type: Int
+          path: $.user.order
+          selectionMap: >-
+            total
       forwardedVariables:
         - b
       dependencies:

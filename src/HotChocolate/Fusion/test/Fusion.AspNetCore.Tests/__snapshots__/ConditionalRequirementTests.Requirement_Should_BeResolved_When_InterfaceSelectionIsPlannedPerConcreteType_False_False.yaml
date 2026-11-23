@@ -96,8 +96,8 @@ sourceSchemas:
                 item {
                   __typename
                   id
-                  total
                   weight
+                  total
                 }
               }
             }
@@ -114,8 +114,8 @@ sourceSchemas:
                     "item": {
                       "__typename": "Product",
                       "id": 1,
-                      "total": 100,
-                      "weight": 10
+                      "weight": 10,
+                      "total": 100
                     }
                   }
                 }
@@ -148,20 +148,20 @@ sourceSchemas:
             query testQuery_dd228edd_3(
               $b: Boolean!
               $__fusion_2_id: Int!
-              $__fusion_3_total: Int
-              $__fusion_4_weight: Int
+              $__fusion_3_weight: Int
+              $__fusion_4_total: Int
             ) {
               productById(id: $__fusion_2_id) {
-                tax(total: $__fusion_3_total) @skip(if: $b)
-                shipping(weight: $__fusion_4_weight)
+                shipping(weight: $__fusion_3_weight)
+                tax(total: $__fusion_4_total) @skip(if: $b)
               }
             }
           variables: |
             {
               "b": false,
               "__fusion_2_id": 1,
-              "__fusion_3_total": 100,
-              "__fusion_4_weight": 10
+              "__fusion_3_weight": 10,
+              "__fusion_4_total": 100
             }
         response:
           results:
@@ -169,13 +169,13 @@ sourceSchemas:
               {
                 "data": {
                   "productById": {
-                    "tax": 107,
-                    "shipping": 1010
+                    "shipping": 1010,
+                    "tax": 107
                   }
                 }
               }
 operationPlan:
-  id: 1fd71a2ec55877600ac6f8119acd74114ba13d4d47d913fcff36127f8b7005a3
+  id: 798bf7ec9f160a2c23931a7cd74e75dafaeb381c49c34fd9036bc818ed898752
   operation:
     - document: |
         query testQuery($a: Boolean!, $b: Boolean!) {
@@ -184,8 +184,8 @@ operationPlan:
               __typename @fusion__requirement
               shipping
               id @fusion__requirement
-              total @fusion__requirement
               weight @fusion__requirement
+              total @fusion__requirement
               tax @skip(if: $b)
             }
             id @fusion__requirement
@@ -231,17 +231,17 @@ operationPlan:
               item {
                 __typename
                 id
-                total
                 weight
+                total
               }
             }
           }
-        hash: 74e57edad9bf128fc5b1e7e54ee6e9e139dcd8e41576145377bd636a5fd60d46
-        shortHash: 74e57eda
-        xxHash: 1593693016600441088
+        hash: 4f50b4ef93410eee2557ea4ced3f4e404c140beedb3b9419135b5e779201e8fb
+        shortHash: 4f50b4ef
+        xxHash: 2903958338246277894
       lookupTypeName: User
       resultSelectionSet: >-
-        { item { __typename id total weight } }
+        { item { __typename id weight total } }
       source: $.userById
       target: $.user
       requirements:
@@ -265,20 +265,20 @@ operationPlan:
           query testQuery_dd228edd_3(
             $b: Boolean!
             $__fusion_2_id: Int!
-            $__fusion_3_total: Int
-            $__fusion_4_weight: Int
+            $__fusion_3_weight: Int
+            $__fusion_4_total: Int
           ) {
             productById(id: $__fusion_2_id) {
-              tax(total: $__fusion_3_total) @skip(if: $b)
-              shipping(weight: $__fusion_4_weight)
+              shipping(weight: $__fusion_3_weight)
+              tax(total: $__fusion_4_total) @skip(if: $b)
             }
           }
-        hash: 3a495a646634b760afde7e051837c6a0e4704c4ae4afce2ce7a1231a0b94a07a
-        shortHash: 3a495a64
-        xxHash: 14065231900181473347
+        hash: f67ba3bd2f5f858e46a7df4a400c21677ec75bf5473ea149b285566cba0e6ba9
+        shortHash: f67ba3bd
+        xxHash: 3501946127024519904
       lookupTypeName: Product
       resultSelectionSet: >-
-        { tax shipping }
+        { shipping tax }
       source: $.productById
       target: $.user.item<Product>
       requirements:
@@ -287,16 +287,16 @@ operationPlan:
           path: $.user.item<Product>
           selectionMap: >-
             id
-        - name: __fusion_3_total
-          type: Int
-          path: $.user.item<Product>
-          selectionMap: >-
-            total
-        - name: __fusion_4_weight
+        - name: __fusion_3_weight
           type: Int
           path: $.user.item<Product>
           selectionMap: >-
             weight
+        - name: __fusion_4_total
+          type: Int
+          path: $.user.item<Product>
+          selectionMap: >-
+            total
       forwardedVariables:
         - b
       dependencies:

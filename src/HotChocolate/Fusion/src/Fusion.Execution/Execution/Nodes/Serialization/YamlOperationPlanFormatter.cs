@@ -777,6 +777,15 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
                     selectionMapLine = selectionMapReader.ReadLine();
                 }
                 writer.Unindent();
+
+                if (requirement.Conditions is { Length: > 0 })
+                {
+                    writer.WriteLine("conditions:");
+                    writer.Indent();
+                    WriteConditionItems(requirement.Conditions, writer);
+                    writer.Unindent();
+                }
+
                 writer.Unindent();
             }
 

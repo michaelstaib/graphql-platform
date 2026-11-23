@@ -1,3 +1,5 @@
+using System.Text;
+using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Types;
 
 namespace HotChocolate.Fusion.Planning;
@@ -5,7 +7,7 @@ namespace HotChocolate.Fusion.Planning;
 public class ConditionalRequirementPlanningTests : FusionTestBase
 {
     [Fact]
-    public void Plan_Should_FetchRequirementInOwnLookup_When_SiblingFieldWithRequirementIsSkipped()
+    public void Plan_Should_ShareLookup_When_OnlyOneFieldWithNullableRequirementIsSkipped()
     {
         // arrange
         var schema = ComposeUserSchema();
@@ -27,7 +29,7 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_FetchRequirementInOwnLookup_When_SkippedSiblingFieldWithRequirementComesFirst()
+    public void Plan_Should_ShareLookup_When_SkippedFieldWithNullableRequirementComesFirst()
     {
         // arrange
         var schema = ComposeUserSchema();
@@ -49,7 +51,7 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_FetchRequirementInOwnLookup_When_SiblingFieldWithRequirementIsNotIncluded()
+    public void Plan_Should_ShareLookup_When_SiblingFieldWithRequirementIsNotIncluded()
     {
         // arrange
         var schema = ComposeUserSchema();
@@ -84,6 +86,218 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
               user {
                 shipping @skip(if: $b)
                 tax @skip(if: $a)
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepOwnLookup_When_RequirementArgumentOfSkippedFieldIsNonNull()
+    {
+        // arrange
+        var schema = ComposeNonNullUserSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user {
+                shipping
+                tax @skip(if: $a)
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepOwnLookups_When_FieldsAreSkippedByUnrelatedVariables()
+    {
+        // arrange
+        var schema = ComposeUserSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+              user {
+                shipping @include(if: $b)
+                tax @skip(if: $a)
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_SelectRequirementUnderFieldCondition_When_FieldIsMergedIntoUnconditionalLookup()
+    {
+        // arrange
+        var schema = ComposeUserSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user {
+                shipping
+                ... @include(if: $a) {
+                  tax
+                }
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_ShareLookup_When_ConditionsFormAChain()
+    {
+        // arrange
+        var schema = ComposeChainSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+              user {
+                shipping
+                tax @skip(if: $a)
+                fee @skip(if: $a) @include(if: $b)
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_SelectRequirementOnce_When_ConditionalAndUnconditionalFieldRequireTheSameField()
+    {
+        // arrange
+        var schema = ComposeChainSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              user {
+                tax @skip(if: $a)
+                ship2
+              }
+            }
+            """);
+
+        // assert
+        MatchSnapshot(plan);
+    }
+
+    [Fact]
+    public void Plan_Should_ForwardVariableOfRequirementCondition_When_RequirementHasConditions()
+    {
+        // arrange
+        var schema = ComposeChainSchema();
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+              user {
+                shipping
+                tax @skip(if: $a)
+                ... @include(if: $b) {
+                  fee
+                }
+              }
+            }
+            """);
+
+        // assert
+        DescribeRequirementConditions(plan).MatchInlineSnapshot(
+            """
+            __fusion_2_weight: [] forwards [a, b]
+            __fusion_5_size: [$b=True] forwards [a, b]
+            __fusion_6_total: [$a=False] forwards [a, b]
+            """);
+    }
+
+    [Fact]
+    public void Plan_Should_KeepOwnLookup_When_FieldIsServedByApolloFederationSource()
+    {
+        // arrange
+        var schema = ComposeSchema(
+            """
+            # name: products
+            extend schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@key"])
+
+            type Query {
+              topProducts: [Product!]!
+            }
+
+            type Product @key(fields: "upc") {
+              upc: String!
+              price: Int!
+              weight: Int!
+            }
+            """,
+            """
+            # name: inventory
+            extend schema @link(
+              url: "https://specs.apollo.dev/federation/v2.7"
+              import: ["@external", "@key", "@requires"]
+            )
+
+            type Product @key(fields: "upc") {
+              upc: String! @external
+              price: Int! @external
+              weight: Int! @external
+              shippingEstimate: Int @requires(fields: "weight")
+              taxEstimate: Int @requires(fields: "price")
+            }
+            """,
+            """
+            # name: reviews
+            extend schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@external", "@key"])
+
+            type Product @key(fields: "upc") {
+              upc: String! @external
+              reviews: [Review!]!
+            }
+
+            type Review @key(fields: "id") {
+              id: ID!
+              product: Product
+            }
+            """);
+
+        // act
+        var plan = PlanOperation(
+            schema,
+            """
+            query($a: Boolean!) {
+              topProducts {
+                reviews {
+                  product {
+                    shippingEstimate
+                    taxEstimate @skip(if: $a)
+                  }
+                }
               }
             }
             """);
@@ -137,7 +351,7 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_FetchRequirementInOwnLookup_When_SiblingFieldWithRequirementIsSkippedBelowTypeCondition()
+    public void Plan_Should_ShareLookup_When_SiblingFieldWithRequirementIsSkippedBelowTypeCondition()
     {
         // arrange
         var schema = ComposeSchema(
@@ -430,7 +644,7 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
     }
 
     [Fact]
-    public void Plan_Should_FetchRequirementInOwnLookup_When_SiblingFieldIsSkippedBelowSharedInterfaceField()
+    public void Plan_Should_ShareLookup_When_SiblingFieldIsSkippedBelowSharedInterfaceField()
     {
         // arrange
         var schema = ComposeSchema(
@@ -832,6 +1046,132 @@ public class ConditionalRequirementPlanningTests : FusionTestBase
               id: ID!
               shipping(weight: Int @require(field: "weight")): Int
               tax(total: Int @require(field: "total")): Int
+            }
+            """);
+
+    private static string DescribeRequirementConditions(OperationPlan plan)
+    {
+        var description = new StringBuilder();
+
+        foreach (var node in plan.AllNodes)
+        {
+            switch (node)
+            {
+                case OperationExecutionNode operation:
+                    Describe(description, operation.Requirements, operation.ForwardedVariables);
+                    break;
+
+                case OperationBatchExecutionNode batch:
+                    foreach (var definition in batch.Operations)
+                    {
+                        Describe(description, definition.Requirements, definition.ForwardedVariables);
+                    }
+
+                    break;
+            }
+        }
+
+        return description.ToString().TrimEnd();
+
+        static void Describe(
+            StringBuilder description,
+            ReadOnlySpan<OperationRequirement> requirements,
+            ReadOnlySpan<string> forwardedVariables)
+        {
+            var forwarded = string.Join(", ", forwardedVariables.ToArray().Order(StringComparer.Ordinal));
+
+            foreach (var requirement in requirements)
+            {
+                if (requirement.Key.EndsWith("_id", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var conditions = requirement.Conditions is null
+                    ? string.Empty
+                    : string.Join(", ", requirement.Conditions.Select(c => $"${c.VariableName}={c.PassingValue}"));
+                description.AppendLine($"{requirement.Key}: [{conditions}] forwards [{forwarded}]");
+            }
+        }
+    }
+
+    private static FusionSchemaDefinition ComposeChainSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+              size: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int @require(field: "total")): Int
+              fee(size: Int @require(field: "size")): Int
+              ship2(total: Int @require(field: "total")): Int
+            }
+            """);
+
+    private static FusionSchemaDefinition ComposeNonNullUserSchema()
+        => ComposeSchema(
+            """
+            # name: a
+            type Query {
+              user: User!
+              users: [User!]!
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+            }
+            """,
+            """
+            # name: d
+            type Query {
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              weight: Int!
+              total: Int!
+            }
+            """,
+            """
+            # name: b
+            type Query {
+              userById(id: ID!): User @lookup @internal
+            }
+
+            type User @key(fields: "id") {
+              id: ID!
+              shipping(weight: Int @require(field: "weight")): Int
+              tax(total: Int! @require(field: "total")): Int
             }
             """);
 

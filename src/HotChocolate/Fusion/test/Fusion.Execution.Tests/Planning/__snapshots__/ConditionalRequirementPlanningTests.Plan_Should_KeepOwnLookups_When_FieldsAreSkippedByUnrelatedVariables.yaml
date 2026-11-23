@@ -1,16 +1,13 @@
-id: fb1f8674651fd4b044c7796c8cbfd31b5a70652639737fb8ddd915c69b07be78
+id: 95cb337a38f33a858056d703e794b18d3becbf57ff58098282d3d3ea35621837
 operation:
   - document: |
       query($a: Boolean!, $b: Boolean!) {
-        user @skip(if: $a) {
-          item {
-            __typename @fusion__requirement
-            shipping
-            id @fusion__requirement
-            total @fusion__requirement
-            weight @fusion__requirement
-            tax @skip(if: $b)
-          }
+        user {
+          id @fusion__requirement
+          total @fusion__requirement
+          weight @fusion__requirement
+          shipping @include(if: $b)
+          tax @skip(if: $a)
         }
       }
     kind: Query
@@ -29,20 +26,14 @@ nodes:
       document: |
         query Op_123456789101112_1 {
           user {
-            item {
-              __typename
-              id
-            }
+            id
           }
         }
-      hash: ce3d104675e85a503a24ebb29cca4626ccf0bee6983b30b2efe12408fd0a74d5
-      shortHash: ce3d1046
-      xxHash: 12617482460829424338
+      hash: 16edb7aa0dd7ec28e1e39327954aac6b8aad8fd79fd15d1b19cfc3f26f7bc85f
+      shortHash: 16edb7aa
+      xxHash: 7236423868947797758
     resultSelectionSet: >-
-      { user { item { __typename id } } }
-    conditions:
-      - variable: $a
-        passingValue: false
+      { user }
   - id: 4
     type: Operation
     schema: d
@@ -51,27 +42,27 @@ nodes:
       kind: Query
       document: |
         query Op_123456789101112_4($__fusion_4_id: ID!) {
-          productById(id: $__fusion_4_id) {
+          userById(id: $__fusion_4_id) {
             total
           }
         }
-      hash: b7e7713266dafce97cb2d448ced9e3089baafc2f8658f5632150e8f4083964af
-      shortHash: b7e77132
-      xxHash: 5347910962191718387
-    lookupTypeName: Product
+      hash: 45be7081b84fbd755fe598de77615b130a6475443f867b177943c32a79b83db7
+      shortHash: 45be7081
+      xxHash: 10998708358512705809
+    lookupTypeName: User
     resultSelectionSet: >-
       { total }
-    source: $.productById
-    target: $.user.item<Product>
+    source: $.userById
+    target: $.user
     batchingGroupId: 7
     requirements:
       - name: __fusion_4_id
         type: ID!
-        path: $.user.item<Product>
+        path: $.user
         selectionMap: >-
           id
     conditions:
-      - variable: $b
+      - variable: $a
         passingValue: false
     dependencies:
       - id: 1
@@ -83,25 +74,28 @@ nodes:
       kind: Query
       document: |
         query Op_123456789101112_6($__fusion_7_id: ID!) {
-          productById(id: $__fusion_7_id) {
+          userById(id: $__fusion_7_id) {
             weight
           }
         }
-      hash: 2a9e8cc84a8fa971575e81302a171082bc706c7bf055af1d2730368725b6feb7
-      shortHash: 2a9e8cc8
-      xxHash: 5986062687937391257
-    lookupTypeName: Product
+      hash: 6ae0c3bd98c0d27f106dc770d96cfc49b5a853bd25a53280ae1b0b9ac8da6511
+      shortHash: 6ae0c3bd
+      xxHash: 4888144846084498517
+    lookupTypeName: User
     resultSelectionSet: >-
       { weight }
-    source: $.productById
-    target: $.user.item<Product>
+    source: $.userById
+    target: $.user
     batchingGroupId: 7
     requirements:
       - name: __fusion_7_id
         type: ID!
-        path: $.user.item<Product>
+        path: $.user
         selectionMap: >-
           id
+    conditions:
+      - variable: $b
+        passingValue: true
     dependencies:
       - id: 1
   - id: 3
@@ -112,32 +106,32 @@ nodes:
       kind: Query
       document: |
         query Op_123456789101112_3($__fusion_2_total: Int, $__fusion_3_id: ID!) {
-          productById(id: $__fusion_3_id) {
+          userById(id: $__fusion_3_id) {
             tax(total: $__fusion_2_total)
           }
         }
-      hash: 54c8de025e5ba35d3d79265ebb2d7bcf8feb184e143fceadf8a6cef209bb4ef5
-      shortHash: 54c8de02
-      xxHash: 9354836035786730979
-    lookupTypeName: Product
+      hash: 867e87114282afc0abf0e1a22ca7358b1787988c0a70a278123a3c7d4f923c64
+      shortHash: "867e8711"
+      xxHash: 2931330351658024004
+    lookupTypeName: User
     resultSelectionSet: >-
       { tax }
-    source: $.productById
-    target: $.user.item<Product>
+    source: $.userById
+    target: $.user
     batchingGroupId: 8
     requirements:
       - name: __fusion_2_total
         type: Int
-        path: $.user.item<Product>
+        path: $.user
         selectionMap: >-
           total
       - name: __fusion_3_id
         type: ID!
-        path: $.user.item<Product>
+        path: $.user
         selectionMap: >-
           id
     conditions:
-      - variable: $b
+      - variable: $a
         passingValue: false
     dependencies:
       - id: 1
@@ -150,30 +144,33 @@ nodes:
       kind: Query
       document: |
         query Op_123456789101112_5($__fusion_5_weight: Int, $__fusion_6_id: ID!) {
-          productById(id: $__fusion_6_id) {
+          userById(id: $__fusion_6_id) {
             shipping(weight: $__fusion_5_weight)
           }
         }
-      hash: 0b8b9270a526733bee506602a7d036ed6686847d0a95c498cd776fff8784376b
-      shortHash: 0b8b9270
-      xxHash: 7327644300850268620
-    lookupTypeName: Product
+      hash: ea0b42c780332788451eda8616ab191a5da065a725512547bddc7f0171c49a7a
+      shortHash: ea0b42c7
+      xxHash: 6896669327089977576
+    lookupTypeName: User
     resultSelectionSet: >-
       { shipping }
-    source: $.productById
-    target: $.user.item<Product>
+    source: $.userById
+    target: $.user
     batchingGroupId: 8
     requirements:
       - name: __fusion_5_weight
         type: Int
-        path: $.user.item<Product>
+        path: $.user
         selectionMap: >-
           weight
       - name: __fusion_6_id
         type: ID!
-        path: $.user.item<Product>
+        path: $.user
         selectionMap: >-
           id
+    conditions:
+      - variable: $b
+        passingValue: true
     dependencies:
       - id: 1
       - id: 6

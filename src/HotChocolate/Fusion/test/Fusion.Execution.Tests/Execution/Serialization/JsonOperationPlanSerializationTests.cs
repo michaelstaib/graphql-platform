@@ -128,7 +128,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         parsedJson.MatchInlineSnapshot(
             """
             {
-              "version": "1.4.0",
+              "version": "1.5.0",
               "id": "3d4ae8bf9805fddd74ade860c3c6ed54b3421658fcd4e005ee243af2842ae9a9",
               "operation": {
                 "kind": "Query",
@@ -557,7 +557,7 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         parsedJson.MatchInlineSnapshot(
             """
             {
-              "version": "1.4.0",
+              "version": "1.5.0",
               "id": "ddeb9a07a1ce2925db3f619131745ad7f71a87d88becc06033d7958550dee877",
               "operation": {
                 "kind": "Query",
@@ -2183,6 +2183,348 @@ public class JsonOperationPlanSerializationTests : FusionTestBase
         Assert.Equal(2, parsedOperation.ConditionAlternatives.Length);
         GetNodes(formatter.Format(parsedPlan), "OperationBatch").MatchSnapshot(extension: ".json");
         MatchSnapshot(parsedPlan);
+    }
+
+    [Fact]
+    public void Parse_Should_RestoreRequirementConditions_When_PlanHasConditionalRequirement()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(UnionSiblingAssetSchemaA, UnionSiblingAssetSchemaB);
+        var originalPlan = PlanOperation(
+            compositeSchema,
+            """
+            query testQuery {
+              search {
+                ... on ExistingResult {
+                  asset {
+                    meterType { type }
+                    category { allowedMeterTypes { type } }
+                  }
+                }
+                ... on ConfigMatchesResult {
+                  asset {
+                    category { allowedMeterTypes { type } }
+                    meterType { type }
+                  }
+                }
+              }
+            }
+            """,
+            new OperationPlannerOptions { EnableRequestGrouping = false });
+        var formatter = new JsonOperationPlanFormatter(
+            new JsonWriterOptions
+            {
+                Indented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+        var json = JsonNode.Parse(formatter.Format(originalPlan))!;
+        var nodes = json["nodes"]!.AsArray().Select(t => t!.AsObject()).ToArray();
+        var operation = nodes.First(
+            t => t["type"]?.GetValue<string>() is "Operation" && t["requirements"] is not null);
+        var batchOperation = nodes.First(
+            t => t["type"]?.GetValue<string>() is "OperationBatch" && t["requirements"] is not null);
+        operation["requirements"]![0]!["conditions"] = new JsonArray(
+            new JsonObject { ["variable"] = "$a", ["passingValue"] = false });
+        batchOperation["requirements"]![0]!["conditions"] = new JsonArray(
+            new JsonObject { ["variable"] = "$b", ["passingValue"] = true },
+            new JsonObject { ["variable"] = "$c", ["passingValue"] = false });
+        var planSource = Encoding.UTF8.GetBytes(json.ToJsonString());
+
+        // act
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create()).Parse(planSource);
+        var formatted = formatter.Format(parsedPlan);
+        var reparsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create())
+            .Parse(Encoding.UTF8.GetBytes(formatted));
+        var reformatted = formatter.Format(reparsedPlan);
+
+        // assert
+        Assert.Equal(formatted, reformatted);
+        var formattedPlan = JsonNode.Parse(formatted)!;
+        Assert.Equal("1.5.0", formattedPlan["version"]!.GetValue<string>());
+        new JsonArray(
+            formattedPlan["nodes"]!.AsArray()
+                .Where(t => t!["requirements"]?[0]?["conditions"] is not null)
+                .Select(t => t!["requirements"]!.DeepClone())
+                .ToArray())
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true })
+            .MatchSnapshot(extension: ".json");
+    }
+
+    [Fact]
+    public void Parse_Should_WireOptionalDependency_When_SupplierConditionIsConditionOfRequirement()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(UnionSiblingAssetSchemaA, UnionSiblingAssetSchemaB);
+        var planSource = CreateConditionalRequirementPlanSource(
+            compositeSchema,
+            new OperationPlannerOptions { EnableRequestGrouping = false },
+            supplierConditions: "$a:false",
+            dependentConditions: "",
+            requirementConditions: "$a:false");
+
+        // act
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create()).Parse(planSource);
+
+        // assert
+        DescribeDependencyWiring(parsedPlan).MatchInlineSnapshot(
+            """
+            1 Operation required=[] optional=[]
+            5 Operation required=[] optional=[1]
+            8 Operation required=[] optional=[1]
+            14 OperationBatch(Merged) required=[] optional=[1]
+            15 OperationBatch(Merged) required=[] optional=[5, 8, 14]
+            16 OperationBatch(Merged) required=[] optional=[5, 8, 14]
+
+            """);
+    }
+
+    [Fact]
+    public void Parse_Should_WireRequiredDependency_When_SupplierConditionIsNotConditionOfRequirement()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(UnionSiblingAssetSchemaA, UnionSiblingAssetSchemaB);
+        var planSource = CreateConditionalRequirementPlanSource(
+            compositeSchema,
+            new OperationPlannerOptions { EnableRequestGrouping = false },
+            supplierConditions: "$b:false",
+            dependentConditions: "",
+            requirementConditions: "$a:false");
+
+        // act
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create()).Parse(planSource);
+
+        // assert
+        DescribeDependencyWiring(parsedPlan).MatchInlineSnapshot(
+            """
+            1 Operation required=[] optional=[]
+            5 Operation required=[1] optional=[]
+            8 Operation required=[1] optional=[]
+            14 OperationBatch(Merged) required=[] optional=[1]
+            15 OperationBatch(Merged) required=[] optional=[5, 8, 14]
+            16 OperationBatch(Merged) required=[] optional=[5, 8, 14]
+
+            """);
+    }
+
+    [Fact]
+    public void Parse_Should_WireOptionalDependencyOfOperationsInBatch_When_SupplierConditionIsConditionOfRequirement()
+    {
+        // arrange
+        var compositeSchema = ComposeSchema(UnionSiblingAssetSchemaA, UnionSiblingAssetSchemaB);
+        var planSource = CreateConditionalRequirementPlanSource(
+            compositeSchema,
+            new OperationPlannerOptions(),
+            supplierConditions: "$a:false",
+            dependentConditions: "",
+            requirementConditions: "$a:false");
+
+        // act
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create()).Parse(planSource);
+
+        // assert
+        DescribeOperationWiring(parsedPlan).MatchInlineSnapshot(
+            """
+            14 / 2 required=[] optional=[1]
+            14 / 5 required=[] optional=[1]
+            14 / 8 required=[] optional=[1]
+            15 / 3 required=[2, 5, 8] optional=[]
+            15 / 4 required=[2, 5, 8] optional=[]
+
+            """);
+    }
+
+    [Theory]
+    [InlineData("$a:false", "", "$a:false")]
+    [InlineData("$a:false;$b:true", "$b:true", "$a:false")]
+    [InlineData("$a:false", "", "$b:true;$a:false")]
+    public void IsConditionalRequirementDependency_Should_ReturnTrue_When_ForeignConditionsAreRequirementConditions(
+        string supplierConditions,
+        string dependentConditions,
+        string requirementConditions)
+    {
+        // arrange
+        var (dependent, supplier) = ParseDependentAndSupplier(
+            supplierConditions,
+            dependentConditions,
+            requirementConditions);
+
+        // act
+        var result = OperationPlanner.IsConditionalRequirementDependency(dependent, supplier);
+
+        // assert
+        Assert.True(result);
+    }
+
+    [Theory]
+    [InlineData("$b:false", "", "$a:false")]
+    [InlineData("$a:true", "", "$a:false")]
+    [InlineData("$a:false;$b:true", "", "$a:false")]
+    [InlineData("", "", "$a:false")]
+    [InlineData("$a:false", "$a:false", "$a:false")]
+    [InlineData("$a:false", "", "")]
+    public void IsConditionalRequirementDependency_Should_ReturnFalse_When_ConditionRuleIsNotMet(
+        string supplierConditions,
+        string dependentConditions,
+        string requirementConditions)
+    {
+        // arrange
+        var (dependent, supplier) = ParseDependentAndSupplier(
+            supplierConditions,
+            dependentConditions,
+            requirementConditions);
+
+        // act
+        var result = OperationPlanner.IsConditionalRequirementDependency(dependent, supplier);
+
+        // assert
+        Assert.False(result);
+    }
+
+    private static (OperationExecutionNode Dependent, OperationExecutionNode Supplier) ParseDependentAndSupplier(
+        string supplierConditions,
+        string dependentConditions,
+        string requirementConditions)
+    {
+        var compositeSchema = ComposeSchema(UnionSiblingAssetSchemaA, UnionSiblingAssetSchemaB);
+        var planSource = CreateConditionalRequirementPlanSource(
+            compositeSchema,
+            new OperationPlannerOptions { EnableRequestGrouping = false },
+            supplierConditions,
+            dependentConditions,
+            requirementConditions);
+        var parsedPlan = CreateParser(compositeSchema, TestPolicyResolver.Create()).Parse(planSource);
+        var dependent = parsedPlan.AllNodes
+            .OfType<OperationExecutionNode>()
+            .First(t => t.Requirements.Length > 0 && t.Dependencies.Length + t.OptionalDependencies.Length > 0);
+        var supplier = parsedPlan.AllNodes
+            .OfType<OperationExecutionNode>()
+            .Single(t => t.Dependents.ToArray().Any(d => d.Id == dependent.Id));
+
+        return (dependent, supplier);
+    }
+
+    /// <summary>
+    /// Plans the union query and gives the supplier of the first operation with requirements the
+    /// supplier conditions, that operation the dependent conditions, and its requirements the
+    /// requirement conditions. Each list is written as <c>$name:passingValue</c> separated by semicolons.
+    /// </summary>
+    private static byte[] CreateConditionalRequirementPlanSource(
+        FusionSchemaDefinition compositeSchema,
+        OperationPlannerOptions options,
+        string supplierConditions,
+        string dependentConditions,
+        string requirementConditions)
+    {
+        var originalPlan = PlanOperation(
+            compositeSchema,
+            """
+            query testQuery {
+              search {
+                ... on ExistingResult {
+                  asset {
+                    meterType { type }
+                    category { allowedMeterTypes { type } }
+                  }
+                }
+                ... on ConfigMatchesResult {
+                  asset {
+                    category { allowedMeterTypes { type } }
+                    meterType { type }
+                  }
+                }
+                ... on NotSubmissableResult {
+                  asset {
+                    meterType { type }
+                    statusMessage
+                    category { allowedMeterTypes { type } }
+                  }
+                }
+                ... on CustomResult {
+                  asset {
+                    meterType { type }
+                    category { allowedMeterTypes { type } }
+                  }
+                }
+              }
+            }
+            """,
+            options);
+        var formatter = new JsonOperationPlanFormatter(
+            new JsonWriterOptions
+            {
+                Indented = true,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+        var json = JsonNode.Parse(formatter.Format(originalPlan))!;
+        var nodes = json["nodes"]!.AsArray().Select(t => t!.AsObject()).ToArray();
+        var supplier = nodes.Single(
+            t => t["type"]?.GetValue<string>() is "Operation"
+                && t["batchingGroupId"] is null
+                && t["dependencies"] is null or JsonArray { Count: 0 });
+        var supplierId = supplier["id"]!.GetValue<int>();
+
+        SetConditions(supplier, "conditions", supplierConditions);
+
+        foreach (var node in nodes)
+        {
+            if (node["requirements"] is not JsonArray requirements
+                || node["dependencies"] is not JsonArray dependencies
+                || dependencies.All(t => t!.GetValue<int>() != supplierId))
+            {
+                continue;
+            }
+
+            if (node["type"]?.GetValue<string>() is "Operation")
+            {
+                SetConditions(node, "conditions", dependentConditions);
+            }
+
+            foreach (var requirement in requirements)
+            {
+                SetConditions(requirement!.AsObject(), "conditions", requirementConditions);
+            }
+        }
+
+        return Encoding.UTF8.GetBytes(json.ToJsonString());
+
+        static void SetConditions(JsonObject target, string property, string conditions)
+        {
+            if (conditions.Length == 0)
+            {
+                return;
+            }
+
+            target[property] = new JsonArray(
+                conditions
+                    .Split(';')
+                    .Select(t => t.Split(':'))
+                    .Select(t => (JsonNode)new JsonObject
+                    {
+                        ["variable"] = t[0],
+                        ["passingValue"] = bool.Parse(t[1])
+                    })
+                    .ToArray());
+        }
+    }
+
+    private static string DescribeOperationWiring(OperationPlan plan)
+    {
+        var builder = new StringBuilder();
+
+        foreach (var batch in plan.AllNodes.OfType<OperationBatchExecutionNode>().OrderBy(t => t.Id))
+        {
+            foreach (var operation in batch.Operations.ToArray().OrderBy(t => t.Id))
+            {
+                builder.Append(batch.Id);
+                builder.Append(" / ");
+                builder.Append(operation.Id);
+                AppendDependencyIds(builder, " required=", operation.Dependencies);
+                AppendDependencyIds(builder, " optional=", operation.OptionalDependencies);
+                builder.AppendLine();
+            }
+        }
+
+        return builder.ToString();
     }
 
     private static JsonArray CreateConditionAlternatives()

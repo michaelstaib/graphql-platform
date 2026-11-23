@@ -1186,6 +1186,7 @@ public sealed partial class OperationPlanner
                     argument.Type,
                     workItem.SelectionSet.Path,
                     fieldSelectionMap,
+                    null,
                     null);
 
                 requirements = requirements.Add(argumentRequirementKey, operationRequirement);
@@ -1798,6 +1799,13 @@ public sealed partial class OperationPlanner
             return;
         }
 
+        // A field that can share a lookup step with fewer conditions is not planned inline.
+        if (workItem.Conditions.Length > 0
+            && HasLookupStepWithFewerConditions(current, workItem, stepConsumer.StepId))
+        {
+            return;
+        }
+
         // next we try to inline the requirements into non-dependant siblings or parents.
         var steps = current.Steps;
         var index = current.SelectionSetIndex.ToBuilder();
@@ -1810,6 +1818,7 @@ public sealed partial class OperationPlanner
                     stepConsumer.StepId,
                     ref current,
                     currentStep,
+                    [],
                     index,
                     ref backlog,
                     ref steps,
@@ -1883,7 +1892,8 @@ public sealed partial class OperationPlanner
                 argument.Type,
                 workItem.Selection.Path,
                 fieldSelectionMap,
-                requirementAliases.GetInternalAlias(fieldSelectionMap));
+                requirementAliases.GetInternalAlias(fieldSelectionMap),
+                null);
 
             requirements = requirements.Add(argumentRequirementKey, operationRequirement);
         }
@@ -1988,6 +1998,12 @@ public sealed partial class OperationPlanner
         var requirementKey = $"__fusion_{lastRequirementId}";
         var compositeField = workItem.Selection.Field;
 
+        // The conditions of the field that the lookup it joins does not carry are evaluated
+        // on the field and on its requirements.
+        var extraConditions = mergeWithExistingStep
+            ? GetConditionsNotIn(workItem.Conditions, existingStep.Conditions)
+            : [];
+
         // The work item can branch into a schema that serves the field without requirements,
         // in which case only the lookup key has to be resolved.
         var fieldRequirements = compositeField.Sources[current.SchemaName].Requirements;
@@ -2006,6 +2022,7 @@ public sealed partial class OperationPlanner
                     stepId,
                     ref current,
                     mergeWithExistingStep ? existingStep : currentStep,
+                    extraConditions,
                     indexBuilder,
                     ref backlog,
                     ref steps,
@@ -2059,7 +2076,8 @@ public sealed partial class OperationPlanner
                 argument.Type,
                 workItem.Selection.Path,
                 fieldSelectionMap,
-                requirementAliases.GetInternalAlias(fieldSelectionMap));
+                requirementAliases.GetInternalAlias(fieldSelectionMap),
+                extraConditions.Length > 0 ? extraConditions : null);
 
             requirements = requirements.Add(argumentRequirementKey, operationRequirement);
         }
@@ -2092,6 +2110,12 @@ public sealed partial class OperationPlanner
 
         var selectionNode =
             workItem.Selection.Node.WithArguments(arguments).WithSelectionSet(childSelections);
+
+        if (extraConditions.Length > 0)
+        {
+            selectionNode = (FieldNode)AddConditionDirectives(selectionNode, extraConditions);
+        }
+
         OperationPlanStep? refreshedExistingStep = null;
 
         if (mergeWithExistingStep)
@@ -2196,6 +2220,7 @@ public sealed partial class OperationPlanner
                 argument.Type,
                 workItem.Selection.Path,
                 fieldSelectionMap,
+                null,
                 null);
 
             requirements = requirements.Add(argumentRequirementKey, operationRequirement);
@@ -2301,7 +2326,7 @@ public sealed partial class OperationPlanner
         return remaining;
     }
 
-    private static bool TryFindMergeableRequirementLookupStep(
+    private bool TryFindMergeableRequirementLookupStep(
         PlanNode current,
         FieldRequirementWorkItem workItem,
         Lookup lookup,
@@ -2309,28 +2334,301 @@ public sealed partial class OperationPlanner
         out OperationPlanStep step,
         out int stepIndex)
     {
+        step = null!;
+        stepIndex = -1;
         for (var i = 0; i < current.Steps.Count; i++)
         {
             if (current.Steps[i] is OperationPlanStep candidate
-                && candidate.Id != consumerStepId
-                && candidate.RootSelectionSetId == workItem.Selection.SelectionSetId
-                && candidate.Target == workItem.Selection.Path
-                && candidate.SchemaName?.Equals(current.SchemaName, StringComparison.Ordinal) == true
-                && ReferenceEquals(candidate.Lookup, lookup)
-                && candidate.Type.Name.Equals(
-                    workItem.Selection.Field.DeclaringType.Name,
-                    StringComparison.Ordinal)
-                && ConditionsEqual(candidate.Conditions, workItem.Conditions)
+                && IsLookupStepOfField(candidate, current, workItem, consumerStepId)
+                && ReferenceEquals(candidate.Lookup, lookup))
+            {
+                if (ConditionsEqual(candidate.Conditions, workItem.Conditions))
+                {
+                    if (IsOrDependsOnAny(candidate, workItem.Dependents, current.Steps))
+                    {
+                        continue;
+                    }
+
+                    step = candidate;
+                    stepIndex = i;
+                    return true;
+                }
+
+                // A step with fewer conditions is shared when no step with equal conditions exists.
+                // Among such steps the one with the most conditions wins, the first one on a tie.
+                if ((stepIndex < 0 || candidate.Conditions.Length > step.Conditions.Length)
+                    && CanShareRequirementLookupStep(candidate.Conditions, workItem, current.SchemaName)
+                    && !IsOrDependsOnAny(candidate, workItem.Dependents, current.Steps))
+                {
+                    step = candidate;
+                    stepIndex = i;
+                }
+            }
+        }
+
+        return stepIndex >= 0;
+    }
+
+    private static bool IsLookupStepOfField(
+        OperationPlanStep candidate,
+        PlanNode current,
+        FieldRequirementWorkItem workItem,
+        int consumerStepId)
+        => candidate.Id != consumerStepId
+            && candidate.Lookup is not null
+            && candidate.RootSelectionSetId == workItem.Selection.SelectionSetId
+            && candidate.Target == workItem.Selection.Path
+            && candidate.SchemaName?.Equals(current.SchemaName, StringComparison.Ordinal) == true
+            && candidate.Type.Name.Equals(
+                workItem.Selection.Field.DeclaringType.Name,
+                StringComparison.Ordinal);
+
+    /// <summary>
+    /// Determines whether the field of <paramref name="workItem"/> has no lookup step with equal conditions
+    /// to join, but one with fewer conditions that it can share.
+    /// </summary>
+    private bool HasLookupStepWithFewerConditions(
+        PlanNode current,
+        FieldRequirementWorkItem workItem,
+        int consumerStepId)
+    {
+        var hasStepToShare = false;
+
+        foreach (var step in current.Steps)
+        {
+            if (step is OperationPlanStep candidate
+                && IsLookupStepOfField(candidate, current, workItem, consumerStepId)
                 && !IsOrDependsOnAny(candidate, workItem.Dependents, current.Steps))
             {
-                step = candidate;
-                stepIndex = i;
+                if (ConditionsEqual(candidate.Conditions, workItem.Conditions))
+                {
+                    return false;
+                }
+
+                hasStepToShare |= CanShareRequirementLookupStep(candidate.Conditions, workItem, current.SchemaName);
+            }
+        }
+
+        return hasStepToShare;
+    }
+
+    /// <summary>
+    /// Determines whether the field of <paramref name="workItem"/> can join a lookup step that carries
+    /// <paramref name="stepConditions"/>, a strict subset of the conditions of the field. The field must not
+    /// have a non-null requirement argument and must not be served by an Apollo Federation source schema.
+    /// </summary>
+    private bool CanShareRequirementLookupStep(
+        ExecutionNodeCondition[] stepConditions,
+        FieldRequirementWorkItem workItem,
+        string schemaName)
+    {
+        if (workItem.Conditions.Length <= stepConditions.Length
+            || HasConditionNotIn(stepConditions, workItem.Conditions)
+            || _schema.GetSourceSchemaConnectorKind(schemaName) == ConnectorKindNames.ApolloFederation)
+        {
+            return false;
+        }
+
+        var compositeField = workItem.Selection.Field;
+        var requirements = compositeField.Sources[schemaName].Requirements;
+
+        if (requirements is null)
+        {
+            return true;
+        }
+
+        for (var i = 0; i < requirements.Arguments.Length; i++)
+        {
+            var argument = requirements.Arguments[i];
+
+            if (requirements.Fields[i] is not null
+                && !compositeField.Arguments.ContainsName(argument.Name, allowInaccessibleFields: true)
+                && argument.Type.Kind is SyntaxKind.NonNullType)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Returns the conditions of <paramref name="conditions"/> that are not in <paramref name="stepConditions"/>.
+    /// </summary>
+    private static ExecutionNodeCondition[] GetConditionsNotIn(
+        ExecutionNodeCondition[] conditions,
+        ExecutionNodeCondition[] stepConditions)
+    {
+        if (conditions.Length <= stepConditions.Length)
+        {
+            return [];
+        }
+
+        var result = new List<ExecutionNodeCondition>(conditions.Length - stepConditions.Length);
+
+        foreach (var condition in conditions)
+        {
+            if (Array.IndexOf(stepConditions, condition) < 0)
+            {
+                result.Add(condition);
+            }
+        }
+
+        return result.ToArray();
+    }
+
+    /// <summary>
+    /// Adds the directives of <paramref name="conditions"/> that the selection does not carry yet.
+    /// </summary>
+    private static ISelectionNode AddConditionDirectives(
+        ISelectionNode selection,
+        ExecutionNodeCondition[] conditions)
+    {
+        var directives = selection switch
+        {
+            FieldNode field => field.Directives,
+            InlineFragmentNode fragment => fragment.Directives,
+            _ => null
+        };
+
+        if (directives is null)
+        {
+            return selection;
+        }
+
+        List<DirectiveNode>? updated = null;
+
+        foreach (var condition in conditions)
+        {
+            if (condition.Directive is not { } directive || HasConditionDirective(directives, condition))
+            {
+                continue;
+            }
+
+            updated ??= [.. directives];
+            updated.Add(directive);
+        }
+
+        if (updated is null)
+        {
+            return selection;
+        }
+
+        return selection switch
+        {
+            FieldNode field => field.WithDirectives(updated),
+            InlineFragmentNode fragment => fragment.WithDirectives(updated),
+            _ => selection
+        };
+    }
+
+    /// <summary>
+    /// Removes the directives of <paramref name="conditions"/> from the fields of <paramref name="requirements"/>
+    /// that <paramref name="step"/> already selects at <paramref name="selectionSetId"/> without any directive.
+    /// </summary>
+    private static SelectionSetNode OmitConditionDirectivesOfSelectedFields(
+        SelectionSetNode requirements,
+        OperationPlanStep step,
+        SelectionSetIndexBuilder index,
+        uint selectionSetId,
+        ExecutionNodeCondition[] conditions)
+    {
+        var existing = FindSelectionSet(step.Definition.SelectionSet, index, selectionSetId);
+
+        if (existing is null)
+        {
+            return requirements;
+        }
+
+        List<ISelectionNode>? updated = null;
+
+        for (var i = 0; i < requirements.Selections.Count; i++)
+        {
+            if (requirements.Selections[i] is FieldNode field
+                && IsSelectedWithoutDirectives(field, existing.Selections))
+            {
+                var directives = new List<DirectiveNode>(field.Directives.Count);
+
+                foreach (var directive in field.Directives)
+                {
+                    if (!IsConditionDirective(directive, conditions))
+                    {
+                        directives.Add(directive);
+                    }
+                }
+
+                updated ??= [.. requirements.Selections];
+                updated[i] = field.WithDirectives(directives);
+            }
+        }
+
+        if (updated is null)
+        {
+            return requirements;
+        }
+
+        var result = new SelectionSetNode(updated);
+        index.Register(selectionSetId, result);
+        return result;
+
+        static bool IsConditionDirective(DirectiveNode directive, ExecutionNodeCondition[] conditions)
+        {
+            foreach (var condition in conditions)
+            {
+                if (HasConditionDirective([directive], condition))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool IsSelectedWithoutDirectives(
+        FieldNode requirementField,
+        IReadOnlyList<ISelectionNode> existingSelections)
+    {
+        var responseName = requirementField.Alias?.Value ?? requirementField.Name.Value;
+
+        foreach (var selection in existingSelections)
+        {
+            if (selection is FieldNode { Directives.Count: 0 } existingField
+                && responseName.Equals(existingField.Alias?.Value ?? existingField.Name.Value, StringComparison.Ordinal)
+                && requirementField.Name.Value.Equals(existingField.Name.Value, StringComparison.Ordinal)
+                && requirementField.Arguments.Count == existingField.Arguments.Count)
+            {
+                var equal = true;
+
+                for (var i = 0; i < requirementField.Arguments.Count && equal; i++)
+                {
+                    equal = SyntaxComparer.BySyntax.Equals(requirementField.Arguments[i], existingField.Arguments[i]);
+                }
+
+                if (equal)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasConditionDirective(
+        IReadOnlyList<DirectiveNode> directives,
+        ExecutionNodeCondition condition)
+    {
+        foreach (var directive in directives)
+        {
+            if (directive.Name.Value.Equals(condition.PassingValue ? "include" : "skip", StringComparison.Ordinal)
+                && directive.Arguments is [{ Value: VariableNode variable }, ..]
+                && variable.Name.Value.Equals(condition.VariableName, StringComparison.Ordinal))
+            {
                 return true;
             }
         }
 
-        step = null!;
-        stepIndex = -1;
         return false;
     }
 
@@ -2983,6 +3281,7 @@ public sealed partial class OperationPlanner
         int dependentStepId,
         ref PlanNode current,
         OperationPlanStep currentStep,
+        ExecutionNodeCondition[] extraConditions,
         SelectionSetIndexBuilder index,
         ref Backlog backlog,
         ref ImmutableList<PlanStep> steps,
@@ -2993,6 +3292,19 @@ public sealed partial class OperationPlanner
         var sourceRequirements = sourceField.Requirements!;
         var requirements = sourceRequirements.Requirements;
         requirementAliases = new RequirementAliasContext(sourceRequirements.Fields, current.RequirementAliases);
+
+        if (extraConditions.Length > 0)
+        {
+            // The requirement is selected only when the field that needs it is selected.
+            var conditionalSelections = new List<ISelectionNode>(requirements.Selections.Count);
+
+            foreach (var selection in requirements.Selections)
+            {
+                conditionalSelections.Add(AddConditionDirectives(selection, extraConditions));
+            }
+
+            requirements = new SelectionSetNode(conditionalSelections);
+        }
 
         if (index.IsRegistered(requirements))
         {
@@ -3105,12 +3417,22 @@ public sealed partial class OperationPlanner
                 continue;
             }
 
+            // A requirement field that the step already selects without a condition is not selected again.
+            var stepRequirements = extraConditions.Length > 0
+                ? OmitConditionDirectivesOfSelectedFields(
+                    requirements,
+                    step,
+                    index,
+                    workItem.Selection.SelectionSetId,
+                    extraConditions)
+                : requirements;
+
             if (!TryInlineSelectionSetIntoStep(
                 step,
                 workItem.Selection.SelectionSetId,
                 workItem.Selection.Field.DeclaringType,
                 workItem.Selection.Path,
-                requirements,
+                stepRequirements,
                 dependentStepId,
                 index,
                 requirementAliases,

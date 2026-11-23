@@ -368,13 +368,18 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                             : null;
                     var selectionMap = requirementElement.GetProperty("selectionMap").GetString()!;
                     var requirementTypeNode = Utf8GraphQLParser.Syntax.ParseTypeReference(requirementType);
+                    var requirementConditions =
+                        requirementElement.TryGetProperty("conditions", out var requirementConditionsElement)
+                            ? ParseConditionArray(requirementConditionsElement)
+                            : null;
 
                     requirementsBuilder.Add(new OperationRequirement(
                         requirementName,
                         requirementTypeNode,
                         SelectionPath.Parse(requirementPath),
                         FieldSelectionMapParser.Parse(selectionMap),
-                        internalAlias));
+                        internalAlias,
+                        requirementConditions));
                 }
 
                 incrementalPlanRequirements = requirementsBuilder.ToImmutable();
@@ -616,7 +621,8 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                         {
                             node.AddOptionalDependency(dependencyNode);
                         }
-                        else if (OperationPlanner.IsEntityReuseOrderingDependency(node, dependencyNode))
+                        else if (OperationPlanner.IsEntityReuseOrderingDependency(node, dependencyNode)
+                            || OperationPlanner.IsConditionalRequirementDependency(node, dependencyNode))
                         {
                             node.AddOptionalDependency(dependencyNode);
                         }
@@ -731,7 +737,8 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                             if (planNodeMap.TryGetValue(depId, out var depNode))
                             {
                                 if ((groupNode is OperationBatchExecutionNode
-                                        && OperationPlanner.IsEntityReuseOrderingDependency(opDef, depNode))
+                                        && (OperationPlanner.IsEntityReuseOrderingDependency(opDef, depNode)
+                                            || OperationPlanner.IsConditionalRequirementDependency(opDef, depNode)))
                                     || (groupNode is ApolloOperationBatchExecutionNode apolloGroup
                                         && OperationPlanner.IsEntityReuseOrderingDependency(
                                             apolloGroup,
@@ -1101,13 +1108,18 @@ public sealed class JsonOperationPlanParser : OperationPlanParser
                         : null;
                 var selectionMap = requirementElement.GetProperty("selectionMap").GetString()!;
                 var requirementTypeNode = Utf8GraphQLParser.Syntax.ParseTypeReference(requirementType);
+                var requirementConditions =
+                    requirementElement.TryGetProperty("conditions", out var requirementConditionsElement)
+                        ? ParseConditionArray(requirementConditionsElement)
+                        : null;
 
                 requirements.Add(new OperationRequirement(
                     requirementName,
                     requirementTypeNode,
                     SelectionPath.Parse(requirementPath),
                     FieldSelectionMapParser.Parse(selectionMap),
-                    internalAlias));
+                    internalAlias,
+                    requirementConditions));
             }
         }
 

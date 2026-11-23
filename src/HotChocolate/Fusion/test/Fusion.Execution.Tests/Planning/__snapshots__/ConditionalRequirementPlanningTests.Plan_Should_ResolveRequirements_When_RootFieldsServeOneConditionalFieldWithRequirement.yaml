@@ -1,11 +1,11 @@
-id: 62025c94cf99aec3cb68551864df850d954c799be5a4b8842b20f55bf7e25164
+id: 3c392a6b2310870d053a1e01cf4a5785bff2b6de03917bed31e54cb646a86b38
 operation:
   - document: |
       query($a: Boolean!) {
         viewer {
           shipping
-          total @fusion__requirement
           weight @fusion__requirement
+          total @fusion__requirement
           tax @skip(if: $a)
         }
       }
@@ -25,15 +25,15 @@ nodes:
       document: |
         query Op_123456789101112_1 {
           viewer {
-            total
             weight
+            total
           }
         }
-      hash: 523c79db326faf17774017a9eb9497f0fa70d871bb9e4e41d3d5bdf2bff2ab5f
-      shortHash: 523c79db
-      xxHash: 2619061691501738927
+      hash: dce1417caea9f803a9116176cc9097140d9e1241e69755c3f341464a54d1223d
+      shortHash: dce1417c
+      xxHash: 4745136345654685423
     resultSelectionSet: >-
-      { viewer { total weight } }
+      { viewer { weight total } }
   - id: 2
     type: Operation
     schema: b
@@ -43,30 +43,30 @@ nodes:
       document: |
         query Op_123456789101112_2(
           $a: Boolean!
-          $__fusion_1_total: Int
-          $__fusion_2_weight: Int
+          $__fusion_1_weight: Int
+          $__fusion_2_total: Int
         ) {
           viewer {
-            tax(total: $__fusion_1_total) @skip(if: $a)
-            shipping(weight: $__fusion_2_weight)
+            shipping(weight: $__fusion_1_weight)
+            tax(total: $__fusion_2_total) @skip(if: $a)
           }
         }
-      hash: 333a9e6c39e17c01263d519eff0f484f37355cd9db2716c541f7faef178894bc
-      shortHash: 333a9e6c
-      xxHash: 17251699391741857200
+      hash: e3ad8c61a824cdc56c494f747c2bb48cde492f5861776d5ed9dbb0466d4c6eae
+      shortHash: e3ad8c61
+      xxHash: 8917736147947133694
     resultSelectionSet: >-
-      { viewer { tax shipping } }
+      { viewer { shipping tax } }
     requirements:
-      - name: __fusion_1_total
-        type: Int
-        path: $.viewer
-        selectionMap: >-
-          total
-      - name: __fusion_2_weight
+      - name: __fusion_1_weight
         type: Int
         path: $.viewer
         selectionMap: >-
           weight
+      - name: __fusion_2_total
+        type: Int
+        path: $.viewer
+        selectionMap: >-
+          total
     forwardedVariables:
       - a
     dependencies:

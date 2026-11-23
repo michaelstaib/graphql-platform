@@ -1,0 +1,139 @@
+id: 95bf67ba34501f554898c4e2bd7a58398b1c003a3034e3079f8236dd269f8fe2
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        user {
+          shipping
+          id @fusion__requirement
+          weight @fusion__requirement
+          ... @skip(if: $a) {
+            tax
+            total @fusion__requirement
+          }
+          ... @skip(if: $a) @include(if: $b) {
+            fee
+            size @fusion__requirement
+          }
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 9
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          user {
+            id
+          }
+        }
+      hash: 16edb7aa0dd7ec28e1e39327954aac6b8aad8fd79fd15d1b19cfc3f26f7bc85f
+      shortHash: 16edb7aa
+      xxHash: 7236423868947797758
+    resultSelectionSet: >-
+      { user }
+  - id: 3
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3(
+          $a: Boolean!
+          $b: Boolean!
+          $__fusion_2_weight: Int
+          $__fusion_3_id: ID!
+          $__fusion_5_total: Int
+          $__fusion_6_size: Int
+        ) {
+          userById(id: $__fusion_3_id) {
+            shipping(weight: $__fusion_2_weight)
+            tax(total: $__fusion_5_total) @skip(if: $a)
+            fee(size: $__fusion_6_size) @skip(if: $a) @include(if: $b)
+          }
+        }
+      hash: ddad60950733ca476d9fc4cc8f622e80a562b7ca112c5b13130d19578649c3ac
+      shortHash: ddad6095
+      xxHash: 13689143524640939423
+    lookupTypeName: User
+    resultSelectionSet: >-
+      { shipping tax fee }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_2_weight
+        type: Int
+        path: $.user
+        selectionMap: >-
+          weight
+      - name: __fusion_3_id
+        type: ID!
+        path: $.user
+        selectionMap: >-
+          id
+      - name: __fusion_5_total
+        type: Int
+        path: $.user
+        selectionMap: >-
+          total
+        conditions:
+          - variable: $a
+            passingValue: false
+      - name: __fusion_6_size
+        type: Int
+        path: $.user
+        selectionMap: >-
+          size
+        conditions:
+          - variable: $a
+            passingValue: false
+          - variable: $b
+            passingValue: true
+    forwardedVariables:
+      - a
+      - b
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query Op_123456789101112_4($a: Boolean!, $b: Boolean!, $__fusion_4_id: ID!) {
+          userById(id: $__fusion_4_id) {
+            weight
+            total @skip(if: $a)
+            size @skip(if: $a) @include(if: $b)
+          }
+        }
+      hash: e182d0939907937adcda972d839b5763e6a952afab900a8dca8406cd8afeb1e0
+      shortHash: e182d093
+      xxHash: 6881883175104886456
+    lookupTypeName: User
+    resultSelectionSet: >-
+      { weight total size }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_4_id
+        type: ID!
+        path: $.user
+        selectionMap: >-
+          id
+    forwardedVariables:
+      - a
+      - b
+    dependencies:
+      - id: 1

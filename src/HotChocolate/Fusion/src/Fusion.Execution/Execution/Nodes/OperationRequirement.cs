@@ -28,9 +28,14 @@ namespace HotChocolate.Fusion.Execution.Nodes;
 /// and read under this alias to keep its result separate. Null when the requirement
 /// is not aliased.
 /// </param>
+/// <param name="Conditions">
+/// The conditions of the requiring field that the operation does not carry.
+/// Null when the requirement is unconditional.
+/// </param>
 public record OperationRequirement(
     string Key,
     ITypeNode Type,
     SelectionPath Path,
     IValueSelectionNode Map,
-    string? InternalAlias = null);
+    string? InternalAlias,
+    ExecutionNodeCondition[]? Conditions);

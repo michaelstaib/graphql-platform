@@ -3259,7 +3259,9 @@ public class DeferPlannerTests : FusionTestBase
                     "__fusion_1_id",
                     new NonNullTypeNode(new NamedTypeNode("ID")),
                     SelectionPath.Parse("$.other"),
-                    new FieldSelectionMapParser("id").Parse()))
+                    new FieldSelectionMapParser("id").Parse(),
+                    null,
+                    null))
         };
         var descriptor = new IncrementalPlanDescriptor([], definition, anchor, null);
 

@@ -1,8 +1,15 @@
-using HotChocolate.Transport;
+using HotChocolate.Buffers;
+using HotChocolate.Execution;
+using HotChocolate.Fusion.Configuration;
+using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Execution.Nodes.Serialization;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Transport.Http;
 using HotChocolate.Types;
 using HotChocolate.Types.Composite;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using OperationRequest = HotChocolate.Transport.OperationRequest;
 
 namespace HotChocolate.Fusion;
 
@@ -614,6 +621,473 @@ public sealed class ConditionalRequirementTests : FusionTestBase
 
         // assert
         await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Request_Should_BeSharedBySiblingFields_When_OnlyOneFieldWithNullableRequirementIsSkipped(
+        bool skip,
+        bool conditionalFirst)
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+        var selection = conditionalFirst ? "tax @skip(if: $a) shipping" : "shipping tax @skip(if: $a)";
+
+        // act
+        var request = new OperationRequest(
+            $$"""
+            query testQuery($a: Boolean!) {
+              user { {{selection}} }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{conditionalFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Request_Should_BeSharedBySiblingFields_When_ConditionSitsOnFragmentAroundField(bool include)
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              user {
+                shipping
+                ... @include(if: $a) { tax }
+              }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, include.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Request_Should_BeSharedBySiblingFields_When_ConditionsFormAChain(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateChainGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user { shipping tax @skip(if: $a) fee @skip(if: $a) @include(if: $b) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Request_Should_BeSplit_When_RequirementArgumentOfSkippedFieldIsNonNull(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateSdlGatewayAsync(
+            ("A", ChainSchemaA),
+            ("D", ChainSchemaD),
+            ("B", NonNullSchemaB));
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              user { shipping tax @skip(if: $a) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Request_Should_BeSplit_When_SiblingFieldsAreSkippedByUnrelatedVariables(
+        bool skip,
+        bool include)
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!, $b: Boolean!) {
+              user { shipping @include(if: $b) tax @skip(if: $a) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip, ["b"] = include });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{include}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Field_Should_BeResolved_When_RequirementOfSkippedSiblingFieldNeedsItsOwnLookup(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateOwnLookupGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              user { shipping tax @skip(if: $a) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Field_Should_BeResolved_When_RequestIsBatchedAndRequirementOfSkippedSiblingFieldNeedsItsOwnLookup(
+        bool skip,
+        bool usersFirst)
+    {
+        // arrange
+        using var gateway = await CreateOwnLookupGatewayAsync();
+        var selection = usersFirst
+            ? "users { shipping tax @skip(if: $a) } user { shipping tax }"
+            : "user { shipping tax @skip(if: $a) } users { shipping }";
+
+        // act
+        var request = new OperationRequest(
+            $$"""
+            query testQuery($a: Boolean!) {
+              {{selection}}
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{usersFirst}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Entity_Should_StayInRequest_When_RequirementOfSkippedFieldIsNotFetched(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              users { id shipping tax @skip(if: $a) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Execute_Should_ReturnPlannedResult_When_PlanIsParsedFromJson(bool skip, bool batched)
+    {
+        // arrange
+        using var gateway = await CreateSdlGatewayAsync(
+            [
+                ("A", ChainSchemaA),
+                ("D", OwnLookupSchemaD),
+                ("E", OwnLookupSchemaE),
+                ("B", OwnLookupSchemaB)
+            ],
+            builder => builder.UseRequest(
+                (_, next) => async context =>
+                {
+                    var plan = context.GetOperationPlan()!;
+                    var services = context.Schema.Services;
+                    using var buffer = new PooledArrayWriter();
+                    new JsonOperationPlanFormatter().Format(buffer, plan);
+                    var parser = new JsonOperationPlanParser(
+                        services.GetRequiredService<OperationCompiler>(),
+                        services.GetRequiredService<IPolicyResolver>());
+                    context.SetOperationPlan(parser.Parse(buffer.WrittenMemory));
+
+                    await next(context);
+                }));
+        var selection = batched
+            ? "user { shipping tax @skip(if: $a) } users { shipping }"
+            : "user { shipping tax @skip(if: $a) }";
+
+        // act
+        var request = new OperationRequest(
+            $$"""
+            query testQuery($a: Boolean!) {
+              {{selection}}
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, $"{skip}_{batched}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Field_Should_BeResolved_When_SupplierOfSkippedFieldRequirementIsBatchNode(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateOwnLookupGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              user { shipping tax @skip(if: $a) }
+              users { shipping tax @skip(if: $a) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Field_Should_NotBeRequested_When_ParentOfMergedLookupIsSkippedByVariableOfRequirement(bool skip)
+    {
+        // arrange
+        using var gateway = await CreateUserGatewayAsync();
+
+        // act
+        var request = new OperationRequest(
+            """
+            query testQuery($a: Boolean!) {
+              user @skip(if: $a) { shipping tax @include(if: $a) }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["a"] = skip });
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, skip.ToString());
+    }
+
+    private const string ChainSchemaA =
+        """
+        type Query {
+          user: User!
+          users: [User!]!
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+        }
+        """;
+
+    private const string ChainSchemaD =
+        """
+        type Query {
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          weight: Int!
+          total: Int!
+          size: Int!
+        }
+        """;
+
+    private const string ChainSchemaB =
+        """
+        type Query {
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          shipping(weight: Int @require(field: "weight")): Int
+          tax(total: Int @require(field: "total")): Int
+          fee(size: Int @require(field: "size")): Int
+        }
+        """;
+
+    private const string NonNullSchemaB =
+        """
+        type Query {
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          shipping(weight: Int @require(field: "weight")): Int
+          tax(total: Int! @require(field: "total")): Int
+        }
+        """;
+
+    private const string OwnLookupSchemaD =
+        """
+        type Query {
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          weight: Int!
+        }
+        """;
+
+    private const string OwnLookupSchemaE =
+        """
+        type Query {
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          total: Int!
+        }
+        """;
+
+    private const string OwnLookupSchemaB =
+        """
+        type Query {
+          userById(id: ID!): User @lookup @internal
+        }
+
+        type User @key(fields: "id") {
+          id: ID!
+          shipping(weight: Int @require(field: "weight")): Int
+          tax(total: Int @require(field: "total")): Int
+        }
+        """;
+
+    private Task<Gateway> CreateChainGatewayAsync()
+        => CreateSdlGatewayAsync(("A", ChainSchemaA), ("D", ChainSchemaD), ("B", ChainSchemaB));
+
+    private Task<Gateway> CreateOwnLookupGatewayAsync()
+        => CreateSdlGatewayAsync(
+            ("A", ChainSchemaA),
+            ("D", OwnLookupSchemaD),
+            ("E", OwnLookupSchemaE),
+            ("B", OwnLookupSchemaB));
+
+    private Task<Gateway> CreateSdlGatewayAsync(params (string Name, string Schema)[] sources)
+        => CreateSdlGatewayAsync(sources, null);
+
+    private async Task<Gateway> CreateSdlGatewayAsync(
+        (string Name, string Schema)[] sources,
+        Action<IFusionGatewayBuilder>? configureGatewayBuilder)
+    {
+        var servers = new (string SchemaName, TestServer Server)[sources.Length];
+
+        for (var i = 0; i < sources.Length; i++)
+        {
+            servers[i] = (sources[i].Name, CreateSourceSchema(sources[i].Name, sources[i].Schema));
+        }
+
+        return await CreateCompositeSchemaAsync(servers, configureGatewayBuilder: configureGatewayBuilder);
     }
 
     private const string TwoRequiringSourcesUserSchema =

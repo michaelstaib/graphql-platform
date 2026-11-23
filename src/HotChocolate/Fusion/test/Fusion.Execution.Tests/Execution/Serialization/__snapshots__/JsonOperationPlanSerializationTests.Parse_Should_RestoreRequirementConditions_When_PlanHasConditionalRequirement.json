@@ -1,0 +1,34 @@
+[
+  [
+    {
+      "name": "__fusion_1_dbId",
+      "type": "Int!",
+      "path": "$.search\u003CConfigMatchesResult\u003E.asset",
+      "selectionMap": "dbId",
+      "conditions": [
+        {
+          "variable": "$a",
+          "passingValue": false
+        }
+      ]
+    }
+  ],
+  [
+    {
+      "name": "__fusion_2_id",
+      "type": "Int!",
+      "path": "$.search\u003CConfigMatchesResult\u003E.asset.meterType",
+      "selectionMap": "id",
+      "conditions": [
+        {
+          "variable": "$b",
+          "passingValue": true
+        },
+        {
+          "variable": "$c",
+          "passingValue": false
+        }
+      ]
+    }
+  ]
+]
