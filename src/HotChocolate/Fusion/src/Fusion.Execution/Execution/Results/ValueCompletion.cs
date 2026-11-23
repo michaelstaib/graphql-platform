@@ -1963,13 +1963,7 @@ internal sealed class ValueCompletion
         else if (target.ValueKind is not JsonValueKind.Array
             || target.GetArrayLength() != source.GetArrayLength())
         {
-            // The null of the list has no recorded error.
-            if (TMode.HasDelivery)
-            {
-                _returnedNullError = null;
-            }
-
-            return ReportSharedListLengthMismatch(target);
+            return ReportSharedListLengthMismatch<TMode>(target);
         }
         else
         {
@@ -2122,7 +2116,8 @@ TryCompleteList_MoveNext:
     /// <c>false</c>, if the null must propagate to the parent.
     /// </returns>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool ReportSharedListLengthMismatch(CompositeResultElement target)
+    private bool ReportSharedListLengthMismatch<TMode>(CompositeResultElement target)
+        where TMode : struct, IMode
     {
         // Non-keyed sibling lists can only be merged by position, which
         // requires an identical length. A differing shape cannot be
@@ -2133,7 +2128,13 @@ TryCompleteList_MoveNext:
             .SetPath(target.CompactPath.ToPath(target.Operation))
             .Build();
         error = _errorHandler.Handle(error);
-        _store.AddError(error);
+
+        var failure = AddError<TMode>(error, target);
+
+        if (TMode.HasDelivery)
+        {
+            _returnedNullError = _propagateNullValues ? failure : null;
+        }
 
         return !_propagateNullValues;
     }

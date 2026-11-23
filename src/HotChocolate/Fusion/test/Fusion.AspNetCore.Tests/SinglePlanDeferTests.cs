@@ -5788,6 +5788,43 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_ReportTheLengthErrorForEachFragment_When_ASharedListFailsAfterAStepOfAnotherFailed()
+    {
+        // arrange
+        // C answers the shared list one part shorter than B, then the steps of E fail, so that neither a nor b is
+        // complete when the lengths differ, and b completes in its own payload
+        var gateway = await CreateGatewayAsync(
+            ["C:4", "B:2", "E:5>", "E:3"],
+            rewrite: (schema, body, text) => schema is "C" ? FirstPart().Replace(text, "\"parts\":[") : text,
+            failingSchema: "E",
+            configure: null,
+            ("A", ProductSource),
+            ("B", PartsWeightSource),
+            ("C", PartsSizeSource),
+            ("E", """
+                type Query { productById(id: ID!): Product @lookup }
+                type Product @key(fields: "id") { id: ID! nullable: String }
+                """));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            {
+                product(id: "1") {
+                    name
+                    ... @defer(label: "a") { nullable package { parts { size } } }
+                    ... @defer(label: "b") { nullable package { parts { weight } } }
+                }
+            }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string PackageStrictSource =
         """
         type Query { productByIdForPackage(id: ID!): Product @lookup }
