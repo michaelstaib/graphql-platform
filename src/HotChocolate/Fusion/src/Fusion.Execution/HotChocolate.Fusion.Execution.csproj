@@ -177,6 +177,12 @@
     <Compile Include="..\..\..\AspNetCore\src\Transport.Http\RequestDeduplicationHttpClientBuilderExtensions.cs">
       <Link>Transport\Http\RequestDeduplicationHttpClientBuilderExtensions.cs</Link>
     </Compile>
+    <Compile Include="..\..\..\AspNetCore\src\Transport.Http\ReadAheadConnectCallback.cs">
+      <Link>Transport\Http\ReadAheadConnectCallback.cs</Link>
+    </Compile>
+    <Compile Include="..\..\..\AspNetCore\src\Transport.Http\ReadAheadNetworkStream.cs">
+      <Link>Transport\Http\ReadAheadNetworkStream.cs</Link>
+    </Compile>
     <Compile Update="Text\Json\SourceResultElement.ObjectEnumerator.cs">
       <DependentUpon>SourceResultElement.cs</DependentUpon>
     </Compile>
