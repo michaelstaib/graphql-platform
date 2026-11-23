@@ -1071,6 +1071,18 @@ internal sealed partial class SinglePlanDeliveryState
             }
         }
 
+        if (dependent is OperationExecutionNode or OperationDefinition)
+        {
+            foreach (var optional in dependent.OptionalDependencies)
+            {
+                if (optional.Id == dependency.Id
+                    && !Planning.OperationPlanner.IsEntityReuseOrderingDependency(dependent, dependency))
+                {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 

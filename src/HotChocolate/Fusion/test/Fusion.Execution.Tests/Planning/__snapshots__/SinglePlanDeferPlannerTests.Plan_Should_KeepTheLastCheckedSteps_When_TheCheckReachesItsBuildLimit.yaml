@@ -298,6 +298,33 @@ nodes:
       - 5
     dependencies:
       - id: 1
+  - id: 6
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_6($__fusion_5_id: Int!) {
+        userById(id: $__fusion_5_id) {
+          friend {
+            id
+          }
+        }
+      }
+    source: $.userById
+    target: $.current.user
+    batchingGroupId: 34
+    requirements:
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $d
+        passingValue: true
+      - variable: $e
+        passingValue: true
+    deliveryGroups:
+      - 6
+    dependencies:
+      - id: 1
   - id: 8
     type: Operation
     schema: a
@@ -476,7 +503,32 @@ nodes:
     deliveryGroups:
       - 6
     dependencies:
-      - id: 2
+      - id: 6
+  - id: 9
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_9($__fusion_8_id: Int!) {
+        userByIdC(id: $__fusion_8_id) {
+          code
+        }
+      }
+    source: $.userByIdC
+    target: $.current.user.friend
+    batchingGroupId: 35
+    requirements:
+      - name: __fusion_8_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $d
+        passingValue: false
+      - variable: $e
+        passingValue: true
+    deliveryGroups:
+      - 4
+    dependencies:
+      - id: 8
   - id: 18
     type: Operation
     schema: c
@@ -577,9 +629,10 @@ nodes:
     type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_3($__fusion_2_code: String!) {
+      query Op_123456789101112_3($e: Boolean!, $__fusion_2_code: String!) {
         userByCode(code: $__fusion_2_code) {
           sku
+          code @skip(if: $e)
         }
       }
     source: $.userByCode
@@ -594,6 +647,8 @@ nodes:
         passingValue: true
     deliveryGroups:
       - 5
+    forwardedVariables:
+      - e
     dependencies:
       - id: 5
   - id: 16
@@ -602,6 +657,7 @@ nodes:
     operation: |
       query Op_123456789101112_16($__fusion_15_code: String!) {
         userByCode(code: $__fusion_15_code) {
+          code
           sku
         }
       }
@@ -623,9 +679,10 @@ nodes:
     type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_23($__fusion_22_code: String!) {
+      query Op_123456789101112_23($b: Boolean!, $__fusion_22_code: String!) {
         userByCode(code: $__fusion_22_code) {
-          sku
+          code
+          sku @skip(if: $b)
         }
       }
     source: $.userByCode
@@ -638,10 +695,10 @@ nodes:
     conditions:
       - variable: $a
         passingValue: true
-      - variable: $b
-        passingValue: false
     deliveryGroups:
       - 1
+    forwardedVariables:
+      - b
     dependencies:
       - id: 24
   - id: 26
@@ -717,7 +774,6 @@ nodes:
       - 5
     dependencies:
       - id: 3
-      - id: 5
   - id: 17
     type: Operation
     schema: b
@@ -741,7 +797,6 @@ nodes:
       - 3
     dependencies:
       - id: 16
-      - id: 18
 deliveryGroups:
   - id: 0
     path: $.current.user

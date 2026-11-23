@@ -108,6 +108,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
@@ -118,13 +120,13 @@ nodes:
     type: Operation
     schema: b
     operation: |
-      query Op_123456789101112_8($__fusion_7_id: ID!) {
+      query Op_123456789101112_8($b: Boolean!, $__fusion_7_id: ID!) {
         productById(id: $__fusion_7_id) {
           price
-          author {
+          author @include(if: $b) {
             id
           }
-          editor {
+          editor @include(if: $b) {
             id
           }
         }
@@ -140,6 +142,8 @@ nodes:
         passingValue: true
     deliveryGroups:
       - 0
+    forwardedVariables:
+      - b
     dependencies:
       - id: 1
   - id: 5
@@ -212,12 +216,15 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
       - 1
     dependencies:
       - id: 2
+      - id: 11
   - id: 4
     type: Operation
     schema: c
@@ -235,12 +242,15 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
       - 1
     dependencies:
       - id: 2
+      - id: 11
   - id: 6
     type: Operation
     schema: c
@@ -344,9 +354,12 @@ nodes:
     conditions:
       - variable: $a
         passingValue: true
+      - variable: $b
+        passingValue: true
     deliveryGroups:
       - 0
     dependencies:
+      - id: 5
       - id: 8
   - id: 10
     type: Operation
@@ -367,9 +380,12 @@ nodes:
     conditions:
       - variable: $a
         passingValue: true
+      - variable: $b
+        passingValue: true
     deliveryGroups:
       - 0
     dependencies:
+      - id: 5
       - id: 8
 deliveryGroups:
   - id: 0

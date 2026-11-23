@@ -1,0 +1,118 @@
+operation:
+  - document: |
+      query($v: Boolean!) {
+        user {
+          nick
+          id @fusion__requirement
+          inner @include(if: $v) {
+            a
+            c
+          }
+          ... @defer(__group: 0, __parent: -1) {
+            inner {
+              a
+            }
+            id @fusion__requirement
+            ... @defer(__group: 1, __parent: 0) {
+              nnA
+              id @fusion__requirement
+              inner @fusion__requirement {
+                a @fusion__requirement
+              }
+            }
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 2
+    expandedNodes: 8
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      query Op_123456789101112_1 {
+        user {
+          nick
+          id
+        }
+      }
+  - id: 2
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_2($__fusion_1_id: ID!) {
+        userById(id: $__fusion_1_id) {
+          inner {
+            a
+            c
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $v
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation: |
+      query Op_123456789101112_3($__fusion_2_id: ID!) {
+        userById(id: $__fusion_2_id) {
+          inner {
+            a
+          }
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_2_id
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $v
+        passingValue: false
+    deliveryGroups:
+      - 0
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: c
+    operation: |
+      query Op_123456789101112_5($__fusion_4_a: String, $__fusion_5_id: ID!) {
+        userById(id: $__fusion_5_id) {
+          nnA(a: $__fusion_4_a)
+        }
+      }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_4_a
+        selectionMap: >-
+          inner.a
+      - name: __fusion_5_id
+        selectionMap: >-
+          id
+    deliveryGroups:
+      - 1
+    dependencies:
+      - id: 1
+      - id: 2
+        optional: true
+      - id: 3
+        optional: true
+deliveryGroups:
+  - id: 0
+    path: $.user
+  - id: 1
+    path: $.user
+    parentId: 0

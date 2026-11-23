@@ -63,7 +63,7 @@ nodes:
     dependencies:
       - id: 1
   - id: 3
-    type: Operation
+    type: OperationBatch
     schema: b
     operation: |
       query Op_123456789101112_3($__fusion_2_id: ID!) {
@@ -72,40 +72,21 @@ nodes:
         }
       }
     source: $.productById
-    target: $.product
+    targets:
+      - $.product
     batchingGroupId: 5
     requirements:
       - name: __fusion_2_id
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
-      - 1
-    dependencies:
-      - id: 1
-  - id: 4
-    type: Operation
-    schema: b
-    operation: |
-      query Op_123456789101112_4($__fusion_3_id: ID!) {
-        productById(id: $__fusion_3_id) {
-          price
-        }
-      }
-    source: $.productById
-    target: $.product
-    batchingGroupId: 5
-    requirements:
-      - name: __fusion_3_id
-        selectionMap: >-
-          id
-    conditions:
-      - variable: $a
-        passingValue: true
-    deliveryGroups:
       - 0
+      - 1
     dependencies:
       - id: 1
 deliveryGroups:

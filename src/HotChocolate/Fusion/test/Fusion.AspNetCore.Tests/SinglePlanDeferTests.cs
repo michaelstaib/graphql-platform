@@ -1110,6 +1110,44 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_SendOneRequestToTheSchemaOfTheKey_When_ItsReaderIsOfASplitPair()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", """
+                type Query { current: Holder! userById(id: ID!): User @lookup @internal }
+                type Holder { user: User! }
+                type User @key(fields: "id") { id: ID! }
+                """),
+            ("F", """
+                type Query { userById(id: ID!): User @lookup @internal }
+                type User @key(fields: "id") { id: ID! friend: User! }
+                """),
+            ("C", """
+                type Query { userById(id: ID!): User @lookup @internal }
+                type User @key(fields: "id") { id: ID! code: String! @shareable nick: String! }
+                """),
+            ("D", """
+                type Query { userByCode(code: String!): User @lookup @internal }
+                type User @key(fields: "code") { code: String! @shareable total: Int! }
+                """));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            {
+                current { user { friend { code } ... @defer { nick total friend { nick total } } } }
+            }
+            """,
+            []);
+
+        // assert
+        MatchRun(run);
+        Assert.Equal(run.Twin.Requests["F"], run.Deferred.Requests["F"]);
+    }
+
+    [Fact]
     public async Task Defer_Should_SendNoKeyRequest_When_ThePassRemovedTheReaderOfTheKey()
     {
         // arrange
@@ -1202,6 +1240,108 @@ public partial class SinglePlanDeferTests : FusionTestBase
         run.AssertMatchesTwin(compareValues: false);
         Assert.Equal("A=2, B=1, S=1, T=1", run.Deferred.RequestSummary);
         Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_TwoSwitchesFetchTheKeyOfTheirLookups(
+        bool a,
+        bool b)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(s_priceByIdRatingSources);
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                products { upc ... @defer(if: $a) { eur } ... @defer(if: $b) { rating } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        run.AssertMatchesTwin(compareValues: false);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_ASkippedObjectHoldsTheRequiredValue(bool v)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @skip(if: $v) { a c } ... @defer { cA } } }",
+            new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        MatchRun(run, $"v={v}");
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Defer_Should_SendTheRequestsOfThePlainTwin_When_UnlabelledSiblingsFetchTheFieldForOwnSwitches(
+        bool a,
+        bool b)
+    {
+        // arrange
+        var gateway = await CreateProductGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!) {
+                product(id: "1") { name ... @defer(if: $a) { price } ... @defer(if: $b) { price } }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = a, ["b"] = b });
+
+        // assert
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        MatchRun(run, $"a={a}, b={b}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendOneRequestToTheCodeSource_When_TheCodeOfTheUserIsSkipped()
+    {
+        // arrange
+        var gateway = await CreateSkuChainGatewayAsync();
+
+        // act
+        var run = await RunWithTwinAsync(
+            gateway,
+            """
+            query($a: Boolean!, $b: Boolean!, $s: Boolean!) {
+                current {
+                    user {
+                        code @skip(if: $s)
+                        ... @defer(if: $a) { friend { code } ... @defer(if: $b) { sku total } }
+                    }
+                }
+            }
+            """,
+            new Dictionary<string, object?> { ["a"] = true, ["b"] = true, ["s"] = true });
+
+        // assert
+        Assert.Equal(1, run.Deferred.Requests["C"]);
+        MatchRun(run, compareValues: false);
     }
 
     [Theory]
@@ -1785,6 +1925,31 @@ public partial class SinglePlanDeferTests : FusionTestBase
     private static readonly (string Name, string Sdl)[] s_catalogRatingSources =
     [
         .. s_catalogSources,
+        ("T", """
+            type Query { productById(id: ID!): Product @lookup @internal }
+            type Product @key(fields: "id") { id: ID! @shareable rating: Int! }
+            """)
+    ];
+
+    // The price of a product has the key id, the id comes from the source S, and the rating has the key id too.
+    private static readonly (string Name, string Sdl)[] s_priceByIdRatingSources =
+    [
+        ("A", """
+            type Query { products: [Product!]! productByUpc(upc: String!): Product @lookup }
+            type Product @key(fields: "upc") {
+                upc: String!
+                name: String!
+                eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+            }
+            """),
+        ("B", """
+            type Query { productByIdB(id: ID!): Product @lookup @internal }
+            type Product @key(fields: "id") { id: ID! @shareable price(cur: String, tax: Boolean): Int }
+            """),
+        ("S", """
+            type Query { productByUpcS(upc: String!): Product @lookup @internal }
+            type Product @key(fields: "upc") { upc: String! id: ID! @shareable }
+            """),
         ("T", """
             type Query { productById(id: ID!): Product @lookup @internal }
             type Product @key(fields: "id") { id: ID! @shareable rating: Int! }
@@ -6408,15 +6573,10 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_SendTheErrorOnce_When_APayloadAlreadyReportsTheDeniedRequirement()
+    public async Task Defer_Should_SendOneLookupOfTheObject_When_TheInitialStepHoldsItUnderACondition()
     {
         // arrange
-        // the initial step of inner (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
         var gateway = await CreateGatewayAsync(
-            ["B:2", "B:5"],
-            NameTheSourceError,
-            failingSchema: null,
-            configure: null,
             ("A", NickSource),
             ("B", InnerSource),
             ("C", InnerRequirementSource));
@@ -6428,6 +6588,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
             new Dictionary<string, object?> { ["v"] = true });
 
         // assert
+        Assert.Equal(1, run.Deferred.Requests["B"]);
         run.AssertMatchesTwin(compareValues: true);
         MatchPayloads(run.Deferred);
     }
@@ -6457,18 +6618,14 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
-    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ANonNullFieldRequiresAReportedObject()
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_ItIsTheOnlyProviderOfTheRequirement()
     {
         // arrange
-        // the initial step of inner (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
         var gateway = await CreateGatewayAsync(
-            ["B:2", "B:5"],
-            NameTheSourceError,
-            failingSchema: null,
-            configure: null,
             ("A", NickSource),
             ("B", InnerSource),
             ("C", InnerNonNullRequirementSource));
+        _gate!.FailingStep = "B:2";
 
         // act
         var run = await RunDeferredAsync(
@@ -6477,6 +6634,141 @@ public partial class SinglePlanDeferTests : FusionTestBase
             new Dictionary<string, object?> { ["v"] = true });
 
         // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_OneStepHoldsTheValueForBothValues()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+        _gate!.FailingStep = "B:2";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            query($v: Boolean!) {
+                user { nick inner @include(if: $v) { a c } inner @skip(if: $v) { a c } ... @defer { nnA } }
+            }
+            """,
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    // The source schema B without an error on the field a, so only a failed request leaves the value out.
+    private const string InnerValueSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inner: Inner }
+        type Inner { a: String! c: String }
+        """;
+
+    private const string InnerValueRequirementSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") {
+            id: ID!
+            cA(a: String @require(field: "inner.a")): String
+            nnA(a: String @require(field: "inner.a")): String!
+        }
+        """;
+
+    private const string TwoHoldersQuery =
+        """
+        query($v: Boolean!) {
+            user { nick inner @include(if: $v) { a c } ... @defer { inner { a } ... @defer { nnA } } }
+        }
+        """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Defer_Should_EqualTheTwin_When_TwoStepsHoldTheValueForOneVariableValueEach(bool v)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+
+        // act
+        var run = await RunWithTwinAsync(gateway, TwoHoldersQuery, new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        Assert.Equal("A=1, B=1, C=1", run.Deferred.RequestSummary);
+        Assert.Equal(run.Twin.RequestSummary, run.Deferred.RequestSummary);
+        run.AssertMatchesTwin(compareValues: true);
+    }
+
+    [Theory]
+    [InlineData(false, "B:3")]
+    [InlineData(true, "B:2")]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_TheOnlyHolderThatRanFailed(
+        bool v,
+        string failingStep)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+        _gate!.FailingStep = failingStep;
+
+        // act
+        var run = await RunDeferredAsync(gateway, TwoHoldersQuery, new Dictionary<string, object?> { ["v"] = v });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run, $"v={v}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheProvider_When_TheStepOfTheOtherValueFailed()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+        _gate!.FailingStep = "B:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { nnA } } }",
+            new Dictionary<string, object?> { ["v"] = false });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheNullableFieldWithTheErrorOfTheProvider_When_TheStepOfTheOtherValueFailed()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerValueSource),
+            ("C", InnerValueRequirementSource));
+        _gate!.FailingStep = "B:5";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { cA } } }",
+            new Dictionary<string, object?> { ["v"] = false });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
         MatchPayloads(run);
     }
 
@@ -6960,7 +7252,7 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_FailTheFragmentWithTheErrorOfItsOwnStep_When_TheInitialStepAlsoReportsTheObject()
     {
         // arrange
-        // the initial step of inner (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
+        // the initial step of inner (B:2) holds only c, so the fragment fetches its requirement itself (B:5)
         var gateway = await CreateGatewayAsync(
             ["B:2", "B:5"],
             NameTheSourceErrorWithTheStep,
@@ -6973,8 +7265,8 @@ public partial class SinglePlanDeferTests : FusionTestBase
         // act
         var run = await RunDeferredAsync(
             gateway,
-            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { nnA } } }",
-            new Dictionary<string, object?> { ["v"] = true });
+            "{ user { nick inner { c } ... @defer { nnA } } }",
+            []);
 
         // assert
         MatchPayloads(run);
@@ -7467,9 +7759,9 @@ public partial class SinglePlanDeferTests : FusionTestBase
     public async Task Defer_Should_SendTheErrorOnlyInTheInitialPayload_When_AnElementOfTheRequiredListFailedThere()
     {
         // arrange
-        // the initial step of inners (B:2) runs under a condition, so the fragment fetches its requirement itself (B:5)
+        // the initial step of inners holds the list under a condition, and the fragment reads its requirement from it
         var gateway = await CreateGatewayAsync(
-            ["B:2", "B:5"],
+            [],
             FailTheSecondInner,
             failingSchema: null,
             configure: null,
@@ -7482,6 +7774,30 @@ public partial class SinglePlanDeferTests : FusionTestBase
             gateway,
             "query($v: Boolean!) { user { nick inners @include(if: $v) { a c } ... @defer { gL } } }",
             new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_SendTheErrorOnce_When_ThePayloadOfAnotherFragmentAlreadyReportedTheFailedElement()
+    {
+        // arrange
+        // the step of p (B:5) answers and its payload is written before the step of q (B:4) answers
+        var gateway = await CreateGatewayAsync(
+            ["B:5>", "B:4"],
+            FailTheSecondInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerListSource),
+            ("C", InnerListRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ user { nick ... @defer(label: "p") { inners { a } } ... @defer(label: "q") { gL } } }""",
+            []);
 
         // assert
         MatchPayloads(run);

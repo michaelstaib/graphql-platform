@@ -17,6 +17,7 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
     {
         var sb = new StringBuilder();
         var writer = new CodeWriter(sb);
+        var hasDeliveryGroups = !plan.DeliveryGroups.IsDefaultOrEmpty;
 
         WriteOperation(plan, trace, writer);
 
@@ -28,12 +29,12 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
             ExecutionNodeTrace? nodeTrace = null;
             trace?.Nodes.TryGetValue(node.Id, out nodeTrace);
 
-            WriteNode(node, nodeTrace, writer);
+            WriteNode(node, nodeTrace, hasDeliveryGroups, writer);
         }
 
         writer.Unindent();
 
-        if (!plan.DeliveryGroups.IsDefaultOrEmpty)
+        if (hasDeliveryGroups)
         {
             writer.WriteLine("deliveryGroups:");
             writer.Indent();
@@ -62,12 +63,16 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
         return sb.ToString();
     }
 
-    private static void WriteNode(ExecutionNode node, ExecutionNodeTrace? nodeTrace, CodeWriter writer)
+    private static void WriteNode(
+        ExecutionNode node,
+        ExecutionNodeTrace? nodeTrace,
+        bool hasDeliveryGroups,
+        CodeWriter writer)
     {
         switch (node)
         {
             case OperationExecutionNode operationNode:
-                WriteOperationNode(operationNode, nodeTrace, writer);
+                WriteOperationNode(operationNode, nodeTrace, hasDeliveryGroups, writer);
                 break;
 
             case EventStreamExecutionNode eventStreamNode:
@@ -148,7 +153,7 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
 
             foreach (var node in incrementalPlan.AllNodes)
             {
-                WriteNode(node, nodeTrace: null, writer);
+                WriteNode(node, nodeTrace: null, hasDeliveryGroups: false, writer);
             }
 
             writer.Unindent();
@@ -213,7 +218,11 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
     private static string FormatSourceText(ReadOnlyMemory<byte> value)
         => Utf8GraphQLParser.Parse(value.Span).ToString(indented: true);
 
-    private static void WriteOperationNode(OperationExecutionNode node, ExecutionNodeTrace? trace, CodeWriter writer)
+    private static void WriteOperationNode(
+        OperationExecutionNode node,
+        ExecutionNodeTrace? trace,
+        bool hasDeliveryGroups,
+        CodeWriter writer)
     {
         writer.WriteLine("- id: {0}", node.Id);
         writer.Indent();
@@ -297,7 +306,12 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
             writer.WriteLine("requiresFileUpload: true");
         }
 
-        WriteDependencies(node.Dependencies, node.OptionalDependencies, node.ParentDependencies, writer);
+        WriteDependencies(
+            node.Dependencies,
+            node.OptionalDependencies,
+            node.ParentDependencies,
+            markOptional: hasDeliveryGroups,
+            writer);
 
         TryWriteNodeTrace(writer, trace);
 
@@ -738,6 +752,14 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
         ReadOnlySpan<IOperationPlanNode> optionalDependencies,
         ReadOnlySpan<int> parentDependencies,
         CodeWriter writer)
+        => WriteDependencies(dependencies, optionalDependencies, parentDependencies, markOptional: false, writer);
+
+    private static void WriteDependencies(
+        ReadOnlySpan<IOperationPlanNode> dependencies,
+        ReadOnlySpan<IOperationPlanNode> optionalDependencies,
+        ReadOnlySpan<int> parentDependencies,
+        bool markOptional,
+        CodeWriter writer)
     {
         if (dependencies.Length == 0 && optionalDependencies.Length == 0 && parentDependencies.Length == 0)
         {
@@ -756,6 +778,13 @@ public sealed class YamlOperationPlanFormatter : OperationPlanFormatter
                 || (i < dependencies.Length && dependencies[i].Id < optionalDependencies[j].Id))
             {
                 writer.WriteLine("- id: {0}", dependencies[i++].Id);
+            }
+            else if (markOptional)
+            {
+                writer.WriteLine("- id: {0}", optionalDependencies[j++].Id);
+                writer.Indent();
+                writer.WriteLine("optional: true");
+                writer.Unindent();
             }
             else
             {

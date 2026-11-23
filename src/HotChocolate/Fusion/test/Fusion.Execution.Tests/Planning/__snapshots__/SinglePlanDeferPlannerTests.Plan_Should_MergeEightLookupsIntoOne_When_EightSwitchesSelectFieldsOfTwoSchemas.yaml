@@ -255,6 +255,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s8
         passingValue: true
     deliveryGroups:
@@ -277,6 +279,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s8
         passingValue: true
     deliveryGroups:
@@ -387,6 +391,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s7
         passingValue: true
     deliveryGroups:
@@ -409,6 +415,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s7
         passingValue: true
     deliveryGroups:
@@ -433,6 +441,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s6
         passingValue: true
     deliveryGroups:
@@ -455,6 +465,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s6
         passingValue: true
     deliveryGroups:
@@ -479,6 +491,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s5
         passingValue: true
     deliveryGroups:
@@ -501,6 +515,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s5
         passingValue: true
     deliveryGroups:
@@ -525,6 +541,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s4
         passingValue: true
     deliveryGroups:
@@ -547,6 +565,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s4
         passingValue: true
     deliveryGroups:
@@ -571,6 +591,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s3
         passingValue: true
     deliveryGroups:
@@ -593,6 +615,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s3
         passingValue: true
     deliveryGroups:
@@ -617,6 +641,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s2
         passingValue: true
     deliveryGroups:
@@ -639,6 +665,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $s1
+        passingValue: true
       - variable: $s2
         passingValue: true
     deliveryGroups:
@@ -665,6 +693,8 @@ nodes:
     conditions:
       - variable: $s1
         passingValue: true
+      - variable: $s2
+        passingValue: true
     deliveryGroups:
       - 0
     dependencies:
@@ -686,6 +716,8 @@ nodes:
           id
     conditions:
       - variable: $s1
+        passingValue: true
+      - variable: $s2
         passingValue: true
     deliveryGroups:
       - 0

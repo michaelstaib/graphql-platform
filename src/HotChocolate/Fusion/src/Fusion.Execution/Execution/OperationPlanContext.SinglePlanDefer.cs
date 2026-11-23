@@ -890,9 +890,17 @@ internal sealed partial class SinglePlanDeliveryState
                     }
                 }
 
-                if (node is OperationExecutionNode step && MarkNeededProviders(step))
+                if (node is OperationExecutionNode step)
                 {
-                    changed = true;
+                    if (MarkNeededOptionalProviders(step))
+                    {
+                        changed = true;
+                    }
+
+                    if (MarkNeededProviders(step))
+                    {
+                        changed = true;
+                    }
                 }
 
                 if (node is OperationBatchExecutionNode batch)
@@ -934,19 +942,56 @@ internal sealed partial class SinglePlanDeliveryState
 
         foreach (var dependency in definition.Dependencies)
         {
+            if (MarkNeeded(dependency))
+            {
+                marked = true;
+            }
+        }
+
+        foreach (var dependency in definition.OptionalDependencies)
+        {
+            if (!Planning.OperationPlanner.IsEntityReuseOrderingDependency(definition, dependency)
+                && MarkNeeded(dependency))
+            {
+                marked = true;
+            }
+        }
+
+        return marked;
+    }
+
+    private bool MarkNeeded(IOperationPlanNode dependency)
+    {
+        var dependencyNode = Plan.GetExecutionNode(dependency);
+
+        if ((Needed[dependency.Id] && Needed[dependencyNode.Id])
+            || GetDeliveryGroups(dependencyNode).IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        Needed[dependency.Id] = true;
+        Needed[dependencyNode.Id] = true;
+        return true;
+    }
+
+    // Marks the steps that the step reads a value from as needed, when another step can provide the value too.
+    // Returns whether a flag changed.
+    private bool MarkNeededOptionalProviders(OperationExecutionNode step)
+    {
+        var marked = false;
+
+        foreach (var dependency in step.OptionalDependencies)
+        {
             var dependencyNode = Plan.GetExecutionNode(dependency);
 
-            if (Needed[dependency.Id] && Needed[dependencyNode.Id])
+            if (Needed[dependencyNode.Id]
+                || GetDeliveryGroups(dependencyNode).IsDefaultOrEmpty
+                || Planning.OperationPlanner.IsEntityReuseOrderingDependency(step, dependency))
             {
                 continue;
             }
 
-            if (GetDeliveryGroups(dependencyNode).IsDefaultOrEmpty)
-            {
-                continue;
-            }
-
-            Needed[dependency.Id] = true;
             Needed[dependencyNode.Id] = true;
             marked = true;
         }
@@ -962,21 +1007,41 @@ internal sealed partial class SinglePlanDeliveryState
 
         foreach (var dependency in step.Dependencies)
         {
-            if (Plan.GetExecutionNode(dependency) is not OperationBatchExecutionNode provider
-                || GetDeliveryGroups(provider).IsDefaultOrEmpty)
+            if (MarkNeededOperations(step, dependency))
             {
-                continue;
+                marked = true;
             }
+        }
 
-            foreach (var definition in provider.Operations)
+        foreach (var dependency in step.OptionalDependencies)
+        {
+            if (MarkNeededOperations(step, dependency))
             {
-                if (!Needed[definition.Id]
-                    && IsInActiveGroup(definition)
-                    && Supplies(definition, step.Requirements))
-                {
-                    Needed[definition.Id] = true;
-                    marked = true;
-                }
+                marked = true;
+            }
+        }
+
+        return marked;
+    }
+
+    private bool MarkNeededOperations(OperationExecutionNode step, IOperationPlanNode dependency)
+    {
+        if (Plan.GetExecutionNode(dependency) is not OperationBatchExecutionNode provider
+            || GetDeliveryGroups(provider).IsDefaultOrEmpty)
+        {
+            return false;
+        }
+
+        var marked = false;
+
+        foreach (var definition in provider.Operations)
+        {
+            if (!Needed[definition.Id]
+                && IsInActiveGroup(definition)
+                && Supplies(definition, step.Requirements))
+            {
+                Needed[definition.Id] = true;
+                marked = true;
             }
         }
 

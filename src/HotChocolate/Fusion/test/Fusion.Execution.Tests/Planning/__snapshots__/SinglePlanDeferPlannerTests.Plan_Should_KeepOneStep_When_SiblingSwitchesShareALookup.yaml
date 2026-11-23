@@ -87,6 +87,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
@@ -109,6 +111,8 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
@@ -185,6 +189,8 @@ nodes:
     conditions:
       - variable: $a
         passingValue: true
+      - variable: $b
+        passingValue: true
     deliveryGroups:
       - 0
     dependencies:
@@ -206,6 +212,8 @@ nodes:
           id
     conditions:
       - variable: $a
+        passingValue: true
+      - variable: $b
         passingValue: true
     deliveryGroups:
       - 0

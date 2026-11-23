@@ -77,10 +77,10 @@ nodes:
     type: Operation
     schema: d
     operation: |
-      query Op_123456789101112_2($__fusion_1_id: ID!) {
+      query Op_123456789101112_2($a: Boolean!, $__fusion_1_id: ID!) {
         productByIdForStock(id: $__fusion_1_id) {
           stock
-          author {
+          author @include(if: $a) {
             id
           }
         }
@@ -96,6 +96,8 @@ nodes:
         passingValue: true
     deliveryGroups:
       - 1
+    forwardedVariables:
+      - a
     dependencies:
       - id: 1
   - id: 3
@@ -114,12 +116,17 @@ nodes:
         selectionMap: >-
           id
     conditions:
+      - variable: $a
+        passingValue: true
       - variable: $b
         passingValue: true
     deliveryGroups:
       - 1
     dependencies:
       - id: 2
+        optional: true
+      - id: 8
+        optional: true
   - id: 4
     type: Operation
     schema: d
@@ -147,10 +154,10 @@ nodes:
     type: Operation
     schema: b
     operation: |
-      query Op_123456789101112_6($__fusion_5_id: ID!) {
+      query Op_123456789101112_6($b: Boolean!, $__fusion_5_id: ID!) {
         productById(id: $__fusion_5_id) {
           price
-          author {
+          author @include(if: $b) {
             id
           }
         }
@@ -166,6 +173,8 @@ nodes:
         passingValue: true
     deliveryGroups:
       - 0
+    forwardedVariables:
+      - b
     dependencies:
       - id: 1
   - id: 7
@@ -186,10 +195,15 @@ nodes:
     conditions:
       - variable: $a
         passingValue: true
+      - variable: $b
+        passingValue: true
     deliveryGroups:
       - 0
     dependencies:
+      - id: 4
+        optional: true
       - id: 6
+        optional: true
   - id: 8
     type: Operation
     schema: b

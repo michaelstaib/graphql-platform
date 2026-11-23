@@ -3,7 +3,7 @@
 ## Payload 1
 
 ```json
-{"errors":[{"message":"B failed 2","path":["user","inner"]}],"data":{"user":{"nick":"User: VXNlcjoyNDgxMTg2ODQy","inner":null}},"pending":[{"id":"0","path":["user"]}],"hasNext":true}
+{"data":{"user":{"nick":"User: VXNlcjoyNDgxMTg2ODQy","inner":{"c":"Inner: SW5uZXI6MzAzMTU3MjMyMQ=="}}},"pending":[{"id":"0","path":["user"]}],"hasNext":true}
 ```
 
 ## Payload 2
