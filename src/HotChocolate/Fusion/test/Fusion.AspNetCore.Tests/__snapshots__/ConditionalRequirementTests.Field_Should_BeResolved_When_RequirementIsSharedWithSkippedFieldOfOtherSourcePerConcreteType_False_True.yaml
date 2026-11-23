@@ -1,0 +1,505 @@
+title: Field_Should_BeResolved_When_RequirementIsSharedWithSkippedFieldOfOtherSourcePerConcreteType
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      thing {
+        ... on Alpha {
+          item {
+            label
+            tax @skip(if: $a)
+            shipping @skip(if: $a) @include(if: $b)
+          }
+        }
+        ... on Beta {
+          item {
+            label
+            shipping
+          }
+        }
+      }
+    }
+  variables: |
+    {
+      "a": false,
+      "b": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "thing": {
+          "item": {
+            "label": "Product: UHJvZHVjdDo0MjMyMzE1ODU4",
+            "tax": 123,
+            "shipping": 123
+          }
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        thing: Thing!
+      }
+
+      type Alpha implements Thing @key(fields: "id") {
+        id: ID!
+        item: Product!
+      }
+
+      type Beta implements Thing @key(fields: "id") {
+        id: ID!
+        item: Product!
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+      }
+
+      interface Thing {
+        id: ID!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_1 {
+              thing {
+                __typename
+                ... on Alpha {
+                  item {
+                    id
+                  }
+                }
+                ... on Beta {
+                  item {
+                    id
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "thing": {
+                    "__typename": "Alpha",
+                    "item": {
+                      "id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+                    }
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+        weight: Int!
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_7($__fusion_8_id: ID!) {
+              productById(id: $__fusion_8_id) {
+                total
+                weight
+              }
+            }
+          variables: |
+            {
+              "__fusion_8_id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "total": 123,
+                    "weight": 123
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+        label: String
+        shipping(weight: Int @require(field: "weight")): Int
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_9($__fusion_10_weight: Int, $__fusion_11_id: ID!) {
+              productById(id: $__fusion_11_id) {
+                shipping(weight: $__fusion_10_weight)
+              }
+            }
+          variables: |
+            {
+              "__fusion_10_weight": 123,
+              "__fusion_11_id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "shipping": 123
+                  }
+                }
+              }
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_2($__fusion_1_id: ID!) {
+              productById(id: $__fusion_1_id) {
+                label
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "label": "Product: UHJvZHVjdDo0MjMyMzE1ODU4"
+                  }
+                }
+              }
+  - name: C
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: ID!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: ID!
+        rating: Int
+        tax(total: Int @require(field: "total")): Int
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_eaa4b15f_6($__fusion_6_total: Int, $__fusion_7_id: ID!) {
+              productById(id: $__fusion_7_id) {
+                tax(total: $__fusion_6_total)
+              }
+            }
+          variables: |
+            {
+              "__fusion_6_total": 123,
+              "__fusion_7_id": "UHJvZHVjdDo0MjMyMzE1ODU4"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "tax": 123
+                  }
+                }
+              }
+operationPlan:
+  id: b590d7071ae7868a2aa01712b0cf829231e9bb0c0832ac3f458d2997549d0fc9
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          thing {
+            __typename @fusion__requirement
+            ... on Alpha {
+              item {
+                label
+                id @fusion__requirement
+                total @fusion__requirement
+                weight @fusion__requirement
+                tax @skip(if: $a)
+                shipping @skip(if: $a) @include(if: $b)
+              }
+            }
+            ... on Beta {
+              item {
+                label
+                shipping
+                id @fusion__requirement
+                weight @fusion__requirement
+              }
+            }
+          }
+        }
+      name: testQuery
+      kind: Query
+      id: b2c96df0cc5cdfb45f0038a035348a9e
+      hash: eaa4b15fadeabbb33f2fa26315d41f34
+      shortHash: eaa4b15f
+  searchSpace: 3
+  expandedNodes: 22
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_eaa4b15f_1
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_1 {
+            thing {
+              __typename
+              ... on Alpha {
+                item {
+                  id
+                }
+              }
+              ... on Beta {
+                item {
+                  id
+                }
+              }
+            }
+          }
+        hash: f97d828995eae4bb844cabcf87e06e83f5f1653bff5743422abb76688264157b
+        shortHash: f97d8289
+        xxHash: 10129182552755899841
+      resultSelectionSet: >-
+        { thing }
+    - id: 6
+      type: Operation
+      schema: C
+      operation:
+        name: testQuery_eaa4b15f_6
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_6($__fusion_6_total: Int, $__fusion_7_id: ID!) {
+            productById(id: $__fusion_7_id) {
+              tax(total: $__fusion_6_total)
+            }
+          }
+        hash: f3b3e38c1bfcd4100d1bd43f3691915702ea4694ae889b8ae5bf64687ea804d9
+        shortHash: f3b3e38c
+        xxHash: 6460347281286586763
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { tax }
+      source: $.productById
+      target: $.thing<Alpha>.item
+      requirements:
+        - name: __fusion_6_total
+          type: Int
+          path: $.thing<Alpha>.item
+          selectionMap: >-
+            total
+        - name: __fusion_7_id
+          type: ID!
+          path: $.thing<Alpha>.item
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 10
+    - id: 4
+      type: Operation
+      schema: D
+      operation:
+        name: testQuery_eaa4b15f_4
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_4($__fusion_4_id: ID!) {
+            productById(id: $__fusion_4_id) {
+              weight
+            }
+          }
+        hash: 637af68e81594f22f455c75a1a7e8066517c2c8c7777509bf1321d4a014dfa9c
+        shortHash: 637af68e
+        xxHash: 5742595125986028757
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { weight }
+      source: $.productById
+      target: $.thing<Beta>.item
+      batchingGroupId: 10
+      requirements:
+        - name: __fusion_4_id
+          type: ID!
+          path: $.thing<Beta>.item
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 7
+      type: Operation
+      schema: D
+      operation:
+        name: testQuery_eaa4b15f_7
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_7($__fusion_8_id: ID!) {
+            productById(id: $__fusion_8_id) {
+              total
+              weight
+            }
+          }
+        hash: a147e6980a064b4b818dd614fe914d67c9c4fa622a837ab669646da1089895a2
+        shortHash: a147e698
+        xxHash: 12856729644974120591
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { total weight }
+      source: $.productById
+      target: $.thing<Alpha>.item
+      batchingGroupId: 10
+      requirements:
+        - name: __fusion_8_id
+          type: ID!
+          path: $.thing<Alpha>.item
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_eaa4b15f_3
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_3($__fusion_2_weight: Int, $__fusion_3_id: ID!) {
+            productById(id: $__fusion_3_id) {
+              shipping(weight: $__fusion_2_weight)
+            }
+          }
+        hash: 3fcc8c22d3dab279762eb23c7afb907568379a4c1effa7fb30a198fe6bc49b75
+        shortHash: 3fcc8c22
+        xxHash: 376137499577363766
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { shipping }
+      source: $.productById
+      target: $.thing<Beta>.item
+      batchingGroupId: 11
+      requirements:
+        - name: __fusion_2_weight
+          type: Int
+          path: $.thing<Beta>.item
+          selectionMap: >-
+            weight
+        - name: __fusion_3_id
+          type: ID!
+          path: $.thing<Beta>.item
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+        - id: 4
+    - id: 9
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_eaa4b15f_9
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_9($__fusion_10_weight: Int, $__fusion_11_id: ID!) {
+            productById(id: $__fusion_11_id) {
+              shipping(weight: $__fusion_10_weight)
+            }
+          }
+        hash: 1eb4189fe7718b4a42563fcd4ff86305c83688aaba854994556c2359879c9c13
+        shortHash: 1eb4189f
+        xxHash: 181422925342660165
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { shipping }
+      source: $.productById
+      target: $.thing<Alpha>.item
+      batchingGroupId: 11
+      requirements:
+        - name: __fusion_10_weight
+          type: Int
+          path: $.thing<Alpha>.item
+          selectionMap: >-
+            weight
+        - name: __fusion_11_id
+          type: ID!
+          path: $.thing<Alpha>.item
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+        - variable: $b
+          passingValue: true
+      dependencies:
+        - id: 1
+        - id: 7
+    - id: 2
+      type: OperationBatch
+      schema: B
+      operation:
+        name: testQuery_eaa4b15f_2
+        kind: Query
+        document: |
+          query testQuery_eaa4b15f_2($__fusion_1_id: ID!) {
+            productById(id: $__fusion_1_id) {
+              label
+            }
+          }
+        hash: 3549f004cf34ce45feb5c067b19f08b9772e104c83882e294e4d8d5a9c024921
+        shortHash: 3549f004
+        xxHash: 11207736444035653380
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { label }
+      source: $.productById
+      targets:
+        - $.thing<Beta>.item
+        - $.thing<Alpha>.item
+      batchingGroupId: 12
+      requirements:
+        - name: __fusion_1_id
+          type: ID!
+          path: $.thing<Beta>.item
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1

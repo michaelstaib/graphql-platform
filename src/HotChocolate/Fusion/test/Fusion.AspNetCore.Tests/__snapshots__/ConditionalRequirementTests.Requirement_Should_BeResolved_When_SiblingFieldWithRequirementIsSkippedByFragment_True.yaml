@@ -1,0 +1,308 @@
+title: Requirement_Should_BeResolved_When_SiblingFieldWithRequirementIsSkippedByFragment
+request:
+  document: |
+    query testQuery($a: Boolean!) {
+      user {
+        shipping
+        ... @skip(if: $a) {
+          tax
+        }
+      }
+    }
+  variables: |
+    {
+      "a": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "user": {
+          "shipping": 1010
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+        users: [User!]!
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_47c87f5e_1 {
+              user {
+                id
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {
+                    "id": 1
+                  }
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        id: Int!
+        weight: Int!
+        total: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_47c87f5e_6($__fusion_7_id: Int!) {
+              userById(id: $__fusion_7_id) {
+                weight
+              }
+            }
+          variables: |
+            {
+              "__fusion_7_id": 1
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "weight": 10
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        userById(id: Int!): User @lookup @internal
+      }
+
+      type User @key(fields: "id") {
+        shipping(weight: Int @require(field: "weight")): Int
+        tax(total: Int @require(field: "total")): Int
+        id: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_47c87f5e_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
+              userById(id: $__fusion_6_id) {
+                shipping(weight: $__fusion_5_weight)
+              }
+            }
+          variables: |
+            {
+              "__fusion_5_weight": 10,
+              "__fusion_6_id": 1
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "userById": {
+                    "shipping": 1010
+                  }
+                }
+              }
+operationPlan:
+  id: ebaae718a17dd26d33cd589f7c6a6eea66a13e1313026a67c5498c0ca3bd75be
+  operation:
+    - document: |
+        query testQuery($a: Boolean!) {
+          user {
+            shipping
+            id @fusion__requirement
+            total @fusion__requirement
+            weight @fusion__requirement
+            tax @skip(if: $a)
+          }
+        }
+      name: testQuery
+      kind: Query
+      id: fbbe74e3d3158595f5c69f06ce6071bc
+      hash: 47c87f5eda8ab23d2a7e52acf36737b9
+      shortHash: 47c87f5e
+  searchSpace: 2
+  expandedNodes: 8
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_47c87f5e_1
+        kind: Query
+        document: |
+          query testQuery_47c87f5e_1 {
+            user {
+              id
+            }
+          }
+        hash: a11dfc27b660d2ee7d5b81ff272cbe331bce9c10707f79c080b68a818cb09a27
+        shortHash: a11dfc27
+        xxHash: 14267824403323307196
+      resultSelectionSet: >-
+        { user }
+    - id: 4
+      type: Operation
+      schema: D
+      operation:
+        name: testQuery_47c87f5e_4
+        kind: Query
+        document: |
+          query testQuery_47c87f5e_4($__fusion_4_id: Int!) {
+            userById(id: $__fusion_4_id) {
+              total
+            }
+          }
+        hash: 1f3d743d7766ba06d024f5aea5e5cdecf9c9087c28bf3f49a810223f659c83fe
+        shortHash: 1f3d743d
+        xxHash: 13587403655020216289
+      lookupTypeName: User
+      resultSelectionSet: >-
+        { total }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 7
+      requirements:
+        - name: __fusion_4_id
+          type: Int!
+          path: $.user
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 6
+      type: Operation
+      schema: D
+      operation:
+        name: testQuery_47c87f5e_6
+        kind: Query
+        document: |
+          query testQuery_47c87f5e_6($__fusion_7_id: Int!) {
+            userById(id: $__fusion_7_id) {
+              weight
+            }
+          }
+        hash: fd424488717d93717a215c517d9c67cb26ced4525f5e6d4df9c0b2d591c1dd85
+        shortHash: fd424488
+        xxHash: 10258922607789789133
+      lookupTypeName: User
+      resultSelectionSet: >-
+        { weight }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 7
+      requirements:
+        - name: __fusion_7_id
+          type: Int!
+          path: $.user
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_47c87f5e_3
+        kind: Query
+        document: |
+          query testQuery_47c87f5e_3($__fusion_2_total: Int, $__fusion_3_id: Int!) {
+            userById(id: $__fusion_3_id) {
+              tax(total: $__fusion_2_total)
+            }
+          }
+        hash: 5d3ea97ecdd168838720c8e229d1c6d910310d114aaf14be677d4da8e9b7835d
+        shortHash: 5d3ea97e
+        xxHash: 4664842995712183964
+      lookupTypeName: User
+      resultSelectionSet: >-
+        { tax }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_2_total
+          type: Int
+          path: $.user
+          selectionMap: >-
+            total
+        - name: __fusion_3_id
+          type: Int!
+          path: $.user
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 4
+    - id: 5
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_47c87f5e_5
+        kind: Query
+        document: |
+          query testQuery_47c87f5e_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
+            userById(id: $__fusion_6_id) {
+              shipping(weight: $__fusion_5_weight)
+            }
+          }
+        hash: d1c71b43659cc940b6274eda0fa99a453b543155b090bc9febce3d3cb63ddcd3
+        shortHash: d1c71b43
+        xxHash: 839469958979660630
+      lookupTypeName: User
+      resultSelectionSet: >-
+        { shipping }
+      source: $.userById
+      target: $.user
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_5_weight
+          type: Int
+          path: $.user
+          selectionMap: >-
+            weight
+        - name: __fusion_6_id
+          type: Int!
+          path: $.user
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 1
+        - id: 6

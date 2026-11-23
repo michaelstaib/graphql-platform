@@ -1,0 +1,109 @@
+id: 2db679c03a3160b2a1d4c43ef0dd99701597be0614768a68a09c28cebac256cc
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user @skip(if: $a) {
+          item {
+            __typename @fusion__requirement
+            shipping
+            id @fusion__requirement
+            weight @fusion__requirement
+          }
+          id @fusion__requirement
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 1
+expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          user {
+            id
+          }
+        }
+      hash: 16edb7aa0dd7ec28e1e39327954aac6b8aad8fd79fd15d1b19cfc3f26f7bc85f
+      shortHash: 16edb7aa
+      xxHash: 7236423868947797758
+    resultSelectionSet: >-
+      { user }
+    conditions:
+      - variable: $a
+        passingValue: false
+  - id: 2
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_2
+      kind: Query
+      document: |
+        query Op_123456789101112_2($__fusion_1_id: ID!) {
+          userById(id: $__fusion_1_id) {
+            item {
+              __typename
+              id
+              weight
+            }
+          }
+        }
+      hash: 0fc23367ddb9632065208f6d8644b120df4c2a59cec9b5a4957dbe260433b3b2
+      shortHash: 0fc23367
+      xxHash: 13581037811764353702
+    lookupTypeName: User
+    resultSelectionSet: >-
+      { item { __typename id weight } }
+    source: $.userById
+    target: $.user
+    requirements:
+      - name: __fusion_1_id
+        type: ID!
+        path: $.user
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3($__fusion_2_id: ID!, $__fusion_3_weight: Int) {
+          productById(id: $__fusion_2_id) {
+            shipping(weight: $__fusion_3_weight)
+          }
+        }
+      hash: dcb8279ec57bf792b5828f3b31c0f45c549b1bc106a1f0ee531f067f9f2e86cd
+      shortHash: dcb8279e
+      xxHash: 8084250813860645642
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { shipping }
+    source: $.productById
+    target: $.user.item<Product>
+    requirements:
+      - name: __fusion_2_id
+        type: ID!
+        path: $.user.item<Product>
+        selectionMap: >-
+          id
+      - name: __fusion_3_weight
+        type: Int
+        path: $.user.item<Product>
+        selectionMap: >-
+          weight
+    dependencies:
+      - id: 2

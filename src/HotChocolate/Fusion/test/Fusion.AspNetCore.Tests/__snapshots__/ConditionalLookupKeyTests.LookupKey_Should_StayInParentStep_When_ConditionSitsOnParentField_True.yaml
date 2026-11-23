@@ -1,0 +1,202 @@
+title: LookupKey_Should_StayInParentStep_When_ConditionSitsOnParentField
+request:
+  document: |
+    query testQuery($a: Boolean!) {
+      user {
+        order @skip(if: $a) {
+          item {
+            price
+          }
+        }
+      }
+    }
+  variables: |
+    {
+      "a": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "user": {}
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        user: User!
+      }
+
+      type Order @key(fields: "id") {
+        id: Int!
+      }
+
+      type User {
+        id: Int!
+        order: Order!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_e819cb85_1($a: Boolean!) {
+              user {
+                order @skip(if: $a) {
+                  id
+                }
+              }
+            }
+          variables: |
+            {
+              "a": true
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "user": {}
+                }
+              }
+  - name: D
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: Int!): Order @lookup @internal
+      }
+
+      type Item @key(fields: "id") {
+        id: Int!
+      }
+
+      type Order @key(fields: "id") {
+        id: Int!
+        item: Item!
+      }
+  - name: E
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        itemById(id: Int!): Item @lookup @internal
+      }
+
+      type Item @key(fields: "id") {
+        id: Int!
+        price: Int!
+      }
+operationPlan:
+  id: 1044e65cad02e06adbc4231e1f9ae0090642b76fa35cddceda03eee613edfc96
+  operation:
+    - document: |
+        query testQuery($a: Boolean!) {
+          user {
+            order @skip(if: $a) {
+              item {
+                price
+                id @fusion__requirement
+              }
+              id @fusion__requirement
+            }
+          }
+        }
+      name: testQuery
+      kind: Query
+      id: 5264bc2c4da4b47291745016525fe3bc
+      hash: e819cb85b50bdd4dc7604c924b2b2a9b
+      shortHash: e819cb85
+  searchSpace: 1
+  expandedNodes: 3
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_e819cb85_1
+        kind: Query
+        document: |
+          query testQuery_e819cb85_1($a: Boolean!) {
+            user {
+              order @skip(if: $a) {
+                id
+              }
+            }
+          }
+        hash: 7c8a7aed039da795ef5bf686e721e4ddec1f03a5024cac5701bfd1f327c148ba
+        shortHash: 7c8a7aed
+        xxHash: 8959483370775413470
+      resultSelectionSet: >-
+        { user }
+      forwardedVariables:
+        - a
+    - id: 2
+      type: Operation
+      schema: D
+      operation:
+        name: testQuery_e819cb85_2
+        kind: Query
+        document: |
+          query testQuery_e819cb85_2($__fusion_1_id: Int!) {
+            orderById(id: $__fusion_1_id) {
+              item {
+                id
+              }
+            }
+          }
+        hash: 612c26b40dd8173da0815ceecd1da533db3da5000ca3b92f57271fce478ae4af
+        shortHash: 612c26b4
+        xxHash: 11359479826023723467
+      lookupTypeName: Order
+      resultSelectionSet: >-
+        { item }
+      source: $.orderById
+      target: $.user.order
+      requirements:
+        - name: __fusion_1_id
+          type: Int!
+          path: $.user.order
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 3
+      type: Operation
+      schema: E
+      operation:
+        name: testQuery_e819cb85_3
+        kind: Query
+        document: |
+          query testQuery_e819cb85_3($__fusion_2_id: Int!) {
+            itemById(id: $__fusion_2_id) {
+              price
+            }
+          }
+        hash: ce390dd822d7406034a209de429f24f37d0acf5364e2fdd8f83a862e6c0d4511
+        shortHash: ce390dd8
+        xxHash: 17489892222134591067
+      lookupTypeName: Item
+      resultSelectionSet: >-
+        { price }
+      source: $.itemById
+      target: $.user.order.item
+      requirements:
+        - name: __fusion_2_id
+          type: Int!
+          path: $.user.order.item
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 2

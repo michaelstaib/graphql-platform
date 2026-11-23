@@ -1,0 +1,440 @@
+title: LookupKey_Should_StayInConditionalStep_When_EverySelectionOfLookupCarriesTheCondition
+request:
+  document: |
+    query testQuery($a: Boolean!, $b: Boolean!) {
+      products {
+        upc
+        eur @skip(if: $a)
+        rating @skip(if: $a) @include(if: $b)
+      }
+    }
+  variables: |
+    {
+      "a": false,
+      "b": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "products": [
+          {
+            "upc": "1",
+            "eur": 880,
+            "rating": 14
+          },
+          {
+            "upc": "2",
+            "eur": 1760,
+            "rating": 25
+          }
+        ]
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        products: [Product!]!
+        product: Product
+        productByUpc(upc: String!): Product @lookup
+      }
+
+      type Product @key(fields: "upc") {
+        eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+        upc: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_d37d696c_1 {
+              products {
+                upc
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "products": [
+                    {
+                      "upc": "1"
+                    },
+                    {
+                      "upc": "2"
+                    }
+                  ]
+                }
+              }
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_d37d696c_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+              productByUpc(upc: $__fusion_2_upc) {
+                eur(price: $__fusion_1_price)
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_1_price": 880,
+                "__fusion_2_upc": "1"
+              },
+              {
+                "__fusion_1_price": 1760,
+                "__fusion_2_upc": "2"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "eur": 880
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "eur": 1760
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: Int!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        price(cur: String): Int
+        id: Int! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_d37d696c_3($__fusion_3_id: Int!) {
+              productById(id: $__fusion_3_id) {
+                price(cur: "EUR")
+                id
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_3_id": 11
+              },
+              {
+                "__fusion_3_id": 22
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "price": 880,
+                    "id": 11
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "price": 1760,
+                    "id": 22
+                  }
+                }
+              }
+  - name: S
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productByUpc(upc: String!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "upc") {
+        upc: String!
+        id: Int! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_d37d696c_4($__fusion_4_upc: String!) {
+              productByUpc(upc: $__fusion_4_upc) {
+                id
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_4_upc": "1"
+              },
+              {
+                "__fusion_4_upc": "2"
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "id": 11
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "id": 22
+                  }
+                }
+              }
+  - name: T
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productById(id: Int!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "id") {
+        id: Int! @shareable
+        rating: Int!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_d37d696c_6($__fusion_6_id: Int!) {
+              productById(id: $__fusion_6_id) {
+                rating
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_6_id": 11
+              },
+              {
+                "__fusion_6_id": 22
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "rating": 14
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "productById": {
+                    "rating": 25
+                  }
+                }
+              }
+operationPlan:
+  id: f8a0b133dc10545f42569f77b36143c6c2e5e550c8f3a2c718e4c103e8e437ea
+  operation:
+    - document: |
+        query testQuery($a: Boolean!, $b: Boolean!) {
+          products {
+            upc
+            upc @fusion__requirement
+            price(cur: "EUR") @fusion__requirement
+            id @fusion__requirement
+            eur @skip(if: $a)
+            rating @skip(if: $a) @include(if: $b)
+          }
+        }
+      name: testQuery
+      kind: Query
+      id: c443fa207f32e852d8982b6499580108
+      hash: d37d696cce57e23224729fc029e62cbb
+      shortHash: d37d696c
+  searchSpace: 2
+  expandedNodes: 9
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_d37d696c_1
+        kind: Query
+        document: |
+          query testQuery_d37d696c_1 {
+            products {
+              upc
+            }
+          }
+        hash: 2bd018be3330cae564cf7a87e04503b3ef88bc08d88d4e1ecd23588b807223e1
+        shortHash: 2bd018be
+        xxHash: 10447469446639488899
+      resultSelectionSet: >-
+        { products }
+    - id: 2
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_d37d696c_2
+        kind: Query
+        document: |
+          query testQuery_d37d696c_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+            productByUpc(upc: $__fusion_2_upc) {
+              eur(price: $__fusion_1_price)
+            }
+          }
+        hash: 5b9ab081bfb6dff441c6a3ce2d1f04aa00dc2116f8914d3641a2731815f28418
+        shortHash: 5b9ab081
+        xxHash: 15324958055450383721
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { eur }
+      source: $.productByUpc
+      target: $.products
+      requirements:
+        - name: __fusion_1_price
+          type: Int
+          path: $.products
+          selectionMap: >-
+            price(cur: "EUR")
+        - name: __fusion_2_upc
+          type: String!
+          path: $.products
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 3
+    - id: 3
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_d37d696c_3
+        kind: Query
+        document: |
+          query testQuery_d37d696c_3($__fusion_3_id: Int!) {
+            productById(id: $__fusion_3_id) {
+              price(cur: "EUR")
+              id
+            }
+          }
+        hash: 3b53edd61579bb3f3830aa32cbc5938760fbd448a7e30c7acda087ff251c44dd
+        shortHash: 3b53edd6
+        xxHash: 12147569205453627857
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { price id }
+      source: $.productById
+      target: $.products
+      requirements:
+        - name: __fusion_3_id
+          type: Int!
+          path: $.products
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 4
+    - id: 4
+      type: Operation
+      schema: S
+      operation:
+        name: testQuery_d37d696c_4
+        kind: Query
+        document: |
+          query testQuery_d37d696c_4($__fusion_4_upc: String!) {
+            productByUpc(upc: $__fusion_4_upc) {
+              id
+            }
+          }
+        hash: d69cda0e1cfcdcf512d3f30d0f53c7daafc3e51e796e48f509c66106872f34d4
+        shortHash: d69cda0e
+        xxHash: 4604070362245286268
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { id }
+      source: $.productByUpc
+      target: $.products
+      requirements:
+        - name: __fusion_4_upc
+          type: String!
+          path: $.products
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $a
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 6
+      type: Operation
+      schema: T
+      operation:
+        name: testQuery_d37d696c_6
+        kind: Query
+        document: |
+          query testQuery_d37d696c_6($__fusion_6_id: Int!) {
+            productById(id: $__fusion_6_id) {
+              rating
+            }
+          }
+        hash: 7c31a117b1faf61d4d1ebeaa1e213f7dab45ce9074b8b4e00ad5cac8a85c0eba
+        shortHash: 7c31a117
+        xxHash: 7183590396029126336
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { rating }
+      source: $.productById
+      target: $.products
+      requirements:
+        - name: __fusion_6_id
+          type: Int!
+          path: $.products
+          selectionMap: >-
+            id
+      conditions:
+        - variable: $a
+          passingValue: false
+        - variable: $b
+          passingValue: true
+      dependencies:
+        - id: 3

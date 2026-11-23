@@ -1,0 +1,176 @@
+id: b32358bcb014086f2d2ade28069099afe33b6a8ae6b588b9404ab2e893d65b29
+operation:
+  - document: |
+      query($v: Boolean!) {
+        product {
+          upc @fusion__requirement
+          price(cur: "USD") @fusion__requirement
+          price(cur: "EUR") @fusion__requirement
+          eur @include(if: $v)
+          usd @skip(if: $v)
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 9
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          product {
+            upc
+          }
+        }
+      hash: 553a3844fb16fbab9cfd8e5bc7a75fe2162c214c9d5bbc3a46143f14836b67f1
+      shortHash: 553a3844
+      xxHash: 16362228295232213448
+    resultSelectionSet: >-
+      { product }
+  - id: 3
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3($__fusion_3_upc: String!) {
+          productByUpc(upc: $__fusion_3_upc) {
+            price(cur: "USD")
+          }
+        }
+      hash: 897275ce16c2ea1092057476925e52995c04245a17db00103afc7cd4a21ebe49
+      shortHash: 897275ce
+      xxHash: 1742863677141228600
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { price }
+    source: $.productByUpc
+    target: $.product
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_3_upc
+        type: String!
+        path: $.product
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $v
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_6
+      kind: Query
+      document: |
+        query Op_123456789101112_6($__fusion_7_upc: String!) {
+          productByUpc(upc: $__fusion_7_upc) {
+            price(cur: "EUR")
+          }
+        }
+      hash: ffc08ac15becc0480a34095f8c8265b42f4df47e1b5851bc912da4be82895cba
+      shortHash: ffc08ac1
+      xxHash: 12179098305218010950
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { price }
+    source: $.productByUpc
+    target: $.product
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_7_upc
+        type: String!
+        path: $.product
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $v
+        passingValue: true
+    dependencies:
+      - id: 1
+  - id: 2
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_2
+      kind: Query
+      document: |
+        query Op_123456789101112_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+          productByUpc(upc: $__fusion_2_upc) {
+            usd(price: $__fusion_1_price)
+          }
+        }
+      hash: 85fe345ef7ceb8b9638520a5302fc33a1d6dc6cbf14a6e5e243e54a1e58efaf5
+      shortHash: 85fe345e
+      xxHash: 17319748918624645292
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { usd }
+    source: $.productByUpc
+    target: $.product
+    batchingGroupId: 9
+    requirements:
+      - name: __fusion_1_price
+        type: Int
+        path: $.product
+        selectionMap: >-
+          price(cur: "USD")
+      - name: __fusion_2_upc
+        type: String!
+        path: $.product
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $v
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 3
+  - id: 5
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_5
+      kind: Query
+      document: |
+        query Op_123456789101112_5($__fusion_5_price: Int, $__fusion_6_upc: String!) {
+          productByUpc(upc: $__fusion_6_upc) {
+            eur(price: $__fusion_5_price)
+          }
+        }
+      hash: dd1a9975a60718e270b6f3310832b1f96c09ab33420c895c724bdcc2d73b1195
+      shortHash: dd1a9975
+      xxHash: 6528470431681484624
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { eur }
+    source: $.productByUpc
+    target: $.product
+    batchingGroupId: 9
+    requirements:
+      - name: __fusion_5_price
+        type: Int
+        path: $.product
+        selectionMap: >-
+          price(cur: "EUR")
+      - name: __fusion_6_upc
+        type: String!
+        path: $.product
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $v
+        passingValue: true
+    dependencies:
+      - id: 1
+      - id: 6

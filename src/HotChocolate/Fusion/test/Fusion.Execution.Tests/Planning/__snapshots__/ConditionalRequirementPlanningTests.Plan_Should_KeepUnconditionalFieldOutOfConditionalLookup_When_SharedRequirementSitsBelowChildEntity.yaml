@@ -1,0 +1,177 @@
+id: 276377fc0695d0e6809448831f77d5fdb26de00d50bf5a1fd60c5a65da47579e
+operation:
+  - document: |
+      query($a: Boolean!, $b: Boolean!) {
+        user {
+          order {
+            label
+            id @fusion__requirement
+            total @fusion__requirement
+            weight @fusion__requirement
+            tax @skip(if: $a)
+            shipping @skip(if: $a) @include(if: $b)
+          }
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 3
+expandedNodes: 17
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          user {
+            order {
+              id
+            }
+          }
+        }
+      hash: 57e6f2c3056081aa63fa355e6499519be166941efe8759a450ad275e9f072dfe
+      shortHash: 57e6f2c3
+      xxHash: 10626420653423798665
+    resultSelectionSet: >-
+      { user }
+  - id: 3
+    type: Operation
+    schema: c
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3($__fusion_2_total: Int, $__fusion_3_id: ID!) {
+          orderById(id: $__fusion_3_id) {
+            tax(total: $__fusion_2_total)
+          }
+        }
+      hash: 1fbadeb0eb1c0522fb444e123e8c3ac2f3af1a1d802509d4de5a8fcfa6f0daa8
+      shortHash: 1fbadeb0
+      xxHash: 10633579453228575228
+    lookupTypeName: Order
+    resultSelectionSet: >-
+      { tax }
+    source: $.orderById
+    target: $.user.order
+    requirements:
+      - name: __fusion_2_total
+        type: Int
+        path: $.user.order
+        selectionMap: >-
+          total
+      - name: __fusion_3_id
+        type: ID!
+        path: $.user.order
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 4
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query Op_123456789101112_4($__fusion_4_id: ID!) {
+          orderById(id: $__fusion_4_id) {
+            total
+            weight
+          }
+        }
+      hash: 80885fa3b7d99c2ba7e75ddc3ba07800b4a372edfd04b699f929d1d23856f0b8
+      shortHash: 80885fa3
+      xxHash: 16659647850891601535
+    lookupTypeName: Order
+    resultSelectionSet: >-
+      { total weight }
+    source: $.orderById
+    target: $.user.order
+    requirements:
+      - name: __fusion_4_id
+        type: ID!
+        path: $.user.order
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 5
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_5
+      kind: Query
+      document: |
+        query Op_123456789101112_5($__fusion_5_id: ID!) {
+          orderById(id: $__fusion_5_id) {
+            label
+          }
+        }
+      hash: 262a4e6d7d5ee3b075955ae92a1f4d529264afd9b004ab8df00ae113ed0f1900
+      shortHash: 262a4e6d
+      xxHash: 3447878438732287009
+    lookupTypeName: Order
+    resultSelectionSet: >-
+      { label }
+    source: $.orderById
+    target: $.user.order
+    requirements:
+      - name: __fusion_5_id
+        type: ID!
+        path: $.user.order
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_6
+      kind: Query
+      document: |
+        query Op_123456789101112_6($__fusion_6_weight: Int, $__fusion_7_id: ID!) {
+          orderById(id: $__fusion_7_id) {
+            shipping(weight: $__fusion_6_weight)
+          }
+        }
+      hash: 6087469a81fdda5bb68d364a98537e72f2a6d1a4150213acd41709e5323c60e2
+      shortHash: 6087469a
+      xxHash: 8895421680872224024
+    lookupTypeName: Order
+    resultSelectionSet: >-
+      { shipping }
+    source: $.orderById
+    target: $.user.order
+    requirements:
+      - name: __fusion_6_weight
+        type: Int
+        path: $.user.order
+        selectionMap: >-
+          weight
+      - name: __fusion_7_id
+        type: ID!
+        path: $.user.order
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+      - variable: $b
+        passingValue: true
+    dependencies:
+      - id: 1
+      - id: 4

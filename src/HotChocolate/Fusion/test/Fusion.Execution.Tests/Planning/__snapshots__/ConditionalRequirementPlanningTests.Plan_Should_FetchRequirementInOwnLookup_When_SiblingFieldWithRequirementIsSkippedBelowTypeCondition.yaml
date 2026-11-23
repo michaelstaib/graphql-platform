@@ -1,0 +1,176 @@
+id: c2d17835f9b1148cff8046d0cc138cd417766da0030534b5b866e0dbba277330
+operation:
+  - document: |
+      query($a: Boolean!) {
+        item {
+          __typename @fusion__requirement
+          ... on Product {
+            shipping
+            id @fusion__requirement
+            total @fusion__requirement
+            weight @fusion__requirement
+            tax @skip(if: $a)
+          }
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 8
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          item {
+            __typename
+            ... on Product {
+              id
+            }
+          }
+        }
+      hash: f90c125fb03ae2d9166d66cc99a585da6f30ba11de612805a02ddfdfe06fb442
+      shortHash: f90c125f
+      xxHash: 3415289652272408043
+    resultSelectionSet: >-
+      { item }
+  - id: 4
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query Op_123456789101112_4($__fusion_4_id: ID!) {
+          productById(id: $__fusion_4_id) {
+            total
+          }
+        }
+      hash: b7e7713266dafce97cb2d448ced9e3089baafc2f8658f5632150e8f4083964af
+      shortHash: b7e77132
+      xxHash: 5347910962191718387
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { total }
+    source: $.productById
+    target: $.item<Product>
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_4_id
+        type: ID!
+        path: $.item<Product>
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 6
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_6
+      kind: Query
+      document: |
+        query Op_123456789101112_6($__fusion_7_id: ID!) {
+          productById(id: $__fusion_7_id) {
+            weight
+          }
+        }
+      hash: 2a9e8cc84a8fa971575e81302a171082bc706c7bf055af1d2730368725b6feb7
+      shortHash: 2a9e8cc8
+      xxHash: 5986062687937391257
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { weight }
+    source: $.productById
+    target: $.item<Product>
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_7_id
+        type: ID!
+        path: $.item<Product>
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3($__fusion_2_total: Int, $__fusion_3_id: ID!) {
+          productById(id: $__fusion_3_id) {
+            tax(total: $__fusion_2_total)
+          }
+        }
+      hash: 54c8de025e5ba35d3d79265ebb2d7bcf8feb184e143fceadf8a6cef209bb4ef5
+      shortHash: 54c8de02
+      xxHash: 9354836035786730979
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { tax }
+    source: $.productById
+    target: $.item<Product>
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_2_total
+        type: Int
+        path: $.item<Product>
+        selectionMap: >-
+          total
+      - name: __fusion_3_id
+        type: ID!
+        path: $.item<Product>
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+      - id: 4
+  - id: 5
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_5
+      kind: Query
+      document: |
+        query Op_123456789101112_5($__fusion_5_weight: Int, $__fusion_6_id: ID!) {
+          productById(id: $__fusion_6_id) {
+            shipping(weight: $__fusion_5_weight)
+          }
+        }
+      hash: 0b8b9270a526733bee506602a7d036ed6686847d0a95c498cd776fff8784376b
+      shortHash: 0b8b9270
+      xxHash: 7327644300850268620
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { shipping }
+    source: $.productById
+    target: $.item<Product>
+    batchingGroupId: 8
+    requirements:
+      - name: __fusion_5_weight
+        type: Int
+        path: $.item<Product>
+        selectionMap: >-
+          weight
+      - name: __fusion_6_id
+        type: ID!
+        path: $.item<Product>
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 1
+      - id: 6

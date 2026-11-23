@@ -1,0 +1,103 @@
+id: 78d14a0b22fa2b78b6b1220530835b65f4a16c59ee2c0f8fe4f11ff1241c08f3
+operation:
+  - document: |
+      query($a: Boolean!) {
+        user {
+          order @skip(if: $a) {
+            item {
+              price
+              id @fusion__requirement
+            }
+            id @fusion__requirement
+          }
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 1
+expandedNodes: 3
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1($a: Boolean!) {
+          user {
+            order @skip(if: $a) {
+              id
+            }
+          }
+        }
+      hash: 2174b26f160f410ba6f54fe2ec79c0499b404a1ca682fafe10cac4ccb6a21faf
+      shortHash: 2174b26f
+      xxHash: 8339148257767203199
+    resultSelectionSet: >-
+      { user }
+    forwardedVariables:
+      - a
+  - id: 2
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_2
+      kind: Query
+      document: |
+        query Op_123456789101112_2($__fusion_1_id: ID!) {
+          orderById(id: $__fusion_1_id) {
+            item {
+              id
+            }
+          }
+        }
+      hash: 4d5b3f14da5fae0a697d80d3d7ae2d72ddc6f216402dff93176428f052f00591
+      shortHash: 4d5b3f14
+      xxHash: 15137578470029238889
+    lookupTypeName: Order
+    resultSelectionSet: >-
+      { item }
+    source: $.orderById
+    target: $.user.order
+    requirements:
+      - name: __fusion_1_id
+        type: ID!
+        path: $.user.order
+        selectionMap: >-
+          id
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 1
+  - id: 3
+    type: Operation
+    schema: e
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3($__fusion_2_id: ID!) {
+          itemById(id: $__fusion_2_id) {
+            price
+          }
+        }
+      hash: 449a3f1a041b932a4ca54e5902abcaffb54bc876ac60cb46744bb6badbe6a1e5
+      shortHash: 449a3f1a
+      xxHash: 7340947546111923258
+    lookupTypeName: Item
+    resultSelectionSet: >-
+      { price }
+    source: $.itemById
+    target: $.user.order.item
+    requirements:
+      - name: __fusion_2_id
+        type: ID!
+        path: $.user.order.item
+        selectionMap: >-
+          id
+    dependencies:
+      - id: 2

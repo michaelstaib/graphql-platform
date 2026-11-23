@@ -1,0 +1,73 @@
+id: 62025c94cf99aec3cb68551864df850d954c799be5a4b8842b20f55bf7e25164
+operation:
+  - document: |
+      query($a: Boolean!) {
+        viewer {
+          shipping
+          total @fusion__requirement
+          weight @fusion__requirement
+          tax @skip(if: $a)
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 3
+expandedNodes: 8
+nodes:
+  - id: 1
+    type: Operation
+    schema: d
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          viewer {
+            total
+            weight
+          }
+        }
+      hash: 523c79db326faf17774017a9eb9497f0fa70d871bb9e4e41d3d5bdf2bff2ab5f
+      shortHash: 523c79db
+      xxHash: 2619061691501738927
+    resultSelectionSet: >-
+      { viewer { total weight } }
+  - id: 2
+    type: Operation
+    schema: b
+    operation:
+      name: Op_123456789101112_2
+      kind: Query
+      document: |
+        query Op_123456789101112_2(
+          $a: Boolean!
+          $__fusion_1_total: Int
+          $__fusion_2_weight: Int
+        ) {
+          viewer {
+            tax(total: $__fusion_1_total) @skip(if: $a)
+            shipping(weight: $__fusion_2_weight)
+          }
+        }
+      hash: 333a9e6c39e17c01263d519eff0f484f37355cd9db2716c541f7faef178894bc
+      shortHash: 333a9e6c
+      xxHash: 17251699391741857200
+    resultSelectionSet: >-
+      { viewer { tax shipping } }
+    requirements:
+      - name: __fusion_1_total
+        type: Int
+        path: $.viewer
+        selectionMap: >-
+          total
+      - name: __fusion_2_weight
+        type: Int
+        path: $.viewer
+        selectionMap: >-
+          weight
+    forwardedVariables:
+      - a
+    dependencies:
+      - id: 1

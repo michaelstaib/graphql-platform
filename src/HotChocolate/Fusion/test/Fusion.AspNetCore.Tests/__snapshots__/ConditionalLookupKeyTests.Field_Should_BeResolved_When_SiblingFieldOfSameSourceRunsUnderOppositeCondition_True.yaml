@@ -1,0 +1,296 @@
+title: Field_Should_BeResolved_When_SiblingFieldOfSameSourceRunsUnderOppositeCondition
+request:
+  document: |
+    query testQuery($v: Boolean!) {
+      product {
+        eur @include(if: $v)
+        usd @skip(if: $v)
+      }
+    }
+  variables: |
+    {
+      "v": true
+    }
+response:
+  body: |
+    {
+      "data": {
+        "product": {
+          "eur": 80
+        }
+      }
+    }
+sourceSchemas:
+  - name: A
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        product: Product!
+        productByUpc(upc: String!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "upc") {
+        eur(price: Int @require(field: "price(cur: \"EUR\")")): Int
+        usd(price: Int @require(field: "price(cur: \"USD\")")): Int
+        upc: String!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query testQuery_b7834797_1 {
+              product {
+                upc
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "product": {
+                    "upc": "1"
+                  }
+                }
+              }
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_b7834797_5($__fusion_5_price: Int, $__fusion_6_upc: String!) {
+              productByUpc(upc: $__fusion_6_upc) {
+                eur(price: $__fusion_5_price)
+              }
+            }
+          variables: |
+            {
+              "__fusion_5_price": 80,
+              "__fusion_6_upc": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "eur": 80
+                  }
+                }
+              }
+  - name: B
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        productByUpc(upc: String!): Product @lookup @internal
+      }
+
+      type Product @key(fields: "upc") {
+        price(cur: String): Int
+        upc: String!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query testQuery_b7834797_6($__fusion_7_upc: String!) {
+              productByUpc(upc: $__fusion_7_upc) {
+                price(cur: "EUR")
+              }
+            }
+          variables: |
+            {
+              "__fusion_7_upc": "1"
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "productByUpc": {
+                    "price": 80
+                  }
+                }
+              }
+operationPlan:
+  id: 3296b2e4df9f68d75912776ea3e01050dd1a643ad0e88f11eaf62f68988a5911
+  operation:
+    - document: |
+        query testQuery($v: Boolean!) {
+          product {
+            upc @fusion__requirement
+            price(cur: "USD") @fusion__requirement
+            price(cur: "EUR") @fusion__requirement
+            eur @include(if: $v)
+            usd @skip(if: $v)
+          }
+        }
+      name: testQuery
+      kind: Query
+      id: e65d667f7dde073f0618ead41d38961b
+      hash: b7834797ad0dd3d7f32ff81c2b25bf10
+      shortHash: b7834797
+  searchSpace: 2
+  expandedNodes: 9
+  nodes:
+    - id: 1
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_b7834797_1
+        kind: Query
+        document: |
+          query testQuery_b7834797_1 {
+            product {
+              upc
+            }
+          }
+        hash: e0c6386c90004010662ccee6465575c8c8c1162920a9e22bb1179d835d0ca721
+        shortHash: e0c6386c
+        xxHash: 11378752247470343083
+      resultSelectionSet: >-
+        { product }
+    - id: 3
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_b7834797_3
+        kind: Query
+        document: |
+          query testQuery_b7834797_3($__fusion_3_upc: String!) {
+            productByUpc(upc: $__fusion_3_upc) {
+              price(cur: "USD")
+            }
+          }
+        hash: 334a7f2d623dbe91516b3fab5ffc43c7ce9f9dac847589342a9a17bb95c7301b
+        shortHash: 334a7f2d
+        xxHash: 73078895362892354
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { price }
+      source: $.productByUpc
+      target: $.product
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_3_upc
+          type: String!
+          path: $.product
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $v
+          passingValue: false
+      dependencies:
+        - id: 1
+    - id: 6
+      type: Operation
+      schema: B
+      operation:
+        name: testQuery_b7834797_6
+        kind: Query
+        document: |
+          query testQuery_b7834797_6($__fusion_7_upc: String!) {
+            productByUpc(upc: $__fusion_7_upc) {
+              price(cur: "EUR")
+            }
+          }
+        hash: 4f07f299d1a36ae162acaa71679592afac2c2765e69a5d05ec8f85fa0e638edf
+        shortHash: 4f07f299
+        xxHash: 13006093386406441247
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { price }
+      source: $.productByUpc
+      target: $.product
+      batchingGroupId: 8
+      requirements:
+        - name: __fusion_7_upc
+          type: String!
+          path: $.product
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $v
+          passingValue: true
+      dependencies:
+        - id: 1
+    - id: 2
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_b7834797_2
+        kind: Query
+        document: |
+          query testQuery_b7834797_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+            productByUpc(upc: $__fusion_2_upc) {
+              usd(price: $__fusion_1_price)
+            }
+          }
+        hash: b48b50ca0e976be50d3b96eec9be0684c89a6c454d58e0fc96f47c37084944e3
+        shortHash: b48b50ca
+        xxHash: 18144764679628019866
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { usd }
+      source: $.productByUpc
+      target: $.product
+      batchingGroupId: 9
+      requirements:
+        - name: __fusion_1_price
+          type: Int
+          path: $.product
+          selectionMap: >-
+            price(cur: "USD")
+        - name: __fusion_2_upc
+          type: String!
+          path: $.product
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $v
+          passingValue: false
+      dependencies:
+        - id: 1
+        - id: 3
+    - id: 5
+      type: Operation
+      schema: A
+      operation:
+        name: testQuery_b7834797_5
+        kind: Query
+        document: |
+          query testQuery_b7834797_5($__fusion_5_price: Int, $__fusion_6_upc: String!) {
+            productByUpc(upc: $__fusion_6_upc) {
+              eur(price: $__fusion_5_price)
+            }
+          }
+        hash: d381291b6bac3486a5e7f5cacf755da5adde2231bf64276caee59949c44ac4b0
+        shortHash: d381291b
+        xxHash: 4454062483805652489
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { eur }
+      source: $.productByUpc
+      target: $.product
+      batchingGroupId: 9
+      requirements:
+        - name: __fusion_5_price
+          type: Int
+          path: $.product
+          selectionMap: >-
+            price(cur: "EUR")
+        - name: __fusion_6_upc
+          type: String!
+          path: $.product
+          selectionMap: >-
+            upc
+      conditions:
+        - variable: $v
+          passingValue: true
+      dependencies:
+        - id: 1
+        - id: 6
