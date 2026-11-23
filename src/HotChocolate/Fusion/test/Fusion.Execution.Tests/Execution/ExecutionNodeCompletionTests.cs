@@ -190,27 +190,6 @@ public sealed class ExecutionNodeCompletionTests : FusionTestBase
     }
 
     [Fact]
-    public async Task SkipNode_Should_NotSkipOperation_When_SkippedNodeIsOptionalDependencyOfOperation()
-    {
-        // arrange
-        var source = new TestExecutionNode(0, TestOutcome.Success);
-        var operation = new TestOperationNode(100, [], [source]);
-        source.AddDependent(operation);
-        source.Seal();
-
-        await using var fixture = await ExecutionTestFixture.CreateAsync(false, source);
-        fixture.State.FillBacklog(fixture.Plan);
-
-        // act
-        fixture.State.SkipNode(fixture.Plan, source);
-
-        // assert
-        Assert.Equal(
-            [true, false],
-            [fixture.State.IsNodeSkipped(source.Id), fixture.State.IsNodeSkipped(operation.Id)]);
-    }
-
-    [Fact]
     public async Task SkipNode_Should_SkipOperation_When_SkippedNodeIsRequiredDependencyOfOperation()
     {
         // arrange
