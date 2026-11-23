@@ -1042,7 +1042,7 @@ internal sealed class ValueCompletion
             && (value.ValueKind is JsonValueKind.Object or JsonValueKind.Array
                 || (value.ValueKind is JsonValueKind.Undefined && !isLeaf)))
         {
-            _store.Result.Delivery!.AddWrittenAnswer(value.Cursor, groups, error);
+            _store.Result.Delivery!.AddWrittenAnswer(value.Cursor, groups, error, holdsRowError: false);
         }
     }
 
@@ -1627,13 +1627,25 @@ internal sealed class ValueCompletion
         return TMode.HasDelivery ? _store.Result.RecordGroupError(element, error) : null;
     }
 
-    // Records the error of a leaf that the client did not select as the answer for the groups that hold the leaf, so
-    // that a field that requires the leaf reports the error as the reason for its missing value.
-    private void RecordUnselectedLeafError(CompositeResultElement leaf, IError error)
+    // Records the error of a leaf as the answer for the fields that require the leaf, so that they report the error
+    // as the reason for their missing value. A leaf that the client selected is answered for every group, a leaf that
+    // the client did not select for the groups that hold it.
+    private void RecordLeafError<TMode>(CompositeResultElement leaf, IError error)
+        where TMode : struct, IMode
     {
         var document = _store.Result;
 
-        if (!leaf.IsInternal || !document.TryGetDestination(leaf, out var destination))
+        if (!leaf.IsInternal)
+        {
+            document.Delivery!.AddWrittenAnswer(
+                leaf.Cursor,
+                TMode.IsFiltered ? _writeFilterGroups : [],
+                error,
+                holdsRowError: true);
+            return;
+        }
+
+        if (!document.TryGetDestination(leaf, out var destination))
         {
             return;
         }
@@ -1872,7 +1884,7 @@ internal sealed class ValueCompletion
 
             if (TMode.HasDelivery && selection.IsLeaf)
             {
-                RecordUnselectedLeafError(target, nullErrorFromPath);
+                RecordLeafError<TMode>(target, nullErrorFromPath);
             }
         }
         else

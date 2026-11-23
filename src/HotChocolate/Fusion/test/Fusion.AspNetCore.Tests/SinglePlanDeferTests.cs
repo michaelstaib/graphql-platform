@@ -6456,6 +6456,211 @@ public partial class SinglePlanDeferTests : FusionTestBase
         MatchPayloads(run);
     }
 
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ItsOwnStepHoldsTheUnselectedObject()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ItsOwnStepHoldsTheSelectedObject(
+        bool selectsA)
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            selectsA
+                ? "{ user { nick ... @defer { inner { a c } nnA } } }"
+                : "{ user { nick ... @defer { inner { c } nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run, $"selectsA={selectsA}");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_AnotherFragmentHoldsTheReportedObject(
+        bool selectsC)
+    {
+        // arrange
+        // the step of q (B:4) answers before the step of d (B:5)
+        var gateway = await CreateGatewayAsync(
+            ["B:4", "B:5"],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            selectsC
+                ? """{ user { nick ... @defer(label: "q") { inner { a c } } ... @defer(label: "d") { nnA } } }"""
+                : """{ user { nick ... @defer(label: "q") { inner { a } } ... @defer(label: "d") { nnA } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run, $"selectsC={selectsC}");
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_ItsOwnStepHoldsTheObjectOfANestedField()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            NameTheSourceError,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerRequirementSource),
+            ("D", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            { user { nick ... @defer(label: "o") { inner { a c } nnA ... @defer(label: "i") { cA } } } }
+            """,
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string InnerLeafSource =
+        """
+        type Query { userById(id: ID!): User @lookup @internal }
+        type User @key(fields: "id") { id: ID! inner: Inner innerNn: Inner! }
+        type Inner { a: String c: String }
+        """;
+
+    // The source schema B answers null with the error "B failed" for the leaf a of inner.
+    private static string FailTheLeafAOfInner(string schema, string body, string text)
+        => schema is "B" && InnerLeafAValue().IsMatch(text)
+            ? """{"errors":[{"message":"B failed","path":["userById","inner","a"]}],"""
+                + InnerLeafAValue().Replace(text, "\"a\":null")[1..]
+            : text;
+
+    [GeneratedRegex("\"a\":\"[^\"]*\"")]
+    private static partial Regex InnerLeafAValue();
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheRequiredLeafIsNullWithAnError()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheLeafAOfInner,
+            failingSchema: null,
+            configure: null,
+            ("A", NickSource),
+            ("B", InnerLeafSource),
+            ("C", InnerNonNullRequirementSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ user { nick inner { a c } ... @defer { nnA } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    private const string SkuListSource =
+        """
+        type Query { products: [Product] }
+        type Product @key(fields: "sku") { sku: String name: String }
+        """;
+
+    private const string SkuPriceSource =
+        """
+        type Query { productBySku(sku: String!): Product @lookup @internal }
+        type Product @key(fields: "sku") { sku: String priceNn: Float! }
+        """;
+
+    // The source schema A answers null with the error "A failed" for the first sku.
+    private static string FailTheFirstSku(string schema, string body, string text)
+        => schema is "A" && ProductSku().IsMatch(text)
+            ? """{"errors":[{"message":"A failed","path":["products",0,"sku"]}],"""
+                + ProductSku().Replace(text, "\"sku\":null", 1)[1..]
+            : text;
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheKeyOfTheLookupIsNullWithAnError()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            [],
+            FailTheFirstSku,
+            failingSchema: null,
+            configure: null,
+            ("A", SkuListSource),
+            ("B", SkuPriceSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "{ products { name sku ... @defer { priceNn } } }",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheStepError_When_TheRequiredWeightOfTheInitialPayloadIsNull()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", RequirementWithErrorSource),
+            ("C", NonNullShippingSource));
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """{ product(id: "1") { name weight ... @defer(label: "b") { shipping } } }""",
+            []);
+
+        // assert
+        MatchPayloads(run);
+    }
+
     private const string InnerAndBoxNonNullRequirementSource =
         """
         type Query { userById(id: ID!): User @lookup @internal }

@@ -527,17 +527,18 @@ internal sealed partial class SinglePlanDeliveryState
 
     /// <summary>
     /// Records that a step wrote an error as the result of a value that held an object or a list, or that no step
-    /// had written yet. <paramref name="groups"/> is empty for a step without delivery groups.
+    /// had written yet, or <c>null</c> for a leaf. <paramref name="groups"/> is empty for a step without delivery
+    /// groups. <paramref name="holdsRowError"/> tells that the error is also recorded for the row of the value.
     /// </summary>
     public void AddWrittenAnswer(
         CompositeResultDocument.Cursor container,
         ImmutableArray<int> groups,
-        IError error)
+        IError error,
+        bool holdsRowError)
     {
         AssertOnLoop();
 
-        (_deniedAnswers ??= []).Add(
-            new DeniedAnswer(container, groups, error, HoldsRowError: false, IsWritten: true));
+        (_deniedAnswers ??= []).Add(new DeniedAnswer(container, groups, error, holdsRowError, IsWritten: true));
     }
 
     /// <summary>
@@ -674,7 +675,7 @@ internal sealed partial class SinglePlanDeliveryState
         CompositeResultElement row,
         Selection selection)
     {
-        if (!HasDeniedError(group) || !TryGetWriters(selection, out var writers))
+        if (!HasDeniedError(group, !selection.IsNonNull) || !TryGetWriters(selection, out var writers))
         {
             return null;
         }
@@ -718,13 +719,13 @@ internal sealed partial class SinglePlanDeliveryState
     }
 
     // An answer that the fields of the group report carries an error.
-    private bool HasDeniedError(int group)
+    private bool HasDeniedError(int group, bool isNullable)
     {
         if (_deniedAnswers is not null)
         {
             foreach (var answer in _deniedAnswers)
             {
-                if (answer.Error is not null && answer.IsReportedBy(group))
+                if (answer.Error is not null && answer.IsReportedBy(group, isNullable))
                 {
                     return true;
                 }
@@ -819,7 +820,7 @@ internal sealed partial class SinglePlanDeliveryState
 
         foreach (var answer in _deniedAnswers!)
         {
-            if (answer.Error is null || !answer.IsReportedBy(group))
+            if (answer.Error is null || !answer.IsReportedBy(group, isNullable))
             {
                 continue;
             }
@@ -1582,9 +1583,11 @@ internal readonly record struct DeniedAnswer(
 {
     /// <summary>
     /// Determines whether a field of the group that requires the value reports the error of the answer. That holds
-    /// for a group of the step of a denied answer, and for every other group when the step wrote the error.
+    /// for a group of the step of a denied answer, and for every other group when the step wrote the error. A
+    /// non-null field reports the error of a step that wrote it for the groups of that step too.
     /// </summary>
-    public bool IsReportedBy(int group) => IsWritten != Groups.Contains(group);
+    public bool IsReportedBy(int group, bool isNullable)
+        => IsWritten ? !isNullable || !Groups.Contains(group) : Groups.Contains(group);
 }
 
 /// <summary>
