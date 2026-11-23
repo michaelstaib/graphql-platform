@@ -6198,6 +6198,52 @@ public partial class SinglePlanDeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_ItIsTheOnlyProviderOfTheRequirement()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+        _gate!.FailingStep = "B:2";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            "query($v: Boolean!) { user { nick inner @include(if: $v) { a c } ... @defer { nnA } } }",
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    [Fact]
+    public async Task Defer_Should_FailTheFragmentWithTheErrorOfTheHolder_When_TwoHoldersCoverBothValues()
+    {
+        // arrange
+        var gateway = await CreateGatewayAsync(
+            ("A", NickSource),
+            ("B", InnerSource),
+            ("C", InnerNonNullRequirementSource));
+        _gate!.FailingStep = "B:2";
+
+        // act
+        var run = await RunDeferredAsync(
+            gateway,
+            """
+            query($v: Boolean!) {
+                user { nick inner @include(if: $v) { a c } inner @skip(if: $v) { a c } ... @defer { nnA } }
+            }
+            """,
+            new Dictionary<string, object?> { ["v"] = true });
+
+        // assert
+        Assert.False(run.Requests.ContainsKey("C"), run.RequestSummary);
+        MatchPayloads(run);
+    }
+
+    [Fact]
     public async Task Defer_Should_FailTheFragmentWithTheSourceError_When_TheInitialStepHoldsTheReportedObject()
     {
         // arrange
