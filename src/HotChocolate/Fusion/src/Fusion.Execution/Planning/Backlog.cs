@@ -134,19 +134,71 @@ internal readonly struct Backlog(ImmutableStack<WorkItem> items, BacklogCost cos
         }
 
         var backlog = this;
+        var count = 0;
+        var hasConditions = false;
 
-        foreach (var entry in fieldsWithRequirements.Reverse())
+        foreach (var entry in fieldsWithRequirements)
         {
-            var workItem = new FieldRequirementWorkItem(entry.FieldSelection, consumer)
+            count++;
+            hasConditions |= entry.Conditions.Length > 0;
+        }
+
+        if (!hasConditions)
+        {
+            foreach (var entry in fieldsWithRequirements.Reverse())
             {
-                Dependents = dependents,
-                ParentDepth = parentDepth,
-                Conditions = entry.Conditions,
-                SourceSchemaNodePolicy = sourceSchemaNodePolicy
-            };
-            backlog = backlog.Push(workItem);
+                backlog = backlog.PushRequirement(entry, consumer, dependents, parentDepth, sourceSchemaNodePolicy);
+            }
+
+            return backlog;
+        }
+
+        // Fields with fewer conditions are pushed last, so they are planned first.
+        var entries = new ConditionedFieldSelection[count];
+        var index = count;
+
+        foreach (var entry in fieldsWithRequirements)
+        {
+            entries[--index] = entry;
+        }
+
+        for (var i = 1; i < entries.Length; i++)
+        {
+            var entry = entries[i];
+            var j = i - 1;
+
+            while (j >= 0 && entries[j].Conditions.Length < entry.Conditions.Length)
+            {
+                entries[j + 1] = entries[j];
+                j--;
+            }
+
+            entries[j + 1] = entry;
+        }
+
+        foreach (var entry in entries)
+        {
+            backlog = backlog.PushRequirement(entry, consumer, dependents, parentDepth, sourceSchemaNodePolicy);
         }
 
         return backlog;
+    }
+
+    private Backlog PushRequirement(
+        ConditionedFieldSelection entry,
+        RequirementConsumer consumer,
+        ImmutableHashSet<int> dependents,
+        int parentDepth,
+        SourceSchemaNodePlanningPolicy? sourceSchemaNodePolicy)
+    {
+        var workItem = new FieldRequirementWorkItem(entry.FieldSelection, consumer)
+        {
+            Dependents = dependents,
+            ParentDepth = parentDepth,
+            Conditions = entry.Conditions,
+            SourceSchemaNodePolicy = sourceSchemaNodePolicy
+        };
+
+        return Push(workItem);
     }
 }

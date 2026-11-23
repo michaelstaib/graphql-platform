@@ -85,38 +85,24 @@ sourceSchemas:
     interactions:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
-          kind: OperationBatch
-          items:
-            - document: |
-                query testQuery_d98e86cd_4($__fusion_4_id: Int!) {
-                  userById(id: $__fusion_4_id) {
-                    total
-                  }
-                }
-              variables: |
-                [
-                  {
-                    "__fusion_4_id": 1
-                  },
-                  {
-                    "__fusion_4_id": 2
-                  }
-                ]
-            - document: |
-                query testQuery_d98e86cd_6($__fusion_7_id: Int!) {
-                  userById(id: $__fusion_7_id) {
-                    weight
-                  }
-                }
-              variables: |
-                [
-                  {
-                    "__fusion_7_id": 1
-                  },
-                  {
-                    "__fusion_7_id": 2
-                  }
-                ]
+          document: |
+            query testQuery_d98e86cd_4($a: Boolean!, $__fusion_4_id: Int!) {
+              userById(id: $__fusion_4_id) {
+                weight
+                total @skip(if: $a)
+              }
+            }
+          variables: |
+            [
+              {
+                "a": false,
+                "__fusion_4_id": 1
+              },
+              {
+                "a": false,
+                "__fusion_4_id": 2
+              }
+            ]
         response:
           contentType: application/jsonl; charset=utf-8
           results:
@@ -124,22 +110,7 @@ sourceSchemas:
               {
                 "data": {
                   "userById": {
-                    "weight": 10
-                  }
-                }
-              }
-            - |
-              {
-                "data": {
-                  "userById": {
-                    "weight": 20
-                  }
-                }
-              }
-            - |
-              {
-                "data": {
-                  "userById": {
+                    "weight": 10,
                     "total": 100
                   }
                 }
@@ -148,6 +119,7 @@ sourceSchemas:
               {
                 "data": {
                   "userById": {
+                    "weight": 20,
                     "total": 200
                   }
                 }
@@ -170,42 +142,33 @@ sourceSchemas:
     interactions:
       - request:
           accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
-          kind: OperationBatch
-          items:
-            - document: |
-                query testQuery_d98e86cd_3($__fusion_2_total: Int, $__fusion_3_id: Int!) {
-                  userById(id: $__fusion_3_id) {
-                    tax(total: $__fusion_2_total)
-                  }
-                }
-              variables: |
-                [
-                  {
-                    "__fusion_2_total": 100,
-                    "__fusion_3_id": 1
-                  },
-                  {
-                    "__fusion_2_total": 200,
-                    "__fusion_3_id": 2
-                  }
-                ]
-            - document: |
-                query testQuery_d98e86cd_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
-                  userById(id: $__fusion_6_id) {
-                    shipping(weight: $__fusion_5_weight)
-                  }
-                }
-              variables: |
-                [
-                  {
-                    "__fusion_5_weight": 10,
-                    "__fusion_6_id": 1
-                  },
-                  {
-                    "__fusion_5_weight": 20,
-                    "__fusion_6_id": 2
-                  }
-                ]
+          document: |
+            query testQuery_d98e86cd_3(
+              $a: Boolean!
+              $__fusion_2_weight: Int
+              $__fusion_3_id: Int!
+              $__fusion_5_total: Int
+            ) {
+              userById(id: $__fusion_3_id) {
+                shipping(weight: $__fusion_2_weight)
+                tax(total: $__fusion_5_total) @skip(if: $a)
+              }
+            }
+          variables: |
+            [
+              {
+                "a": false,
+                "__fusion_2_weight": 10,
+                "__fusion_3_id": 1,
+                "__fusion_5_total": 100
+              },
+              {
+                "a": false,
+                "__fusion_2_weight": 20,
+                "__fusion_3_id": 2,
+                "__fusion_5_total": 200
+              }
+            ]
         response:
           contentType: application/jsonl; charset=utf-8
           results:
@@ -213,22 +176,7 @@ sourceSchemas:
               {
                 "data": {
                   "userById": {
-                    "shipping": 1010
-                  }
-                }
-              }
-            - |
-              {
-                "data": {
-                  "userById": {
-                    "shipping": 2020
-                  }
-                }
-              }
-            - |
-              {
-                "data": {
-                  "userById": {
+                    "shipping": 1010,
                     "tax": 107
                   }
                 }
@@ -237,21 +185,24 @@ sourceSchemas:
               {
                 "data": {
                   "userById": {
+                    "shipping": 2020,
                     "tax": 207
                   }
                 }
               }
 operationPlan:
-  id: 36871da6ce2ef1b564dfccfe6bd53ce83c3542792e3bc4cee1610e8e41ebe554
+  id: 09951f6c3d0a97a078df288cba5398b4005179088ca25716fb255dcfe8b1c407
   operation:
     - document: |
         query testQuery($a: Boolean!) {
           users {
             shipping
             id @fusion__requirement
-            total @fusion__requirement
             weight @fusion__requirement
-            tax @skip(if: $a)
+            ... @skip(if: $a) {
+              tax
+              total @fusion__requirement
+            }
           }
         }
       name: testQuery
@@ -260,7 +211,7 @@ operationPlan:
       hash: d98e86cd814026d68cbc6250c9f4beff
       shortHash: d98e86cd
   searchSpace: 2
-  expandedNodes: 8
+  expandedNodes: 7
   nodes:
     - id: 1
       type: Operation
@@ -279,67 +230,6 @@ operationPlan:
         xxHash: 848410629471426556
       resultSelectionSet: >-
         { users }
-    - id: 4
-      type: Operation
-      schema: D
-      operation:
-        name: testQuery_d98e86cd_4
-        kind: Query
-        document: |
-          query testQuery_d98e86cd_4($__fusion_4_id: Int!) {
-            userById(id: $__fusion_4_id) {
-              total
-            }
-          }
-        hash: 1fc681ec4b84c83d084cb437a6312baa6fde96cbe940908b3582f06c0b284995
-        shortHash: 1fc681ec
-        xxHash: 11618595990842359213
-      lookupTypeName: User
-      resultSelectionSet: >-
-        { total }
-      source: $.userById
-      target: $.users
-      batchingGroupId: 7
-      requirements:
-        - name: __fusion_4_id
-          type: Int!
-          path: $.users
-          selectionMap: >-
-            id
-      conditions:
-        - variable: $a
-          passingValue: false
-      dependencies:
-        - id: 1
-    - id: 6
-      type: Operation
-      schema: D
-      operation:
-        name: testQuery_d98e86cd_6
-        kind: Query
-        document: |
-          query testQuery_d98e86cd_6($__fusion_7_id: Int!) {
-            userById(id: $__fusion_7_id) {
-              weight
-            }
-          }
-        hash: 040518e02701a10cdc34f87821b5a94f194661a5ecd7b437b4fbe1c3524fe34d
-        shortHash: "040518e0"
-        xxHash: 16301480050124523576
-      lookupTypeName: User
-      resultSelectionSet: >-
-        { weight }
-      source: $.userById
-      target: $.users
-      batchingGroupId: 7
-      requirements:
-        - name: __fusion_7_id
-          type: Int!
-          path: $.users
-          selectionMap: >-
-            id
-      dependencies:
-        - id: 1
     - id: 3
       type: Operation
       schema: B
@@ -347,69 +237,77 @@ operationPlan:
         name: testQuery_d98e86cd_3
         kind: Query
         document: |
-          query testQuery_d98e86cd_3($__fusion_2_total: Int, $__fusion_3_id: Int!) {
+          query testQuery_d98e86cd_3(
+            $a: Boolean!
+            $__fusion_2_weight: Int
+            $__fusion_3_id: Int!
+            $__fusion_5_total: Int
+          ) {
             userById(id: $__fusion_3_id) {
-              tax(total: $__fusion_2_total)
+              shipping(weight: $__fusion_2_weight)
+              tax(total: $__fusion_5_total) @skip(if: $a)
             }
           }
-        hash: 3a26253780460b72e3b6d09fac4ef7bec4087ee0ca66e2a7bf1bcd9da32ca773
-        shortHash: 3a262537
-        xxHash: 16537038916613938721
+        hash: bf2755ef27c9fe2d21810f405005971f77af7fd48d1a0d73e06e8edcc837bf59
+        shortHash: bf2755ef
+        xxHash: 12964657612613705191
       lookupTypeName: User
       resultSelectionSet: >-
-        { tax }
+        { shipping tax }
       source: $.userById
       target: $.users
-      batchingGroupId: 8
       requirements:
-        - name: __fusion_2_total
+        - name: __fusion_2_weight
           type: Int
           path: $.users
           selectionMap: >-
-            total
+            weight
         - name: __fusion_3_id
           type: Int!
           path: $.users
           selectionMap: >-
             id
-      conditions:
-        - variable: $a
-          passingValue: false
-      dependencies:
-        - id: 1
-        - id: 4
-    - id: 5
-      type: Operation
-      schema: B
-      operation:
-        name: testQuery_d98e86cd_5
-        kind: Query
-        document: |
-          query testQuery_d98e86cd_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
-            userById(id: $__fusion_6_id) {
-              shipping(weight: $__fusion_5_weight)
-            }
-          }
-        hash: 58f0ffaa3fa87522420cc8e5d2e0ff27d4728a4d0dc89f17eba1040f821ecf1c
-        shortHash: 58f0ffaa
-        xxHash: 1860720755522245584
-      lookupTypeName: User
-      resultSelectionSet: >-
-        { shipping }
-      source: $.userById
-      target: $.users
-      batchingGroupId: 8
-      requirements:
-        - name: __fusion_5_weight
+        - name: __fusion_5_total
           type: Int
           path: $.users
           selectionMap: >-
-            weight
-        - name: __fusion_6_id
+            total
+          conditions:
+            - variable: $a
+              passingValue: false
+      forwardedVariables:
+        - a
+      dependencies:
+        - id: 1
+        - id: 4
+    - id: 4
+      type: Operation
+      schema: D
+      operation:
+        name: testQuery_d98e86cd_4
+        kind: Query
+        document: |
+          query testQuery_d98e86cd_4($a: Boolean!, $__fusion_4_id: Int!) {
+            userById(id: $__fusion_4_id) {
+              weight
+              total @skip(if: $a)
+            }
+          }
+        hash: 46b34aaba7ac6f522434b94ff543f0c24da36d701dc40838ef4d6bba077c51b4
+        shortHash: 46b34aab
+        xxHash: 15589748751582766169
+      lookupTypeName: User
+      resultSelectionSet: >-
+        { weight total }
+      source: $.userById
+      target: $.users
+      requirements:
+        - name: __fusion_4_id
           type: Int!
           path: $.users
           selectionMap: >-
             id
+      forwardedVariables:
+        - a
       dependencies:
         - id: 1
-        - id: 6

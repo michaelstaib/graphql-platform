@@ -1,0 +1,183 @@
+id: 7af9fbfefcae3e2f0dc61a88e2c6fd54e098f062674d43f0b3e9e90de6348027
+operation:
+  - document: |
+      query($a: Boolean!) {
+        topProducts {
+          reviews {
+            product {
+              shippingEstimate
+              upc @fusion__requirement
+              weight @fusion__requirement
+              price @fusion__requirement
+              taxEstimate @skip(if: $a)
+            }
+          }
+          upc @fusion__requirement
+        }
+      }
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 8
+nodes:
+  - id: 1
+    type: Operation
+    schema: products
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          topProducts {
+            upc
+          }
+        }
+      hash: 2b2e2cafb13c20aa615a1fd75f8590caf464921141c20b1f6e14fee6e6bb85e9
+      shortHash: 2b2e2caf
+      xxHash: 7632037644630230732
+    resultSelectionSet: >-
+      { topProducts }
+  - id: 2
+    type: ApolloOperation
+    schema: reviews
+    operation:
+      name: Op_123456789101112_2
+      kind: Query
+      document: |
+        query($representations: [_Any!]!) {
+          _entities(representations: $representations) {
+            ... on Product {
+              reviews {
+                product {
+                  upc
+                }
+              }
+            }
+          }
+        }
+      hash: a0048890564f263eedf0d6d963497e52a0eea1af52e65d7cad565181676ff672
+      shortHash: a0048890
+      xxHash: 350619761885652995
+    entityType: Product
+    resultSelectionSet: >-
+      { reviews }
+    source: $._entities
+    target: $.topProducts
+    requirements:
+      - name: __fusion_1_upc
+        type: String!
+        path: $.topProducts
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 1
+  - id: 5
+    type: ApolloOperation
+    schema: products
+    operation:
+      name: Op_123456789101112_5
+      kind: Query
+      document: |
+        query($representations: [_Any!]!) {
+          _entities(representations: $representations) {
+            ... on Product {
+              weight
+              price
+            }
+          }
+        }
+      hash: 47a93277d3820ed1866af807afc7a33ab8e46129da1ecf6dfcd0e77330a9af56
+      shortHash: 47a93277
+      xxHash: 8846564845544859324
+    entityType: Product
+    resultSelectionSet: >-
+      { weight price }
+    source: $._entities
+    target: $.topProducts.reviews.product
+    requirements:
+      - name: __fusion_5_upc
+        type: String!
+        path: $.topProducts.reviews.product
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 2
+  - id: 4
+    type: ApolloOperationBatch
+    schema: inventory
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query($representations: [_Any!]!) {
+          _entities(representations: $representations) {
+            ... on Product {
+              shippingEstimate
+            }
+          }
+        }
+      hash: 5de3249ab9db5c7c1858d30979a3046366169c582ff4a8ad3e60625e346eb2da
+      shortHash: 5de3249a
+      xxHash: 3599507137454671928
+    entityType: Product
+    resultSelectionSet: >-
+      { shippingEstimate }
+    source: $._entities
+    target: $.topProducts.reviews.product
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_3_weight
+        type: Int
+        path: $.topProducts.reviews.product
+        selectionMap: >-
+          weight
+      - name: __fusion_4_upc
+        type: String!
+        path: $.topProducts.reviews.product
+        selectionMap: >-
+          upc
+    dependencies:
+      - id: 2
+      - id: 5
+  - id: 6
+    type: ApolloOperationBatch
+    schema: inventory
+    operation:
+      name: Op_123456789101112_6
+      kind: Query
+      document: |
+        query($representations: [_Any!]!) {
+          _entities(representations: $representations) {
+            ... on Product {
+              taxEstimate
+            }
+          }
+        }
+      hash: 09fc89edbedf4f6d70fb1872ba3369d68416deab8d4ae6f46e7b33d171c93ae9
+      shortHash: 09fc89ed
+      xxHash: 6051704677596286653
+    entityType: Product
+    resultSelectionSet: >-
+      { taxEstimate }
+    source: $._entities
+    target: $.topProducts.reviews.product
+    batchingGroupId: 7
+    requirements:
+      - name: __fusion_6_price
+        type: Int
+        path: $.topProducts.reviews.product
+        selectionMap: >-
+          price
+      - name: __fusion_7_upc
+        type: String!
+        path: $.topProducts.reviews.product
+        selectionMap: >-
+          upc
+    conditions:
+      - variable: $a
+        passingValue: false
+    dependencies:
+      - id: 2
+      - id: 5

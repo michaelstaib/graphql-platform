@@ -3886,14 +3886,54 @@ public sealed partial class OperationPlanner
             commonConditions.Add(existing);
         }
 
+        var nodeConditions = SortConditions(commonConditions);
+
         updated = step with
         {
             Definition = step.Definition.WithSelectionSet(newSelectionSet),
-            Conditions = SortConditions(commonConditions),
+            Requirements = RemoveRequirementConditionsOfNode(step.Requirements, nodeConditions),
+            Conditions = nodeConditions,
             ConditionAlternatives = conditionAlternatives
         };
 
         return true;
+    }
+
+    /// <summary>
+    /// Removes the conditions that the node carries itself from the conditions of the requirements.
+    /// </summary>
+    private static ImmutableDictionary<string, OperationRequirement> RemoveRequirementConditionsOfNode(
+        ImmutableDictionary<string, OperationRequirement> requirements,
+        ExecutionNodeCondition[] nodeConditions)
+    {
+        var result = requirements;
+
+        foreach (var (key, requirement) in requirements)
+        {
+            if (requirement.Conditions is not { } conditions)
+            {
+                continue;
+            }
+
+            var remaining = new List<ExecutionNodeCondition>(conditions.Length);
+
+            foreach (var condition in conditions)
+            {
+                if (!ContainsCondition(nodeConditions, condition))
+                {
+                    remaining.Add(condition);
+                }
+            }
+
+            if (remaining.Count < conditions.Length)
+            {
+                result = result.SetItem(
+                    key,
+                    requirement with { Conditions = remaining.Count > 0 ? remaining.ToArray() : null });
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
