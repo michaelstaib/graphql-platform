@@ -296,6 +296,7 @@ sourceSchemas:
                 }
               }
 operationPlan:
+  id: 982b99b948ae9b282c6ab7aef2caa953f9ca1371c4b7e07902d32e14e83e8b13
   operation:
     - document: |
         query testQuery($a: Boolean!) {
@@ -309,35 +310,59 @@ operationPlan:
           }
         }
       name: testQuery
-      hash: 128c4fd24e41ca7b4bac2f84e59718a5
-      searchSpace: 3
-      expandedNodes: 12
+      kind: Query
+      id: 128c4fd24e41ca7b4bac2f84e59718a5
+      hash: e9325099cc87446915790ab795aef31d
+      shortHash: e9325099
+  searchSpace: 3
+  expandedNodes: 12
   nodes:
     - id: 1
       type: Operation
       schema: A
-      operation: |
-        query testQuery_e9325099_1 {
-          products {
-            upc
+      operation:
+        name: testQuery_e9325099_1
+        kind: Query
+        document: |
+          query testQuery_e9325099_1 {
+            products {
+              upc
+            }
           }
-        }
+        hash: a712de4f9058800d2b61947ea2a4fdc17182542b51509f162558eb3cf3aa7d2e
+        shortHash: a712de4f
+        xxHash: 9717056087691561199
+      resultSelectionSet: >-
+        { products }
     - id: 2
       type: Operation
       schema: A
-      operation: |
-        query testQuery_e9325099_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
-          productByUpc(upc: $__fusion_2_upc) {
-            eur(price: $__fusion_1_price)
+      operation:
+        name: testQuery_e9325099_2
+        kind: Query
+        document: |
+          query testQuery_e9325099_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+            productByUpc(upc: $__fusion_2_upc) {
+              eur(price: $__fusion_1_price)
+            }
           }
-        }
+        hash: 3cc84807e5277792037c3604e2f6fdf9ccfc8174a03fdc65138d4c1f6b512251
+        shortHash: 3cc84807
+        xxHash: 15533831600336715938
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { eur }
       source: $.productByUpc
       target: $.products
       requirements:
         - name: __fusion_1_price
+          type: Int
+          path: $.products
           selectionMap: >-
             price(cur: "EUR")
         - name: __fusion_2_upc
+          type: String!
+          path: $.products
           selectionMap: >-
             upc
       conditions:
@@ -349,16 +374,27 @@ operationPlan:
     - id: 3
       type: Operation
       schema: B
-      operation: |
-        query testQuery_e9325099_3($__fusion_3_id: Int!) {
-          productById(id: $__fusion_3_id) {
-            price(cur: "EUR")
+      operation:
+        name: testQuery_e9325099_3
+        kind: Query
+        document: |
+          query testQuery_e9325099_3($__fusion_3_id: Int!) {
+            productById(id: $__fusion_3_id) {
+              price(cur: "EUR")
+            }
           }
-        }
+        hash: 99f5533069aa943a16fcd63dd4c4f20296c361536b6758f812bf68a0f068ee21
+        shortHash: 99f55330
+        xxHash: 16673622303765125193
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { price }
       source: $.productById
       target: $.products
       requirements:
         - name: __fusion_3_id
+          type: Int!
+          path: $.products
           selectionMap: >-
             id
       conditions:
@@ -369,16 +405,27 @@ operationPlan:
     - id: 6
       type: Operation
       schema: T
-      operation: |
-        query testQuery_e9325099_6($__fusion_6_id: Int!) {
-          productById(id: $__fusion_6_id) {
-            rating
+      operation:
+        name: testQuery_e9325099_6
+        kind: Query
+        document: |
+          query testQuery_e9325099_6($__fusion_6_id: Int!) {
+            productById(id: $__fusion_6_id) {
+              rating
+            }
           }
-        }
+        hash: 6a1157791aaeb5306b5b3ade37b920d4aac0f1dd780363f1ad85ed0dc32ee53c
+        shortHash: 6a115779
+        xxHash: 2195203374447217543
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { rating }
       source: $.productById
       target: $.products
       requirements:
         - name: __fusion_6_id
+          type: Int!
+          path: $.products
           selectionMap: >-
             id
       dependencies:
@@ -386,17 +433,28 @@ operationPlan:
     - id: 4
       type: Operation
       schema: S
-      operation: |
-        query testQuery_e9325099_4($__fusion_4_upc: String!) {
-          productByUpc(upc: $__fusion_4_upc) {
-            id
+      operation:
+        name: testQuery_e9325099_4
+        kind: Query
+        document: |
+          query testQuery_e9325099_4($__fusion_4_upc: String!) {
+            productByUpc(upc: $__fusion_4_upc) {
+              id
+            }
           }
-        }
+        hash: d4db74bd66d8ab5e1184852ed2028b6e1a1b5bbb1d0837417786d861f86ea73a
+        shortHash: d4db74bd
+        xxHash: 4044262968157859188
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { id }
       source: $.productByUpc
       target: $.products
       batchingGroupId: 8
       requirements:
         - name: __fusion_4_upc
+          type: String!
+          path: $.products
           selectionMap: >-
             upc
       conditions:
@@ -407,17 +465,28 @@ operationPlan:
     - id: 7
       type: Operation
       schema: S
-      operation: |
-        query testQuery_e9325099_7($__fusion_7_upc: String!) {
-          productByUpc(upc: $__fusion_7_upc) {
-            id
+      operation:
+        name: testQuery_e9325099_7
+        kind: Query
+        document: |
+          query testQuery_e9325099_7($__fusion_7_upc: String!) {
+            productByUpc(upc: $__fusion_7_upc) {
+              id
+            }
           }
-        }
+        hash: 4233359f46f7753a7772187026f82302ceca5221929c4b4bab8eb1f10ede5db8
+        shortHash: 4233359f
+        xxHash: 2121057018523147326
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { id }
       source: $.productByUpc
       target: $.products
       batchingGroupId: 8
       requirements:
         - name: __fusion_7_upc
+          type: String!
+          path: $.products
           selectionMap: >-
             upc
       dependencies:

@@ -92,6 +92,7 @@ sourceSchemas:
         id: Int!
       }
 operationPlan:
+  id: e490d484c151637e92f884ad8f0841f3fe8e48cbaef93ad8a8d4f82764e12b26
   operation:
     - document: |
         query testQuery($a: Boolean!, $b: Boolean!) {
@@ -107,39 +108,61 @@ operationPlan:
           }
         }
       name: testQuery
-      hash: 1202fcdc2ad27829a7110953f41ae377
-      searchSpace: 2
-      expandedNodes: 8
+      kind: Query
+      id: 1202fcdc2ad27829a7110953f41ae377
+      hash: dd228eddf9391bf14b12d356de2094bb
+      shortHash: dd228edd
+  searchSpace: 2
+  expandedNodes: 8
   nodes:
     - id: 1
       type: Operation
       schema: A
-      operation: |
-        query testQuery_dd228edd_1 {
-          user {
-            item {
-              __typename
-              id
+      operation:
+        name: testQuery_dd228edd_1
+        kind: Query
+        document: |
+          query testQuery_dd228edd_1 {
+            user {
+              item {
+                __typename
+                id
+              }
             }
           }
-        }
+        hash: c2df6ab50d6041bb5f3bb90579567f411ad755142578b27f46879828154620ec
+        shortHash: c2df6ab5
+        xxHash: 11784307192875849230
+      resultSelectionSet: >-
+        { user { item { __typename id } } }
       conditions:
         - variable: $a
           passingValue: false
     - id: 4
       type: Operation
       schema: D
-      operation: |
-        query testQuery_dd228edd_4($__fusion_4_id: Int!) {
-          productById(id: $__fusion_4_id) {
-            total
+      operation:
+        name: testQuery_dd228edd_4
+        kind: Query
+        document: |
+          query testQuery_dd228edd_4($__fusion_4_id: Int!) {
+            productById(id: $__fusion_4_id) {
+              total
+            }
           }
-        }
+        hash: 52d77ae79a385a789ebc8f5625c8f63a34c2206ee0aa030e6ef5e96819e53fbb
+        shortHash: 52d77ae7
+        xxHash: 12872194974407162076
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { total }
       source: $.productById
       target: $.user.item<Product>
       batchingGroupId: 7
       requirements:
         - name: __fusion_4_id
+          type: Int!
+          path: $.user.item<Product>
           selectionMap: >-
             id
       conditions:
@@ -150,17 +173,28 @@ operationPlan:
     - id: 6
       type: Operation
       schema: D
-      operation: |
-        query testQuery_dd228edd_6($__fusion_7_id: Int!) {
-          productById(id: $__fusion_7_id) {
-            weight
+      operation:
+        name: testQuery_dd228edd_6
+        kind: Query
+        document: |
+          query testQuery_dd228edd_6($__fusion_7_id: Int!) {
+            productById(id: $__fusion_7_id) {
+              weight
+            }
           }
-        }
+        hash: cf865332714899e9fd53b90fce8c0e255c137d6691d96743c63b97d66ae95651
+        shortHash: cf865332
+        xxHash: 9669681722680387220
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { weight }
       source: $.productById
       target: $.user.item<Product>
       batchingGroupId: 7
       requirements:
         - name: __fusion_7_id
+          type: Int!
+          path: $.user.item<Product>
           selectionMap: >-
             id
       dependencies:
@@ -168,20 +202,33 @@ operationPlan:
     - id: 3
       type: Operation
       schema: B
-      operation: |
-        query testQuery_dd228edd_3($__fusion_2_total: Int, $__fusion_3_id: Int!) {
-          productById(id: $__fusion_3_id) {
-            tax(total: $__fusion_2_total)
+      operation:
+        name: testQuery_dd228edd_3
+        kind: Query
+        document: |
+          query testQuery_dd228edd_3($__fusion_2_total: Int, $__fusion_3_id: Int!) {
+            productById(id: $__fusion_3_id) {
+              tax(total: $__fusion_2_total)
+            }
           }
-        }
+        hash: 558f1a55d325c4d1d387e2f6ca5d0d3c27b6bc22a7663bc851d1c2d83f32b88b
+        shortHash: 558f1a55
+        xxHash: 8823847185612329075
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { tax }
       source: $.productById
       target: $.user.item<Product>
       batchingGroupId: 8
       requirements:
         - name: __fusion_2_total
+          type: Int
+          path: $.user.item<Product>
           selectionMap: >-
             total
         - name: __fusion_3_id
+          type: Int!
+          path: $.user.item<Product>
           selectionMap: >-
             id
       conditions:
@@ -193,20 +240,33 @@ operationPlan:
     - id: 5
       type: Operation
       schema: B
-      operation: |
-        query testQuery_dd228edd_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
-          productById(id: $__fusion_6_id) {
-            shipping(weight: $__fusion_5_weight)
+      operation:
+        name: testQuery_dd228edd_5
+        kind: Query
+        document: |
+          query testQuery_dd228edd_5($__fusion_5_weight: Int, $__fusion_6_id: Int!) {
+            productById(id: $__fusion_6_id) {
+              shipping(weight: $__fusion_5_weight)
+            }
           }
-        }
+        hash: 95f2acea5426e3deee843baf1cc598aab033ffe63b161a2b984cdbbb1fdcfa5f
+        shortHash: 95f2acea
+        xxHash: 859495347078614459
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { shipping }
       source: $.productById
       target: $.user.item<Product>
       batchingGroupId: 8
       requirements:
         - name: __fusion_5_weight
+          type: Int
+          path: $.user.item<Product>
           selectionMap: >-
             weight
         - name: __fusion_6_id
+          type: Int!
+          path: $.user.item<Product>
           selectionMap: >-
             id
       dependencies:

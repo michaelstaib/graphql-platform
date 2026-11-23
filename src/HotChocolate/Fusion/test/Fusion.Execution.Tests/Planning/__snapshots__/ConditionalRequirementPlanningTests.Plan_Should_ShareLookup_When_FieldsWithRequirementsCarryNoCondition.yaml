@@ -1,3 +1,4 @@
+id: d050601ae0ab3885c2cca0a5d7b0d855a1df1d3358e52aac56b516aefbd81f43
 operation:
   - document: |
       {
@@ -9,43 +10,69 @@ operation:
           weight @fusion__requirement
         }
       }
-    hash: 123456789101112
-    searchSpace: 2
-    expandedNodes: 7
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 7
 nodes:
   - id: 1
     type: Operation
     schema: a
-    operation: |
-      query Op_123456789101112_1 {
-        user {
-          id
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          user {
+            id
+          }
         }
-      }
+      hash: 16edb7aa0dd7ec28e1e39327954aac6b8aad8fd79fd15d1b19cfc3f26f7bc85f
+      shortHash: 16edb7aa
+      xxHash: 7236423868947797758
+    resultSelectionSet: >-
+      { user }
   - id: 3
     type: Operation
     schema: b
-    operation: |
-      query Op_123456789101112_3(
-        $__fusion_2_total: Int
-        $__fusion_3_id: ID!
-        $__fusion_5_weight: Int
-      ) {
-        userById(id: $__fusion_3_id) {
-          tax(total: $__fusion_2_total)
-          shipping(weight: $__fusion_5_weight)
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3(
+          $__fusion_2_total: Int
+          $__fusion_3_id: ID!
+          $__fusion_5_weight: Int
+        ) {
+          userById(id: $__fusion_3_id) {
+            tax(total: $__fusion_2_total)
+            shipping(weight: $__fusion_5_weight)
+          }
         }
-      }
+      hash: f663ea7637958365d9284a0e3a464edb506d949991f5385b3a42126bef7851fb
+      shortHash: f663ea76
+      xxHash: 10809916365165578266
+    lookupTypeName: User
+    resultSelectionSet: >-
+      { tax shipping }
     source: $.userById
     target: $.user
     requirements:
       - name: __fusion_2_total
+        type: Int
+        path: $.user
         selectionMap: >-
           total
       - name: __fusion_3_id
+        type: ID!
+        path: $.user
         selectionMap: >-
           id
       - name: __fusion_5_weight
+        type: Int
+        path: $.user
         selectionMap: >-
           weight
     dependencies:
@@ -54,17 +81,28 @@ nodes:
   - id: 4
     type: Operation
     schema: d
-    operation: |
-      query Op_123456789101112_4($__fusion_4_id: ID!) {
-        userById(id: $__fusion_4_id) {
-          total
-          weight
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query Op_123456789101112_4($__fusion_4_id: ID!) {
+          userById(id: $__fusion_4_id) {
+            total
+            weight
+          }
         }
-      }
+      hash: 1723cbe7963573f3ce54746622fe2a021536954ee3f960518f09643f0f0a584c
+      shortHash: 1723cbe7
+      xxHash: 16430035123746358083
+    lookupTypeName: User
+    resultSelectionSet: >-
+      { total weight }
     source: $.userById
     target: $.user
     requirements:
       - name: __fusion_4_id
+        type: ID!
+        path: $.user
         selectionMap: >-
           id
     dependencies:

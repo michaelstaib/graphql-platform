@@ -1,3 +1,4 @@
+id: b622d1efe9985261efbd496c406c57c0ab31998855c1c318ae8870cf830af5af
 operation:
   - document: |
       query($a: Boolean!) {
@@ -15,42 +16,64 @@ operation:
           id @fusion__requirement
         }
       }
-    hash: 123456789101112
-    searchSpace: 2
-    expandedNodes: 5
+    kind: Query
+    id: "123456789101112"
+    hash: "123456789101112"
+    shortHash: "123456789101112"
+searchSpace: 2
+expandedNodes: 5
 nodes:
   - id: 1
     type: Operation
     schema: a
-    operation: |
-      query Op_123456789101112_1 {
-        user {
-          id
+    operation:
+      name: Op_123456789101112_1
+      kind: Query
+      document: |
+        query Op_123456789101112_1 {
+          user {
+            id
+          }
         }
-      }
+      hash: 16edb7aa0dd7ec28e1e39327954aac6b8aad8fd79fd15d1b19cfc3f26f7bc85f
+      shortHash: 16edb7aa
+      xxHash: 7236423868947797758
+    resultSelectionSet: >-
+      { user }
     conditions:
       - variable: $a
         passingValue: false
   - id: 2
     type: Operation
     schema: d
-    operation: |
-      query Op_123456789101112_2($__fusion_1_id: ID!) {
-        userById(id: $__fusion_1_id) {
-          item {
-            __typename
-            dItemField
-            ... on Product {
-              weight
-              id
+    operation:
+      name: Op_123456789101112_2
+      kind: Query
+      document: |
+        query Op_123456789101112_2($__fusion_1_id: ID!) {
+          userById(id: $__fusion_1_id) {
+            item {
+              __typename
+              dItemField
+              ... on Product {
+                weight
+                id
+              }
             }
           }
         }
-      }
+      hash: 2336cd473453e53d4d6e77d522c68267558c30eeececabf39ba78115089e48c9
+      shortHash: 2336cd47
+      xxHash: 529440972430645626
+    lookupTypeName: User
+    resultSelectionSet: >-
+      { item }
     source: $.userById
     target: $.user
     requirements:
       - name: __fusion_1_id
+        type: ID!
+        path: $.user
         selectionMap: >-
           id
     conditions:
@@ -61,19 +84,32 @@ nodes:
   - id: 3
     type: Operation
     schema: b
-    operation: |
-      query Op_123456789101112_3($__fusion_2_sku: ID!, $__fusion_3_weight: Int) {
-        productBySku(sku: $__fusion_2_sku) {
-          shipping(weight: $__fusion_3_weight)
+    operation:
+      name: Op_123456789101112_3
+      kind: Query
+      document: |
+        query Op_123456789101112_3($__fusion_2_sku: ID!, $__fusion_3_weight: Int) {
+          productBySku(sku: $__fusion_2_sku) {
+            shipping(weight: $__fusion_3_weight)
+          }
         }
-      }
+      hash: f0211a4029b525b7398b7249b2b442a892b5af5580c5295129dc4fb2ee926715
+      shortHash: f0211a40
+      xxHash: 8051664051795455434
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { shipping }
     source: $.productBySku
     target: $.user.item<Product>
     requirements:
       - name: __fusion_2_sku
+        type: ID!
+        path: $.user.item<Product>
         selectionMap: >-
           sku
       - name: __fusion_3_weight
+        type: Int
+        path: $.user.item<Product>
         selectionMap: >-
           weight
     dependencies:
@@ -82,19 +118,30 @@ nodes:
   - id: 4
     type: Operation
     schema: c
-    operation: |
-      query Op_123456789101112_4($__fusion_4_id: ID!) {
-        itemById(id: $__fusion_4_id) {
-          __typename
-          ... on Product {
-            sku
+    operation:
+      name: Op_123456789101112_4
+      kind: Query
+      document: |
+        query Op_123456789101112_4($__fusion_4_id: ID!) {
+          itemById(id: $__fusion_4_id) {
+            __typename
+            ... on Product {
+              sku
+            }
           }
         }
-      }
+      hash: 0468c916986e90cf748226d9579353d5dd86a08054cb5849a71de3c2aaedc8a1
+      shortHash: 0468c916
+      xxHash: 13835425347119614671
+    lookupTypeName: Product
+    resultSelectionSet: >-
+      { sku }
     source: $.itemById<Product>
     target: $.user.item<Product>
     requirements:
       - name: __fusion_4_id
+        type: ID!
+        path: $.user.item<Product>
         selectionMap: >-
           id
     dependencies:

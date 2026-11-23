@@ -83,6 +83,7 @@ sourceSchemas:
         id: Int!
       }
 operationPlan:
+  id: 1fd71a2ec55877600ac6f8119acd74114ba13d4d47d913fcff36127f8b7005a3
   operation:
     - document: |
         query testQuery($a: Boolean!, $b: Boolean!) {
@@ -99,40 +100,62 @@ operationPlan:
           }
         }
       name: testQuery
-      hash: 1202fcdc2ad27829a7110953f41ae377
-      searchSpace: 1
-      expandedNodes: 3
+      kind: Query
+      id: 1202fcdc2ad27829a7110953f41ae377
+      hash: dd228eddf9391bf14b12d356de2094bb
+      shortHash: dd228edd
+  searchSpace: 1
+  expandedNodes: 3
   nodes:
     - id: 1
       type: Operation
       schema: A
-      operation: |
-        query testQuery_dd228edd_1 {
-          user {
-            id
+      operation:
+        name: testQuery_dd228edd_1
+        kind: Query
+        document: |
+          query testQuery_dd228edd_1 {
+            user {
+              id
+            }
           }
-        }
+        hash: ac2b6a7dd7cbf9cdd9e8d67ddc02da87c7d9afb83505d8bde9709aebb7a0249b
+        shortHash: ac2b6a7d
+        xxHash: 6271358168055094197
+      resultSelectionSet: >-
+        { user }
       conditions:
         - variable: $a
           passingValue: false
     - id: 2
       type: Operation
       schema: D
-      operation: |
-        query testQuery_dd228edd_2($__fusion_1_id: Int!) {
-          userById(id: $__fusion_1_id) {
-            item {
-              __typename
-              id
-              total
-              weight
+      operation:
+        name: testQuery_dd228edd_2
+        kind: Query
+        document: |
+          query testQuery_dd228edd_2($__fusion_1_id: Int!) {
+            userById(id: $__fusion_1_id) {
+              item {
+                __typename
+                id
+                total
+                weight
+              }
             }
           }
-        }
+        hash: 74e57edad9bf128fc5b1e7e54ee6e9e139dcd8e41576145377bd636a5fd60d46
+        shortHash: 74e57eda
+        xxHash: 1593693016600441088
+      lookupTypeName: User
+      resultSelectionSet: >-
+        { item { __typename id total weight } }
       source: $.userById
       target: $.user
       requirements:
         - name: __fusion_1_id
+          type: Int!
+          path: $.user
           selectionMap: >-
             id
       conditions:
@@ -143,28 +166,43 @@ operationPlan:
     - id: 3
       type: Operation
       schema: B
-      operation: |
-        query testQuery_dd228edd_3(
-          $b: Boolean!
-          $__fusion_2_id: Int!
-          $__fusion_3_total: Int
-          $__fusion_4_weight: Int
-        ) {
-          productById(id: $__fusion_2_id) {
-            tax(total: $__fusion_3_total) @skip(if: $b)
-            shipping(weight: $__fusion_4_weight)
+      operation:
+        name: testQuery_dd228edd_3
+        kind: Query
+        document: |
+          query testQuery_dd228edd_3(
+            $b: Boolean!
+            $__fusion_2_id: Int!
+            $__fusion_3_total: Int
+            $__fusion_4_weight: Int
+          ) {
+            productById(id: $__fusion_2_id) {
+              tax(total: $__fusion_3_total) @skip(if: $b)
+              shipping(weight: $__fusion_4_weight)
+            }
           }
-        }
+        hash: 3a495a646634b760afde7e051837c6a0e4704c4ae4afce2ce7a1231a0b94a07a
+        shortHash: 3a495a64
+        xxHash: 14065231900181473347
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { tax shipping }
       source: $.productById
       target: $.user.item<Product>
       requirements:
         - name: __fusion_2_id
+          type: Int!
+          path: $.user.item<Product>
           selectionMap: >-
             id
         - name: __fusion_3_total
+          type: Int
+          path: $.user.item<Product>
           selectionMap: >-
             total
         - name: __fusion_4_weight
+          type: Int
+          path: $.user.item<Product>
           selectionMap: >-
             weight
       forwardedVariables:

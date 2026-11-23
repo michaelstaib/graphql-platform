@@ -111,6 +111,7 @@ sourceSchemas:
         rating: Int!
       }
 operationPlan:
+  id: f8a0b133dc10545f42569f77b36143c6c2e5e550c8f3a2c718e4c103e8e437ea
   operation:
     - document: |
         query testQuery($a: Boolean!, $b: Boolean!) {
@@ -124,35 +125,59 @@ operationPlan:
           }
         }
       name: testQuery
-      hash: c443fa207f32e852d8982b6499580108
-      searchSpace: 2
-      expandedNodes: 9
+      kind: Query
+      id: c443fa207f32e852d8982b6499580108
+      hash: d37d696cce57e23224729fc029e62cbb
+      shortHash: d37d696c
+  searchSpace: 2
+  expandedNodes: 9
   nodes:
     - id: 1
       type: Operation
       schema: A
-      operation: |
-        query testQuery_d37d696c_1 {
-          products {
-            upc
+      operation:
+        name: testQuery_d37d696c_1
+        kind: Query
+        document: |
+          query testQuery_d37d696c_1 {
+            products {
+              upc
+            }
           }
-        }
+        hash: 2bd018be3330cae564cf7a87e04503b3ef88bc08d88d4e1ecd23588b807223e1
+        shortHash: 2bd018be
+        xxHash: 10447469446639488899
+      resultSelectionSet: >-
+        { products }
     - id: 2
       type: Operation
       schema: A
-      operation: |
-        query testQuery_d37d696c_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
-          productByUpc(upc: $__fusion_2_upc) {
-            eur(price: $__fusion_1_price)
+      operation:
+        name: testQuery_d37d696c_2
+        kind: Query
+        document: |
+          query testQuery_d37d696c_2($__fusion_1_price: Int, $__fusion_2_upc: String!) {
+            productByUpc(upc: $__fusion_2_upc) {
+              eur(price: $__fusion_1_price)
+            }
           }
-        }
+        hash: 5b9ab081bfb6dff441c6a3ce2d1f04aa00dc2116f8914d3641a2731815f28418
+        shortHash: 5b9ab081
+        xxHash: 15324958055450383721
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { eur }
       source: $.productByUpc
       target: $.products
       requirements:
         - name: __fusion_1_price
+          type: Int
+          path: $.products
           selectionMap: >-
             price(cur: "EUR")
         - name: __fusion_2_upc
+          type: String!
+          path: $.products
           selectionMap: >-
             upc
       conditions:
@@ -164,17 +189,28 @@ operationPlan:
     - id: 3
       type: Operation
       schema: B
-      operation: |
-        query testQuery_d37d696c_3($__fusion_3_id: Int!) {
-          productById(id: $__fusion_3_id) {
-            price(cur: "EUR")
-            id
+      operation:
+        name: testQuery_d37d696c_3
+        kind: Query
+        document: |
+          query testQuery_d37d696c_3($__fusion_3_id: Int!) {
+            productById(id: $__fusion_3_id) {
+              price(cur: "EUR")
+              id
+            }
           }
-        }
+        hash: 3b53edd61579bb3f3830aa32cbc5938760fbd448a7e30c7acda087ff251c44dd
+        shortHash: 3b53edd6
+        xxHash: 12147569205453627857
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { price id }
       source: $.productById
       target: $.products
       requirements:
         - name: __fusion_3_id
+          type: Int!
+          path: $.products
           selectionMap: >-
             id
       conditions:
@@ -185,16 +221,27 @@ operationPlan:
     - id: 4
       type: Operation
       schema: S
-      operation: |
-        query testQuery_d37d696c_4($__fusion_4_upc: String!) {
-          productByUpc(upc: $__fusion_4_upc) {
-            id
+      operation:
+        name: testQuery_d37d696c_4
+        kind: Query
+        document: |
+          query testQuery_d37d696c_4($__fusion_4_upc: String!) {
+            productByUpc(upc: $__fusion_4_upc) {
+              id
+            }
           }
-        }
+        hash: d69cda0e1cfcdcf512d3f30d0f53c7daafc3e51e796e48f509c66106872f34d4
+        shortHash: d69cda0e
+        xxHash: 4604070362245286268
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { id }
       source: $.productByUpc
       target: $.products
       requirements:
         - name: __fusion_4_upc
+          type: String!
+          path: $.products
           selectionMap: >-
             upc
       conditions:
@@ -205,16 +252,27 @@ operationPlan:
     - id: 6
       type: Operation
       schema: T
-      operation: |
-        query testQuery_d37d696c_6($__fusion_6_id: Int!) {
-          productById(id: $__fusion_6_id) {
-            rating
+      operation:
+        name: testQuery_d37d696c_6
+        kind: Query
+        document: |
+          query testQuery_d37d696c_6($__fusion_6_id: Int!) {
+            productById(id: $__fusion_6_id) {
+              rating
+            }
           }
-        }
+        hash: 7c31a117b1faf61d4d1ebeaa1e213f7dab45ce9074b8b4e00ad5cac8a85c0eba
+        shortHash: 7c31a117
+        xxHash: 7183590396029126336
+      lookupTypeName: Product
+      resultSelectionSet: >-
+        { rating }
       source: $.productById
       target: $.products
       requirements:
         - name: __fusion_6_id
+          type: Int!
+          path: $.products
           selectionMap: >-
             id
       conditions:
