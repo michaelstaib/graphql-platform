@@ -939,8 +939,8 @@ public sealed partial class OperationPlanner
 
         while (!ReferenceEquals(taken, planSteps) && !pass.TryAccept(planSteps, taken))
         {
-            // The result splits a pair of steps, so the steps are taken again. The pair keeps its selections, but its
-            // steps can still hold a field for another step, so their dependents grow.
+            // The result splits a pair of steps, so the steps are taken again. The pair keeps its selections, and
+            // when the result splits it again, the steps that provide a field to the pair keep theirs as well.
             taken = pass.TryFreezeSplitPair() ? TakeSelections(planSteps, pass) : planSteps;
         }
 
@@ -1465,6 +1465,7 @@ public sealed partial class OperationPlanner
         private bool[]? _listed;
         private bool[]? _hadDependent;
         private bool[]? _frozen;
+        private bool[]? _providersFixed;
         private ImmutableArray<int> _stepGroups;
         private int _allowedCount;
         private int _visitStamp;
@@ -1589,7 +1590,8 @@ public sealed partial class OperationPlanner
             return index >= 0 && !_plainHolders[index];
         }
 
-        // Checks that the step or one of its dependents is a step of a split pair, so the pass does not change it.
+        // Checks that the step is a step of a split pair, or a step that provides a field to a step of a pair whose
+        // providers are fixed, so the pass does not change it.
         public bool IsFixed(OperationPlanStep step)
         {
             if (_frozen is null)
@@ -1604,7 +1606,7 @@ public sealed partial class OperationPlanner
 
             foreach (var dependentId in step.Dependents)
             {
-                if (dependentId <= _maxId && _frozen[dependentId])
+                if (dependentId <= _maxId && _providersFixed![dependentId])
                 {
                     return true;
                 }
@@ -1613,8 +1615,9 @@ public sealed partial class OperationPlanner
             return false;
         }
 
-        // Fixes the two steps that the last refused result split. Returns false when no pair was split or both
-        // were fixed before.
+        // Fixes the two steps that the last refused result split. When both were fixed before, fixes the steps that
+        // provide a field to them instead. Returns false when no pair was split or both were fixed with their
+        // providers before.
         public bool TryFreezeSplitPair()
         {
             var first = _splitFirstId;
@@ -1631,11 +1634,20 @@ public sealed partial class OperationPlanner
             {
                 _frozen = ArrayPool<bool>.Shared.Rent(_maxId + 1);
                 _frozen.AsSpan(0, _maxId + 1).Clear();
+                _providersFixed = ArrayPool<bool>.Shared.Rent(_maxId + 1);
+                _providersFixed.AsSpan(0, _maxId + 1).Clear();
             }
 
             if (_frozen[first] && _frozen[second])
             {
-                return false;
+                if (_providersFixed![first] && _providersFixed[second])
+                {
+                    return false;
+                }
+
+                _providersFixed[first] = true;
+                _providersFixed[second] = true;
+                return true;
             }
 
             _frozen[first] = true;
@@ -2175,6 +2187,11 @@ public sealed partial class OperationPlanner
             if (_frozen is not null)
             {
                 ArrayPool<bool>.Shared.Return(_frozen);
+            }
+
+            if (_providersFixed is not null)
+            {
+                ArrayPool<bool>.Shared.Return(_providersFixed);
             }
 
             if (_listed is not null)

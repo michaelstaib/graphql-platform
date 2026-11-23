@@ -1310,6 +1310,26 @@ public partial class SinglePlanDeferPlannerTests : FusionTestBase
     }
 
     [Fact]
+    public void Plan_Should_TakeTheKeyFromTheInitialLookup_When_ItsReaderIsOfASplitPair()
+    {
+        // arrange
+        var schema = ComposeSchema(HolderRootSchema, HolderFriendSchema, HolderCodeSchema, HolderByCodeSchema);
+
+        // act
+        var result = Plan(
+            schema,
+            """
+            {
+                current { user { friend { code } ... @defer { nick total friend { nick total } } } }
+            }
+            """);
+
+        // assert
+        Assert.Empty(result.Fallbacks);
+        MatchSnapshot(result.Plan);
+    }
+
+    [Fact]
     public void Plan_Should_KeepTheLastCheckedSteps_When_TheCheckReachesItsBuildLimit()
     {
         // arrange
