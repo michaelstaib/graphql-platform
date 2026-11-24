@@ -4,7 +4,8 @@ using GreenDonut.Data;
 namespace HotChocolate.Types.Pagination;
 
 /// <summary>
-/// A connection to a stream of items.
+/// A connection to a stream of items. When its edges or nodes are delivered with <c>@stream</c>, the database
+/// reader of the page stays open while the client consumes the stream.
 /// </summary>
 /// <typeparam name="TNode">
 /// The type of the node.
