@@ -42,10 +42,19 @@ public class StreamPageConnectionExecutionGroupTests
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         // act
-        var group = ((Schema)executor.Schema).QueryType.Fields["derived"].ExecutionGroup;
+        var entries = ((Schema)executor.Schema).QueryType.Fields["derived"].ExecutionGroup!.Entries
+            .Select(e => $"{e.Path} {e.Priority} streamable={e.IsStreamable} optional={e.IsOptional}");
 
         // assert
-        Assert.NotNull(group);
+        entries.MatchInlineSnapshots(
+        [
+            "edges 0 streamable=True optional=True",
+            "nodes 1 streamable=True optional=True",
+            "pageInfo.hasNextPage 2147483647 streamable=False optional=True",
+            "pageInfo.endCursor 2147483647 streamable=False optional=True",
+            "pageInfo.forwardCursors 2147483647 streamable=False optional=True",
+            "pageInfo.backwardCursors 2147483647 streamable=False optional=True"
+        ]);
     }
 
     [Fact]

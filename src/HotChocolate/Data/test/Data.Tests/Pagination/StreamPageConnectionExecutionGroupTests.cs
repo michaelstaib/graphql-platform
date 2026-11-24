@@ -254,6 +254,132 @@ public class StreamPageConnectionExecutionGroupTests(PostgreSqlResource resource
             """);
     }
 
+    [Fact]
+    public async Task Execute_Should_RunDeferredMembersOneAtATime_When_NodesAndPageInfoAreDeferredInSeparateFragments()
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var gate = new MemberGate();
+        var executor = await CreateExecutorAsync(store, gate);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        // act
+        var events = await RunGatedAsync(executor, gate, "{ items(first: 2) { ... @defer(label: \"nodes\") { nodes { id } } ... @defer(label: \"info\") { pageInfo { hasNextPage endCursor } } } }", cts.Token);
+
+        // assert
+        events.MatchInlineSnapshots(
+        [
+            "while nodes is gated: start nodes",
+            "while hasNextPage is gated: start nodes, end nodes, start hasNextPage",
+            "while endCursor is gated: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor",
+            "completed: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor, end endCursor"
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_RunDeferredMembersOneAtATime_When_PageInfoIsDeferredAfterNodes()
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var gate = new MemberGate();
+        var executor = await CreateExecutorAsync(store, gate);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        // act
+        var events = await RunGatedAsync(executor, gate, "{ items(first: 2) { nodes { id } ... @defer { pageInfo { hasNextPage endCursor } } } }", cts.Token);
+
+        // assert
+        events.MatchInlineSnapshots(
+        [
+            "while nodes is gated: start nodes",
+            "while hasNextPage is gated: start nodes, end nodes, start hasNextPage",
+            "while endCursor is gated: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor",
+            "completed: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor, end endCursor"
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_RunDeferredMembersOneAtATime_When_NodesAreDeferredBeforePageInfo()
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var gate = new MemberGate();
+        var executor = await CreateExecutorAsync(store, gate);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        // act
+        var events = await RunGatedAsync(executor, gate, "{ items(first: 2) { ... @defer { nodes { id } } pageInfo { hasNextPage endCursor } } }", cts.Token);
+
+        // assert
+        events.MatchInlineSnapshots(
+        [
+            "while nodes is gated: start nodes",
+            "while hasNextPage is gated: start nodes, end nodes, start hasNextPage",
+            "while endCursor is gated: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor",
+            "completed: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor, end endCursor"
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_RunDeferredMembersOneAtATime_When_PageInfoFieldsAreDeferredSeparately()
+    {
+        // arrange
+        var store = await Store.CreateAsync(resource, authorCount: 1, itemsPerAuthor: 5);
+        var gate = new MemberGate();
+        var executor = await CreateExecutorAsync(store, gate);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        // act
+        var events = await RunGatedAsync(executor, gate, "{ items(first: 2) { nodes { id } pageInfo { ... @defer(label: \"a\") { hasNextPage } ... @defer(label: \"b\") { endCursor } } } }", cts.Token);
+
+        // assert
+        events.MatchInlineSnapshots(
+        [
+            "while nodes is gated: start nodes",
+            "while hasNextPage is gated: start nodes, end nodes, start hasNextPage",
+            "while endCursor is gated: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor",
+            "completed: start nodes, end nodes, start hasNextPage, end hasNextPage, start endCursor, end endCursor"
+        ]);
+    }
+
+    private static async Task<List<string>> RunGatedAsync(
+        IRequestExecutor executor,
+        MemberGate gate,
+        string query,
+        CancellationToken cancellationToken)
+    {
+        var events = new List<string>();
+        var drain = DrainAsync(executor.ExecuteAsync(query, cancellationToken), cancellationToken);
+
+        foreach (var member in new[] { "nodes", "hasNextPage", "endCursor" })
+        {
+            await gate.StartedAsync(member);
+            events.Add($"while {member} is gated: {string.Join(", ", gate.Events)}");
+            gate.Release(member);
+        }
+
+        await drain;
+        events.Add($"completed: {string.Join(", ", gate.Events)}");
+        return events;
+    }
+
+    private static async Task DrainAsync(Task<IExecutionResult> execution, CancellationToken cancellationToken)
+    {
+        await using var result = await execution;
+
+        if (result is IResponseStream stream)
+        {
+            await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cancellationToken))
+            {
+                await payload.DisposeAsync();
+            }
+        }
+    }
+
     private static async Task<List<string>> ReadAsync(IRequestExecutor executor, string query)
     {
         var result = await executor.ExecuteAsync(query, TestContext.Current.CancellationToken);
