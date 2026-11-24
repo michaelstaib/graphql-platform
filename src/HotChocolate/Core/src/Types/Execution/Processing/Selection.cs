@@ -22,6 +22,7 @@ public sealed class Selection : ISelection, IFeatureProvider
     private readonly DeferUsage[] _deferUsage;
     private readonly ulong _deferMask;
     private readonly ulong[]? _wideDeferMask;
+    private readonly StreamArguments? _streamArguments;
     private Flags _flags;
     private SelectionSet? _declaringSelectionSet;
 
@@ -67,6 +68,7 @@ public sealed class Selection : ISelection, IFeatureProvider
             hasPureResolver: pureResolver is not null,
             hasBatchResolver: batchResolverPipeline is not null);
         _syntaxNodes = syntaxNodes;
+        _streamArguments = StreamArguments.Create(syntaxNodes);
         _includeFlags = includeFlags;
         _wideIncludeFlags = wideIncludeFlags;
         _wideIncludeFlagsStride = wideIncludeFlagsStride;
@@ -111,6 +113,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         ObjectField field,
         IType type,
         FieldSelectionNode[] syntaxNodes,
+        StreamArguments? streamArguments,
         ulong[] includeFlags,
         ulong[]? wideIncludeFlags,
         int wideIncludeFlagsStride,
@@ -135,6 +138,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         BatchResolverPipeline = batchResolverPipeline;
         Strategy = strategy;
         _syntaxNodes = syntaxNodes;
+        _streamArguments = streamArguments;
         _includeFlags = includeFlags;
         _wideIncludeFlags = wideIncludeFlags;
         _wideIncludeFlagsStride = wideIncludeFlagsStride;
@@ -199,6 +203,12 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// Gets a value indicating whether this selection returns a list that honors the <c>@stream</c> directive.
     /// </summary>
     internal bool IsStreamable => (_flags & Flags.Stream) == Flags.Stream;
+
+    /// <summary>
+    /// Gets the arguments of the <c>@stream</c> directive of this selection, or <c>null</c> if it has none or the
+    /// directive is disabled by the literal <c>false</c>.
+    /// </summary>
+    internal StreamArguments? StreamArguments => _streamArguments;
 
     /// <inheritdoc />
     public bool IsLeaf => (_flags & Flags.Leaf) == Flags.Leaf;
@@ -1011,6 +1021,7 @@ nextItem:
             field,
             field.Type,
             _syntaxNodes,
+            _streamArguments,
             _includeFlags,
             _wideIncludeFlags,
             _wideIncludeFlagsStride,
@@ -1043,6 +1054,7 @@ nextItem:
             Field,
             type,
             _syntaxNodes,
+            _streamArguments,
             _includeFlags,
             _wideIncludeFlags,
             _wideIncludeFlagsStride,
@@ -1143,6 +1155,21 @@ nextItem:
         }
 
         return SelectionExecutionStrategy.Default;
+    }
+
+    /// <summary>
+    /// Defines whether this selection honors the <c>@stream</c> directive, which only a list can do.
+    /// </summary>
+    internal void SetStreamable(bool isStreamable)
+    {
+        if (isStreamable && (_flags & Flags.List) == Flags.List)
+        {
+            _flags |= Flags.Stream;
+        }
+        else
+        {
+            _flags &= ~Flags.Stream;
+        }
     }
 
     private static bool IsStreamableField(ObjectField field)

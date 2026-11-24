@@ -17,7 +17,7 @@ public sealed class ExecutionGroupEntry
     /// The position of the member in the sequence. Lower values run first.
     /// </param>
     /// <param name="isStreamable">
-    /// Defines whether the member can be consumed incrementally.
+    /// Defines whether the member honors the <c>@stream</c> directive.
     /// </param>
     public ExecutionGroupEntry(string path, int priority, bool isStreamable)
     {
@@ -42,7 +42,8 @@ public sealed class ExecutionGroupEntry
     public int Priority { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the member can be consumed incrementally.
+    /// Gets a value indicating whether the member honors the <c>@stream</c> directive. A streamed member that is
+    /// delivered with the group root reads its initial items outside the sequence and its remaining items in its turn.
     /// </summary>
     public bool IsStreamable { get; }
 

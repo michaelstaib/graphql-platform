@@ -148,7 +148,7 @@ public class ExecutionGroupScopeTests
             harness =>
             {
                 var scheduler = harness.Scheduler;
-                var scope = scheduler.OpenExecutionGroupScope(harness.Plan, harness.IncludeFlags)!;
+                var scope = harness.OpenScope()!;
                 var first = CreateMember(harness, scope, "nodes");
                 var second = CreateMember(harness, scope, "edges");
                 var states = new List<string>();
@@ -259,13 +259,13 @@ public class ExecutionGroupScopeTests
     private static Task<ExecutionGroupScope?> OpenAsync(string query)
         => ExecutionGroupTestHarness.RunAsync(
             query,
-            harness => harness.Scheduler.OpenExecutionGroupScope(harness.Plan, harness.IncludeFlags));
+            harness => harness.OpenScope());
 
     private static Task<ExecutionGroupScope?> OpenAsync(string query, bool skip)
         => ExecutionGroupTestHarness.RunAsync(
             query,
             new Dictionary<string, object?> { ["skip"] = skip },
-            harness => harness.Scheduler.OpenExecutionGroupScope(harness.Plan, harness.IncludeFlags));
+            harness => harness.OpenScope());
 
     private static Task<T> RunWithScopeAsync<T>(string query, Func<ExecutionGroupScope, T> test)
         => RunWithScopeAsync(query, (_, scope) => test(scope));
@@ -277,7 +277,7 @@ public class ExecutionGroupScopeTests
             query,
             harness =>
             {
-                var scope = harness.Scheduler.OpenExecutionGroupScope(harness.Plan, harness.IncludeFlags)!;
+                var scope = harness.OpenScope()!;
                 return test(harness, scope);
             });
 

@@ -203,6 +203,7 @@ internal sealed partial class ResolverTask
 
         if (_selection.IsStreamable
             && _operationContext.Operation.HasIncrementalParts
+            && (!IsGroupMember || _groupScope!.HonorsStreams)
             && StreamUsage.TryCreate(_selection, _context.Variables, out var streamUsage)
             && postProcessor.ToStreamResultAsync(result, cancellationToken) is { } stream)
         {
@@ -266,7 +267,12 @@ internal sealed partial class ResolverTask
                     IsGroupMember ? _groupScope : null,
                     _groupSlot);
                 isStreaming = true;
-                _stream.StartProducer();
+
+                // the stream of a group member starts reading when its slot has its turn.
+                if (!IsGroupMember)
+                {
+                    _stream.StartProducer();
+                }
             }
 
             return items;
@@ -298,9 +304,15 @@ internal sealed partial class ResolverTask
         if (_completionStatus is ExecutionTaskStatus.Completed && !_context.ResultValue.IsNullOrInvalidated)
         {
             _stream = null;
-            _streamHoldsGroupTurn = IsGroupMember;
             stream.Announce(BranchId, _context.ResultValue);
             _operationContext.RegisterRequestCleanup(stream.DisposeAsync);
+
+            if (IsGroupMember)
+            {
+                _streamHoldsGroupTurn = true;
+                _groupScope!.Enqueue(stream, _groupSlot);
+            }
+
             _taskBuffer.Add(stream);
             return;
         }

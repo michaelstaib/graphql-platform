@@ -32,6 +32,14 @@ internal sealed class ExecutionGroupTestHarness
 
     public ConditionFlags IncludeFlags => OperationContext.IncludeConditionFlags;
 
+    public ExecutionGroupScope? OpenScope()
+        => Scheduler.OpenExecutionGroupScope(
+            Plan,
+            IncludeFlags,
+            OperationContext.DeferConditionFlags,
+            rootDeferUsage: null,
+            OperationContext.Variables);
+
     public Selection GetSelection(string fieldName)
         => RootSet.Selections.ToArray().Single(s => s.Field.Name == fieldName);
 

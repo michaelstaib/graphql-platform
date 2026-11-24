@@ -11,11 +11,16 @@ internal sealed partial class WorkScheduler
     /// Opens an execution group scope that stays valid until the scheduler is cleared, or returns
     /// <c>null</c> if the group has nothing to sequence.
     /// </summary>
-    public ExecutionGroupScope? OpenExecutionGroupScope(ExecutionGroupPlan plan, ConditionFlags includeFlags)
+    public ExecutionGroupScope? OpenExecutionGroupScope(
+        ExecutionGroupPlan plan,
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        DeferUsage? rootDeferUsage,
+        IVariableValueCollection variables)
     {
         AssertNotPooled();
 
-        var scope = ExecutionGroupScope.Open(this, plan, includeFlags);
+        var scope = ExecutionGroupScope.Open(this, plan, includeFlags, deferFlags, rootDeferUsage, variables);
 
         if (scope is null)
         {

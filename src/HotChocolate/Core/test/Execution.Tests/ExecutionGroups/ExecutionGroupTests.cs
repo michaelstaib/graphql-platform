@@ -1339,14 +1339,26 @@ public class ExecutionGroupTests
         script.Release("streaming.nodes.a");
 
         // act
-        var execution = executor.ExecuteAsync(
-            "{ streaming { nodes @stream(initialCount: 1) { name } edges } }",
-            cts.Token);
-        await script.Started("streaming.nodes.b");
-        var eventsWhileSourceIsRead = script.Events;
-        script.Release("streaming.nodes.b");
-        script.Release("streaming.nodes.c");
-        var payloads = await ReadRawPayloadsAsync(execution, cts.Token);
+        var stream = Assert.IsType<ResponseStream>(
+            await executor.ExecuteAsync(
+                "{ streaming { nodes @stream(initialCount: 1) { name } ... @defer { edges } } }",
+                cts.Token));
+        var payloads = new List<string>();
+        var eventsWhileSourceIsRead = new List<string>();
+
+        await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cts.Token))
+        {
+            await using var cleanup = payload;
+            payloads.Add(JsonNode.Parse(payload.ToJson())!.ToJsonString());
+
+            if (payloads.Count == 1)
+            {
+                await script.Started("streaming.nodes.b");
+                eventsWhileSourceIsRead.AddRange(script.Events);
+                script.Release("streaming.nodes.b");
+                script.Release("streaming.nodes.c");
+            }
+        }
 
         // assert
         eventsWhileSourceIsRead.MatchInlineSnapshots(
@@ -1365,11 +1377,62 @@ public class ExecutionGroupTests
         ]);
         payloads.MatchInlineSnapshots(
         [
-            "{\"data\":{\"streaming\":{\"nodes\":[{\"name\":\"a\"}],\"edges\":[\"e1\"]}},"
-            + "\"pending\":[{\"id\":\"2\",\"path\":[\"streaming\",\"nodes\"]}],"
-            + "\"incremental\":[{\"id\":\"2\",\"items\":[{\"name\":\"b\"},{\"name\":\"c\"}]}],"
-            + "\"completed\":[{\"id\":\"2\"}],\"hasNext\":false}"
+            """{"data":{"streaming":{"nodes":[{"name":"a"}]}},"pending":[{"id":"2","path":["streaming"]},{"id":"3","path":["streaming","nodes"]}],"hasNext":true}""",
+            """{"incremental":[{"id":"3","items":[{"name":"b"},{"name":"c"}]}],"completed":[{"id":"3"}],"hasNext":true}""",
+            """{"incremental":[{"id":"2","data":{"edges":["e1"]}}],"completed":[{"id":"2"}],"hasNext":false}"""
         ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_IgnoreStream_When_MemberThatIsNotStreamableIsDeliveredWithTheRoot()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("streaming.edges");
+        script.Release("streaming.nodes.a");
+        script.Release("streaming.nodes.b");
+        script.Release("streaming.nodes.c");
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ streaming { nodes @stream(initialCount: 1) { name } edges } }",
+            cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "read streaming.nodes a",
+            "read streaming.nodes b",
+            "read streaming.nodes c",
+            "source ended streaming.nodes",
+            "start streaming.edges",
+            "end streaming.edges"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "streaming": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    },
+                    {
+                      "name": "c"
+                    }
+                  ],
+                  "edges": [
+                    "e1"
+                  ]
+                }
+              }
+            }
+            """);
     }
 
     [Fact]
@@ -1452,22 +1515,6 @@ public class ExecutionGroupTests
         }
 
         return items;
-    }
-
-    private static async Task<List<string>> ReadRawPayloadsAsync(
-        Task<IExecutionResult> execution,
-        CancellationToken cancellationToken)
-    {
-        var stream = Assert.IsType<ResponseStream>(await execution);
-        var payloads = new List<string>();
-
-        await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cancellationToken))
-        {
-            await using var cleanup = payload;
-            payloads.Add(JsonNode.Parse(payload.ToJson())!.ToJsonString());
-        }
-
-        return payloads;
     }
 
     private static async Task<List<string>> ReadPayloadsAsync(
