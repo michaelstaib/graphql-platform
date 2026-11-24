@@ -56,6 +56,22 @@ public class ExecutionGroupConfigurationTests
     }
 
     [Fact]
+    public void Create_Should_SkipTheEntry_When_OptionalPathReferencesAMissingField()
+    {
+        // arrange
+        // act
+        var schema = CreateSchema(
+            new ExecutionGroupEntry("pageInfo.hasNextPage", 0, isStreamable: false),
+            new ExecutionGroupEntry("pageInfo.missing", 1, isStreamable: false) { IsOptional = true },
+            new ExecutionGroupEntry("missing.hasNextPage", 2, isStreamable: false) { IsOptional = true });
+
+        // assert
+        schema.QueryType.Fields["connection"].ExecutionGroup!.Entries
+            .Select(e => e.Path)
+            .MatchInlineSnapshots(["pageInfo.hasNextPage", "pageInfo.missing", "missing.hasNextPage"]);
+    }
+
+    [Fact]
     public void Create_Should_Throw_When_PathPassesThroughAListField()
     {
         // arrange
