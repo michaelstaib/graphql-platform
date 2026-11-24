@@ -860,6 +860,8 @@ public class StreamPageConnectionDataRequirementTests(PostgreSqlResource resourc
         private int _readsAfterResolver;
         private int _resolverReturns;
         private int _released;
+        private int _holdReadsAfterResolverReturns;
+        private TaskCompletionSource? _readGate;
 
         private Store(string connectionString, int[] authorIds)
         {
@@ -930,12 +932,33 @@ public class StreamPageConnectionDataRequirementTests(PostgreSqlResource resourc
         public ReadSummary Summarize()
             => new(ReadsAtEnd > 0, ReadsAtEnd > ReadsAfterResolver);
 
+        /// <summary>
+        /// Holds every read that starts after the specified number of resolvers have returned until
+        /// <see cref="ReleaseReads"/> is called.
+        /// </summary>
+        public void HoldReadsAfterResolverReturns(int resolverReturns)
+            => _holdReadsAfterResolverReturns = resolverReturns;
+
+        public void ReleaseReads()
+        {
+            lock (_sync)
+            {
+                _holdReadsAfterResolverReturns = 0;
+                _readGate?.TrySetResult();
+            }
+        }
+
         public void RecordResolverReturn()
         {
             lock (_sync)
             {
                 _resolverReturns++;
                 _readsAfterResolver = Math.Max(_readsAfterResolver, Volatile.Read(ref _reads));
+
+                if (_resolverReturns == _holdReadsAfterResolverReturns)
+                {
+                    _readGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
             }
         }
 
@@ -945,8 +968,16 @@ public class StreamPageConnectionDataRequirementTests(PostgreSqlResource resourc
             DbDataReader result,
             CancellationToken cancellationToken = default)
             => _counting
-                ? new(new CountingDataReader(result, () => Interlocked.Increment(ref _reads)))
+                ? new(new CountingDataReader(result, () => Interlocked.Increment(ref _reads), WaitForReadAsync))
                 : base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+
+        private Task WaitForReadAsync(CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                return _readGate?.Task.WaitAsync(cancellationToken) ?? Task.CompletedTask;
+            }
+        }
 
         private sealed class Lifetime(Store store, PagingContext context) : IAsyncDisposable
         {
@@ -960,7 +991,10 @@ public class StreamPageConnectionDataRequirementTests(PostgreSqlResource resourc
 
     public sealed record ReadSummary(bool RowsWereRead, bool ReadAfterResolver);
 
-    private sealed class CountingDataReader(DbDataReader inner, Action onRead) : DbDataReader
+    private sealed class CountingDataReader(
+        DbDataReader inner,
+        Action onRead,
+        Func<CancellationToken, Task> waitForRead) : DbDataReader
     {
         public override object this[int ordinal] => inner[ordinal];
 
@@ -984,10 +1018,11 @@ public class StreamPageConnectionDataRequirementTests(PostgreSqlResource resourc
             return inner.Read();
         }
 
-        public override Task<bool> ReadAsync(CancellationToken cancellationToken)
+        public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
         {
             onRead();
-            return inner.ReadAsync(cancellationToken);
+            await waitForRead(cancellationToken);
+            return await inner.ReadAsync(cancellationToken);
         }
 
         public override bool NextResult() => inner.NextResult();
