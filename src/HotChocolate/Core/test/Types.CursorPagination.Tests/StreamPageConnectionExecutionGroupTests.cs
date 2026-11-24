@@ -153,6 +153,77 @@ public class StreamPageConnectionExecutionGroupTests
             ]);
     }
 
+    [Theory]
+    [InlineData("edges", "AllRows")]
+    [InlineData("nodes", "AllRows")]
+    [InlineData("totalCount", "TotalCount")]
+    [InlineData("pageInfo", "None")]
+    [InlineData("__typename", "None")]
+    public void GetConnectionRequirements_Should_ReturnTheRequirements_When_FieldIsOfTheConnection(
+        string fieldName,
+        string expected)
+    {
+        // act
+        var requirements = StreamPageConnectionExecutionGroup.GetConnectionRequirements(fieldName);
+
+        // assert
+        Assert.Equal(expected, requirements.ToString());
+    }
+
+    [Theory]
+    [InlineData("hasNextPage", "AllRows")]
+    [InlineData("endCursor", "AllRows")]
+    [InlineData("forwardCursors", "AllRows")]
+    [InlineData("backwardCursors", "AllRows")]
+    [InlineData("startCursor", "FirstRow")]
+    [InlineData("hasPreviousPage", "FirstRow")]
+    [InlineData("__typename", "None")]
+    public void GetPageInfoRequirements_Should_ReturnTheRequirements_When_FieldIsOfThePageInfo(
+        string fieldName,
+        string expected)
+    {
+        // act
+        var requirements = StreamPageConnectionExecutionGroup.GetPageInfoRequirements(fieldName);
+
+        // assert
+        Assert.Equal(expected, requirements.ToString());
+    }
+
+    [Fact]
+    public async Task GetRequirements_Should_ReadAllRows_When_PathIsAnEntryOfTheExecutionGroup()
+    {
+        // arrange
+        var executor = await new ServiceCollection()
+            .AddGraphQL()
+            .AddQueryType<StreamQueryType>()
+            .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var entries = ((Schema)executor.Schema).QueryType.Fields["products"].ExecutionGroup!.Entries;
+
+        // act
+        var requirements = entries.Select(e => GetRequirements(e.Path));
+
+        // assert
+        requirements.MatchInlineSnapshots(
+        [
+            "AllRows",
+            "AllRows",
+            "AllRows",
+            "AllRows",
+            "AllRows",
+            "AllRows"
+        ]);
+
+        static string GetRequirements(string path)
+        {
+            var separator = path.IndexOf('.');
+
+            return (separator < 0
+                ? StreamPageConnectionExecutionGroup.GetConnectionRequirements(path)
+                : StreamPageConnectionExecutionGroup.GetPageInfoRequirements(path[(separator + 1)..]))
+                .ToString();
+        }
+    }
+
     public sealed class Product
     {
         public int Id { get; set; }

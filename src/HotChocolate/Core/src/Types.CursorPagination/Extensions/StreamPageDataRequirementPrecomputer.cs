@@ -44,7 +44,7 @@ internal sealed class StreamPageDataRequirementPrecomputer : ISelectionSetHandle
                 continue;
             }
 
-            var childRequirements = StreamPageDataRequirementAnalyzer.GetConnectionRequirements(child.Field.Name);
+            var childRequirements = StreamPageConnectionExecutionGroup.GetConnectionRequirements(child.Field.Name);
 
             if (childRequirements is StreamPageDataRequirements.None)
             {
@@ -79,7 +79,7 @@ internal sealed class StreamPageDataRequirementPrecomputer : ISelectionSetHandle
 
         foreach (var child in pageInfo.GetSelectionSet(pageInfoType).Selections)
         {
-            var childRequirements = StreamPageDataRequirementAnalyzer.GetPageInfoRequirements(child.Field.Name);
+            var childRequirements = StreamPageConnectionExecutionGroup.GetPageInfoRequirements(child.Field.Name);
 
             if (childRequirements is StreamPageDataRequirements.None)
             {
