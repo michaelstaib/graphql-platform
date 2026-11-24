@@ -28,7 +28,7 @@ public class DeferTaskLifecycleTests
         try
         {
             await resolverStarted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
-            await stream.DisposeAsync();
+            await stream.DisposeAsync().AsTask().WaitAsync(s_timeout, TestContext.Current.CancellationToken);
             completeDeferredResolver.TrySetResult();
             await deferTaskCompleted.Task.WaitAsync(s_timeout, TestContext.Current.CancellationToken);
         }

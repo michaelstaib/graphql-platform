@@ -26,8 +26,11 @@ internal sealed class QueryExecutor
         OperationContext operationContext,
         IImmutableDictionary<string, object?> scopedContext)
     {
-        var requestCleanup = new RequestCleanup();
+        var cancellation = operationContext.RentOperationAborted();
+        var operationAborted = cancellation.Token;
+        var requestCleanup = new RequestCleanup(cancellation, operationContext.RequestAborted);
         operationContext.RequestCleanup = requestCleanup;
+        operationContext.OverrideRequestAborted(operationAborted);
 
         EnqueueRootResolverTasks(
             operationContext,
@@ -54,6 +57,10 @@ internal sealed class QueryExecutor
                 await execution.ConfigureAwait(false);
             }
 
+            // the operation context is returned before the result is disposed, so the
+            // cancellation source must not be reachable from the request token anymore.
+            requestCleanup.DetachCancellation();
+
             // there are no deferred parts, so this behaves like a buffered result: seal now.
             memory.Seal();
 
@@ -78,20 +85,18 @@ internal sealed class QueryExecutor
 
         // the payloads are disposed while the stream is still being read, so the request cleanup
         // is released when the stream itself is disposed.
-        stream.RegisterForCleanup(requestCleanup.ExecuteAsync);
+        stream.RegisterForCleanup(() => CancelAndExecuteAsync(requestCleanup, execution));
 
         return stream;
 
         async IAsyncEnumerable<OperationResult> CreateStream()
         {
-            var requestAborted = operationContext.RequestAborted;
-
-            await foreach (var result in coordinator.ReadResultsAsync(requestAborted))
+            await foreach (var result in coordinator.ReadResultsAsync(operationAborted))
             {
                 yield return result;
             }
 
-            if (!requestAborted.IsCancellationRequested)
+            if (!operationAborted.IsCancellationRequested)
             {
                 // The stream was read to completion, so every deferred branch has been delivered and
                 // the scheduler has fully settled: no resolver or batch task can write into the arena
@@ -99,6 +104,33 @@ internal sealed class QueryExecutor
                 await execution.ConfigureAwait(false);
                 memory.Seal();
             }
+        }
+    }
+
+    private static async ValueTask CancelAndExecuteAsync(RequestCleanup requestCleanup, Task execution)
+    {
+        try
+        {
+            // a stream that ends before the execution has finished abandons the outstanding work.
+            if (!execution.IsCompleted)
+            {
+                _ = execution.ContinueWith(
+                    static task => _ = task.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+
+                requestCleanup.Cancel();
+            }
+            else if (execution.IsFaulted)
+            {
+                // an execution that faulted before the stream was disposed is observed here.
+                _ = execution.Exception;
+            }
+        }
+        finally
+        {
+            await requestCleanup.ExecuteAsync().ConfigureAwait(false);
         }
     }
 
