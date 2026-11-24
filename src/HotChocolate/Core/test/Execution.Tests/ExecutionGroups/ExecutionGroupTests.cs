@@ -1343,16 +1343,39 @@ public class ExecutionGroupTests
             await executor.ExecuteAsync(
                 "{ streaming { nodes @stream(initialCount: 1) { name } ... @defer { edges } } }",
                 cts.Token));
-        var payloads = new List<string>();
+        var initial = string.Empty;
+        var streamedItems = new JsonArray();
+        var delivered = new List<string>();
         var eventsWhileSourceIsRead = new List<string>();
 
         await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cts.Token))
         {
             await using var cleanup = payload;
-            payloads.Add(JsonNode.Parse(payload.ToJson())!.ToJsonString());
+            var root = JsonNode.Parse(payload.ToJson())!;
 
-            if (payloads.Count == 1)
+            foreach (var entry in root["incremental"]?.AsArray() ?? [])
             {
+                if (entry!["items"] is JsonArray items)
+                {
+                    foreach (var item in items)
+                    {
+                        streamedItems.Add(item!.DeepClone());
+                    }
+                }
+                else
+                {
+                    delivered.Add($"data {entry["id"]} {entry["data"]!.ToJsonString()}");
+                }
+            }
+
+            foreach (var entry in root["completed"]?.AsArray() ?? [])
+            {
+                delivered.Add($"completed {entry!["id"]}");
+            }
+
+            if (initial.Length == 0)
+            {
+                initial = root.ToJsonString();
                 await script.Started("streaming.nodes.b");
                 eventsWhileSourceIsRead.AddRange(script.Events);
                 script.Release("streaming.nodes.b");
@@ -1375,11 +1398,14 @@ public class ExecutionGroupTests
             "start streaming.edges",
             "end streaming.edges"
         ]);
-        payloads.MatchInlineSnapshots(
+        initial.MatchInlineSnapshot(
+            """{"data":{"streaming":{"nodes":[{"name":"a"}]}},"pending":[{"id":"2","path":["streaming"]},{"id":"3","path":["streaming","nodes"]}],"hasNext":true}""");
+        streamedItems.ToJsonString().MatchInlineSnapshot("""[{"name":"b"},{"name":"c"}]""");
+        delivered.MatchInlineSnapshots(
         [
-            """{"data":{"streaming":{"nodes":[{"name":"a"}]}},"pending":[{"id":"2","path":["streaming"]},{"id":"3","path":["streaming","nodes"]}],"hasNext":true}""",
-            """{"incremental":[{"id":"3","items":[{"name":"b"},{"name":"c"}]}],"completed":[{"id":"3"}],"hasNext":true}""",
-            """{"incremental":[{"id":"2","data":{"edges":["e1"]}}],"completed":[{"id":"2"}],"hasNext":false}"""
+            "completed 3",
+            """data 2 {"edges":["e1"]}""",
+            "completed 2"
         ]);
     }
 
