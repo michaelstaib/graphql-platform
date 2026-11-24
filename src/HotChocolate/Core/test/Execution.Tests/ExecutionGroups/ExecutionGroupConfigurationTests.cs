@@ -180,9 +180,11 @@ public class ExecutionGroupConfigurationTests
         GetMessages(exception).MatchInlineSnapshots(
         [
             "The execution group of field `Query.connection` is invalid: the entry `pageInfo.hasNextPage` "
-            + "references the field `Connection.pageInfo` that is not parallel executable.",
+            + "references the field `Connection.pageInfo` that is not parallel executable. Execution group members are started by the group "
+            + "and cannot run serially, for example when the default resolver strategy is serial.",
             "The execution group of field `Query.connection` is invalid: the entry `nodes` "
-            + "references the field `Connection.nodes` that is not parallel executable."
+            + "references the field `Connection.nodes` that is not parallel executable. Execution group members are started by the group "
+            + "and cannot run serially, for example when the default resolver strategy is serial."
         ]);
     }
 
@@ -263,7 +265,8 @@ public class ExecutionGroupConfigurationTests
         GetMessages(exception).MatchInlineSnapshots(
         [
             "The execution group of field `Query.conn` is invalid: the entry `nodes` "
-            + "references the field `ConnB.nodes` that is not parallel executable."
+            + "references the field `ConnB.nodes` that is not parallel executable. Execution group members are started by the group "
+            + "and cannot run serially, for example when the default resolver strategy is serial."
         ]);
     }
 

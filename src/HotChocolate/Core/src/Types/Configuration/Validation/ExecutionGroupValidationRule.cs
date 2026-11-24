@@ -131,7 +131,9 @@ internal sealed class ExecutionGroupValidationRule : ISchemaValidationRule
 
             if (!currentType.Fields.TryGetField(segment, out var field))
             {
-                return ExecutionGroup_FieldNotFound(type, root, entry, currentType.Name, segment);
+                return entry.IsOptional
+                    ? null
+                    : ExecutionGroup_FieldNotFound(type, root, entry, currentType.Name, segment);
             }
 
             if (field is ObjectField { BatchResolver: not null })
