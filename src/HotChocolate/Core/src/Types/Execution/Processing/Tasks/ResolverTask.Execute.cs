@@ -155,7 +155,11 @@ internal sealed partial class ResolverTask
         if (_groupSlot >= 0)
         {
             // a streamed member keeps its turn until the stream has ended and releases it itself.
-            if (!_streamHoldsGroupTurn)
+            if (_streamHoldsGroupTurn)
+            {
+                scope.EndInitialRead(_groupSlot);
+            }
+            else
             {
                 scope.Release(_groupSlot);
             }
