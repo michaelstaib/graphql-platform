@@ -1,14 +1,18 @@
 using HotChocolate.Execution;
 using HotChocolate.Execution.Processing;
-using HotChocolate.Language;
 using HotChocolate.Resolvers;
 
 namespace HotChocolate.Types.Pagination;
 
 internal static class StreamPageDataRequirementAnalyzer
 {
-    public static StreamPageDataRequirements Analyze(IResolverContext context)
+    /// <summary>
+    /// Gets the data the connection must hold in memory before its resolver returns, and the number of leading
+    /// rows the streamed members deliver with the connection.
+    /// </summary>
+    public static StreamPageDataRequirements Analyze(IResolverContext context, out int initialRowCount)
     {
+        initialRowCount = 0;
         var selection = context.Selection;
 
         if (selection.Type.NamedType() is not ObjectType connectionType)
@@ -22,21 +26,38 @@ internal static class StreamPageDataRequirementAnalyzer
         }
 
         // The requirements of an unconditional selection are stored while its selection set is compiled.
-        selection.GetSelectionSet(connectionType);
+        var selectionSet = selection.GetSelectionSet(connectionType);
 
         if (selection.Features.TryGet(out precomputed))
         {
             return precomputed;
         }
 
-        var deferFlags = context.Operation.CreateDeferConditionFlags(context.Variables);
+        var variables = context.Variables;
+        var deferFlags = context.Operation.CreateDeferConditionFlags(variables);
         var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags);
+        var plan = selectionSet.ExecutionGroupPlan;
+        var honorsStreams = plan?.HonorsStreams(
+            context.IncludeConditionFlags,
+            deferFlags,
+            connectionDeferUsage,
+            variables) == true;
         var requirements = StreamPageDataRequirements.None;
 
         foreach (var child in context.GetSelections(connectionType))
         {
-            if (IsDeferredOrStreamed(child, context.Variables, deferFlags, connectionDeferUsage))
+            if (child.GetPrimaryDeferUsage(deferFlags) != connectionDeferUsage)
             {
+                continue;
+            }
+
+            if (honorsStreams
+                && child.IsStreamable
+                && child.StreamArguments is { } stream
+                && plan!.TryGetNode(child.Id, out var node)
+                && node.SlotIndex >= 0)
+            {
+                initialRowCount = Math.Max(initialRowCount, stream.GetInitialCount(variables));
                 continue;
             }
 
@@ -63,7 +84,7 @@ internal static class StreamPageDataRequirementAnalyzer
 
         foreach (var child in context.GetSelections(pageInfoType, pageInfo))
         {
-            if (IsDeferredOrStreamed(child, context.Variables, deferFlags, connectionDeferUsage))
+            if (child.GetPrimaryDeferUsage(deferFlags) != connectionDeferUsage)
             {
                 continue;
             }
@@ -73,37 +94,4 @@ internal static class StreamPageDataRequirementAnalyzer
 
         return requirements;
     }
-
-    private static bool IsDeferredOrStreamed(
-        Selection selection,
-        IVariableValueCollection variables,
-        ConditionFlags deferFlags,
-        DeferUsage? connectionDeferUsage)
-    {
-        if (selection.GetPrimaryDeferUsage(deferFlags) != connectionDeferUsage)
-        {
-            return true;
-        }
-
-        foreach (var syntaxNode in selection.SyntaxNodes)
-        {
-            foreach (var directive in syntaxNode.Node.Directives)
-            {
-                if (directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal)
-                    && IsStreamEnabled(directive, variables))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    internal static bool IsStreamEnabled(DirectiveNode directive, IVariableValueCollection variables)
-        => DirectiveIfCondition.IsEnabled(
-            DirectiveNames.Stream.Name,
-            directive.GetArgumentValue(DirectiveNames.Stream.Arguments.If),
-            variables,
-            defaultValue: true);
 }

@@ -98,25 +98,7 @@ internal sealed class StreamPageDataRequirementPrecomputer : ISelectionSetHandle
     }
 
     private static bool HasNoOwnConditions(Selection connection, Selection child)
-    {
-        if (!child.HasSameConditions(connection))
-        {
-            return false;
-        }
-
-        foreach (var syntaxNode in child.SyntaxNodes)
-        {
-            foreach (var directive in syntaxNode.Node.Directives)
-            {
-                if (directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
+        => child.HasSameConditions(connection) && child.StreamArguments is null;
 
     private static object[] CreateBoxedRequirements()
     {

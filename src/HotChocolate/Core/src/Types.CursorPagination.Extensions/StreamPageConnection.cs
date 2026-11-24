@@ -96,6 +96,7 @@ public class StreamPageConnection<TNode> : IStreamPageConnection
 
     async ValueTask IStreamPageConnection.LoadRequirementsAsync(
         StreamPageDataRequirements requirements,
+        int rowCount,
         CancellationToken cancellationToken)
     {
         if ((requirements & StreamPageDataRequirements.TotalCount) != 0)
@@ -109,13 +110,23 @@ public class StreamPageConnection<TNode> : IStreamPageConnection
             {
             }
         }
-        else if ((requirements & StreamPageDataRequirements.FirstRow) != 0)
+        else
         {
-            var entries = _page.GetEntriesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
-
-            await using (entries.ConfigureAwait(false))
+            if ((requirements & StreamPageDataRequirements.FirstRow) != 0)
             {
-                await entries.MoveNextAsync().ConfigureAwait(false);
+                rowCount = Math.Max(rowCount, 1);
+            }
+
+            if (rowCount > 0)
+            {
+                var entries = _page.GetEntriesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+
+                await using (entries.ConfigureAwait(false))
+                {
+                    for (var i = 0; i < rowCount && await entries.MoveNextAsync().ConfigureAwait(false); i++)
+                    {
+                    }
+                }
             }
         }
 
