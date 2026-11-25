@@ -233,7 +233,16 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
                     tasksRegistered = true;
                 }
 
-                await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
+                context.Scheduler.ParkRunningTask();
+
+                try
+                {
+                    await context.Scheduler.WaitForCompletionAsync(itemsBranchId).ConfigureAwait(false);
+                }
+                finally
+                {
+                    context.Scheduler.UnparkRunningTask();
+                }
 
                 var result = context.BuildStreamItemsResult();
 
