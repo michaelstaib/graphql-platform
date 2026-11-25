@@ -1,0 +1,92 @@
+operation:
+  - document: |
+      mutation($a: Boolean!) {
+        touch {
+          id @fusion__requirement
+          ... @include(if: $a) {
+            __typename @fusion__empty
+          }
+        }
+      }
+    hash: 123456789101112
+    searchSpace: 1
+    expandedNodes: 1
+nodes:
+  - id: 1
+    type: Operation
+    schema: a
+    operation: |
+      mutation Op_123456789101112_1($a: Boolean!) {
+        touch {
+          ... @include(if: $a) {
+            __typename
+          }
+          id
+        }
+      }
+    forwardedVariables:
+      - a
+deliveryGroups:
+  - id: 0
+    path: $.touch
+incrementalPlans:
+  - deliveryGroupIds:
+      - 0
+    parentNodeId: 1
+    requirements:
+      - name: __fusion_1_id
+        selectionMap: >-
+          id
+    nodes:
+      - id: 1
+        type: Operation
+        schema: c
+        operation: |
+          query Op_defer_2($__fusion_1_id: ID!) {
+            userById(id: $__fusion_1_id) {
+              code
+              id
+            }
+          }
+        source: $.userById
+        target: $.touch
+        requirements:
+          - name: __fusion_1_id
+            selectionMap: >-
+              id
+        dependencies:
+          - parentNodeId: 1
+      - id: 2
+        type: Operation
+        schema: b
+        operation: |
+          query Op_defer_3($__fusion_2_sku: String!) {
+            userBySku(sku: $__fusion_2_sku) {
+              total
+            }
+          }
+        source: $.userBySku
+        target: $.touch
+        requirements:
+          - name: __fusion_2_sku
+            selectionMap: >-
+              sku
+        dependencies:
+          - id: 3
+      - id: 3
+        type: Operation
+        schema: d
+        operation: |
+          query Op_defer_4($__fusion_3_code: String!) {
+            userByCode(code: $__fusion_3_code) {
+              sku
+            }
+          }
+        source: $.userByCode
+        target: $.touch
+        requirements:
+          - name: __fusion_3_code
+            selectionMap: >-
+              code
+        dependencies:
+          - id: 1
