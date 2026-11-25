@@ -13,6 +13,7 @@ namespace HotChocolate.Fusion.Planning;
 internal sealed class PlanContextGraph
 {
     private readonly Dictionary<IncrementalPlanDescriptor, ParentPlanContext> _enclosingContextByDescriptor = [];
+    private readonly HashSet<IncrementalPlanDescriptor> _transparentDescriptors = [];
     private ParentPlanContext _rootContext;
 
     private PlanContextGraph(ParentPlanContext rootContext)
@@ -73,12 +74,14 @@ internal sealed class PlanContextGraph
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        if (descriptor.Parent is null)
+        var parent = GetEnclosingDescriptor(descriptor);
+
+        if (parent is null)
         {
             return _rootContext;
         }
 
-        if (!_enclosingContextByDescriptor.TryGetValue(descriptor.Parent, out var parentContext))
+        if (!_enclosingContextByDescriptor.TryGetValue(parent, out var parentContext))
         {
             throw new InvalidOperationException(
                 "The enclosing deferred incremental plan has not been registered with the defer context graph. "
@@ -139,6 +142,17 @@ internal sealed class PlanContextGraph
     }
 
     /// <summary>
+    /// Marks <paramref name="descriptor"/> as a descriptor that owns no scope of its own, so its nested
+    /// descriptors resolve their enclosing scope from the next descriptor above it.
+    /// </summary>
+    public void RegisterTransparentDescriptor(IncrementalPlanDescriptor descriptor)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+
+        _transparentDescriptors.Add(descriptor);
+    }
+
+    /// <summary>
     /// Returns the next enclosing scope above <paramref name="scope"/>, or
     /// <see langword="null"/> when <paramref name="scope"/> is the root.
     /// The walker in <see cref="OperationPlanner.ApplyDeferRequirementsToParent"/>
@@ -161,12 +175,14 @@ internal sealed class PlanContextGraph
             ?? throw new InvalidOperationException(
                 "An EnclosingIncrementalPlan-kind scope must carry an OwnerDescriptor.");
 
-        if (ownerDescriptor.Parent is null)
+        var parent = GetEnclosingDescriptor(ownerDescriptor);
+
+        if (parent is null)
         {
             return _rootContext;
         }
 
-        if (!_enclosingContextByDescriptor.TryGetValue(ownerDescriptor.Parent, out var next))
+        if (!_enclosingContextByDescriptor.TryGetValue(parent, out var next))
         {
             throw new InvalidOperationException(
                 "The parent deferred incremental plan has not been registered with the defer context graph.");
@@ -236,5 +252,17 @@ internal sealed class PlanContextGraph
             ParentSteps = steps,
             ParentInternalOperation = internalOperation ?? existing.ParentInternalOperation
         };
+    }
+
+    private IncrementalPlanDescriptor? GetEnclosingDescriptor(IncrementalPlanDescriptor descriptor)
+    {
+        var parent = descriptor.Parent;
+
+        while (parent is not null && _transparentDescriptors.Contains(parent))
+        {
+            parent = parent.Parent;
+        }
+
+        return parent;
     }
 }
