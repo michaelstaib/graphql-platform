@@ -5,6 +5,7 @@ operation:
         product(id: "1") {
           name
           id @fusion__requirement
+          productSku @fusion__requirement
         }
       }
     kind: Query
@@ -58,6 +59,8 @@ nodes:
         path: $.product
         selectionMap: >-
           id
+    dependencies:
+      - id: 1
 deliveryGroups:
   - id: 0
     path: $.product
