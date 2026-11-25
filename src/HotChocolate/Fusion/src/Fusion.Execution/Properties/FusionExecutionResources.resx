@@ -99,6 +99,9 @@
   <data name="OperationPlan_DeferredGroupPlannedToNothing" xml:space="preserve">
     <value>The deferred group at path '{0}' selects fields but its incremental plan has no execution nodes.</value>
   </data>
+  <data name="OperationPlan_UnionAnchoredDeferReadByListPosition" xml:space="preserve">
+    <value>The deferred incremental plan at path '{0}' could not be resolved from the parent plan. Defer anchor type: union '{1}'. Target schema: '{2}'. Reason: the union anchor would be read again from '{3}' above a list and joined to the response by list position.</value>
+  </data>
   <data name="OperationBatchExecutionNode_MissingBatchResult" xml:space="preserve">
     <value>The batch response does not contain any result for operation '{0}'.</value>
   </data>
