@@ -55,21 +55,21 @@ internal sealed partial class WorkScheduler : IObserver<BatchDispatchEventArgs>
     }
 
     /// <summary>
-    /// Marks the calling running task as waiting, so queued serial work can run while it waits.
+    /// Marks the calling running task as waiting, so queued serial work and pending batches can run while it waits.
     /// </summary>
     public void ParkRunningTask()
     {
         AssertNotPooled();
 
-        bool hasSerialWork;
+        bool canMakeProgress;
 
         lock (_sync)
         {
             _work.Park();
-            hasSerialWork = !_serial.IsEmpty;
+            canMakeProgress = !_serial.IsEmpty || _pendingBatches.Count > 0;
         }
 
-        if (hasSerialWork)
+        if (canMakeProgress)
         {
             _signal.Set();
         }

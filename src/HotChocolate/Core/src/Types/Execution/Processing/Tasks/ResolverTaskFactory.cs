@@ -59,23 +59,18 @@ internal static class ResolverTaskFactory
                         continue;
                     }
 
-                    if (selection.Strategy is SelectionExecutionStrategy.Batch)
+                    var task = CreateOrRegisterTopLevelTask(
+                        operationContext,
+                        parent,
+                        selection,
+                        field.Value,
+                        scopedContext,
+                        mainBranchId,
+                        deferUsage: null);
+
+                    if (task is not null)
                     {
-                        scheduler.RegisterBatchEntry(
-                            selection,
-                            parent,
-                            field.Value,
-                            scopedContext,
-                            mainBranchId);
-                    }
-                    else
-                    {
-                        bufferedTasks[i++] =
-                            operationContext.CreateResolverTask(
-                                parent,
-                                selection,
-                                field.Value,
-                                scopedContext);
+                        bufferedTasks[i++] = task;
                     }
                 }
 
@@ -115,23 +110,18 @@ internal static class ResolverTaskFactory
                 {
                     var selection = field.AssertSelection();
 
-                    if (selection.Strategy is SelectionExecutionStrategy.Batch)
+                    var task = CreateOrRegisterTopLevelTask(
+                        operationContext,
+                        parent,
+                        selection,
+                        field.Value,
+                        scopedContext,
+                        mainBranchId,
+                        deferUsage: null);
+
+                    if (task is not null)
                     {
-                        scheduler.RegisterBatchEntry(
-                            selection,
-                            parent,
-                            field.Value,
-                            scopedContext,
-                            mainBranchId);
-                    }
-                    else
-                    {
-                        bufferedTasks[i++] =
-                            operationContext.CreateResolverTask(
-                                parent,
-                                selection,
-                                field.Value,
-                                scopedContext);
+                        bufferedTasks[i++] = task;
                     }
                 }
 
@@ -156,6 +146,41 @@ internal static class ResolverTaskFactory
 
             s_pool.Return(bufferedTasks);
         }
+    }
+
+    /// <summary>
+    /// Registers a batch entry with the scheduler when the selection has the batch strategy and returns
+    /// <c>null</c>, otherwise creates the resolver task for the top-level field of an execution branch.
+    /// </summary>
+    public static ResolverTask? CreateOrRegisterTopLevelTask(
+        OperationContext operationContext,
+        object? parent,
+        Selection selection,
+        ResultElement resultValue,
+        IImmutableDictionary<string, object?> scopedContext,
+        int branchId,
+        DeferUsage? deferUsage)
+    {
+        if (selection.Strategy is SelectionExecutionStrategy.Batch)
+        {
+            operationContext.Scheduler.RegisterBatchEntry(
+                operationContext,
+                selection,
+                parent,
+                resultValue,
+                scopedContext,
+                branchId,
+                deferUsage);
+            return null;
+        }
+
+        return operationContext.CreateResolverTask(
+            parent,
+            selection,
+            resultValue,
+            scopedContext,
+            branchId,
+            deferUsage);
     }
 
     public static void EnqueueOrInlineResolverTasks(
@@ -234,6 +259,7 @@ internal static class ResolverTaskFactory
                 else if (selection.Strategy is SelectionExecutionStrategy.Batch)
                 {
                     operationContext.Scheduler.RegisterBatchEntry(
+                        operationContext,
                         selection,
                         parent,
                         field.Value,
@@ -279,11 +305,13 @@ internal static class ResolverTaskFactory
                 else if (selection.Strategy is SelectionExecutionStrategy.Batch)
                 {
                     operationContext.Scheduler.RegisterBatchEntry(
+                        operationContext,
                         selection,
                         parent,
                         field.Value,
                         resolverContext.ScopedContextData,
-                        resolverContext.BranchId);
+                        resolverContext.BranchId,
+                        deferUsage: null);
                 }
                 else
                 {
