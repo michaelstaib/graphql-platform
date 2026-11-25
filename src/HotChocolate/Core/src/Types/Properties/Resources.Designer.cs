@@ -459,6 +459,12 @@ namespace HotChocolate.Properties {
             }
         }
         
+        internal static string ErrorHelper_DeferAndStreamEnabledInSubscription {
+            get {
+                return ResourceManager.GetString("ErrorHelper_DeferAndStreamEnabledInSubscription", resourceCulture);
+            }
+        }
+        
         internal static string ErrorHelper_IncrementalDeliveryNotAcceptable {
             get {
                 return ResourceManager.GetString("ErrorHelper_IncrementalDeliveryNotAcceptable", resourceCulture);
