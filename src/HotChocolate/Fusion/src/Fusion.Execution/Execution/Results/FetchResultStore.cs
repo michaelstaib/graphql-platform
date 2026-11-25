@@ -3904,6 +3904,7 @@ AddErrors_Next:
         }
 
         var element = _result.Data;
+        Selection? fieldSelection = null;
         var segments = path.Segments;
 
         for (var i = 0; i < segments.Length; i++)
@@ -3935,6 +3936,7 @@ AddErrors_Next:
                 }
 
                 element = element.GetPropertyBySelectionId(seg);
+                fieldSelection = element.Selection;
             }
             else
             {
@@ -3974,12 +3976,11 @@ AddErrors_Next:
                     return;
                 }
 
-                var listSelection = element.Selection;
                 element = element[index];
 
-                if (element.ValueKind is JsonValueKind.Undefined)
+                if (element.ValueKind is JsonValueKind.Undefined && segments[i + 1] >= 0)
                 {
-                    InitializeIntermediateObjectUnsafe(element, listSelection);
+                    InitializeIntermediateObjectUnsafe(element, fieldSelection);
                 }
             }
         }
