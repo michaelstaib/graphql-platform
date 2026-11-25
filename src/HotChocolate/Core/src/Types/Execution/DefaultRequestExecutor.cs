@@ -144,38 +144,36 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
                 operationResult.SetRequestIndex(requestIndex.Value);
             }
 
+            var result = context.Result;
+
             // transfer ownership of the request memory to the result so it is disposed when the
             // result is disposed. On the error path the arena stays attached and the pool reset
             // disposes it.
-            if (context.TryDetachMemory() is { } memory)
-            {
-                context.Result.RegisterForCleanup(memory);
-            }
+            var memory = context.TryDetachMemory();
 
-            if (scope is null)
+            if (result.IsStreamResult())
             {
                 var localContext = context;
 
-                if (context.Result.IsStreamResult())
+                if (scope is not null)
                 {
-                    context.Result.RegisterForCleanup(() => _contextPool.Return(localContext));
-                    context = null;
+                    result.RegisterForCleanup(scope);
                 }
 
-                return localContext.Result;
-            }
-
-            if (context.Result.IsStreamResult())
-            {
-                var localContext = context;
-                context.Result.RegisterForCleanup(scope);
-                context.Result.RegisterForCleanup(() => _contextPool.Return(localContext));
+                // the arena is sealed once the response was read to the end and its execution has finished.
+                // A stream that is disposed earlier abandons the request context, because the outstanding
+                // work may still use it. The arena is disposed after this check.
+                result.RegisterForCleanup(() => ReturnWhenSealed(localContext, memory));
                 scope = null;
                 context = null;
-                return localContext.Result;
             }
 
-            return context.Result;
+            if (memory is not null)
+            {
+                result.RegisterForCleanup(memory);
+            }
+
+            return result;
         }
         finally
         {
@@ -195,6 +193,14 @@ internal sealed class DefaultRequestExecutor : IRequestExecutor
             {
                 scope?.Dispose();
             }
+        }
+    }
+
+    private void ReturnWhenSealed(PooledRequestContext context, MemoryArena? memory)
+    {
+        if (memory is { IsSealed: true })
+        {
+            _contextPool.Return(context);
         }
     }
 
