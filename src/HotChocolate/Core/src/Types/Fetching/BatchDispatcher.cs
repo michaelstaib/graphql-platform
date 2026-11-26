@@ -108,7 +108,7 @@ public sealed partial class BatchDispatcher : IBatchDispatcher
 
                 if (stoppingToken.IsCancellationRequested)
                 {
-                    return;
+                    break;
                 }
 
                 await EvaluateAndDispatchAsync(
@@ -116,6 +116,16 @@ public sealed partial class BatchDispatcher : IBatchDispatcher
                     _dispatchTasks,
                     _inFlightDispatches,
                     stoppingToken);
+            }
+
+            // Dispatches that completed before the coordinator stopped are still reported.
+            var completedDispatches = await CompleteInFlightDispatchesAsync(_inFlightDispatches)
+                .ConfigureAwait(false);
+
+            if (completedDispatches > 0)
+            {
+                _diagnosticEvents.BatchDispatched(completedDispatches);
+                Send(BatchDispatchEventType.Dispatched);
             }
         }
         catch (Exception ex)
