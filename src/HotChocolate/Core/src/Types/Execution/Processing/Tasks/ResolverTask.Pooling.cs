@@ -58,6 +58,7 @@ internal sealed partial class ResolverTask
         _groupScope = null;
         _groupSlot = -1;
         _childTasksRegistered = false;
+        _streamHoldsGroupTurn = false;
         IsRegistered = false;
 #pragma warning disable CS0618
         Next = null;

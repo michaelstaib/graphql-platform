@@ -7,32 +7,6 @@ namespace HotChocolate.Types.Pagination;
 
 internal static class StreamPageDataRequirementAnalyzer
 {
-    private const string ForwardCursors = "forwardCursors";
-    private const string BackwardCursors = "backwardCursors";
-
-    /// <summary>
-    /// Gets the requirements of a connection field other than <c>pageInfo</c>.
-    /// </summary>
-    public static StreamPageDataRequirements GetConnectionRequirements(string fieldName)
-        => fieldName switch
-        {
-            ConnectionType.Names.Edges or ConnectionType.Names.Nodes => StreamPageDataRequirements.AllRows,
-            ConnectionType.Names.TotalCount => StreamPageDataRequirements.TotalCount,
-            _ => StreamPageDataRequirements.None
-        };
-
-    /// <summary>
-    /// Gets the requirements of a <c>pageInfo</c> field.
-    /// </summary>
-    public static StreamPageDataRequirements GetPageInfoRequirements(string fieldName)
-        => fieldName switch
-        {
-            PageInfo.Names.HasPreviousPage or PageInfo.Names.StartCursor => StreamPageDataRequirements.FirstRow,
-            PageInfo.Names.HasNextPage or PageInfo.Names.EndCursor or ForwardCursors or BackwardCursors
-                => StreamPageDataRequirements.AllRows,
-            _ => StreamPageDataRequirements.None
-        };
-
     public static StreamPageDataRequirements Analyze(IResolverContext context)
     {
         var selection = context.Selection;
@@ -68,7 +42,7 @@ internal static class StreamPageDataRequirementAnalyzer
 
             requirements |= child.Field.Name.Equals(ConnectionType.Names.PageInfo, StringComparison.Ordinal)
                 ? AnalyzePageInfo(context, child, deferFlags, connectionDeferUsage)
-                : GetConnectionRequirements(child.Field.Name);
+                : StreamPageConnectionExecutionGroup.GetConnectionRequirements(child.Field.Name);
         }
 
         return requirements;
@@ -94,7 +68,7 @@ internal static class StreamPageDataRequirementAnalyzer
                 continue;
             }
 
-            requirements |= GetPageInfoRequirements(child.Field.Name);
+            requirements |= StreamPageConnectionExecutionGroup.GetPageInfoRequirements(child.Field.Name);
         }
 
         return requirements;

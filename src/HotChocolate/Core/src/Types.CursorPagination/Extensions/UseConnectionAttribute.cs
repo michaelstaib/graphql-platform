@@ -156,6 +156,7 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
             {
                 definition.Flags |= CoreFieldFlags.HasSelectionSetHandler;
                 definition.Features.Set<ISelectionSetHandler>(StreamPageDataRequirementPrecomputer.Instance);
+                StreamPageConnectionExecutionGroup.Apply(definition);
 
                 var index = definition.MiddlewareConfigurations.IndexOf(middleware);
 

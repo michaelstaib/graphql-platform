@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using HotChocolate.Execution.Configuration;
 using HotChocolate.Resolvers;
 using HotChocolate.Types;
@@ -30,6 +31,14 @@ internal static class ExecutionGroupTestSchema
                         new ExecutionGroupEntry("pageInfo.hasNextPage", 2, isStreamable: false));
 
                 descriptor.Field("holder").Type("Holder").Resolve(_ => new Holder());
+
+                descriptor
+                    .Field("streaming")
+                    .Type("StreamingConnection")
+                    .Resolve(_ => new StreamingConnection())
+                    .ExecutionGroup(
+                        new ExecutionGroupEntry("nodes", 0, isStreamable: true),
+                        new ExecutionGroupEntry("edges", 1, isStreamable: false));
 
                 descriptor.Field("items").Type("[Item!]!").Resolve(_ => StreamItems());
 
@@ -116,6 +125,15 @@ internal static class ExecutionGroupTestSchema
                     .Type("PageInfo")
                     .Resolve(ctx => script.Resolve(ctx, new PageInfo(script)));
                 descriptor.Field("probe").Type("String").Resolve(ctx => script.Resolve(ctx, "probe"));
+            })
+            .AddObjectType<StreamingConnection>(descriptor =>
+            {
+                descriptor.Name("StreamingConnection");
+                descriptor
+                    .Field("nodes")
+                    .Type("[Item!]!")
+                    .Resolve(ctx => ReadSource(script, ctx.Path.ToString(), ctx.RequestAborted));
+                descriptor.Field("edges").Type("[String!]!").Resolve(ctx => script.RunAsync(ctx, new[] { "e1" }));
             })
             .AddObjectType<Holder>(descriptor =>
             {
@@ -208,7 +226,24 @@ internal static class ExecutionGroupTestSchema
         }
     }
 
+    private static async IAsyncEnumerable<Item> ReadSource(
+        ExecutionScript script,
+        string path,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        foreach (var name in new[] { "a", "b", "c" })
+        {
+            script.Log($"read {path} {name}");
+            await script.WaitAsync($"{path}.{name}", cancellationToken);
+            yield return new Item(name);
+        }
+
+        script.Log($"source ended {path}");
+    }
+
     internal sealed class Connection;
+
+    internal sealed class StreamingConnection;
 
     internal sealed class Holder;
 

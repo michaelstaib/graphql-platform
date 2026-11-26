@@ -28,6 +28,9 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly int _maxItemsPerPayload;
     private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
+    private readonly ExecutionGroupScope? _groupScope;
+    private readonly int _groupSlot;
+    private Task _producer = Task.CompletedTask;
     private int _nextItemIndex;
     private int _streamBranchId;
 
@@ -42,7 +45,9 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         int firstStreamedIndex,
         int maxItemsPerPayload,
         IAsyncEnumerator<object?> enumerator,
-        CancellationTokenSource cancellation)
+        CancellationTokenSource cancellation,
+        ExecutionGroupScope? groupScope,
+        int groupSlot)
     {
         _parentContext = parentContext;
         _selection = selection;
@@ -63,6 +68,8 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         _enumerator = enumerator;
         _cancellation = cancellation;
         _cancellationToken = cancellation.Token;
+        _groupScope = groupScope;
+        _groupSlot = groupSlot;
     }
 
     // the stream task runs in the system branch as it's just an orchestration task.
@@ -87,7 +94,12 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     /// Starts reading the items of the source into the buffer of the stream.
     /// </summary>
     public void StartProducer()
-        => _ = ProduceAsync();
+        => _producer = ProduceAsync();
+
+    /// <summary>
+    /// Completes once the source is no longer read and has been disposed.
+    /// </summary>
+    public Task WaitForProducerAsync() => _producer;
 
     /// <summary>
     /// Stops the stream. The enumerator is disposed by the producer once the source returns control.
@@ -107,6 +119,13 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         finally
         {
             await DisposeAsync().ConfigureAwait(false);
+
+            if (_groupScope is not null)
+            {
+                // the source is released before the next member of the execution group starts.
+                await _producer.ConfigureAwait(false);
+                _groupScope.Release(_groupSlot);
+            }
         }
     }
 
