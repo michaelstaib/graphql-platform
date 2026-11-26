@@ -148,7 +148,7 @@ internal static class StreamPageDataRequirementAnalyzer
         public bool IsDeferred(Selection selection)
             => Table?.GetActive(selection) is not null
                 && (BranchDeferUsage is null
-                    || !selection.HasActiveDeferUsage(DeferFlags.Word0, DeferFlags.Overflow, BranchDeferUsage));
+                    || !selection.HasActiveDeferUsage(DeferFlags, BranchDeferUsage));
     }
 
     internal static bool IsStreamEnabled(DirectiveNode directive, IVariableValueCollection variables)

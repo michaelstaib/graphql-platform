@@ -14,8 +14,7 @@ internal sealed class DeferUsageSetTable
     private readonly object _sync = new();
 #endif
     private readonly Operation _operation;
-    private readonly ulong _deferFlags;
-    private readonly ulong[]? _wideDeferFlags;
+    private readonly ConditionFlags _deferFlags;
     private DeferUsageSet?[] _slots;
     private Dictionary<DeferUsageSet, DeferUsageSet>? _interned;
 
@@ -29,8 +28,7 @@ internal sealed class DeferUsageSetTable
         ArgumentNullException.ThrowIfNull(operation);
 
         _operation = operation;
-        _deferFlags = deferFlags.Word0;
-        _wideDeferFlags = deferFlags.Overflow;
+        _deferFlags = deferFlags;
         _slots = CreateSlots(operation.DeferUsageSets.Length);
     }
 
@@ -109,7 +107,7 @@ internal sealed class DeferUsageSetTable
 
         foreach (var usage in usages)
         {
-            var active = DeferUsage.FindActive(usage, _deferFlags, _wideDeferFlags);
+            var active = DeferUsage.FindActive(usage, _deferFlags);
 
             if (active is null)
             {
@@ -133,7 +131,7 @@ internal sealed class DeferUsageSetTable
 
         foreach (var usage in usages)
         {
-            var active = DeferUsage.FindActive(usage, _deferFlags, _wideDeferFlags)!;
+            var active = DeferUsage.FindActive(usage, _deferFlags)!;
 
             if (!resolved.Contains(active))
             {

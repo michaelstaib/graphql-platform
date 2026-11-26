@@ -23,14 +23,21 @@ const josefinSans = Josefin_Sans({
 });
 
 const DESCRIPTION =
-  "Build, federate, observe, and evolve GraphQL APIs with open-source Hot Chocolate, Fusion, Strawberry Shake, and Mocha, plus the Nitro control plane.";
+  "Unify, manage, and monitor APIs across any stack with ChilliCream’s GraphQL federation platform, open-source Fusion router (gateway), and Nitro API control plane.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   // Preview/staging deployments emit `<meta name="robots" content="noindex, nofollow">`.
   ...(process.env.NEXT_PUBLIC_NOINDEX === "true"
     ? { robots: { index: false, follow: false } }
-    : {}),
+    : {
+        // Allows large image previews (Google Discover) and full snippets in Google and Bing.
+        robots: {
+          "max-image-preview": "large",
+          "max-snippet": -1,
+          "max-video-preview": -1,
+        },
+      }),
   title: {
     default: SITE_TITLE,
     template: TITLE_TEMPLATE,

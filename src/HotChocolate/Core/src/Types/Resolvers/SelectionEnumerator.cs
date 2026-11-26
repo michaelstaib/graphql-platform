@@ -10,8 +10,7 @@ namespace HotChocolate.Resolvers;
 public struct SelectionEnumerator : IEnumerable<Selection>, IEnumerator<Selection>
 {
     private readonly SelectionSet _selectionSet;
-    private readonly ulong _includeFlags;
-    private readonly ulong[]? _wideIncludeFlags;
+    private readonly ConditionFlags _includeFlags;
     private int _position = -1;
 
     /// <summary>
@@ -34,15 +33,14 @@ public struct SelectionEnumerator : IEnumerable<Selection>, IEnumerator<Selectio
         }
 
         _selectionSet = selectionSet!;
-        _includeFlags = includeFlags;
+        _includeFlags = new ConditionFlags(includeFlags);
         Current = null!;
     }
 
     public SelectionEnumerator(SelectionSet selectionSet, ConditionFlags includeFlags)
     {
         _selectionSet = selectionSet;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
         Current = null!;
     }
 
@@ -66,7 +64,7 @@ public struct SelectionEnumerator : IEnumerable<Selection>, IEnumerator<Selectio
             return false;
         }
 
-        if (_wideIncludeFlags is not null)
+        if (_includeFlags.Overflow is not null)
         {
             return MoveNextWide();
         }
@@ -83,7 +81,7 @@ public struct SelectionEnumerator : IEnumerable<Selection>, IEnumerator<Selectio
             }
 
             var selection = _selectionSet.Selections[_position];
-            if (selection.IsIncludedUnchecked(_includeFlags))
+            if (selection.IsIncludedUnchecked(_includeFlags.Word0))
             {
                 Current = selection;
                 return true;
@@ -108,7 +106,7 @@ public struct SelectionEnumerator : IEnumerable<Selection>, IEnumerator<Selectio
             }
 
             var selection = _selectionSet.Selections[_position];
-            if (selection.IsIncludedWide(_includeFlags, _wideIncludeFlags))
+            if (selection.IsIncluded(_includeFlags))
             {
                 Current = selection;
                 return true;

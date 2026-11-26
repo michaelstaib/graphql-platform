@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Testing;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
@@ -185,6 +186,14 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
                 "addFusionDefinitions": null,
                 "cacheControlMergeBehavior": "Include",
                 "defaultListSize": 25,
+                "maxFieldCost": null,
+                "maxTypeCost": null,
+                "enforceCostLimits": null,
+                "skipCostAnalyzer": null,
+                "maxResponseSize": null,
+                "costPlanCacheSize": null,
+                "caseBudget": null,
+                "caseBudgetExceededBehavior": null,
                 "enableGlobalObjectIdentification": false,
                 "enumValuesMergeBehavior": "Union",
                 "nodeResolution": "Gateway",
@@ -846,7 +855,7 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
         await coordinator.AcquireSeedAsync(
             gateway.Name,
             GatewayApiId,
-            new RecordingLogger<NitroSchemaCompositionTests>(),
+            new FakeLogger<NitroSchemaCompositionTests>(),
             TestContext.Current.CancellationToken);
 
         // act
@@ -916,7 +925,7 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
         await coordinator.AcquireSeedAsync(
             gateway.Name,
             GatewayApiId,
-            new RecordingLogger<NitroSchemaCompositionTests>(),
+            new FakeLogger<NitroSchemaCompositionTests>(),
             TestContext.Current.CancellationToken);
         var previousHash = coordinator.GetSeed(gateway.Name)!.SchemaHash;
         await ServeUpdatedSeedAsync();
@@ -955,7 +964,7 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
         await coordinator.AcquireSeedAsync(
             gateway.Name,
             GatewayApiId,
-            new RecordingLogger<NitroSchemaCompositionTests>(),
+            new FakeLogger<NitroSchemaCompositionTests>(),
             TestContext.Current.CancellationToken);
         _server.DownloadHandler = _ =>
             FakeNitroResponse.Status(StatusCodes.Status503ServiceUnavailable);
@@ -985,14 +994,14 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
         await coordinator.AcquireSeedAsync(
             gateway.Name,
             GatewayApiId,
-            new RecordingLogger<NitroSchemaCompositionTests>(),
+            new FakeLogger<NitroSchemaCompositionTests>(),
             TestContext.Current.CancellationToken);
         await ServeUpdatedSeedAsync();
         var refresh = await coordinator.DownloadFreshSeedAsync(
             gateway.Name,
             GatewayApiId,
             "configuration-2",
-            new RecordingLogger<NitroSchemaCompositionTests>(),
+            new FakeLogger<NitroSchemaCompositionTests>(),
             suppressProviderLogs: false,
             TestContext.Current.CancellationToken);
         coordinator.StageCandidate(gateway.Name, refresh.Candidate!);
@@ -1084,7 +1093,7 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
                 ?? new NitroSchemaValidator(
                     GraphQLHttpClient.Create(_httpClient, disposeHttpClient: false),
                     _timeProvider,
-                    new RecordingLogger<NitroSchemaValidator>()),
+                    new FakeLogger<NitroSchemaValidator>()),
             new NoopStageUpdateClient(),
             new NitroCompositionSettingsClient(
                 GraphQLHttpClient.Create(_httpClient, disposeHttpClient: false)),
@@ -1115,7 +1124,7 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
     }
 
     private static int CountRecompositions(CompositionHarness harness)
-        => harness.Logger.Entries.Count(
+        => harness.Logger.Collector.GetSnapshot().Count(
             entry => entry.Level is LogLevel.Information
                 && entry.Message.StartsWith(
                     "Recomposing GraphQL schema for ",
@@ -1261,7 +1270,7 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
         var acquisition = await CreateCoordinator().AcquireSeedAsync(
             "gateway",
             GatewayApiId,
-            new RecordingLogger<NitroSchemaCompositionTests>(),
+            new FakeLogger<NitroSchemaCompositionTests>(),
             TestContext.Current.CancellationToken);
 
         Assert.NotNull(acquisition.Seed);
@@ -1363,13 +1372,13 @@ public sealed class NitroSchemaCompositionTests : IAsyncLifetime
     private static string DescribeEntries(CompositionHarness harness, LogLevel level)
         => string.Join(
             Environment.NewLine,
-            harness.Logger.Entries
+            harness.Logger.Collector.GetSnapshot()
                 .Where(entry => entry.Level == level)
                 .Select(entry => entry.Message));
 
     private static string GetFallbackWarning(CompositionHarness harness)
         => Assert.Single(
-                harness.Logger.Entries,
+                harness.Logger.Collector.GetSnapshot(),
                 entry => entry.Message.StartsWith(
                     "A fresh fusion configuration could NOT be fetched",
                     StringComparison.Ordinal))

@@ -16,8 +16,7 @@ public sealed partial class ResultDocument : IDisposable
     private static readonly ArrayPool<MemorySegment> s_arrayPool = ArrayPool<MemorySegment>.Shared;
     private readonly IMemoryArena _arena;
     private readonly Operation _operation;
-    private readonly ulong _includeFlags;
-    private readonly ulong[]? _wideIncludeFlags;
+    private readonly ConditionFlags _includeFlags;
     private readonly Path _rootPath = Path.Root;
     private readonly int _startIndex;
     internal MetaDb _metaDb;
@@ -53,8 +52,7 @@ public sealed partial class ResultDocument : IDisposable
         _metaDb = MetaDb.Create(arena);
         _data = RentDataChunks();
         _operation = operation;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
 
         Data = CreateObject(Cursor.CreateZero(), operation.RootSelectionSet);
     }
@@ -77,18 +75,15 @@ public sealed partial class ResultDocument : IDisposable
         _metaDb = MetaDb.Create(arena);
         _data = RentDataChunks();
         _operation = operation;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
         _rootPath = path;
 
         Data = CreateObject(
             Cursor.CreateZero(),
             selectionSet,
-            includeFlags.Word0,
-            deferFlags.Word0,
-            deferUsage,
-            includeFlags.Overflow,
-            deferFlags.Overflow);
+            includeFlags,
+            deferFlags,
+            deferUsage);
     }
 
     internal ResultDocument(
@@ -108,8 +103,7 @@ public sealed partial class ResultDocument : IDisposable
         _metaDb = MetaDb.Create(arena);
         _data = RentDataChunks();
         _operation = operation;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
         _rootPath = path;
         _startIndex = startIndex;
 
@@ -249,67 +243,93 @@ public sealed partial class ResultDocument : IDisposable
         }
 
         Span<Cursor> chain = stackalloc Cursor[64];
-        var c = current;
-        var written = 0;
+        Cursor[]? rentedChain = null;
 
-        while (true)
+        try
         {
-            chain[written++] = c;
+            var c = current;
+            var written = 0;
 
-            var parent = _metaDb.GetParentCursor(c);
-            if (parent.IsZero)
+            while (true)
             {
-                break;
-            }
-
-            c = parent;
-
-            if (written >= 64)
-            {
-                throw new InvalidOperationException("The path is to deep.");
-            }
-        }
-
-        var path = _rootPath;
-        var parentTokenType = ElementTokenType.StartObject;
-        var applyStartIndex = _startIndex != 0;
-
-        chain = chain[..written];
-
-        for (var i = chain.Length - 1; i >= 0; i--)
-        {
-            c = chain[i];
-            var tokenType = _metaDb.GetElementTokenType(c, resolveReferences: false);
-
-            if (tokenType == ElementTokenType.PropertyName)
-            {
-                path = path.Append(GetSelection(c)!.ResponseName);
-                i--; // skip over the actual value
-            }
-            else if (chain.Length - 1 > i)
-            {
-                var parentCursor = chain[i + 1];
-
-                if (parentTokenType is ElementTokenType.StartArray)
+                if (written == chain.Length)
                 {
-                    // arrayIndex = abs(child) - (abs(parent) + 1)
-                    var arrayIndex = c.Index - (parentCursor.Index + 1);
-
-                    if (applyStartIndex)
-                    {
-                        // only the items of the root list continue the numbering of the full list.
-                        arrayIndex += _startIndex;
-                        applyStartIndex = false;
-                    }
-
-                    path = path.Append(arrayIndex);
+                    GrowPathChain(ref chain, ref rentedChain, written);
                 }
+
+                chain[written++] = c;
+
+                var parent = _metaDb.GetParentCursor(c);
+                if (parent.IsZero)
+                {
+                    break;
+                }
+
+                c = parent;
             }
 
-            parentTokenType = tokenType;
+            var path = _rootPath;
+            var parentTokenType = ElementTokenType.StartObject;
+            var applyStartIndex = _startIndex != 0;
+
+            chain = chain[..written];
+
+            for (var i = chain.Length - 1; i >= 0; i--)
+            {
+                c = chain[i];
+                var tokenType = _metaDb.GetElementTokenType(c, resolveReferences: false);
+
+                if (tokenType == ElementTokenType.PropertyName)
+                {
+                    path = path.Append(GetSelection(c)!.ResponseName);
+                    i--; // skip over the actual value
+                }
+                else if (chain.Length - 1 > i)
+                {
+                    var parentCursor = chain[i + 1];
+
+                    if (parentTokenType is ElementTokenType.StartArray)
+                    {
+                        // arrayIndex = abs(child) - (abs(parent) + 1)
+                        var arrayIndex = c.Index - (parentCursor.Index + 1);
+
+                        if (applyStartIndex)
+                        {
+                            // only the items of the root list continue the numbering of the full list.
+                            arrayIndex += _startIndex;
+                            applyStartIndex = false;
+                        }
+
+                        path = path.Append(arrayIndex);
+                    }
+                }
+
+                parentTokenType = tokenType;
+            }
+
+            return path;
+        }
+        finally
+        {
+            if (rentedChain is not null)
+            {
+                ArrayPool<Cursor>.Shared.Return(rentedChain);
+            }
+        }
+    }
+
+    private static void GrowPathChain(ref Span<Cursor> buffer, ref Cursor[]? rented, int written)
+    {
+        var array = ArrayPool<Cursor>.Shared.Rent(buffer.Length * 2);
+        buffer[..written].CopyTo(array);
+
+        if (rented is not null)
+        {
+            ArrayPool<Cursor>.Shared.Return(rented);
         }
 
-        return path;
+        rented = array;
+        buffer = array;
     }
 
     internal ResultElement GetParent(Cursor current)
@@ -338,9 +358,12 @@ public sealed partial class ResultDocument : IDisposable
         {
             parent = _metaDb.GetParentCursor(parent);
 
-            // in this case the parent must be a reference, otherwise we would have
-            // found an inconsistency in the database.
-            Debug.Assert(_metaDb.GetElementTokenType(parent, resolveReferences: false) == ElementTokenType.Reference);
+            // in this case the parent must be a reference to the live value or a null row when the
+            // value was nulled by null propagation, otherwise we would have found an inconsistency
+            // in the database.
+            Debug.Assert(
+                _metaDb.GetElementTokenType(parent, resolveReferences: false)
+                    is ElementTokenType.Reference or ElementTokenType.Null);
         }
 
         return new ResultElement(this, parent);
@@ -525,7 +548,7 @@ public sealed partial class ResultDocument : IDisposable
             var startObjectCursor = WriteStartObject(parent, selectionSet.Id);
 
             var selectionCount = 0;
-            if (_wideIncludeFlags is null)
+            if (_includeFlags.Overflow is null)
             {
                 foreach (var selection in selectionSet.Selections)
                 {
@@ -551,24 +574,22 @@ public sealed partial class ResultDocument : IDisposable
     private ResultElement CreateObject(
         Cursor parent,
         SelectionSet selectionSet,
-        ulong includeFlags,
-        ulong deferFlags,
-        DeferUsage deferUsage,
-        ulong[]? wideIncludeFlags,
-        ulong[]? wideDeferFlags)
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        DeferUsage deferUsage)
     {
         lock (_dataChunkLock)
         {
             var startObjectCursor = WriteStartObject(parent, selectionSet.Id);
 
             var selectionCount = 0;
-            if (wideIncludeFlags is null && wideDeferFlags is null)
+            if (includeFlags.Overflow is null && deferFlags.Overflow is null)
             {
                 foreach (var selection in selectionSet.Selections)
                 {
-                    if (selection.IsIncludedNarrow(includeFlags)
-                        && selection.IsDeferredNarrow(deferFlags)
-                        && selection.HasActiveDeferUsageNarrow(deferFlags, deferUsage))
+                    if (selection.IsIncludedNarrow(includeFlags.Word0)
+                        && selection.IsDeferredNarrow(deferFlags.Word0)
+                        && selection.HasActiveDeferUsageNarrow(deferFlags.Word0, deferUsage))
                     {
                         WriteEmptyProperty(startObjectCursor, selection);
                         selectionCount++;
@@ -579,9 +600,9 @@ public sealed partial class ResultDocument : IDisposable
             {
                 foreach (var selection in selectionSet.Selections)
                 {
-                    if (selection.IsIncludedWide(includeFlags, wideIncludeFlags)
-                        && selection.IsDeferredWide(deferFlags, wideDeferFlags)
-                        && selection.HasActiveDeferUsage(deferFlags, wideDeferFlags, deferUsage))
+                    if (selection.IsIncluded(includeFlags)
+                        && selection.IsDeferred(deferFlags)
+                        && selection.HasActiveDeferUsage(deferFlags, deferUsage))
                     {
                         WriteEmptyPropertyWide(startObjectCursor, selection);
                         selectionCount++;
@@ -601,7 +622,7 @@ public sealed partial class ResultDocument : IDisposable
         {
             var startObjectCursor = WriteStartObject(Cursor.CreateZero(), isSelectionSet: false);
 
-            if (_wideIncludeFlags is null)
+            if (_includeFlags.Overflow is null)
             {
                 WriteEmptyProperty(startObjectCursor, selection);
             }
@@ -960,7 +981,7 @@ public sealed partial class ResultDocument : IDisposable
             flags = ElementFlags.IsInternal;
         }
 
-        if (!selection.IsIncludedUnchecked(_includeFlags))
+        if (!selection.IsIncludedUnchecked(_includeFlags.Word0))
         {
             flags |= ElementFlags.IsExcluded;
         }
@@ -1002,7 +1023,7 @@ public sealed partial class ResultDocument : IDisposable
             flags = ElementFlags.IsInternal;
         }
 
-        if (!selection.IsIncludedWide(_includeFlags, _wideIncludeFlags))
+        if (!selection.IsIncluded(_includeFlags))
         {
             flags |= ElementFlags.IsExcluded;
         }
@@ -1064,12 +1085,6 @@ public sealed partial class ResultDocument : IDisposable
 
     public void Dispose()
     {
-        ReleaseTrackingArrays();
-        GC.SuppressFinalize(this);
-    }
-
-    private void ReleaseTrackingArrays()
-    {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
@@ -1095,6 +1110,4 @@ public sealed partial class ResultDocument : IDisposable
         s_arrayPool.Return(_data);
         _data = [];
     }
-
-    ~ResultDocument() => ReleaseTrackingArrays();
 }

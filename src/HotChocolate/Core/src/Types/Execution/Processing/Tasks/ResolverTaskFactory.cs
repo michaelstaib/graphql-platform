@@ -45,7 +45,7 @@ internal static class ResolverTaskFactory
                     {
                         // Get all active defer usages for this field.
                         // If IsDeferred is true, there is at least one active usage.
-                        var deferUsages = selection.GetActiveDeferUsages(deferFlags.Word0, deferFlags.Overflow);
+                        var deferUsages = selection.GetActiveDeferUsages(deferFlags);
                         Debug.Assert(deferUsages is not null);
 
                         field.Value.MarkAsDeferred();
@@ -227,9 +227,9 @@ internal static class ResolverTaskFactory
                 // a selection whose active usages include the usage of the enclosing branch runs in that branch.
                 if (activeSet is not null
                     && (parentDeferUsage is null
-                        || !selection.HasActiveDeferUsage(deferFlags.Word0, deferFlags.Overflow, parentDeferUsage)))
+                        || !selection.HasActiveDeferUsage(deferFlags, parentDeferUsage)))
                 {
-                    var deferUsages = selection.GetActiveDeferUsages(deferFlags.Word0, deferFlags.Overflow);
+                    var deferUsages = selection.GetActiveDeferUsages(deferFlags);
                     Debug.Assert(deferUsages is not null);
 
                     field.Value.MarkAsDeferred();

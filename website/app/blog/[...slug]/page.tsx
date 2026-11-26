@@ -45,11 +45,13 @@ import { estimateReadingTime } from "@/src/helpers/readingTime";
 import { SITE_NAME, TWITTER_HANDLE } from "@/src/helpers/site";
 import { getShareImageSrc } from "@/src/image-optimization/manifest";
 import { toAbsoluteUrl } from "@/src/helpers/siteUrl";
+import { shareCardSize } from "@/src/og/pageShareCardImage";
 import {
   ORGANIZATION_ID,
   schemaId,
   schemaRef,
   type JsonLdNode,
+  toStructuredDateTime,
 } from "@/src/helpers/structuredData";
 
 type BlogFrontmatter = {
@@ -108,17 +110,32 @@ export async function generateMetadata({
   }
   if (isPaginationSlug(slug)) {
     const pageNum = Number(slug[0]);
-    return pageMetadata({
+    const metadata = pageMetadata({
       title: `Blog, Page ${pageNum}`,
       description: `${BLOG_DESCRIPTION} Page ${pageNum}.`,
       path: `/blog/${pageNum}`,
     });
+    const images = [
+      {
+        url: toAbsoluteUrl("/blog/opengraph-image"),
+        ...shareCardSize,
+        alt: "ChilliCream blog",
+      },
+    ];
+    return {
+      ...metadata,
+      openGraph: { ...metadata.openGraph, images },
+      twitter: { ...metadata.twitter, images },
+    };
   }
   const rel = resolveBlogFile(slug);
   if (rel === null) {
     return {};
   }
-  const { title, description } = readFrontmatter(path.join(BLOG_ROOT, rel));
+  const { title, metaTitle, description } = readFrontmatter(
+    path.join(BLOG_ROOT, rel),
+  );
+  const searchTitle = metaTitle ?? title;
 
   const stem = stemForSlug(slug);
   const summary = listBlogPostSummaries().find((s) => s.stem === stem);
@@ -128,7 +145,7 @@ export async function generateMetadata({
   const images = featuredImageAbs ? [featuredImageAbs] : undefined;
 
   return {
-    title,
+    title: searchTitle,
     description,
     ...(summary?.author
       ? {
@@ -148,7 +165,7 @@ export async function generateMetadata({
     openGraph: {
       type: "article",
       siteName: SITE_NAME,
-      title,
+      title: searchTitle,
       description,
       images,
       url: summary?.href,
@@ -168,7 +185,7 @@ export async function generateMetadata({
     twitter: {
       card: "summary_large_image",
       site: TWITTER_HANDLE,
-      title,
+      title: searchTitle,
       description,
       images,
     },
@@ -215,7 +232,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
   const sidebarPosts = summaries.slice(0, 10);
   const currentHref = current.href;
   const dateModified =
-    normalizeStructuredDate(frontmatter.updated) ?? lastModified?.toISOString();
+    toStructuredDateTime(frontmatter.updated) ?? lastModified?.toISOString();
   const articleId = schemaId(currentHref, "article");
   const authorId = current.authorProfile
     ? authorPersonId(current.authorProfile)
@@ -227,7 +244,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
     url: toAbsoluteUrl(currentHref),
     headline: current.title,
     ...(current.description ? { description: current.description } : {}),
-    datePublished: current.date,
+    datePublished: toStructuredDateTime(current.date),
     ...(dateModified ? { dateModified } : {}),
     ...(featuredImage ? { image: schemaRef(imageId) } : {}),
     ...(current.author ? { author: schemaRef(authorId) } : {}),
@@ -262,6 +279,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
         "@id": imageId,
         url: toAbsoluteUrl(getShareImageSrc(featuredImage)),
         contentUrl: toAbsoluteUrl(getShareImageSrc(featuredImage)),
+        ...shareCardSize,
         caption: current.title,
       }
     : null;
@@ -359,17 +377,6 @@ function isPaginationSlug(slug: string[]): boolean {
 
 function stemForSlug(slug: string[]): string {
   return slug[0];
-}
-
-function normalizeStructuredDate(value: string | undefined) {
-  if (!value) {
-    return undefined;
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return value;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function renderPagination(pageNum: number) {
