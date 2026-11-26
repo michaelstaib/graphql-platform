@@ -1387,6 +1387,189 @@ public class ExecutionGroupTests
         ]);
     }
 
+    [Fact]
+    public async Task Execute_Should_HoldTurnUntilStreamEnds_When_MemberIsStreamed()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("streaming.edges");
+        script.Release("streaming.nodes.a");
+
+        // act
+        var stream = Assert.IsType<ResponseStream>(
+            await executor.ExecuteAsync(
+                "{ streaming { nodes @stream(initialCount: 1) { name } ... @defer { edges } } }",
+                cts.Token));
+        var initial = string.Empty;
+        var streamedItems = new JsonArray();
+        var delivered = new List<string>();
+        var eventsWhileSourceIsRead = new List<string>();
+
+        await foreach (var payload in stream.ReadResultsAsync().WithCancellation(cts.Token))
+        {
+            await using var cleanup = payload;
+            var root = JsonNode.Parse(payload.ToJson())!;
+
+            foreach (var entry in root["incremental"]?.AsArray() ?? [])
+            {
+                if (entry!["items"] is JsonArray items)
+                {
+                    foreach (var item in items)
+                    {
+                        streamedItems.Add(item!.DeepClone());
+                    }
+                }
+                else
+                {
+                    delivered.Add($"data {entry["id"]} {entry["data"]!.ToJsonString()}");
+                }
+            }
+
+            foreach (var entry in root["completed"]?.AsArray() ?? [])
+            {
+                delivered.Add($"completed {entry!["id"]}");
+            }
+
+            if (initial.Length == 0)
+            {
+                initial = root.ToJsonString();
+                await script.Started("streaming.nodes.b");
+                eventsWhileSourceIsRead.AddRange(script.Events);
+                script.Release("streaming.nodes.b");
+                script.Release("streaming.nodes.c");
+            }
+        }
+
+        // assert
+        eventsWhileSourceIsRead.MatchInlineSnapshots(
+        [
+            "read streaming.nodes a",
+            "read streaming.nodes b"
+        ]);
+        script.Events.MatchInlineSnapshots(
+        [
+            "read streaming.nodes a",
+            "read streaming.nodes b",
+            "read streaming.nodes c",
+            "source ended streaming.nodes",
+            "start streaming.edges",
+            "end streaming.edges"
+        ]);
+        initial.MatchInlineSnapshot(
+            """{"data":{"streaming":{"nodes":[{"name":"a"}]}},"pending":[{"id":"2","path":["streaming"]},{"id":"3","path":["streaming","nodes"]}],"hasNext":true}""");
+        streamedItems.ToJsonString().MatchInlineSnapshot("""[{"name":"b"},{"name":"c"}]""");
+        delivered.MatchInlineSnapshots(
+        [
+            "completed 3",
+            """data 2 {"edges":["e1"]}""",
+            "completed 2"
+        ]);
+    }
+
+    [Fact]
+    public async Task Execute_Should_IgnoreStream_When_MemberThatIsNotStreamableIsDeliveredWithTheRoot()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("streaming.edges");
+        script.Release("streaming.nodes.a");
+        script.Release("streaming.nodes.b");
+        script.Release("streaming.nodes.c");
+
+        // act
+        var result = await executor.ExecuteAsync(
+            "{ streaming { nodes @stream(initialCount: 1) { name } edges } }",
+            cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "read streaming.nodes a",
+            "read streaming.nodes b",
+            "read streaming.nodes c",
+            "source ended streaming.nodes",
+            "start streaming.edges",
+            "end streaming.edges"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "streaming": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    },
+                    {
+                      "name": "c"
+                    }
+                  ],
+                  "edges": [
+                    "e1"
+                  ]
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task Execute_Should_ReleaseTurnAtResolverCompletion_When_MemberIsNotStreamed()
+    {
+        // arrange
+        var script = new ExecutionScript();
+        var executor = await ExecutionGroupTestSchema.CreateAsync(script);
+        using var cts = new CancellationTokenSource(s_timeout);
+        script.Release("streaming.edges");
+        script.Release("streaming.nodes.a");
+        script.Release("streaming.nodes.b");
+        script.Release("streaming.nodes.c");
+
+        // act
+        var result = await executor.ExecuteAsync("{ streaming { nodes { name } edges } }", cts.Token);
+
+        // assert
+        script.Events.MatchInlineSnapshots(
+        [
+            "read streaming.nodes a",
+            "read streaming.nodes b",
+            "read streaming.nodes c",
+            "source ended streaming.nodes",
+            "start streaming.edges",
+            "end streaming.edges"
+        ]);
+        result.MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "streaming": {
+                  "nodes": [
+                    {
+                      "name": "a"
+                    },
+                    {
+                      "name": "b"
+                    },
+                    {
+                      "name": "c"
+                    }
+                  ],
+                  "edges": [
+                    "e1"
+                  ]
+                }
+              }
+            }
+            """);
+    }
+
     private static async Task<List<string>> ReadStreamedItemsAsync(
         Task<IExecutionResult> execution,
         CancellationToken cancellationToken)

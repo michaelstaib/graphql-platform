@@ -28,6 +28,10 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
     private readonly int _maxItemsPerPayload;
     private readonly Channel<object?> _buffer;
     private readonly MiddlewareContext _resolverContext = new();
+    private readonly ExecutionGroupScope? _groupScope;
+    private readonly int _groupSlot;
+    private readonly TaskCompletionSource _sourceReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _isProducerClaimed;
     private int _nextItemIndex;
     private int _streamBranchId;
 
@@ -42,7 +46,9 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         int firstStreamedIndex,
         int maxItemsPerPayload,
         IAsyncEnumerator<object?> enumerator,
-        CancellationTokenSource cancellation)
+        CancellationTokenSource cancellation,
+        ExecutionGroupScope? groupScope,
+        int groupSlot)
     {
         _parentContext = parentContext;
         _selection = selection;
@@ -63,6 +69,8 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         _enumerator = enumerator;
         _cancellation = cancellation;
         _cancellationToken = cancellation.Token;
+        _groupScope = groupScope;
+        _groupSlot = groupSlot;
     }
 
     // the stream task runs in the system branch as it's just an orchestration task.
@@ -84,17 +92,34 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
             this);
 
     /// <summary>
-    /// Starts reading the items of the source into the buffer of the stream.
+    /// Starts reading the items of the source into the buffer of the stream, unless the stream was stopped.
     /// </summary>
     public void StartProducer()
-        => _ = ProduceAsync();
+    {
+        if (Interlocked.Exchange(ref _isProducerClaimed, 1) == 0)
+        {
+            _ = ProduceAsync();
+        }
+    }
 
     /// <summary>
-    /// Stops the stream. The enumerator is disposed by the producer once the source returns control.
+    /// Completes once the source is no longer read and has been disposed.
+    /// </summary>
+    public Task WaitForProducerAsync() => _sourceReleased.Task;
+
+    /// <summary>
+    /// Stops the stream. The enumerator is disposed by the producer once the source returns control,
+    /// or right away if the producer has not started.
     /// </summary>
     public ValueTask DisposeAsync()
     {
         Cancel();
+
+        if (Interlocked.Exchange(ref _isProducerClaimed, 1) == 0)
+        {
+            return ReleaseSourceAsync();
+        }
+
         return ValueTask.CompletedTask;
     }
 
@@ -107,6 +132,13 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         finally
         {
             await DisposeAsync().ConfigureAwait(false);
+
+            if (_groupScope is not null)
+            {
+                // the source is released before the next member of the execution group starts.
+                await _sourceReleased.Task.ConfigureAwait(false);
+                _groupScope.Release(_groupSlot);
+            }
         }
     }
 
@@ -129,18 +161,24 @@ internal sealed class StreamTask : ExecutionTask, IAsyncDisposable
         }
         finally
         {
-            try
-            {
-                await _enumerator.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // the stream already ended or was discarded, so a failing disposal has nobody to report to.
-            }
-            finally
-            {
-                _cancellation.Dispose();
-            }
+            await ReleaseSourceAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask ReleaseSourceAsync()
+    {
+        try
+        {
+            await _enumerator.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // the stream already ended or was discarded, so a failing disposal has nobody to report to.
+        }
+        finally
+        {
+            _cancellation.Dispose();
+            _sourceReleased.TrySetResult();
         }
     }
 

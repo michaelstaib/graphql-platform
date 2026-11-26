@@ -52,6 +52,12 @@ internal sealed class ExecutionScript
         }
     }
 
+    public Task WaitAsync(string path, CancellationToken cancellationToken)
+    {
+        GetStarted(path).TrySetResult();
+        return GetGate(path).Task.WaitAsync(cancellationToken);
+    }
+
     public async ValueTask<object?> RunAsync(IResolverContext context, object? value)
     {
         var path = context.Path.ToString();

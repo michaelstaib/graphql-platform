@@ -80,7 +80,7 @@ public class StreamPageDataRequirementPrecomputeTests
         "TotalCount, AllRows")]
     [InlineData(
         "items { totalCount nodes @stream(if: $v, initialCount: 1) { id } }",
-        "TotalCount",
+        "TotalCount, rows: 1",
         "TotalCount, AllRows")]
     [InlineData(
         "items { totalCount ... @include(if: $v) { nodes { id } } }",
@@ -121,6 +121,45 @@ public class StreamPageDataRequirementPrecomputeTests
         Assert.Equal(expectedWhenFalse, whenFalse);
         Assert.Equal(expectedWhenTrue, whenTrueAgain);
         Assert.Null(GetPrecomputed(recorder));
+    }
+
+    [Theory]
+    [InlineData("items { nodes @stream(initialCount: 2) { id } }", "None, rows: 2")]
+    [InlineData("items { nodes @stream { id } }", "None")]
+    [InlineData("items { edges @stream(initialCount: 1) { cursor } nodes @stream(initialCount: 3) { id } }", "None, rows: 3")]
+    [InlineData("items { totalCount pageInfo { startCursor } nodes @stream(initialCount: 2) { id } }", "TotalCount, FirstRow, rows: 2")]
+    [InlineData("items { nodes @stream(initialCount: 1) { id } ... @defer { pageInfo { hasNextPage } } }", "None, rows: 1")]
+    [InlineData("items { nodes @stream(initialCount: 1) { id } pageInfo { ... @defer { endCursor } } }", "None, rows: 1")]
+    [InlineData("items { edges @stream(initialCount: 1) { cursor } ... @defer { nodes @stream(initialCount: 2) { id } } }", "None, rows: 1")]
+    public async Task Execute_Should_ReadTheInitialItemsOfTheStreams_When_TheStreamsAreHonored(
+        string selection,
+        string expected)
+    {
+        // arrange
+        var (executor, recorder) = await CreateExecutorAsync();
+
+        // act
+        var requirements = await ExecuteAsync(executor, recorder, $"{{ {selection} }}");
+
+        // assert
+        Assert.Equal(expected, requirements);
+    }
+
+    [Theory]
+    [InlineData("items { edges { cursor } nodes @stream(initialCount: 1) { id } }")]
+    [InlineData("items { edges @stream(initialCount: 1) { cursor } ... @defer { nodes { id } } }")]
+    [InlineData("items { nodes @stream(initialCount: 1) { id } pageInfo { hasNextPage } }")]
+    [InlineData("items { nodes @stream(initialCount: 1) { id } pageInfo { endCursor } }")]
+    public async Task Execute_Should_ReadAllRows_When_TheStreamsAreIgnored(string selection)
+    {
+        // arrange
+        var (executor, recorder) = await CreateExecutorAsync();
+
+        // act
+        var requirements = await ExecuteAsync(executor, recorder, $"{{ {selection} }}");
+
+        // assert
+        Assert.Equal("AllRows", requirements);
     }
 
     [Fact]
@@ -256,9 +295,10 @@ public class StreamPageDataRequirementPrecomputeTests
 
         ValueTask IStreamPageConnection.LoadRequirementsAsync(
             StreamPageDataRequirements requirements,
+            int rowCount,
             CancellationToken cancellationToken)
         {
-            _recorder.Requirements.Add(requirements.ToString());
+            _recorder.Requirements.Add(rowCount == 0 ? requirements.ToString() : $"{requirements}, rows: {rowCount}");
             return ValueTask.CompletedTask;
         }
 

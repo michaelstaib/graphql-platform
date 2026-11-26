@@ -156,6 +156,7 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
             {
                 definition.Flags |= CoreFieldFlags.HasSelectionSetHandler;
                 definition.Features.Set<ISelectionSetHandler>(StreamPageDataRequirementPrecomputer.Instance);
+                StreamPageConnectionExecutionGroup.Apply(definition);
 
                 var index = definition.MiddlewareConfigurations.IndexOf(middleware);
 
@@ -261,11 +262,11 @@ public sealed class UseConnectionAttribute : DescriptorAttribute
 
         context.RegisterForCleanup(connection.DisposeAsync, CleanAfter.Request);
 
-        var requirements = StreamPageDataRequirementAnalyzer.Analyze(context);
+        var requirements = StreamPageDataRequirementAnalyzer.Analyze(context, out var initialRowCount);
 
-        return requirements is StreamPageDataRequirements.None
+        return requirements is StreamPageDataRequirements.None && initialRowCount == 0
             ? ValueTask.CompletedTask
-            : connection.LoadRequirementsAsync(requirements, context.RequestAborted);
+            : connection.LoadRequirementsAsync(requirements, initialRowCount, context.RequestAborted);
     }
 
     private static void ValidateContext(

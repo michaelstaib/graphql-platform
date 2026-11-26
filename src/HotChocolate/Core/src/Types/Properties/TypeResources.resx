@@ -1192,7 +1192,7 @@ Type: `{0}`</value>
     <value>The execution group of field `{0}` is invalid: the entry `{1}` references the field `{2}.{3}` that uses a batch resolver.</value>
   </data>
   <data name="ErrorHelper_ExecutionGroup_NotParallelExecutableField" xml:space="preserve">
-    <value>The execution group of field `{0}` is invalid: the entry `{1}` references the field `{2}.{3}` that is not parallel executable.</value>
+    <value>The execution group of field `{0}` is invalid: the entry `{1}` references the field `{2}.{3}` that is not parallel executable. Execution group members are started by the group and cannot run serially, for example when the default resolver strategy is serial.</value>
   </data>
   <data name="ErrorHelper_ExecutionGroup_ListField" xml:space="preserve">
     <value>The execution group of field `{0}` is invalid: the entry `{1}` passes through the list field `{2}.{3}`.</value>

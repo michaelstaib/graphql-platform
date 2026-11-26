@@ -14,9 +14,13 @@ internal sealed class ExecutionGroupScope
         new DefaultObjectPool<ExecutionGroupScope>(new ScopePolicy(), 1024);
 
     private ulong[] _released = new ulong[1];
+    private ulong[] _unsequenced = new ulong[1];
+    private ulong[] _pendingInitialReads = new ulong[1];
     private ResolverTask?[] _tasks = new ResolverTask?[4];
+    private StreamTask?[] _streams = new StreamTask?[4];
     private WorkScheduler _scheduler = null!;
     private ExecutionGroupPlan _plan = null!;
+    private bool _honorsStreams;
     private int _slotCount;
     private int _wordCount;
 
@@ -24,6 +28,11 @@ internal sealed class ExecutionGroupScope
     /// Gets the plan that this scope sequences.
     /// </summary>
     public ExecutionGroupPlan Plan => _plan;
+
+    /// <summary>
+    /// Gets a value indicating whether the streamed members of the group stream for this result.
+    /// </summary>
+    public bool HonorsStreams => _honorsStreams;
 
     /// <summary>
     /// Gets the slot whose turn it is, or the number of slots if all members have ended their turn.
@@ -58,7 +67,10 @@ internal sealed class ExecutionGroupScope
     public static ExecutionGroupScope? Open(
         WorkScheduler scheduler,
         ExecutionGroupPlan plan,
-        ConditionFlags includeFlags)
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        DeferUsage? rootDeferUsage,
+        IVariableValueCollection variables)
     {
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(plan);
@@ -68,9 +80,10 @@ internal sealed class ExecutionGroupScope
             return null;
         }
 
+        var honorsStreams = plan.HonorsStreams(includeFlags, deferFlags, rootDeferUsage, variables);
         var scope = s_pool.Get();
 
-        if (scope.Initialize(scheduler, plan, includeFlags) < 2)
+        if (scope.Initialize(scheduler, plan, includeFlags, deferFlags, rootDeferUsage, honorsStreams) < 2)
         {
             scope.Return();
             return null;
@@ -80,9 +93,38 @@ internal sealed class ExecutionGroupScope
     }
 
     /// <summary>
-    /// Gets a value indicating whether the specified slot may run, because it is its turn or it was released.
+    /// Gets a value indicating whether the task of the specified slot may run, because it was released, it is a
+    /// streamed member in the payload of the group root whose initial items are not sequenced, or it is its turn
+    /// and no initial items are still being read.
     /// </summary>
-    public bool CanRun(int slot) => IsReleased(slot) || Position == slot;
+    public bool CanRun(int slot) => IsReleased(slot) || IsUnsequenced(slot) || IsTurn(slot);
+
+    /// <summary>
+    /// Holds the stream of a member until its slot has its turn and then starts reading the remaining items.
+    /// </summary>
+    public void Enqueue(StreamTask stream, int slot)
+    {
+        Interlocked.Exchange(ref _streams[slot], stream);
+
+        if (IsReleased(slot) || IsTurn(slot))
+        {
+            Dispatch(slot);
+        }
+    }
+
+    /// <summary>
+    /// Marks the initial items of the specified slot as read, so that the sequence can start once all streamed
+    /// members in the payload of the group root have read theirs.
+    /// </summary>
+    public void EndInitialRead(int slot)
+    {
+        var bit = 1UL << (slot & 63);
+
+        if ((Interlocked.And(ref _pendingInitialReads[slot >> 6], ~bit) & bit) != 0 && !HasPendingInitialReads())
+        {
+            Dispatch(Position);
+        }
+    }
 
     /// <summary>
     /// Holds the task of a member until its slot may run.
@@ -108,8 +150,13 @@ internal sealed class ExecutionGroupScope
 
         if ((Interlocked.Or(ref word, bit) & bit) == 0)
         {
+            Interlocked.And(ref _pendingInitialReads[slot >> 6], ~bit);
             Dispatch(slot);
-            Dispatch(Position);
+
+            if (!HasPendingInitialReads())
+            {
+                Dispatch(Position);
+            }
         }
     }
 
@@ -141,6 +188,7 @@ internal sealed class ExecutionGroupScope
         for (var i = 0; i < _wordCount; i++)
         {
             Interlocked.Exchange(ref _released[i], ulong.MaxValue);
+            Interlocked.Exchange(ref _pendingInitialReads[i], 0);
         }
 
         for (var i = 0; i < _slotCount; i++)
@@ -155,15 +203,23 @@ internal sealed class ExecutionGroupScope
     public void Return()
     {
         Array.Clear(_tasks, 0, _slotCount);
+        Array.Clear(_streams, 0, _slotCount);
         _scheduler = null!;
         _plan = null!;
+        _honorsStreams = false;
         _slotCount = 0;
         _wordCount = 0;
         NextScope = null;
         s_pool.Return(this);
     }
 
-    private int Initialize(WorkScheduler scheduler, ExecutionGroupPlan plan, ConditionFlags includeFlags)
+    private int Initialize(
+        WorkScheduler scheduler,
+        ExecutionGroupPlan plan,
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        DeferUsage? rootDeferUsage,
+        bool honorsStreams)
     {
         var slots = plan.Slots;
         var slotCount = slots.Length;
@@ -172,22 +228,36 @@ internal sealed class ExecutionGroupScope
         if (_released.Length < wordCount)
         {
             _released = new ulong[wordCount];
+            _unsequenced = new ulong[wordCount];
+            _pendingInitialReads = new ulong[wordCount];
         }
 
         if (_tasks.Length < slotCount)
         {
             _tasks = new ResolverTask?[slotCount];
+            _streams = new StreamTask?[slotCount];
         }
 
         Array.Clear(_released, 0, wordCount);
+        Array.Clear(_unsequenced, 0, wordCount);
 
         var included = 0;
 
         for (var i = 0; i < slotCount; i++)
         {
-            if (slots[i].Selection.IsIncluded(includeFlags))
+            var slot = slots[i];
+
+            if (slot.Selection.IsIncluded(includeFlags))
             {
                 included++;
+
+                // a streamed member reads its initial items with the root, only its remaining items are sequenced.
+                if (honorsStreams
+                    && slot.IsStreamable
+                    && slot.Selection.GetPrimaryDeferUsage(deferFlags) == rootDeferUsage)
+                {
+                    _unsequenced[i >> 6] |= 1UL << (i & 63);
+                }
             }
             else
             {
@@ -202,8 +272,10 @@ internal sealed class ExecutionGroupScope
             _released[wordCount - 1] |= ulong.MaxValue << tail;
         }
 
+        Array.Copy(_unsequenced, _pendingInitialReads, wordCount);
         _scheduler = scheduler;
         _plan = plan;
+        _honorsStreams = honorsStreams;
         _slotCount = slotCount;
         _wordCount = wordCount;
         return included;
@@ -211,6 +283,24 @@ internal sealed class ExecutionGroupScope
 
     private bool IsReleased(int slot)
         => (Volatile.Read(ref _released[slot >> 6]) & (1UL << (slot & 63))) != 0;
+
+    private bool IsUnsequenced(int slot)
+        => (_unsequenced[slot >> 6] & (1UL << (slot & 63))) != 0;
+
+    private bool IsTurn(int slot) => Position == slot && !HasPendingInitialReads();
+
+    private bool HasPendingInitialReads()
+    {
+        for (var i = 0; i < _wordCount; i++)
+        {
+            if (Volatile.Read(ref _pendingInitialReads[i]) != 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private void Dispatch(int slot)
     {
@@ -222,6 +312,11 @@ internal sealed class ExecutionGroupScope
         if (Interlocked.Exchange(ref _tasks[slot], null) is { } task)
         {
             _scheduler.RegisterReserved(task);
+        }
+
+        if (Interlocked.Exchange(ref _streams[slot], null) is { } stream)
+        {
+            stream.StartProducer();
         }
     }
 

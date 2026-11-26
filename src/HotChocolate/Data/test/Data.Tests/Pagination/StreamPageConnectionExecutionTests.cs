@@ -258,6 +258,60 @@ public class StreamPageConnectionExecutionTests(PostgreSqlResource resource)
     }
 
     [Fact]
+    public async Task Execute_Should_IgnoreStream_When_EdgesAndNodesOfAPageConnectionAreStreamed()
+    {
+        // arrange
+        var store = await Store.CreateAsync(
+            resource.GetConnectionString($"db_{Guid.NewGuid():N}"),
+            authorCount: 1,
+            itemsPerAuthor: 3);
+        var executor = await CreateExecutorAsync(store);
+
+        // act
+        var result = await executor.ExecuteAsync(
+            """
+            {
+              pagedItems(authorId: 1, first: 2) {
+                edges @stream(initialCount: 0) { node { id } }
+                nodes @stream(initialCount: 0) { id }
+              }
+            }
+            """,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        result.ExpectOperationResult().MatchInlineSnapshot(
+            """
+            {
+              "data": {
+                "pagedItems": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": 1
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": 2
+                      }
+                    }
+                  ],
+                  "nodes": [
+                    {
+                      "id": 1
+                    },
+                    {
+                      "id": 2
+                    }
+                  ]
+                }
+              }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task CancelAndDispose_Should_ReleasePage_When_ReaderIsBlockedAndSiblingCompletes()
     {
         // arrange
@@ -359,7 +413,11 @@ public class StreamPageConnectionExecutionTests(PostgreSqlResource resource)
                 options.MaxFieldCost = 20_000;
                 options.MaxTypeCost = 20_000;
             })
-            .ModifyOptions(options => options.EnableDefer = true)
+            .ModifyOptions(options =>
+            {
+                options.EnableDefer = true;
+                options.EnableStream = true;
+            })
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
     public sealed class Item

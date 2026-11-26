@@ -32,7 +32,7 @@ internal static partial class ValueCompletion
 
             if (selectionSet.ExecutionGroupPlan is not null)
             {
-                EnqueueExecutionGroupRoot(context, selectionSet, objectType, resultValue, runtimeValue);
+                EnqueueExecutionGroupRoot(context, selection, selectionSet, objectType, resultValue, runtimeValue);
                 return;
             }
 
@@ -52,15 +52,20 @@ internal static partial class ValueCompletion
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void EnqueueExecutionGroupRoot(
         ValueCompletionContext context,
+        Selection selection,
         SelectionSet selectionSet,
         ObjectType objectType,
         ResultElement resultValue,
         object runtimeValue)
     {
         var operationContext = context.OperationContext;
+        var deferFlags = operationContext.DeferConditionFlags;
         var scope = operationContext.Scheduler.OpenExecutionGroupScope(
             selectionSet.ExecutionGroupPlan!,
-            operationContext.IncludeConditionFlags);
+            operationContext.IncludeConditionFlags,
+            deferFlags,
+            selection.GetPrimaryDeferUsage(deferFlags),
+            operationContext.Variables);
 
         try
         {

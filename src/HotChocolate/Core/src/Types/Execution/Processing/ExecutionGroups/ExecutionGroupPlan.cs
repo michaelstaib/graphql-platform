@@ -10,13 +10,16 @@ namespace HotChocolate.Execution.Processing;
 internal sealed class ExecutionGroupPlan
 {
     private readonly FrozenDictionary<int, ExecutionGroupNode> _nodes;
+    private readonly bool _hasStreams;
 
     private ExecutionGroupPlan(
         ImmutableArray<ExecutionGroupSlot> slots,
-        FrozenDictionary<int, ExecutionGroupNode> nodes)
+        FrozenDictionary<int, ExecutionGroupNode> nodes,
+        bool hasStreams)
     {
         Slots = slots;
         _nodes = nodes;
+        _hasStreams = hasStreams;
     }
 
     /// <summary>
@@ -29,6 +32,56 @@ internal sealed class ExecutionGroupPlan
     /// </summary>
     public bool TryGetNode(int selectionId, out ExecutionGroupNode node)
         => _nodes.TryGetValue(selectionId, out node);
+
+    /// <summary>
+    /// Gets a value indicating whether the streamed members of the group stream for a request. Streams are
+    /// ignored when a selected streamable member is not streamed, or when a selected member that is not
+    /// streamable is delivered in the payload of the group root.
+    /// </summary>
+    /// <param name="includeFlags">The include condition flags of the request.</param>
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
+    /// <param name="rootDeferUsage">The primary defer usage of the group root, or <c>null</c> if it is not deferred.</param>
+    /// <param name="variables">The variable values of the request.</param>
+    public bool HonorsStreams(
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        DeferUsage? rootDeferUsage,
+        IVariableValueCollection variables)
+    {
+        if (!_hasStreams)
+        {
+            return false;
+        }
+
+        var hasStreamedMember = false;
+        var hasUnstreamedMember = false;
+        var hasNonStreamableMemberWithRoot = false;
+
+        foreach (var slot in Slots)
+        {
+            var selection = slot.Selection;
+
+            if (!selection.IsIncluded(includeFlags))
+            {
+                continue;
+            }
+
+            if (!slot.IsStreamable)
+            {
+                hasNonStreamableMemberWithRoot |= selection.GetPrimaryDeferUsage(deferFlags) == rootDeferUsage;
+            }
+            else if (selection.IsStreamable && selection.StreamArguments is { } stream && stream.IsEnabled(variables))
+            {
+                hasStreamedMember = true;
+            }
+            else
+            {
+                hasUnstreamedMember = true;
+            }
+        }
+
+        return hasStreamedMember && !hasUnstreamedMember && !hasNonStreamableMemberWithRoot;
+    }
 
     /// <summary>
     /// Resolves the entries of <paramref name="group"/> against the selection set of a group root.
@@ -60,10 +113,15 @@ internal sealed class ExecutionGroupPlan
 
         var slots = ImmutableArray.CreateBuilder<ExecutionGroupSlot>(ordered.Length);
         var builders = new Dictionary<int, NodeBuilder>();
+        var hasStreams = false;
 
         for (var i = 0; i < ordered.Length; i++)
         {
             var candidate = ordered[i];
+
+            // the group decides which of its members honor the @stream directive.
+            candidate.Selection.SetStreamable(candidate.Entry.IsStreamable);
+            hasStreams |= candidate.Selection.IsStreamable && candidate.Selection.StreamArguments is not null;
 
             slots.Add(new ExecutionGroupSlot(
                 candidate.Selection,
@@ -101,7 +159,10 @@ internal sealed class ExecutionGroupPlan
                 new ExecutionGroupNode(builder.SlotIndex, [.. builder.SlotsBelow]));
         }
 
-        return new ExecutionGroupPlan(slots.MoveToImmutable(), nodes.ToFrozenDictionary());
+        return new ExecutionGroupPlan(
+            slots.MoveToImmutable(),
+            nodes.ToFrozenDictionary(),
+            hasStreams && operation.HasIncrementalParts);
     }
 
     private static void Collect(

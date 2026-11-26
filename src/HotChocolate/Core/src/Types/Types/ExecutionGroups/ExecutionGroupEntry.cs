@@ -17,7 +17,7 @@ public sealed class ExecutionGroupEntry
     /// The position of the member in the sequence. Lower values run first.
     /// </param>
     /// <param name="isStreamable">
-    /// Defines whether the member can be consumed incrementally.
+    /// Defines whether the member honors the <c>@stream</c> directive.
     /// </param>
     public ExecutionGroupEntry(string path, int priority, bool isStreamable)
     {
@@ -36,15 +36,21 @@ public sealed class ExecutionGroupEntry
     public string Path { get; }
 
     /// <summary>
-    /// Gets the position of the member in the sequence. Lower values run first, and the turn of a member ends
-    /// when its own resolver task completes.
+    /// Gets the position of the member in the sequence. Lower values run first. The turn of a member ends
+    /// when its resolver task completes, or when its stream has ended if the member is streamed.
     /// </summary>
     public int Priority { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the member can be consumed incrementally.
+    /// Gets a value indicating whether the member honors the <c>@stream</c> directive. A streamed member that is
+    /// delivered with the group root reads its initial items outside the sequence and its remaining items in its turn.
     /// </summary>
     public bool IsStreamable { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the entry is skipped when its path does not exist in the schema.
+    /// </summary>
+    public bool IsOptional { get; init; }
 
     internal ImmutableArray<string> Segments { get; }
 }

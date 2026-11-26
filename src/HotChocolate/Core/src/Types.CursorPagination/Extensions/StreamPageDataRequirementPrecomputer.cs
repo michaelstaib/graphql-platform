@@ -44,7 +44,7 @@ internal sealed class StreamPageDataRequirementPrecomputer : ISelectionSetHandle
                 continue;
             }
 
-            var childRequirements = StreamPageDataRequirementAnalyzer.GetConnectionRequirements(child.Field.Name);
+            var childRequirements = StreamPageConnectionExecutionGroup.GetConnectionRequirements(child.Field.Name);
 
             if (childRequirements is StreamPageDataRequirements.None)
             {
@@ -79,7 +79,7 @@ internal sealed class StreamPageDataRequirementPrecomputer : ISelectionSetHandle
 
         foreach (var child in pageInfo.GetSelectionSet(pageInfoType).Selections)
         {
-            var childRequirements = StreamPageDataRequirementAnalyzer.GetPageInfoRequirements(child.Field.Name);
+            var childRequirements = StreamPageConnectionExecutionGroup.GetPageInfoRequirements(child.Field.Name);
 
             if (childRequirements is StreamPageDataRequirements.None)
             {
@@ -98,25 +98,7 @@ internal sealed class StreamPageDataRequirementPrecomputer : ISelectionSetHandle
     }
 
     private static bool HasNoOwnConditions(Selection connection, Selection child)
-    {
-        if (!child.HasSameConditions(connection))
-        {
-            return false;
-        }
-
-        foreach (var syntaxNode in child.SyntaxNodes)
-        {
-            foreach (var directive in syntaxNode.Node.Directives)
-            {
-                if (directive.Name.Value.Equals(DirectiveNames.Stream.Name, StringComparison.Ordinal))
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
+        => child.HasSameConditions(connection) && child.StreamArguments is null;
 
     private static object[] CreateBoxedRequirements()
     {
