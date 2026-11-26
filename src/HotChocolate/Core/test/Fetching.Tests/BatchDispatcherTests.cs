@@ -256,6 +256,32 @@ public class BatchDispatcherTests
     }
 
     [Fact]
+    public async Task BeginDispatch_Should_ReportCompletedDispatch_When_DisposedBeforeTheNextRound()
+    {
+        // arrange
+        var diagnosticEvents = new RecordingDiagnosticEvents();
+        var dispatcher = new BatchDispatcher(diagnosticEvents);
+        // the dispatch completes synchronously and its owner disposes the dispatcher before the next round
+        var batch = new DelegatingBatch(
+            () =>
+            {
+                dispatcher.Dispose();
+                return Task.CompletedTask;
+            });
+        dispatcher.Schedule(batch);
+
+        // act
+        dispatcher.BeginDispatch(TestContext.Current.CancellationToken);
+        var completed = await Task.WhenAny(
+            diagnosticEvents.CoordinatorCompleted,
+            Task.Delay(5_000, TestContext.Current.CancellationToken));
+
+        // assert
+        Assert.Same(diagnosticEvents.CoordinatorCompleted, completed);
+        Assert.Equal(1, Assert.Single(diagnosticEvents.DispatchedBatches));
+    }
+
+    [Fact]
     public void MaxBatchWaitTimeUs_Should_ReturnDefault_When_NotSet()
     {
         // arrange
@@ -285,6 +311,27 @@ public class BatchDispatcherTests
         // assert
         Assert.Equal(250, defaultValue);
         Assert.Equal(1_000, explicitValue);
+    }
+
+    private sealed class RecordingDiagnosticEvents : DataLoaderDiagnosticEventListener
+    {
+        private readonly TaskCompletionSource _coordinatorCompleted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task CoordinatorCompleted => _coordinatorCompleted.Task;
+
+        public ImmutableList<int> DispatchedBatches { get; private set; } = [];
+
+        public override IDisposable RunBatchDispatchCoordinator()
+            => new CoordinatorScope(_coordinatorCompleted);
+
+        public override void BatchDispatched(int dispatchedBatches)
+            => DispatchedBatches = DispatchedBatches.Add(dispatchedBatches);
+
+        private sealed class CoordinatorScope(TaskCompletionSource completed) : IDisposable
+        {
+            public void Dispose() => completed.TrySetResult();
+        }
     }
 
     public class TestObserver : IObserver<BatchDispatchEventArgs>
