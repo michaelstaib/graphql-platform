@@ -26,6 +26,14 @@ internal sealed class NodeFieldSelectionSetPartitioner(FusionSchemaDefinition sc
 
         var indexBuilder = input.SelectionSetIndex.ToBuilder();
 
+        if (context.RewrittenFragments is not null)
+        {
+            foreach (var (original, rewritten) in context.RewrittenFragments)
+            {
+                indexBuilder.Register(original, rewritten);
+            }
+        }
+
         SelectionSet? prunedSelectionSet = null;
         if (selectionSet is not null)
         {
@@ -84,6 +92,9 @@ internal sealed class NodeFieldSelectionSetPartitioner(FusionSchemaDefinition sc
 
                     if (fragmentSelectionSet is not null)
                     {
+                        context.RewrittenFragments ??= [];
+                        context.RewrittenFragments.Add((inlineFragmentNode.SelectionSet, fragmentSelectionSet));
+
                         selections ??= [];
                         selections.Add(inlineFragmentNode.WithSelectionSet(fragmentSelectionSet));
                     }
@@ -105,5 +116,7 @@ internal sealed class NodeFieldSelectionSetPartitioner(FusionSchemaDefinition sc
         public List<NodeField>? NodeFields { get; set; }
 
         public Stack<InlineFragmentNode>? FragmentPath { get; set; }
+
+        public List<(SelectionSetNode Original, SelectionSetNode Rewritten)>? RewrittenFragments { get; set; }
     }
 }
