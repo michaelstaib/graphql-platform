@@ -154,7 +154,13 @@ internal sealed partial class ResolverTask
 
         if (_groupSlot >= 0)
         {
-            scope.Release(_groupSlot);
+            // a streamed member keeps its turn until the stream has ended and releases it itself.
+            if (!_streamHoldsGroupTurn)
+            {
+                scope.Release(_groupSlot);
+            }
+
+            _streamHoldsGroupTurn = false;
         }
         else if (!childTasksRegistered)
         {
@@ -256,7 +262,9 @@ internal sealed partial class ResolverTask
                     items.Count,
                     options.MaxStreamBatchSize,
                     enumerator,
-                    cancellation);
+                    cancellation,
+                    IsGroupMember ? _groupScope : null,
+                    _groupSlot);
                 isStreaming = true;
                 _stream.StartProducer();
             }
@@ -290,6 +298,7 @@ internal sealed partial class ResolverTask
         if (_completionStatus is ExecutionTaskStatus.Completed && !_context.ResultValue.IsNullOrInvalidated)
         {
             _stream = null;
+            _streamHoldsGroupTurn = IsGroupMember;
             stream.Announce(BranchId, _context.ResultValue);
             _operationContext.RegisterRequestCleanup(stream.DisposeAsync);
             _taskBuffer.Add(stream);
@@ -304,6 +313,11 @@ internal sealed partial class ResolverTask
         var stream = _stream!;
         _stream = null;
         await stream.DisposeAsync().ConfigureAwait(false);
+
+        if (IsGroupMember)
+        {
+            await stream.WaitForProducerAsync().ConfigureAwait(false);
+        }
     }
 
     /// <summary>

@@ -36,8 +36,8 @@ public sealed class ExecutionGroupEntry
     public string Path { get; }
 
     /// <summary>
-    /// Gets the position of the member in the sequence. Lower values run first, and the turn of a member ends
-    /// when its own resolver task completes.
+    /// Gets the position of the member in the sequence. Lower values run first. The turn of a member ends
+    /// when its resolver task completes, or when its stream has ended if the member is streamed.
     /// </summary>
     public int Priority { get; }
 
@@ -45,6 +45,11 @@ public sealed class ExecutionGroupEntry
     /// Gets a value indicating whether the member can be consumed incrementally.
     /// </summary>
     public bool IsStreamable { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the entry is skipped when its path does not exist in the schema.
+    /// </summary>
+    public bool IsOptional { get; init; }
 
     internal ImmutableArray<string> Segments { get; }
 }
