@@ -143,7 +143,7 @@ public class DeferUsageSetTests
         var flags = (outerEnabled ? 1ul : 0ul) | (innerEnabled ? 2ul : 0ul);
 
         // act
-        var active = DeferUsage.FindActive(inner, flags, default);
+        var active = DeferUsage.FindActive(inner, new ConditionFlags(flags));
 
         // assert
         Assert.Equal(expectedLabel, active?.Label);
@@ -156,8 +156,8 @@ public class DeferUsageSetTests
         var usage = new DeferUsage("A", null, 65) { Ordinal = 0 };
 
         // act
-        var enabled = DeferUsage.FindActive(usage, 0ul, [2ul]);
-        var disabled = DeferUsage.FindActive(usage, ulong.MaxValue, [0ul]);
+        var enabled = DeferUsage.FindActive(usage, new ConditionFlags(0ul, [2ul]));
+        var disabled = DeferUsage.FindActive(usage, new ConditionFlags(ulong.MaxValue, [0ul]));
 
         // assert
         Assert.Same(usage, enabled);

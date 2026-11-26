@@ -56,7 +56,7 @@ internal static class StreamPageDataRequirementAnalyzer
         }
 
         var deferFlags = context.Operation.CreateDeferConditionFlags(context.Variables);
-        var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags.Word0, deferFlags.Overflow);
+        var connectionDeferUsage = selection.GetPrimaryDeferUsage(deferFlags);
         var requirements = StreamPageDataRequirements.None;
 
         foreach (var child in context.GetSelections(connectionType))
@@ -106,7 +106,7 @@ internal static class StreamPageDataRequirementAnalyzer
         ConditionFlags deferFlags,
         DeferUsage? connectionDeferUsage)
     {
-        if (selection.GetPrimaryDeferUsage(deferFlags.Word0, deferFlags.Overflow) != connectionDeferUsage)
+        if (selection.GetPrimaryDeferUsage(deferFlags) != connectionDeferUsage)
         {
             return true;
         }

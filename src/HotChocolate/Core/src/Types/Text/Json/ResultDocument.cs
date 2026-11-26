@@ -16,8 +16,7 @@ public sealed partial class ResultDocument : IDisposable
     private static readonly ArrayPool<MemorySegment> s_arrayPool = ArrayPool<MemorySegment>.Shared;
     private readonly IMemoryArena _arena;
     private readonly Operation _operation;
-    private readonly ulong _includeFlags;
-    private readonly ulong[]? _wideIncludeFlags;
+    private readonly ConditionFlags _includeFlags;
     private readonly Path _rootPath = Path.Root;
     private readonly int _startIndex;
     internal MetaDb _metaDb;
@@ -53,8 +52,7 @@ public sealed partial class ResultDocument : IDisposable
         _metaDb = MetaDb.Create(arena);
         _data = RentDataChunks();
         _operation = operation;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
 
         Data = CreateObject(Cursor.CreateZero(), operation.RootSelectionSet);
     }
@@ -77,18 +75,15 @@ public sealed partial class ResultDocument : IDisposable
         _metaDb = MetaDb.Create(arena);
         _data = RentDataChunks();
         _operation = operation;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
         _rootPath = path;
 
         Data = CreateObject(
             Cursor.CreateZero(),
             selectionSet,
-            includeFlags.Word0,
-            deferFlags.Word0,
-            deferUsage,
-            includeFlags.Overflow,
-            deferFlags.Overflow);
+            includeFlags,
+            deferFlags,
+            deferUsage);
     }
 
     internal ResultDocument(
@@ -108,8 +103,7 @@ public sealed partial class ResultDocument : IDisposable
         _metaDb = MetaDb.Create(arena);
         _data = RentDataChunks();
         _operation = operation;
-        _includeFlags = includeFlags.Word0;
-        _wideIncludeFlags = includeFlags.Overflow;
+        _includeFlags = includeFlags;
         _rootPath = path;
         _startIndex = startIndex;
 
@@ -560,7 +554,7 @@ public sealed partial class ResultDocument : IDisposable
             var startObjectCursor = WriteStartObject(parent, selectionSet.Id);
 
             var selectionCount = 0;
-            if (_wideIncludeFlags is null)
+            if (_includeFlags.Overflow is null)
             {
                 foreach (var selection in selectionSet.Selections)
                 {
@@ -586,24 +580,22 @@ public sealed partial class ResultDocument : IDisposable
     private ResultElement CreateObject(
         Cursor parent,
         SelectionSet selectionSet,
-        ulong includeFlags,
-        ulong deferFlags,
-        DeferUsage deferUsage,
-        ulong[]? wideIncludeFlags,
-        ulong[]? wideDeferFlags)
+        ConditionFlags includeFlags,
+        ConditionFlags deferFlags,
+        DeferUsage deferUsage)
     {
         lock (_dataChunkLock)
         {
             var startObjectCursor = WriteStartObject(parent, selectionSet.Id);
 
             var selectionCount = 0;
-            if (wideIncludeFlags is null && wideDeferFlags is null)
+            if (includeFlags.Overflow is null && deferFlags.Overflow is null)
             {
                 foreach (var selection in selectionSet.Selections)
                 {
-                    if (selection.IsIncludedNarrow(includeFlags)
-                        && selection.IsDeferredNarrow(deferFlags)
-                        && selection.HasActiveDeferUsageNarrow(deferFlags, deferUsage))
+                    if (selection.IsIncludedNarrow(includeFlags.Word0)
+                        && selection.IsDeferredNarrow(deferFlags.Word0)
+                        && selection.HasActiveDeferUsageNarrow(deferFlags.Word0, deferUsage))
                     {
                         WriteEmptyProperty(startObjectCursor, selection);
                         selectionCount++;
@@ -614,9 +606,9 @@ public sealed partial class ResultDocument : IDisposable
             {
                 foreach (var selection in selectionSet.Selections)
                 {
-                    if (selection.IsIncludedWide(includeFlags, wideIncludeFlags)
-                        && selection.IsDeferredWide(deferFlags, wideDeferFlags)
-                        && selection.HasActiveDeferUsage(deferFlags, wideDeferFlags, deferUsage))
+                    if (selection.IsIncluded(includeFlags)
+                        && selection.IsDeferred(deferFlags)
+                        && selection.HasActiveDeferUsage(deferFlags, deferUsage))
                     {
                         WriteEmptyPropertyWide(startObjectCursor, selection);
                         selectionCount++;
@@ -636,7 +628,7 @@ public sealed partial class ResultDocument : IDisposable
         {
             var startObjectCursor = WriteStartObject(Cursor.CreateZero(), isSelectionSet: false);
 
-            if (_wideIncludeFlags is null)
+            if (_includeFlags.Overflow is null)
             {
                 WriteEmptyProperty(startObjectCursor, selection);
             }
@@ -995,7 +987,7 @@ public sealed partial class ResultDocument : IDisposable
             flags = ElementFlags.IsInternal;
         }
 
-        if (!selection.IsIncludedUnchecked(_includeFlags))
+        if (!selection.IsIncludedUnchecked(_includeFlags.Word0))
         {
             flags |= ElementFlags.IsExcluded;
         }
@@ -1037,7 +1029,7 @@ public sealed partial class ResultDocument : IDisposable
             flags = ElementFlags.IsInternal;
         }
 
-        if (!selection.IsIncludedWide(_includeFlags, _wideIncludeFlags))
+        if (!selection.IsIncluded(_includeFlags))
         {
             flags |= ElementFlags.IsExcluded;
         }

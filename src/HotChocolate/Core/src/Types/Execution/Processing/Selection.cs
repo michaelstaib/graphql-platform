@@ -329,22 +329,15 @@ public sealed class Selection : ISelection, IFeatureProvider
     public bool IsSkipped(ulong includeFlags)
         => !IsIncludedNarrow(includeFlags);
 
-    public bool IsSkipped(ConditionFlags includeFlags)
-        => !IsIncludedWide(includeFlags.Word0, includeFlags.Overflow);
-
     /// <summary>
-    /// Determines whether this selection should be skipped based on conditional flags,
-    /// including the overflow words of operations with more than 64 include conditions.
+    /// Determines whether this selection should be skipped based on the include condition flags.
     /// </summary>
-    /// <param name="includeFlags">The conditional inclusion flags for condition indexes 0-63.</param>
-    /// <param name="wideIncludeFlags">
-    /// The overflow words for condition indexes 64 and above; empty for narrow operations.
-    /// </param>
+    /// <param name="includeFlags">The include condition flags of the request.</param>
     /// <returns>
     /// <c>true</c> if this selection should be skipped; otherwise, <c>false</c>.
     /// </returns>
-    internal bool IsSkipped(ulong includeFlags, ReadOnlySpan<ulong> wideIncludeFlags)
-        => !IsIncludedWide(includeFlags, wideIncludeFlags);
+    public bool IsSkipped(ConditionFlags includeFlags)
+        => !IsIncluded(includeFlags);
 
     /// <inheritdoc />
     [Obsolete("Use IsIncluded(ConditionFlags) instead. This overload throws for operations with more than 64 conditions.")]
@@ -378,11 +371,8 @@ public sealed class Selection : ISelection, IFeatureProvider
             return IsIncludedUnchecked(word0);
         }
 
-        return IsIncludedWide(word0, includeFlags.Overflow);
+        return IsIncludedWide(includeFlags);
     }
-
-    internal bool IsIncluded(ulong includeFlags, ReadOnlySpan<ulong> wideIncludeFlags)
-        => IsIncludedWide(includeFlags, wideIncludeFlags);
 
     /// <summary>
     /// Evaluates the include conditions against word 0 of the request flags only.
@@ -437,13 +427,15 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// A path is satisfied when every word of its mask is fully covered by the
     /// corresponding request word; the selection is included when any path is satisfied.
     /// </summary>
-    internal bool IsIncludedWide(ulong includeFlags, ReadOnlySpan<ulong> wideIncludeFlags)
+    private bool IsIncludedWide(ConditionFlags includeFlags)
     {
         if (_includeFlags.Length == 0)
         {
             return true;
         }
 
+        var word0 = includeFlags.Word0;
+        var wideIncludeFlags = includeFlags.Overflow.AsSpan();
         var wide = _wideIncludeFlags;
         var stride = _wideIncludeFlagsStride;
 
@@ -451,7 +443,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         {
             var flags = _includeFlags[i];
 
-            if ((flags & includeFlags) != flags)
+            if ((flags & word0) != flags)
             {
                 continue;
             }
@@ -523,12 +515,6 @@ public sealed class Selection : ISelection, IFeatureProvider
         return IsDeferredUnchecked(deferFlags);
     }
 
-    public bool IsDeferred(ConditionFlags deferFlags)
-        => IsDeferredWide(deferFlags.Word0, deferFlags.Overflow);
-
-    internal bool IsDeferred(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
-        => IsDeferredWide(deferFlags, wideDeferFlags);
-
     /// <summary>
     /// Evaluates the defer mask against word 0 of the request flags only.
     /// This is the narrow fast path; callers must ensure the operation has at most
@@ -537,17 +523,21 @@ public sealed class Selection : ISelection, IFeatureProvider
     internal bool IsDeferredUnchecked(ulong deferFlags)
         => _deferMask != 0
             && (_deferMask & deferFlags) != 0
-            && (_deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, default));
+            && (_deferUsages.Length == 1 || IsEveryOccurrenceDeferred(new ConditionFlags(deferFlags)));
 
     /// <summary>
-    /// Evaluates the defer mask against all words of the request flags.
-    /// The selection is deferred when any bit matches in any word.
+    /// Determines whether this selection is deferred based on the defer condition flags.
     /// </summary>
-    internal bool IsDeferredWide(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
+    /// <returns>
+    /// <c>true</c> if every occurrence of this selection is inside an active deferred fragment;
+    /// otherwise, <c>false</c>.
+    /// </returns>
+    public bool IsDeferred(ConditionFlags deferFlags)
     {
-        if ((_deferMask & deferFlags) != 0)
+        if ((_deferMask & deferFlags.Word0) != 0)
         {
-            return _deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
+            return _deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags);
         }
 
         var wide = _wideDeferMask;
@@ -557,13 +547,14 @@ public sealed class Selection : ISelection, IFeatureProvider
             return false;
         }
 
+        var wideDeferFlags = deferFlags.Overflow.AsSpan();
         var length = Math.Min(wide.Length, wideDeferFlags.Length);
 
         for (var i = 0; i < length; i++)
         {
             if ((wide[i] & wideDeferFlags[i]) != 0)
             {
-                return _deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags, wideDeferFlags);
+                return _deferUsages.Length == 1 || IsEveryOccurrenceDeferred(deferFlags);
             }
         }
 
@@ -588,7 +579,7 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// <c>true</c> if this selection is deferred and belongs to the specified parent
     /// defer context; otherwise, <c>false</c>.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17. This overload throws for operations with more than 64 conditions.")]
+    [Obsolete("Use IsDeferred(ConditionFlags, DeferUsage?) instead. This overload throws for operations with more than 64 conditions.")]
     public bool IsDeferred(ulong deferFlags, DeferUsage? parentDeferUsage)
     {
         if ((_flags & Flags.RequiresWideDeferFlags) != 0)
@@ -598,14 +589,13 @@ public sealed class Selection : ISelection, IFeatureProvider
                 + "the wide defer flags. Use IsDeferred(ConditionFlags, DeferUsage?).");
         }
 
-        return IsDeferred(deferFlags, default, parentDeferUsage);
+        return IsDeferred(new ConditionFlags(deferFlags), parentDeferUsage);
     }
 
     /// <summary>
-    /// Determines whether this selection is deferred relative to a parent defer usage,
-    /// evaluating all words of the request defer flags.
+    /// Determines whether this selection is deferred relative to a parent defer usage.
     /// </summary>
-    /// <param name="deferFlags">The defer condition flags for condition indexes 0-63.</param>
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
     /// <param name="parentDeferUsage">
     /// The defer usage of the parent context, or <c>null</c> if the parent is not deferred.
     /// </param>
@@ -613,13 +603,9 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// <c>true</c> if this selection is deferred and belongs to the specified parent
     /// defer context; otherwise, <c>false</c>.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17.")]
     public bool IsDeferred(ConditionFlags deferFlags, DeferUsage? parentDeferUsage)
-        => IsDeferred(deferFlags.Word0, deferFlags.Overflow, parentDeferUsage);
-
-    internal bool IsDeferred(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags, DeferUsage? parentDeferUsage)
     {
-        if (IsDeferredWide(deferFlags, wideDeferFlags))
+        if (IsDeferred(deferFlags))
         {
             if (parentDeferUsage is null)
             {
@@ -629,7 +615,7 @@ public sealed class Selection : ISelection, IFeatureProvider
             // If the parent's defer usage is in this selection's active defer usage set,
             // this selection belongs to the parent's context and does not need to be
             // deferred separately.
-            if (HasActiveDeferUsage(deferFlags, wideDeferFlags, parentDeferUsage))
+            if (HasActiveDeferUsage(deferFlags, parentDeferUsage))
             {
                 return false;
             }
@@ -649,7 +635,7 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// <returns>
     /// The primary defer usage, or <c>null</c> if the selection is not deferred or has no active defer usages.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17. This overload throws for operations with more than 64 conditions.")]
+    [Obsolete("Use GetPrimaryDeferUsage(ConditionFlags) instead. This overload throws for operations with more than 64 conditions.")]
     public DeferUsage? GetPrimaryDeferUsage(ulong deferFlags)
     {
         if ((_flags & Flags.RequiresWideDeferFlags) != 0)
@@ -659,22 +645,17 @@ public sealed class Selection : ISelection, IFeatureProvider
                 + "the wide defer flags. Use GetPrimaryDeferUsage(ConditionFlags).");
         }
 
-        return GetPrimaryDeferUsage(deferFlags, default);
+        return GetPrimaryDeferUsage(new ConditionFlags(deferFlags));
     }
 
     /// <summary>
-    /// Gets the primary defer usage for this selection, evaluating all words of the
-    /// request defer flags.
+    /// Gets the primary defer usage for this selection given the defer condition flags.
     /// </summary>
-    /// <param name="deferFlags">The defer condition flags for condition indexes 0-63.</param>
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
     /// <returns>
     /// The primary defer usage, or <c>null</c> if the selection is not deferred or has no active defer usages.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17.")]
     public DeferUsage? GetPrimaryDeferUsage(ConditionFlags deferFlags)
-        => GetPrimaryDeferUsage(deferFlags.Word0, deferFlags.Overflow);
-
-    internal DeferUsage? GetPrimaryDeferUsage(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
         var deferUsages = _deferUsages;
 
@@ -690,7 +671,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         // parent scope may itself be deferred.
         if (deferUsages.Length == 1)
         {
-            return DeferUsage.FindActive(deferUsages[0], deferFlags, wideDeferFlags);
+            return DeferUsage.FindActive(deferUsages[0], deferFlags);
         }
 
         // Multiple defer usages: the field was collected from multiple deferred
@@ -700,7 +681,7 @@ public sealed class Selection : ISelection, IFeatureProvider
 
         for (var i = 0; i < deferUsages.Length; i++)
         {
-            var effective = DeferUsage.FindActive(deferUsages[i], deferFlags, wideDeferFlags);
+            var effective = DeferUsage.FindActive(deferUsages[i], deferFlags);
 
             if (effective is null)
             {
@@ -745,7 +726,7 @@ public sealed class Selection : ISelection, IFeatureProvider
     /// <returns>
     /// The array of active defer usages (pruned), or <c>null</c> if the field is not deferred.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17. This overload throws for operations with more than 64 conditions.")]
+    [Obsolete("Use GetActiveDeferUsages(ConditionFlags) instead. This overload throws for operations with more than 64 conditions.")]
     public DeferUsage[]? GetActiveDeferUsages(ulong deferFlags)
         => GetActiveDeferUsagesNarrow(deferFlags);
 
@@ -758,22 +739,17 @@ public sealed class Selection : ISelection, IFeatureProvider
                 + "the wide defer flags. Use GetActiveDeferUsages(ConditionFlags).");
         }
 
-        return GetActiveDeferUsages(deferFlags, default);
+        return GetActiveDeferUsages(new ConditionFlags(deferFlags));
     }
 
     /// <summary>
-    /// Returns all active defer usages for this selection, evaluating all words of the
-    /// request defer flags.
+    /// Returns all active defer usages for this selection given the defer condition flags.
     /// </summary>
-    /// <param name="deferFlags">The defer condition flags for condition indexes 0-63.</param>
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
     /// <returns>
     /// The array of active defer usages (pruned), or <c>null</c> if the field is not deferred.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17.")]
     public DeferUsage[]? GetActiveDeferUsages(ConditionFlags deferFlags)
-        => GetActiveDeferUsages(deferFlags.Word0, deferFlags.Overflow);
-
-    internal DeferUsage[]? GetActiveDeferUsages(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
     {
         var deferUsages = _deferUsages;
 
@@ -785,7 +761,7 @@ public sealed class Selection : ISelection, IFeatureProvider
         // Fast path for single defer usage (most common case).
         if (deferUsages.Length == 1)
         {
-            var usage = DeferUsage.FindActive(deferUsages[0], deferFlags, wideDeferFlags);
+            var usage = DeferUsage.FindActive(deferUsages[0], deferFlags);
             return usage is null ? null : [usage];
         }
 
@@ -795,7 +771,7 @@ public sealed class Selection : ISelection, IFeatureProvider
 
         for (var i = 0; i < deferUsages.Length; i++)
         {
-            var effective = DeferUsage.FindActive(deferUsages[i], deferFlags, wideDeferFlags);
+            var effective = DeferUsage.FindActive(deferUsages[i], deferFlags);
 
             if (effective is null)
             {
@@ -881,7 +857,7 @@ nextItem:
     /// <returns>
     /// <c>true</c> if <paramref name="target"/> is in the active defer usage set.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17. This overload throws for operations with more than 64 conditions.")]
+    [Obsolete("Use HasActiveDeferUsage(ConditionFlags, DeferUsage) instead. This overload throws for operations with more than 64 conditions.")]
     public bool HasActiveDeferUsage(ulong deferFlags, DeferUsage target)
         => HasActiveDeferUsageNarrow(deferFlags, target);
 
@@ -894,23 +870,19 @@ nextItem:
                 + "the wide defer flags. Use HasActiveDeferUsage(ConditionFlags, DeferUsage).");
         }
 
-        return HasActiveDeferUsage(deferFlags, default, target);
+        return HasActiveDeferUsage(new ConditionFlags(deferFlags), target);
     }
 
     /// <summary>
     /// Determines whether the specified <paramref name="target"/> defer usage is among
-    /// this selection's active defer usages, evaluating all words of the request defer flags.
+    /// this selection's active defer usages given the defer condition flags.
     /// </summary>
-    /// <param name="deferFlags">The defer condition flags for condition indexes 0-63.</param>
+    /// <param name="deferFlags">The defer condition flags of the request.</param>
     /// <param name="target">The defer usage to look for.</param>
     /// <returns>
     /// <c>true</c> if <paramref name="target"/> is in the active defer usage set.
     /// </returns>
-    [Obsolete("This method will be removed in Hot Chocolate 17.")]
     public bool HasActiveDeferUsage(ConditionFlags deferFlags, DeferUsage target)
-        => HasActiveDeferUsage(deferFlags.Word0, deferFlags.Overflow, target);
-
-    internal bool HasActiveDeferUsage(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags, DeferUsage target)
     {
         var deferUsages = _deferUsages;
 
@@ -927,7 +899,7 @@ nextItem:
 
         for (var i = 0; i < deferUsages.Length; i++)
         {
-            var effective = DeferUsage.FindActive(deferUsages[i], deferFlags, wideDeferFlags);
+            var effective = DeferUsage.FindActive(deferUsages[i], deferFlags);
 
             if (effective is null)
             {
@@ -951,11 +923,11 @@ nextItem:
     }
 
     // a field is deferred only if every occurrence has an enabled @defer in its chain.
-    private bool IsEveryOccurrenceDeferred(ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    private bool IsEveryOccurrenceDeferred(ConditionFlags deferFlags)
     {
         foreach (var occurrence in _deferUsages)
         {
-            if (DeferUsage.FindActive(occurrence, deferFlags, wideDeferFlags) is null)
+            if (DeferUsage.FindActive(occurrence, deferFlags) is null)
             {
                 return false;
             }

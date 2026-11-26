@@ -50,27 +50,13 @@ public sealed record DeferUsage(
     /// Gets the nearest defer usage in the parent chain of <paramref name="usage"/>, starting with
     /// <paramref name="usage"/> itself, whose condition is enabled, or <c>null</c> if none is enabled.
     /// </summary>
-    internal static DeferUsage? FindActive(DeferUsage? usage, ulong deferFlags, ReadOnlySpan<ulong> wideDeferFlags)
+    internal static DeferUsage? FindActive(DeferUsage? usage, ConditionFlags deferFlags)
     {
-        while (usage is not null && !IsConditionBitSet(deferFlags, wideDeferFlags, usage.DeferConditionIndex))
+        while (usage is not null && !deferFlags.IsSet(usage.DeferConditionIndex))
         {
             usage = usage.Parent;
         }
 
         return usage;
-    }
-
-    private static bool IsConditionBitSet(ulong flags, ReadOnlySpan<ulong> wideFlags, int index)
-    {
-        var word = index >> 6;
-        var bit = 1ul << (index & 63);
-
-        if (word == 0)
-        {
-            return (flags & bit) != 0;
-        }
-
-        word--;
-        return (uint)word < (uint)wideFlags.Length && (wideFlags[word] & bit) != 0;
     }
 }
