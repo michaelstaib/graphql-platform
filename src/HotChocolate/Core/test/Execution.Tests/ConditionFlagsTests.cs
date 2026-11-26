@@ -22,4 +22,32 @@ public class ConditionFlagsTests
         Assert.True(isSet);
         Assert.False(isNeighbourSet);
     }
+
+    [Theory]
+    [InlineData(64)]
+    [InlineData(130)]
+    public void IsSet_Should_ReturnFalse_When_OverflowIsNull(int index)
+    {
+        // arrange
+        var flags = new ConditionFlags(ulong.MaxValue);
+
+        // act
+        var isSet = flags.IsSet(index);
+
+        // assert
+        Assert.False(isSet);
+    }
+
+    [Fact]
+    public void IsSet_Should_ReturnFalse_When_IndexIsPastTheOverflowWords()
+    {
+        // arrange
+        var flags = new ConditionFlags(ulong.MaxValue, [ulong.MaxValue]);
+
+        // act
+        var isSet = flags.IsSet(128);
+
+        // assert
+        Assert.False(isSet);
+    }
 }
