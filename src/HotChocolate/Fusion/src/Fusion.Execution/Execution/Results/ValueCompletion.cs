@@ -20,7 +20,6 @@ namespace HotChocolate.Fusion.Execution.Results;
 internal sealed class ValueCompletion
 {
     private readonly FetchResultStore _store;
-    private readonly int _maxDepth;
     private FusionSchemaDefinition _schema = default!;
     private IErrorHandler _errorHandler = default!;
     private ErrorHandlingMode _errorHandlingMode;
@@ -28,12 +27,11 @@ internal sealed class ValueCompletion
     private IObjectTypeDefinition? _typeMemoA;
     private IObjectTypeDefinition? _typeMemoB;
 
-    public ValueCompletion(FetchResultStore store, int maxDepth)
+    public ValueCompletion(FetchResultStore store)
     {
         ArgumentNullException.ThrowIfNull(store);
 
         _store = store;
-        _maxDepth = maxDepth;
     }
 
     /// <summary>
@@ -174,7 +172,6 @@ internal sealed class ValueCompletion
                         resultField,
                         errorTrieForResponseName,
                         selection,
-                        0,
                         childSet)
                     && _errorHandlingMode is ErrorHandlingMode.Propagate)
                 {
@@ -245,7 +242,6 @@ internal sealed class ValueCompletion
                         resultField,
                         errorTrieForResponseName,
                         selection,
-                        0,
                         childSet))
                 {
                     switch (_errorHandlingMode)
@@ -792,7 +788,6 @@ internal sealed class ValueCompletion
                     fieldResult,
                     errorTrie: null,
                     selection,
-                    0,
                     childSet))
             {
                 switch (_errorHandlingMode)
@@ -981,7 +976,6 @@ internal sealed class ValueCompletion
         CompositeResultElement target,
         ErrorTrie? errorTrie,
         Selection selection,
-        int depth,
         ResultSelectionSet? resultSelectionSet)
     {
         var sourceValueKind = source.ValueKind;
@@ -1015,7 +1009,6 @@ internal sealed class ValueCompletion
                     selection.ListElementType!,
                     selection.ListElementKind,
                     selection.IsNonNullListElement,
-                    depth,
                     resultSelectionSet);
 
             case TypeKind.Object:
@@ -1023,7 +1016,6 @@ internal sealed class ValueCompletion
                     selection,
                     source,
                     errorTrie,
-                    depth,
                     target,
                     resultSelectionSet);
 
@@ -1033,7 +1025,6 @@ internal sealed class ValueCompletion
                     target,
                     errorTrie,
                     selection,
-                    depth,
                     resultSelectionSet);
 
             case TypeKind.Scalar:
@@ -1133,7 +1124,6 @@ internal sealed class ValueCompletion
         ErrorTrie? errorTrie,
         Selection selection,
         IType type,
-        int depth,
         ResultSelectionSet? resultSelectionSet)
     {
         var elementType = type.ElementType();
@@ -1153,7 +1143,6 @@ internal sealed class ValueCompletion
             elementType,
             elementTypeKind,
             isNonNull,
-            depth,
             resultSelectionSet);
     }
 
@@ -1165,11 +1154,8 @@ internal sealed class ValueCompletion
         IType elementType,
         TypeKind elementTypeKind,
         bool isNonNull,
-        int depth,
         ResultSelectionSet? resultSelectionSet)
     {
-        AssertDepthAllowed(ref depth);
-
         if (target.IsNullOrInvalidated)
         {
             return true;
@@ -1258,7 +1244,6 @@ internal sealed class ValueCompletion
                         errorTrieForIndex,
                         selection,
                         elementType,
-                        depth,
                         resultSelectionSet);
                     break;
 
@@ -1278,7 +1263,6 @@ internal sealed class ValueCompletion
                         targetElement,
                         errorTrieForIndex,
                         selection,
-                        depth,
                         resultSelectionSet);
                     break;
 
@@ -1290,7 +1274,6 @@ internal sealed class ValueCompletion
                         errorTrieForIndex,
                         selection,
                         listObjectType!,
-                        depth,
                         resultSelectionSet,
                         listObjectSelectionSet);
                     break;
@@ -1526,7 +1509,6 @@ TryCompleteList_MoveNext:
         Selection parentSelection,
         SourceResultElementSnapshot source,
         ErrorTrie? errorTrie,
-        int depth,
         CompositeResultElement target,
         ResultSelectionSet? resultSelectionSet)
     {
@@ -1539,7 +1521,6 @@ TryCompleteList_MoveNext:
             errorTrie,
             parentSelection,
             objectType,
-            depth,
             resultSelectionSet,
             preparedSelectionSet: null);
     }
@@ -1550,12 +1531,9 @@ TryCompleteList_MoveNext:
         ErrorTrie? errorTrie,
         Selection parentSelection,
         IComplexTypeDefinition objectType,
-        int depth,
         ResultSelectionSet? resultSelectionSet,
         SelectionSet? preparedSelectionSet)
     {
-        AssertDepthAllowed(ref depth);
-
         if (target.IsNullOrInvalidated)
         {
             return true;
@@ -1578,7 +1556,6 @@ TryCompleteList_MoveNext:
                 source,
                 errorTrie,
                 objectType,
-                depth,
                 resultSelectionSet,
                 objectContext)
                 || TryCompleteNullContainer(target);
@@ -1643,7 +1620,6 @@ TryCompleteList_MoveNext:
                         errorTrie: null,
                         selection,
                         Unsafe.As<ITypeDefinition, IObjectTypeDefinition>(ref namedType),
-                        depth,
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType),
                         preparedSelectionSet: null))
                     {
@@ -1664,7 +1640,6 @@ TryCompleteList_MoveNext:
                         selection.ListElementType!,
                         selection.ListElementKind,
                         selection.IsNonNullListElement,
-                        depth,
                         resultSelectionSet?.TryGetChild(selection.ResponseName, objectType)))
                     {
                         return TryCompleteNullContainer(target);
@@ -1683,7 +1658,6 @@ TryCompleteList_MoveNext:
                     targetProperty,
                     errorTrieForResponseName,
                     selection,
-                    depth,
                     childSet))
             {
                 return TryCompleteNullContainer(target);
@@ -1721,7 +1695,6 @@ TryCompleteList_MoveNext:
         SourceResultElementSnapshot source,
         ErrorTrie? errorTrie,
         IComplexTypeDefinition objectType,
-        int depth,
         ResultSelectionSet resultSelectionSet,
         CompositeObjectContext objectContext)
     {
@@ -1787,7 +1760,6 @@ TryCompleteList_MoveNext:
                     targetProperty,
                     errorTrieForResponseName,
                     selection,
-                    depth,
                     childSet))
             {
                 return false;
@@ -1802,7 +1774,6 @@ TryCompleteList_MoveNext:
         CompositeResultElement target,
         ErrorTrie? errorTrie,
         Selection selection,
-        int depth,
         ResultSelectionSet? resultSelectionSet)
     {
         var isOpaque = resultSelectionSet?.ProducesOpaqueElements ?? false;
@@ -1820,7 +1791,6 @@ TryCompleteList_MoveNext:
             errorTrie,
             selection,
             objectType,
-            depth,
             resultSelectionSet,
             preparedSelectionSet: null);
     }
@@ -1959,17 +1929,6 @@ TryCompleteList_MoveNext:
 
         objectType = null;
         return false;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void AssertDepthAllowed(ref int depth)
-    {
-        depth++;
-
-        if (depth > _maxDepth)
-        {
-            throw ThrowHelper.ValueCompletionDepthNotAllowed(depth);
-        }
     }
 
     private struct ErrorTrieFrame(

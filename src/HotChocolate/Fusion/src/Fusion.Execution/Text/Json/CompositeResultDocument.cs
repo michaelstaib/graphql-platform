@@ -195,57 +195,86 @@ public sealed partial class CompositeResultDocument : IDisposable
 
         Span<Cursor> chain = stackalloc Cursor[64];
         Span<DbRow> rows = stackalloc DbRow[64];
+        Cursor[]? rentedChain = null;
+        DbRow[]? rentedRows = null;
         chain[0] = current;
         rows[0] = firstRow;
         var written = 1;
 
-        var parentCursor = new Cursor(firstRow.Parent);
-        while (!parentCursor.IsZero)
-        {
-            var row = _metaDb.Get(parentCursor);
-            chain[written] = parentCursor;
-            rows[written] = row;
-            written++;
-
-            parentCursor = new Cursor(row.Parent);
-
-            if (written >= 64)
-            {
-                throw new InvalidOperationException("The path is to deep.");
-            }
-        }
-
         Span<int> pathBuffer = stackalloc int[32];
         var path = new CompactPathBuilder(pathBuffer, pooled ? Volatile.Read(ref _pathPool) : null);
-        var parentTokenType = ElementTokenType.StartObject;
 
-        for (var i = written - 1; i >= 0; i--)
+        try
         {
-            var cursor = chain[i];
-            var tokenType = rows[i].TokenType;
-
-            if (tokenType == ElementTokenType.PropertyName)
+            var parentCursor = new Cursor(firstRow.Parent);
+            while (!parentCursor.IsZero)
             {
-                Debug.Assert(rows[i].OperationReferenceType is OperationReferenceType.Selection);
-                path.AppendField(rows[i].OperationReferenceId);
-                i--; // skip over the actual value
-            }
-            else if (written - 1 > i)
-            {
-                var arrayParentCursor = chain[i + 1];
-
-                if (parentTokenType is ElementTokenType.StartArray)
+                if (written == chain.Length)
                 {
-                    // arrayIndex = abs(child) - (abs(parent) + 1)
-                    var arrayIndex = cursor.Index - (arrayParentCursor.Index + 1);
-                    path.AppendIndex(arrayIndex);
+                    GrowPathChain(ref chain, ref rentedChain, written);
+                    GrowPathChain(ref rows, ref rentedRows, written);
                 }
+
+                var row = _metaDb.Get(parentCursor);
+                chain[written] = parentCursor;
+                rows[written] = row;
+                written++;
+
+                parentCursor = new Cursor(row.Parent);
             }
 
-            parentTokenType = tokenType;
+            var parentTokenType = ElementTokenType.StartObject;
+
+            for (var i = written - 1; i >= 0; i--)
+            {
+                var cursor = chain[i];
+                var tokenType = rows[i].TokenType;
+
+                if (tokenType == ElementTokenType.PropertyName)
+                {
+                    Debug.Assert(rows[i].OperationReferenceType is OperationReferenceType.Selection);
+                    path.AppendField(rows[i].OperationReferenceId);
+                    i--; // skip over the actual value
+                }
+                else if (written - 1 > i)
+                {
+                    var arrayParentCursor = chain[i + 1];
+
+                    if (parentTokenType is ElementTokenType.StartArray)
+                    {
+                        // arrayIndex = abs(child) - (abs(parent) + 1)
+                        var arrayIndex = cursor.Index - (arrayParentCursor.Index + 1);
+                        path.AppendIndex(arrayIndex);
+                    }
+                }
+
+                parentTokenType = tokenType;
+            }
+        }
+        finally
+        {
+            if (rentedChain is not null)
+            {
+                ArrayPool<Cursor>.Shared.Return(rentedChain);
+                ArrayPool<DbRow>.Shared.Return(rentedRows!);
+            }
         }
 
         return path.ToPath();
+    }
+
+    private static void GrowPathChain<T>(ref Span<T> buffer, ref T[]? rented, int written)
+    {
+        var array = ArrayPool<T>.Shared.Rent(buffer.Length * 2);
+        buffer[..written].CopyTo(array);
+
+        if (rented is not null)
+        {
+            ArrayPool<T>.Shared.Return(rented);
+        }
+
+        rented = array;
+        buffer = array;
     }
 
     internal Path CreatePath(Cursor current)
