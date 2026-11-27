@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using HotChocolate.Features;
@@ -21,6 +22,7 @@ public sealed class Operation : IOperation
     private readonly OperationCompiler _compiler;
     private readonly IncludeConditionCollection _includeConditions;
     private readonly DeferConditionCollection _deferConditions;
+    private readonly DeferUsageRegistry _deferUsageRegistry;
     private readonly OperationFeatureCollection _features;
     private object[] _elementsById;
     private int _lastId;
@@ -36,6 +38,7 @@ public sealed class Operation : IOperation
         OperationCompiler compiler,
         IncludeConditionCollection includeConditions,
         DeferConditionCollection deferConditions,
+        DeferUsageRegistry deferUsageRegistry,
         OperationFeatureCollection features,
         int lastId,
         object[] elementsById,
@@ -51,6 +54,7 @@ public sealed class Operation : IOperation
         ArgumentNullException.ThrowIfNull(compiler);
         ArgumentNullException.ThrowIfNull(includeConditions);
         ArgumentNullException.ThrowIfNull(deferConditions);
+        ArgumentNullException.ThrowIfNull(deferUsageRegistry);
         ArgumentNullException.ThrowIfNull(elementsById);
 
         Id = id;
@@ -63,6 +67,7 @@ public sealed class Operation : IOperation
         _compiler = compiler;
         _includeConditions = includeConditions;
         _deferConditions = deferConditions;
+        _deferUsageRegistry = deferUsageRegistry;
         _lastId = lastId;
         _elementsById = elementsById;
         _features = features;
@@ -153,6 +158,16 @@ public sealed class Operation : IOperation
     /// Gets the number of distinct defer conditions of this operation.
     /// </summary>
     internal int DeferConditionCount => _deferConditions.Count;
+
+    /// <summary>
+    /// Gets a snapshot of the defer usage sets compiled so far, ordered by <see cref="DeferUsageSet.Index"/>.
+    /// </summary>
+    internal ImmutableArray<DeferUsageSet> DeferUsageSets => _deferUsageRegistry.Sets;
+
+    /// <summary>
+    /// Gets the defer usages and defer usage sets of this operation.
+    /// </summary>
+    internal DeferUsageRegistry DeferUsageRegistry => _deferUsageRegistry;
 
     /// <summary>
     /// Gets the process-unique cache identifier for this operation.

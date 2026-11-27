@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace HotChocolate.Execution.Processing;
 
 /// <summary>
@@ -20,4 +22,35 @@ namespace HotChocolate.Execution.Processing;
 public sealed record DeferUsage(
     string? Label,
     DeferUsage? Parent,
-    int DeferConditionIndex);
+    int DeferConditionIndex)
+{
+    /// <summary>
+    /// Gets the creation order of this defer usage within its operation.
+    /// Each defer usage of an operation is one instance and therefore has one ordinal.
+    /// </summary>
+    public int Ordinal { get; internal init; }
+
+    /// <summary>
+    /// Determines whether <paramref name="other"/> is this instance. A defer usage is equal only to itself.
+    /// </summary>
+    public bool Equals(DeferUsage? other)
+        => ReferenceEquals(this, other);
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+        => RuntimeHelpers.GetHashCode(this);
+
+    /// <summary>
+    /// Gets the nearest defer usage in the parent chain of <paramref name="usage"/>, starting with
+    /// <paramref name="usage"/> itself, whose condition is enabled, or <c>null</c> if none is enabled.
+    /// </summary>
+    internal static DeferUsage? FindActive(DeferUsage? usage, ConditionFlags deferFlags)
+    {
+        while (usage is not null && !deferFlags.IsSet(usage.DeferConditionIndex))
+        {
+            usage = usage.Parent;
+        }
+
+        return usage;
+    }
+}
