@@ -43,6 +43,11 @@ internal sealed class FusionRequestExecutorManager
     , IRequestExecutorEvents
     , IAsyncDisposable
 {
+    /// <summary>
+    /// The number of request contexts a gateway keeps for reuse.
+    /// </summary>
+    private const int RequestContextPoolSize = 256;
+
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphoreBySchema = new();
     private readonly ConcurrentDictionary<string, RequestExecutorRegistration> _registry = [];
     private readonly IOptionsMonitor<FusionGatewaySetup> _optionsMonitor;
@@ -558,7 +563,8 @@ internal sealed class FusionRequestExecutorManager
 
         services.AddSingleton<ObjectPool<PooledRequestContext>>(
             static _ => new DefaultObjectPool<PooledRequestContext>(
-                new RequestContextPooledObjectPolicy()));
+                new RequestContextPooledObjectPolicy(),
+                RequestContextPoolSize));
 
         services.TryAddSingleton<ObjectPoolProvider>(
             static _ => new DefaultObjectPoolProvider());
