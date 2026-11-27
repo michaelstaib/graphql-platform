@@ -23,6 +23,7 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
     private readonly ApolloEntityLookup _lookup;
     private readonly string _schemaName;
     private readonly SelectionPath _target;
+    private OperationResultShape? _resultShape;
 
     private ApolloOperationExecutionNode(
         int id,
@@ -226,12 +227,11 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             return reusedCount > 0 ? ExecutionStatus.Success : ExecutionStatus.Skipped;
         }
 
-        var variables = representation.ToVariableValues();
         var schemaName = _schemaName;
 
         // The combined representations object must be the request's single
         // variable set so the request is routed as a single operation. The
-        // per-entity variable value sets are only used for error attribution.
+        // per-entity variable value sets are only created for error attribution.
         var requestVariables = ImmutableArray.Create(
             new VariableValues(CompactPath.Root, representation.Value));
         context.TrackVariableValueSets(this, requestVariables);
@@ -245,31 +245,42 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             Variables = requestVariables,
             RequiresFileUpload = false,
             OperationDocument = _lookup.OperationDocument,
-            LookupTypeName = _lookup.EntityTypeName
+            LookupTypeName = _lookup.EntityTypeName,
+            ResultShape = _resultShape ?? InitializeResultShape()
         };
 
-        SourceSchemaResult? result = null;
-        var hasSomeErrors = false;
+        var results = new SourceSchemaResultCollector(initialCapacity: 2);
 
         try
         {
             var client = context.GetClient(schemaName, _lookup.Operation.Type);
             using var clientScope = diagnosticEvents.ExecuteSourceSchemaRequest(context, this, schemaName);
 
-            await foreach (var current in client.ExecuteAsync(context, request, cancellationToken).ConfigureAwait(false))
+            if (client is HttpSourceSchemaClient httpClient
+                && HttpSourceSchemaClient.CanExecuteBuffered(_lookup.Operation.Type, requiresFileUpload: false))
             {
-                if (result is not null)
+                await httpClient
+                    .ExecuteBufferedAsync(context, request, results, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await foreach (var current in client.ExecuteAsync(context, request, cancellationToken).ConfigureAwait(false))
                 {
-                    current.Dispose();
-                    throw ThrowHelper.ApolloEntityFetchProducedMultipleResults();
-                }
+                    // A second result ends the read, so a source that keeps its stream open is not awaited.
+                    if (results.Count > 0)
+                    {
+                        current.Dispose();
+                        throw ThrowHelper.ApolloEntityFetchProducedMultipleResults();
+                    }
 
-                result = current;
-
-                if (current.Errors is not null)
-                {
-                    hasSomeErrors = true;
+                    results.OnResult(0, current);
                 }
+            }
+
+            if (results.Count > 1)
+            {
+                throw ThrowHelper.ApolloEntityFetchProducedMultipleResults();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -277,18 +288,20 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             // If the execution of the node was cancelled, either the entire request was cancelled
             // or the execution was halted. In both cases we do not want to produce any errors
             // and just exit the node as quickly as possible.
-            result?.Dispose();
+            results.DisposeResults();
             return ExecutionStatus.Failed;
         }
         catch (Exception exception)
         {
             diagnosticEvents.SourceSchemaTransportError(context, this, schemaName, exception);
-            result?.Dispose();
+            results.DisposeResults();
 
-            context.AddErrors(exception, variables, _resultSelectionSet);
+            context.AddErrors(exception, representation.ToVariableValues(), _resultSelectionSet);
             return ExecutionStatus.Failed;
         }
 
+        var result = results.Single;
+        var hasSomeErrors = results.HasErrors;
         var pendingMerge = default(PendingMerge);
         var hasPendingMerge = false;
 
@@ -301,19 +314,15 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
                     schemaName,
                     s_entitiesSource,
                     _resultSelectionSet,
-                    variables,
                     representation,
                     result,
                     hasSomeErrors);
                 hasPendingMerge = true;
-            }
 
-            if (hasPendingMerge)
-            {
-                context.EnqueuePendingMerge(pendingMerge);
+                // ExecuteAsync reports the completion of this node right after we return,
+                // and that signal wakes the executor for the merge as well.
+                context.EnqueuePendingMergeBeforeCompletion(pendingMerge);
             }
-
-            result = null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -335,15 +344,21 @@ public sealed class ApolloOperationExecutionNode : ExecutionNode
             }
             else
             {
-                result?.Dispose();
+                results.DisposeResults();
             }
 
             diagnosticEvents.SourceSchemaStoreError(context, this, schemaName, exception);
-            context.AddErrors(exception, variables, _resultSelectionSet);
+            context.AddErrors(exception, representation.ToVariableValues(), _resultSelectionSet);
             return ExecutionStatus.Failed;
         }
 
         return hasSomeErrors ? ExecutionStatus.PartialSuccess : ExecutionStatus.Success;
+    }
+
+    private OperationResultShape InitializeResultShape()
+    {
+        var created = OperationResultShape.Create(_lookup.OperationDocument);
+        return Interlocked.CompareExchange(ref _resultShape, created, null) ?? created;
     }
 
     protected override IDisposable CreateScope(OperationPlanContext context)

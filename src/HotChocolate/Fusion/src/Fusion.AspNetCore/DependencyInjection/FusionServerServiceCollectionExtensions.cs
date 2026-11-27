@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate;
 using HotChocolate.AspNetCore;
 using HotChocolate.AspNetCore.Formatters;
@@ -59,6 +60,9 @@ public static class FusionServerServiceCollectionExtensions
         this IFusionGatewayBuilder builder,
         int maxAllowedRequestSize = ServerDefaults.MaxAllowedRequestSize)
     {
+        KeepClosedType(typeof(OptionsMonitor<GraphQLServerOptions>));
+        KeepClosedType(typeof(OptionsFactory<GraphQLServerOptions>));
+
         builder.ConfigureSchemaServices((applicationServices, sc) =>
         {
             sc.TryAddSingleton<ITimeProvider, DefaultTimeProvider>();
@@ -108,6 +112,12 @@ public static class FusionServerServiceCollectionExtensions
 
         return builder;
     }
+
+    // References a closed generic type that dependency injection creates at run time,
+    // so that a Native AOT binary contains the type.
+    private static void KeepClosedType(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type type)
+        => GC.KeepAlive(type);
 
     private static IFusionGatewayBuilder AddStartupInitialization(
         this IFusionGatewayBuilder builder)
