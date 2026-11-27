@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace HotChocolate.Execution.Processing;
 
 /// <summary>
@@ -24,27 +26,19 @@ public sealed record DeferUsage(
 {
     /// <summary>
     /// Gets the creation order of this defer usage within its operation.
-    /// Equal defer usages of an operation share one instance and therefore one ordinal.
+    /// Each defer usage of an operation is one instance and therefore has one ordinal.
     /// </summary>
     public int Ordinal { get; internal init; }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Determines whether <paramref name="other"/> is this instance. A defer usage is equal only to itself.
+    /// </summary>
     public bool Equals(DeferUsage? other)
-    {
-        if (ReferenceEquals(this, other))
-        {
-            return true;
-        }
-
-        return other is not null
-            && DeferConditionIndex == other.DeferConditionIndex
-            && string.Equals(Label, other.Label, StringComparison.Ordinal)
-            && Equals(Parent, other.Parent);
-    }
+        => ReferenceEquals(this, other);
 
     /// <inheritdoc />
     public override int GetHashCode()
-        => HashCode.Combine(Label, Parent, DeferConditionIndex);
+        => RuntimeHelpers.GetHashCode(this);
 
     /// <summary>
     /// Gets the nearest defer usage in the parent chain of <paramref name="usage"/>, starting with
