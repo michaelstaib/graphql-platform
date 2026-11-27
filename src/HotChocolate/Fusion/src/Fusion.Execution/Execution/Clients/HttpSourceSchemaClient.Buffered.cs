@@ -198,7 +198,7 @@ public sealed partial class HttpSourceSchemaClient
         try
         {
             var httpRequest = CreateHttpRequest(context, in request, ref buffer);
-            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration);
+            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, request.Node, _configuration, _client);
             return (httpRequest, buffer);
         }
         catch
@@ -218,7 +218,12 @@ public sealed partial class HttpSourceSchemaClient
         {
             ref readonly var firstRequest = ref requests.ItemRef(0);
             var httpRequest = CreateHttpBatchRequest(context, requests, firstRequest.RequiresFileUpload, ref buffer);
-            SourceSchemaCallbackHelper.ConfigureCallbacks(httpRequest, context, firstRequest.Node, _configuration);
+            SourceSchemaCallbackHelper.ConfigureCallbacks(
+                httpRequest,
+                context,
+                firstRequest.Node,
+                _configuration,
+                _client);
             return (httpRequest, buffer);
         }
         catch

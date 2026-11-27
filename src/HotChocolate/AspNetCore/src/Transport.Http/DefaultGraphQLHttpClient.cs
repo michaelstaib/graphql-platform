@@ -7,6 +7,7 @@ using HotChocolate.Language;
 using static System.Net.Http.HttpCompletionOption;
 
 #if FUSION
+using System.Net.Http.Headers;
 using HotChocolate.Fusion.Transport.Serialization;
 using HotChocolate.Text.Json;
 using HotChocolate.Transport.Http;
@@ -96,6 +97,13 @@ public sealed class DefaultGraphQLHttpClient : GraphQLHttpClient
 
         _invoker = new HttpMessageInvoker(handler, disposeHandler: false);
     }
+
+    /// <summary>
+    /// Gets the headers that the HTTP client adds to a request that does not have them,
+    /// or <c>null</c> when the HTTP client has no configuration other than its base address.
+    /// </summary>
+    internal HttpRequestHeaders? DefaultRequestHeaders
+        => _invoker is null ? _http.DefaultRequestHeaders : null;
 #endif
 
     /// <summary>

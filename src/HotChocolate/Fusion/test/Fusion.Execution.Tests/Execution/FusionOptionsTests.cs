@@ -48,7 +48,8 @@ public class FusionOptionsTests : FusionTestBase
             OperationDocumentCacheSize = 1024,
             EnableDefer = false,
             EnableObjectDeprecation = true,
-            EnableEntityReuse = false
+            EnableEntityReuse = false,
+            PropagatedHeaders = ["Authorization"]
         };
 
         // act
@@ -64,6 +65,9 @@ public class FusionOptionsTests : FusionTestBase
               "OperationDocumentCacheSize": 1024,
               "PathSegmentLocalPoolCapacity": 64,
               "EnableEntityReuse": false,
+              "PropagatedHeaders": [
+                "Authorization"
+              ],
               "LazyInitialization": false,
               "NodeIdSerializerFormat": "Base64",
               "ApplySerializeAsToScalars": false,
@@ -74,6 +78,66 @@ public class FusionOptionsTests : FusionTestBase
               "EnableSemanticIntrospection": true
             }
             """);
+    }
+
+    [Theory]
+    [InlineData("Content-Length")]
+    [InlineData("content-type")]
+    [InlineData("Content-Encoding")]
+    [InlineData("Transfer-Encoding")]
+    [InlineData("connection")]
+    [InlineData("Keep-Alive")]
+    [InlineData("Upgrade")]
+    [InlineData("TE")]
+    [InlineData("Trailer")]
+    public void PropagatedHeaders_Should_Throw_When_HeaderDescribesBodyOrConnection(string headerName)
+    {
+        // arrange
+        var options = new FusionOptions();
+
+        // act
+        var exception = Record.Exception(() => options.PropagatedHeaders = ["Authorization", headerName]);
+
+        // assert
+        var argumentException = Assert.IsType<ArgumentException>(exception);
+        Assert.Equal(
+            $"The header '{headerName}' describes the body or the connection of a single request "
+            + "and cannot be copied to source schema requests. (Parameter 'value')",
+            argumentException.Message);
+        Assert.Empty(options.PropagatedHeaders);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("X Tenant")]
+    [InlineData("X-Tenant:")]
+    public void PropagatedHeaders_Should_Throw_When_HeaderNameIsInvalid(string headerName)
+    {
+        // arrange
+        var options = new FusionOptions();
+
+        // act
+        var exception = Record.Exception(() => options.PropagatedHeaders = [headerName]);
+
+        // assert
+        var argumentException = Assert.IsType<ArgumentException>(exception);
+        Assert.Equal(
+            $"'{headerName}' is not a valid HTTP header name. (Parameter 'value')",
+            argumentException.Message);
+    }
+
+    [Fact]
+    public void PropagatedHeaders_Should_KeepNames_When_HeadersAreRequestHeaders()
+    {
+        // arrange
+        string[] headerNames = ["Authorization", "X-Tenant", "traceparent", "Cookie"];
+        var options = new FusionOptions();
+
+        // act
+        options.PropagatedHeaders = [.. headerNames];
+
+        // assert
+        Assert.Equal(headerNames, options.PropagatedHeaders);
     }
 
     [Theory]
