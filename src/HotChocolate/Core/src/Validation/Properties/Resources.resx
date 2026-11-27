@@ -143,6 +143,9 @@
   <data name="ErrorHelper_NoSelectionOnCompositeField" xml:space="preserve">
     <value>Field "{0}" of type "{1}" must have a selection of subfields. Did you mean "{0} {{ ... }}"?</value>
   </data>
+  <data name="ErrorHelper_EmptySelectionSetOnCompositeField" xml:space="preserve">
+    <value>Field "{0}" of type "{1}" has an empty selection set. Composite fields without selections are disallowed.</value>
+  </data>
   <data name="ErrorHelper_NoSelectionOnFragment" xml:space="preserve">
     <value>The fragment on type "{0}" has an empty selection set. Fragments without selections are disallowed.</value>
   </data>
@@ -154,6 +157,9 @@
   </data>
   <data name="ErrorHelper_FieldsAreNotMergeable" xml:space="preserve">
     <value>Encountered fields for the same object that cannot be merged.</value>
+  </data>
+  <data name="ErrorHelper_FieldsOverlapWithStream" xml:space="preserve">
+    <value>Fields `{0}` conflict because a field with the @stream directive cannot be selected more than once under the same response name.</value>
   </data>
   <data name="ErrorHelper_FragmentNameNotUnique" xml:space="preserve">
     <value>There are multiple fragments with the name `{0}`.</value>

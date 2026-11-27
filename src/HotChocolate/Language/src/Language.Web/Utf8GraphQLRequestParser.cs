@@ -20,6 +20,7 @@ public ref struct Utf8GraphQLRequestParser
     private readonly bool _useCache;
     private readonly ParserOptions _options;
     private readonly bool _skipDocumentBody;
+    private readonly DocumentHashCache? _hashCache;
 
     public Utf8GraphQLRequestParser(
         ParserOptions? options = null,
@@ -32,6 +33,27 @@ public ref struct Utf8GraphQLRequestParser
         _hashProvider = hashProvider;
         _useCache = cache is not null;
         _skipDocumentBody = skipDocumentBody;
+    }
+
+    /// <summary>
+    /// Initializes a new parser that looks up the hash of a repeated document in
+    /// <paramref name="hashCache"/>. The hash cache is ignored when it holds the hashes of
+    /// another hash provider or when <paramref name="cache"/> is <c>null</c>.
+    /// </summary>
+    internal Utf8GraphQLRequestParser(
+        ParserOptions? options,
+        IDocumentCache? cache,
+        IDocumentHashProvider? hashProvider,
+        bool skipDocumentBody,
+        DocumentHashCache? hashCache)
+        : this(options, cache, hashProvider, skipDocumentBody)
+    {
+        if (cache is not null
+            && hashCache is not null
+            && ReferenceEquals(hashCache.HashProvider, hashProvider))
+        {
+            _hashCache = hashCache;
+        }
     }
 
     public readonly GraphQLRequest[] Parse(ReadOnlySpan<byte> requestData)
@@ -106,14 +128,22 @@ public ref struct Utf8GraphQLRequestParser
 
             var request = ParseRequest(ref reader, operationId);
 
-            return new GraphQLRequest(
-                request.Document,
-                operationId,
-                request.DocumentHash,
-                operationName,
-                request.ErrorHandlingMode,
-                request.Variables,
-                request.Extensions);
+            try
+            {
+                return new GraphQLRequest(
+                    request.Document,
+                    operationId,
+                    request.DocumentHash,
+                    operationName,
+                    request.ErrorHandlingMode,
+                    request.Variables,
+                    request.Extensions);
+            }
+            catch
+            {
+                request.Dispose();
+                throw;
+            }
         }
         catch (JsonException ex)
         {
@@ -144,7 +174,8 @@ public ref struct Utf8GraphQLRequestParser
                         rentedArray = newArray;
                     }
 
-                    rentedArray[count++] = ParseRequest(ref reader, OperationDocumentId.Empty);
+                    rentedArray[count] = ParseRequest(ref reader, OperationDocumentId.Empty);
+                    count++;
                 }
             }
 
@@ -156,6 +187,15 @@ public ref struct Utf8GraphQLRequestParser
             var result = new GraphQLRequest[count];
             Array.Copy(rentedArray, result, count);
             return result;
+        }
+        catch
+        {
+            for (var i = 0; i < count; i++)
+            {
+                rentedArray[i].Dispose();
+            }
+
+            throw;
         }
         finally
         {
@@ -176,212 +216,230 @@ public ref struct Utf8GraphQLRequestParser
         var isDocumentEscaped = false;
         var hasDocumentBody = false;
 
-        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        try
         {
-            if (reader.TokenType is not JsonTokenType.PropertyName)
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
             {
-                throw new InvalidGraphQLRequestException(
-                    $"Unexpected token type {reader.TokenType}. Expected PropertyName.");
-            }
-
-            if (reader.ValueTextEquals("query"u8))
-            {
-                reader.Read();
-                if (reader.TokenType == JsonTokenType.String)
+                if (reader.TokenType is not JsonTokenType.PropertyName)
                 {
-                    if (_skipDocumentBody)
-                    {
-                        hasDocumentBody = true;
-                    }
-                    else
-                    {
-                        isDocumentEscaped = reader.ValueIsEscaped;
+                    throw new InvalidGraphQLRequestException(
+                        $"Unexpected token type {reader.TokenType}. Expected PropertyName.");
+                }
 
-                        if (reader.HasValueSequence)
+                if (reader.ValueTextEquals("query"u8))
+                {
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.String)
+                    {
+                        if (_skipDocumentBody)
                         {
-                            documentSequence = reader.ValueSequence;
+                            hasDocumentBody = true;
                         }
                         else
                         {
-                            documentSpan = reader.ValueSpan;
+                            isDocumentEscaped = reader.ValueIsEscaped;
+
+                            if (reader.HasValueSequence)
+                            {
+                                documentSequence = reader.ValueSequence;
+                            }
+                            else
+                            {
+                                documentSpan = reader.ValueSpan;
+                            }
                         }
                     }
-                }
-                else if (reader.TokenType == JsonTokenType.Null)
-                {
-                    // Null is acceptable, just skip it
-                }
-                else
-                {
-                    throw ThrowHelper.InvalidQueryValue(reader.TokenType);
-                }
-            }
-            else if (reader.ValueTextEquals("id"u8) || reader.ValueTextEquals("documentId"u8))
-            {
-                reader.Read();
-                if (reader.TokenType == JsonTokenType.String)
-                {
-                    var id = reader.GetString();
-                    if (!string.IsNullOrEmpty(id) && !OperationDocumentId.TryParse(id, out documentId))
+                    else if (reader.TokenType == JsonTokenType.Null)
                     {
-                        throw ThrowHelper.InvalidDocumentIdFormat();
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidQueryValue(reader.TokenType);
                     }
                 }
-                else if (reader.TokenType == JsonTokenType.Null)
+                else if (reader.ValueTextEquals("id"u8) || reader.ValueTextEquals("documentId"u8))
                 {
-                    // Null is acceptable, just skip it
-                }
-                else
-                {
-                    throw ThrowHelper.InvalidDocumentIdValue(reader.TokenType);
-                }
-            }
-            else if (reader.ValueTextEquals("operationName"u8))
-            {
-                reader.Read();
-                if (reader.TokenType == JsonTokenType.String)
-                {
-                    var name = reader.GetString();
-                    if (!string.IsNullOrEmpty(name))
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.String)
                     {
-                        operationName = name;
+                        var id = reader.GetString();
+                        if (!string.IsNullOrEmpty(id)
+                            && !OperationDocumentId.TryParse(id, out documentId))
+                        {
+                            throw ThrowHelper.InvalidDocumentIdFormat();
+                        }
+                    }
+                    else if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidDocumentIdValue(reader.TokenType);
                     }
                 }
-                else if (reader.TokenType == JsonTokenType.Null)
+                else if (reader.ValueTextEquals("operationName"u8))
                 {
-                    // Null is acceptable, just skip it
-                }
-                else
-                {
-                    throw ThrowHelper.InvalidOperationNameValue(reader.TokenType);
-                }
-            }
-            else if (reader.ValueTextEquals("onError"u8))
-            {
-                reader.Read();
-                if (reader.TokenType == JsonTokenType.String)
-                {
-                    var mode = reader.GetString();
-                    errorHandlingMode = mode?.ToUpperInvariant() switch
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.String)
                     {
-                        "PROPAGATE" => ErrorHandlingMode.Propagate,
-                        "NULL" => ErrorHandlingMode.Null,
-                        _ => throw ThrowHelper.UnknownOnErrorValue(mode)
-                    };
+                        var name = reader.GetString();
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            operationName = name;
+                        }
+                    }
+                    else if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidOperationNameValue(reader.TokenType);
+                    }
                 }
-                else if (reader.TokenType == JsonTokenType.Null)
+                else if (reader.ValueTextEquals("onError"u8))
                 {
-                    // Null is acceptable, just skip it
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.String)
+                    {
+                        var mode = reader.GetString();
+                        errorHandlingMode = mode?.ToUpperInvariant() switch
+                        {
+                            "PROPAGATE" => ErrorHandlingMode.Propagate,
+                            "NULL" => ErrorHandlingMode.Null,
+                            _ => throw ThrowHelper.UnknownOnErrorValue(mode)
+                        };
+                    }
+                    else if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidOnErrorValue(reader.TokenType);
+                    }
+                }
+                else if (reader.ValueTextEquals("variables"u8))
+                {
+                    reader.Read();
+                    if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                    {
+                        var value = JsonDocument.ParseValue(ref reader);
+                        variables?.Dispose();
+                        variables = value;
+                    }
+                    else if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidVariablesValue(reader.TokenType);
+                    }
+                }
+                else if (reader.ValueTextEquals("extensions"u8))
+                {
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.StartObject)
+                    {
+                        var value = JsonDocument.ParseValue(ref reader);
+                        extensions?.Dispose();
+                        extensions = value;
+                    }
+                    else if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidExtensionsValue(reader.TokenType);
+                    }
+                }
+                else if (reader.ValueTextEquals("operationType"u8))
+                {
+                    reader.Read();
+                    if (reader.TokenType == JsonTokenType.String)
+                    {
+                        // A String is acceptable, just skip it
+                    }
+                    else if (reader.TokenType == JsonTokenType.Null)
+                    {
+                        // Null is acceptable, just skip it
+                    }
+                    else
+                    {
+                        throw ThrowHelper.InvalidOperationTypeValue(reader.TokenType);
+                    }
                 }
                 else
                 {
-                    throw ThrowHelper.InvalidOnErrorValue(reader.TokenType);
+                    // The GraphQL over HTTP specification requires a server to ignore request
+                    // properties it does not understand, so the whole value is skipped.
+                    reader.Read();
+                    reader.Skip();
                 }
             }
-            else if (reader.ValueTextEquals("variables"u8))
-            {
-                reader.Read();
-                if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
-                {
-                    variables = JsonDocument.ParseValue(ref reader);
-                }
-                else if (reader.TokenType == JsonTokenType.Null)
-                {
-                    // Null is acceptable, just skip it
-                }
-                else
-                {
-                    throw ThrowHelper.InvalidVariablesValue(reader.TokenType);
-                }
-            }
-            else if (reader.ValueTextEquals("extensions"u8))
-            {
-                reader.Read();
-                if (reader.TokenType == JsonTokenType.StartObject)
-                {
-                    extensions = JsonDocument.ParseValue(ref reader);
-                }
-                else if (reader.TokenType == JsonTokenType.Null)
-                {
-                    // Null is acceptable, just skip it
-                }
-                else
-                {
-                    throw ThrowHelper.InvalidExtensionsValue(reader.TokenType);
-                }
-            }
-            else if (reader.ValueTextEquals("operationType"u8))
-            {
-                reader.Read();
-                if (reader.TokenType == JsonTokenType.String)
-                {
-                    // A String is acceptable, just skip it
-                }
-                else if (reader.TokenType == JsonTokenType.Null)
-                {
-                    // Null is acceptable, just skip it
-                }
-                else
-                {
-                    throw ThrowHelper.InvalidOperationTypeValue(reader.TokenType);
-                }
-            }
-            else
-            {
-                // The GraphQL over HTTP specification requires a server to ignore request
-                // properties it does not understand, so the whole value is skipped.
-                reader.Read();
-                reader.Skip();
-            }
-        }
 
-        // Handle persisted queries via extensions
-        if (documentSpan.IsEmpty
-            && documentSequence.IsEmpty
-            && documentId.IsEmpty
-            && _useCache
-            && extensions is not null
-            && TryExtractHash(extensions, out var hash))
-        {
-            documentId = new OperationDocumentId(hash);
-            documentHash = new OperationDocumentHash(hash, _hashProvider!.AlgorithmName, _hashProvider.Format);
-        }
+            // Handle persisted queries via extensions
+            if (documentSpan.IsEmpty
+                && documentSequence.IsEmpty
+                && documentId.IsEmpty
+                && _useCache
+                && extensions is not null
+                && TryExtractHash(extensions, out var hash))
+            {
+                documentId = new OperationDocumentId(hash);
+                documentHash = new OperationDocumentHash(
+                    hash,
+                    _hashProvider!.AlgorithmName,
+                    _hashProvider.Format);
+            }
 
-        // Parse the GraphQL document if provided
-        if (!documentSpan.IsEmpty)
-        {
-            ParseDocument(
-                documentSpan,
-                isDocumentEscaped,
-                ref document,
-                ref documentHash,
-                ref documentId);
-        }
-        else if (!documentSequence.IsEmpty)
-        {
-            ParseDocument(
-                documentSequence,
-                isDocumentEscaped,
-                ref document,
-                ref documentHash,
-                ref documentId);
-        }
+            // Parse the GraphQL document if provided
+            if (!documentSpan.IsEmpty)
+            {
+                ParseDocument(
+                    documentSpan,
+                    isDocumentEscaped,
+                    ref document,
+                    ref documentHash,
+                    ref documentId);
+            }
+            else if (!documentSequence.IsEmpty)
+            {
+                ParseDocument(
+                    documentSequence,
+                    isDocumentEscaped,
+                    ref document,
+                    ref documentHash,
+                    ref documentId);
+            }
 
-        // Validation
-        if (document is null && documentId.IsEmpty && !hasDocumentBody)
-        {
-            throw new InvalidGraphQLRequestException("Request must contain either a query or a document id.");
-        }
+            // Validation
+            if (document is null && documentId.IsEmpty && !hasDocumentBody)
+            {
+                throw new InvalidGraphQLRequestException(
+                    "Request must contain either a query or a document id.");
+            }
 
-        return new GraphQLRequest(
-            document,
-            documentId.IsEmpty ? null : documentId,
-            documentHash.IsEmpty ? null : documentHash,
-            operationName,
-            errorHandlingMode,
-            variables,
-            extensions,
-            hasDocumentBody);
+            return new GraphQLRequest(
+                document,
+                documentId.IsEmpty ? null : documentId,
+                documentHash.IsEmpty ? null : documentHash,
+                operationName,
+                errorHandlingMode,
+                variables,
+                extensions,
+                hasDocumentBody);
+        }
+        catch
+        {
+            variables?.Dispose();
+            extensions?.Dispose();
+            throw;
+        }
     }
 
     private readonly void ParseDocument(
@@ -395,13 +453,25 @@ public ref struct Utf8GraphQLRequestParser
 
         try
         {
-            if (isEscaped)
+            var rawDocumentBody = documentBody;
+            var rememberHash = false;
+            OperationDocumentHash knownHash = default;
+
+            // The hash of a repeated document is known from its JSON-encoded bytes,
+            // so the document is neither unescaped nor hashed again to look it up.
+            if (_hashCache is { } hashCache
+                && rawDocumentBody.Length > 0
+                && rawDocumentBody.Length <= hashCache.MaxDocumentLength)
             {
-                var requiredBufferLength = documentBody.Length;
-                rentedBuffer = s_bytePool.Rent(requiredBufferLength);
-                Span<byte> unescapedDocumentBody = rentedBuffer;
-                Utf8Helper.Unescape(documentBody, ref unescapedDocumentBody, isBlockString: false);
-                documentBody = unescapedDocumentBody;
+                rememberHash = !hashCache.TryGetHash(rawDocumentBody, isEscaped, out knownHash);
+            }
+
+            var isHashKnown = !knownHash.IsEmpty;
+
+            if (isEscaped && !isHashKnown)
+            {
+                rentedBuffer = s_bytePool.Rent(documentBody.Length);
+                documentBody = rentedBuffer.AsSpan(0, Unescape(documentBody, rentedBuffer));
             }
 
             // Now use the document bytes for parsing and caching
@@ -412,14 +482,30 @@ public ref struct Utf8GraphQLRequestParser
                     document = cachedDocument.Body;
                     documentHash = cachedDocument.Hash;
                 }
-                else if (documentBody.Length > 0)
+                else if (isHashKnown || documentBody.Length > 0)
                 {
-                    var hash = _hashProvider!.ComputeHash(documentBody);
+                    var hash = isHashKnown ? knownHash : _hashProvider!.ComputeHash(documentBody);
                     documentHash = hash;
 
-                    document = _cache!.TryGetDocument(hash.Value, out cachedDocument)
-                        ? cachedDocument.Body
-                        : Utf8GraphQLParser.Parse(documentBody, _options);
+                    if (_cache!.TryGetDocument(hash.Value, out cachedDocument))
+                    {
+                        document = cachedDocument.Body;
+
+                        if (rememberHash)
+                        {
+                            _hashCache!.Add(rawDocumentBody, isEscaped, hash);
+                        }
+                    }
+                    else
+                    {
+                        if (isEscaped && isHashKnown)
+                        {
+                            rentedBuffer = s_bytePool.Rent(documentBody.Length);
+                            documentBody = rentedBuffer.AsSpan(0, Unescape(documentBody, rentedBuffer));
+                        }
+
+                        document = Utf8GraphQLParser.Parse(documentBody, _options);
+                    }
 
                     if (documentId.IsEmpty)
                     {
@@ -439,6 +525,13 @@ public ref struct Utf8GraphQLRequestParser
                 s_bytePool.Return(rentedBuffer);
             }
         }
+    }
+
+    private static int Unescape(ReadOnlySpan<byte> documentBody, byte[] buffer)
+    {
+        Span<byte> unescapedDocumentBody = buffer;
+        Utf8Helper.Unescape(documentBody, ref unescapedDocumentBody, isBlockString: false);
+        return unescapedDocumentBody.Length;
     }
 
     private readonly void ParseDocument(

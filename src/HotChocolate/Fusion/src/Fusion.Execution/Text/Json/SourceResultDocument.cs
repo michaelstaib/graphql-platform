@@ -20,13 +20,24 @@ public sealed partial class SourceResultDocument : IDisposable
     private readonly int _usedChunks;
     private int _disposed;
 
-    private SourceResultDocument(MetaDb parsedData, MemorySegment[] segments, int usedChunks)
+    private SourceResultDocument(
+        MetaDb parsedData,
+        MemorySegment[] segments,
+        int usedChunks,
+        SourceResultShape? shape)
     {
         _parsedData = parsedData.Freeze();
         _parsedDataEnd = parsedData.EndCursor.Value;
         _segments = segments;
         _usedChunks = usedChunks;
+        Shape = shape;
     }
+
+    /// <summary>
+    /// Gets the shape that the document was expected to have when it was parsed, or <c>null</c>
+    /// when nothing was expected of it.
+    /// </summary>
+    internal SourceResultShape? Shape { get; }
 
     internal int Id { get; set; } = -1;
 
@@ -157,6 +168,21 @@ public sealed partial class SourceResultDocument : IDisposable
         CheckExpectedType(JsonTokenType.StartObject, row.TokenType);
 
         return row.SizeOrLength;
+    }
+
+    /// <summary>
+    /// Gets the node of <see cref="Shape"/> whose expected fields are exactly the properties of
+    /// the object at <paramref name="cursor"/>, in their order. The row of the object is
+    /// <paramref name="row"/>. It is <see cref="SourceResultShape.NoNode"/> when the object is not
+    /// identified, which is always the case for a document without a <see cref="Shape"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal int GetObjectShapeNode(Cursor cursor, DbRow row)
+    {
+        Debug.Assert(row.TokenType is JsonTokenType.StartObject);
+
+        // The parser stores the node in the end row of the object.
+        return _parsedData.Get(cursor + (row.NumberOfRows - 1)).ShapeNode;
     }
 
     internal SourceResultElement GetArrayIndexElement(Cursor startCursor, int arrayIndex)
@@ -390,18 +416,21 @@ public sealed partial class SourceResultDocument : IDisposable
         // quote and the size covers both quotes. The unquoted value is obtained by slicing one byte
         // in on each side, which keeps every stored location pointing at a real byte and avoids any
         // arithmetic on the packed location.
+        var value = ReadRawValue(row.Location, row.SizeOrLength);
+
         if (!includeQuotes && row.TokenType is JsonTokenType.String or JsonTokenType.PropertyName)
         {
-            return ReadRawValue(row.Location, row.SizeOrLength)[1..^1];
+            return value[1..^1];
         }
 
-        return ReadRawValue(row.Location, row.SizeOrLength);
+        return value;
     }
 
     /// <summary>
     /// Reads raw data from the data chunks. Data contained in a single chunk is returned as a
     /// slice over that chunk; data that spans chunk boundaries is copied into a fresh buffer.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal ReadOnlySpan<byte> ReadRawValue(int location, int size)
     {
         var startChunkIndex = location >>> DataOffsetBits;
@@ -421,6 +450,15 @@ public sealed partial class SourceResultDocument : IDisposable
             return MemoryMarshal.CreateReadOnlySpan(ref start, size);
         }
 
+        return ReadRawValueAcrossChunks(startChunkIndex, offsetInStartChunk, size);
+    }
+
+    /// <summary>
+    /// Copies raw data that spans data chunk boundaries into a fresh buffer.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ReadOnlySpan<byte> ReadRawValueAcrossChunks(int startChunkIndex, int offsetInStartChunk, int size)
+    {
         Span<byte> buffer = new byte[size];
         var bytesRead = 0;
         var chunkIndex = startChunkIndex;

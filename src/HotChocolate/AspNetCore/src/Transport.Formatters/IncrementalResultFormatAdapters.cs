@@ -121,7 +121,7 @@ internal static class IncrementalRfc1ResultFormatAdapter
                 {
                     (entries ??= []).Add(
                         LegacyIncrementalEntry.ForItems(
-                            pendingResult.Path ?? Path.Root,
+                            (pendingResult.Path ?? Path.Root).Append(listResult.Items.StartIndex),
                             pendingResult.Label,
                             listResult.Items,
                             listResult.Errors));

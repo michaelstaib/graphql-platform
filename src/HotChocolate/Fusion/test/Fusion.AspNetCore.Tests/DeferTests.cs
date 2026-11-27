@@ -332,6 +332,7 @@ public class DeferTests : FusionTestBase
                                     deliveryGroups,
                                     incrementalPlan.Requirements)
                             ],
+                            plan.Policies,
                             plan.SearchSpace,
                             plan.ExpandedNodes));
 
@@ -1196,6 +1197,48 @@ public class DeferTests : FusionTestBase
     }
 
     [Fact]
+    public async Task Defer_Nested_Should_DeliverDeferredFields_When_InitialFieldIsExcludedByInclude()
+    {
+        // act
+        var payloads = await ExecuteConditionalNestedDeferAsync(includeName: false, skipEmail: false);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"1","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{"email":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
+    public async Task Defer_Nested_Should_DeliverInnerGroup_When_OuterGroupFieldIsExcludedBySkip()
+    {
+        // act
+        var payloads = await ExecuteConditionalNestedDeferAsync(includeName: true, skipEmail: true);
+
+        // assert
+        payloads.MatchInlineSnapshots(
+        [
+            """
+            {"data":{"user":{"id":"VXNlcjoyMDkyMTcyNjc2","name":"User: VXNlcjoyMDkyMTcyNjc2"}},"pending":[{"id":"0","path":["user"],"label":"outer"}],"hasNext":true}
+            """,
+            """
+            {"pending":[{"id":"1","path":["user"],"label":"inner"}],"incremental":[{"id":"0","data":{}}],"completed":[{"id":"0"}],"hasNext":true}
+            """,
+            """
+            {"incremental":[{"id":"1","data":{"address":"User: VXNlcjoyMDkyMTcyNjc2"}}],"completed":[{"id":"1"}],"hasNext":false}
+            """
+        ]);
+    }
+
+    [Fact]
     public async Task Defer_Nested_Without_Label_On_Inner_Should_Return_Incremental_Response()
     {
         // arrange
@@ -1591,6 +1634,68 @@ public class DeferTests : FusionTestBase
         var rawBody = await result.HttpResponseMessage.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);
         rawBody.MatchSnapshot();
+    }
+
+    [Fact]
+    public async Task Defer_Should_NotSendLookupRequest_When_SkipsOnDifferentVariablesOfDeferredFieldsAreTrue()
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                thing: Thing
+            }
+
+            type Thing @key(fields: "id") {
+                id: Int!
+            }
+            """);
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                thingById(id: Int!): Thing @lookup
+            }
+
+            type Thing {
+                id: Int!
+                delta: Int!
+                epsilon: Int!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        // act
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            """
+            query testQuery($skipDelta: Boolean!, $skipEpsilon: Boolean!) {
+                thing {
+                    id
+                    ... @defer {
+                        delta @skip(if: $skipDelta)
+                        epsilon @skip(if: $skipEpsilon)
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["skipDelta"] = true, ["skipEpsilon"] = true });
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(gateway, request, result, stableStream: true);
     }
 
     [Fact(Skip = "Requires validation of @skip/@include interaction with @defer at the planning level")]
@@ -3192,6 +3297,77 @@ public class DeferTests : FusionTestBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Defer_Should_DeliverUnconditionalInnerDefer_When_ConditionalOuterDeferIsToggled(
+        bool outerEnabled)
+    {
+        // arrange
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                product: Product
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+            }
+            """);
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                productById(id: ID!): Product @lookup
+            }
+
+            type Product @key(fields: "id") {
+                id: ID!
+                price: Int!
+                cost: Int!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+        var request = new OperationRequest(
+            """
+            query($d: Boolean!) {
+                product {
+                    id
+                    ... @defer(if: $d) {
+                        price
+                        ... @defer {
+                            cost
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?> { ["d"] = outerEnabled });
+
+        // act
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        // assert
+        await MatchSnapshotAsync(
+            gateway,
+            request,
+            result,
+            postFix: outerEnabled ? "Enabled" : "Disabled",
+            stableStream: true);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Defer_Should_NotStream_When_EmptyOuterGroupAndInnerGroupAreDisabled(
         bool bodyBehindLookup)
     {
@@ -4711,6 +4887,72 @@ public class DeferTests : FusionTestBase
             ("B", server2),
             ("C", server3)
         ]);
+    }
+
+    private async Task<List<string>> ExecuteConditionalNestedDeferAsync(bool includeName, bool skipEmail)
+    {
+        using var server1 = CreateSourceSchema(
+            "A",
+            """
+            type Query {
+                user(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                name: String!
+            }
+            """);
+
+        using var server2 = CreateSourceSchema(
+            "B",
+            """
+            type Query {
+                userById(id: ID!): User @lookup
+            }
+
+            type User @key(fields: "id") {
+                id: ID!
+                email: String!
+                address: String!
+            }
+            """);
+
+        using var gateway = await CreateCompositeSchemaAsync(
+        [
+            ("A", server1),
+            ("B", server2)
+        ]);
+
+        using var client = GraphQLHttpClient.Create(gateway.CreateClient());
+
+        var request = new OperationRequest(
+            query: """
+            query($includeName: Boolean!, $skipEmail: Boolean!) {
+                user(id: "1") {
+                    id
+                    name @include(if: $includeName)
+                    ... @defer(label: "outer") {
+                        email @skip(if: $skipEmail)
+                        ... @defer(label: "inner") {
+                            address
+                        }
+                    }
+                }
+            }
+            """,
+            variables: new Dictionary<string, object?>
+            {
+                ["includeName"] = includeName,
+                ["skipEmail"] = skipEmail
+            });
+
+        using var result = await client.PostAsync(
+            request,
+            new Uri("http://localhost:5000/graphql"),
+            TestContext.Current.CancellationToken);
+
+        return await ReadPayloadsAsync(result);
     }
 
     private static async Task<List<string>> ReadPayloadsAsync(GraphQLHttpResponse response)

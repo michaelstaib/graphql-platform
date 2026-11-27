@@ -78,8 +78,7 @@ internal sealed class SelectionExpressionBuilder
             rootType,
             requirements,
             new NullabilityInfoContext(),
-            includeFlags,
-            wideIncludeFlags,
+            new ConditionFlags(includeFlags, wideIncludeFlags),
             mask);
         var root = new TypeContainer();
 
@@ -122,8 +121,7 @@ internal sealed class SelectionExpressionBuilder
             rootType,
             requirements,
             new NullabilityInfoContext(),
-            includeFlags,
-            wideIncludeFlags,
+            new ConditionFlags(includeFlags, wideIncludeFlags),
             mask);
         var root = new TypeContainer();
 
@@ -609,9 +607,9 @@ internal sealed class SelectionExpressionBuilder
             // Otherwise the selector cache may reuse the wrong expression.
             // Wide operations carry their overflow words in the context and never enter
             // the selector cache; without them the narrow check throws for wide operations.
-            if (context.WideIncludeFlags is null
-                ? !selection.IsIncludedNarrow(context.IncludeFlags)
-                : !selection.IsIncluded(context.IncludeFlags, context.WideIncludeFlags))
+            if (context.IncludeFlags.Overflow is null
+                ? !selection.IsIncludedNarrow(context.IncludeFlags.Word0)
+                : !selection.IsIncluded(context.IncludeFlags))
             {
                 continue;
             }
@@ -849,8 +847,7 @@ internal sealed class SelectionExpressionBuilder
         Type ParentType,
         FieldRequirementsMetadata Requirements,
         NullabilityInfoContext NullabilityInfoContext,
-        ulong IncludeFlags,
-        ulong[]? WideIncludeFlags,
+        ConditionFlags IncludeFlags,
         DependencyMask Mask)
     {
         public TypeNode? GetRequirements(Selection selection)

@@ -1,10 +1,12 @@
 import { authorPersonId } from "@/src/data/authors";
+import type { ComparisonSubject } from "@/src/helpers/comparisonCollection";
 import type { ArticleSummary } from "@/src/helpers/contentCollection";
 import { toAbsoluteUrl } from "@/src/helpers/siteUrl";
 import {
   ORGANIZATION_ID,
   schemaId,
   schemaRef,
+  toStructuredDateTime,
 } from "@/src/helpers/structuredData";
 import type { JsonLdNode } from "@/src/helpers/structuredData";
 import { getShareImageSrc } from "@/src/image-optimization/manifest";
@@ -12,8 +14,19 @@ import { getShareImageSrc } from "@/src/image-optimization/manifest";
 /** The comparison section itself, the entity every article is part of. */
 export const COMPARISON_ID = schemaId("/comparison", "collection");
 export const COMPARISON_DESCRIPTION =
-  "Side-by-side comparisons of GraphQL Federation and the alternatives, " +
-  "with a verdict on when each is the better buy.";
+  "Side-by-side comparisons of ChilliCream products and the alternatives, " +
+  "from GraphQL Federation to .NET messaging.";
+
+/** The things an article compares, as inline `Thing` nodes for its `about`. */
+export function createComparisonSubjectNodes(
+  subjects: readonly ComparisonSubject[],
+): JsonLdNode[] {
+  return subjects.map((subject) => ({
+    "@type": "Thing",
+    name: subject.name,
+    ...(subject.url ? { url: toAbsoluteUrl(subject.url) } : {}),
+  }));
+}
 
 export function createComparisonCollectionNode(
   description: string = COMPARISON_DESCRIPTION,
@@ -46,12 +59,12 @@ export function createComparisonItemListNode(
       position: startPosition + index,
       url: toAbsoluteUrl(article.href),
       item: {
-        "@type": "TechArticle",
+        "@type": ["TechArticle", "Article"],
         "@id": schemaId(article.href, "article"),
         url: toAbsoluteUrl(article.href),
         headline: article.title,
         ...(article.description ? { description: article.description } : {}),
-        datePublished: article.date,
+        datePublished: toStructuredDateTime(article.date),
         ...(article.featuredImage
           ? { image: toAbsoluteUrl(getShareImageSrc(article.featuredImage)) }
           : {}),

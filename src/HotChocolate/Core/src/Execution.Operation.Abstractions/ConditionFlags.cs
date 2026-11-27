@@ -35,4 +35,25 @@ public readonly struct ConditionFlags
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get;
     }
+
+    /// <summary>
+    /// Gets whether the flag at the specified condition index is set.
+    /// A condition index beyond the stored overflow words is not set.
+    /// </summary>
+    /// <param name="index">The condition index.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsSet(int index)
+        => index < 64
+            ? (Word0 & (1ul << index)) != 0
+            : IsOverflowSet(index);
+
+    private bool IsOverflowSet(int index)
+    {
+        var overflow = Overflow;
+        var word = (index >> 6) - 1;
+
+        return overflow is not null
+            && (uint)word < (uint)overflow.Length
+            && (overflow[word] & (1ul << (index & 63))) != 0;
+    }
 }

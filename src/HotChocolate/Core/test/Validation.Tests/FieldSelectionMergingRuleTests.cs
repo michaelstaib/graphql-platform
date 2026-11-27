@@ -283,9 +283,9 @@ public class FieldSelectionMergingRuleTests
     }
 
     [Fact]
-    public void Stream_Mergeable()
+    public void Validate_Should_Report_When_IdenticalStreamFieldsOverlap()
     {
-        ExpectValid(
+        ExpectErrors(
             """
             {
                 __type (type: "Foo") {
@@ -299,6 +299,142 @@ public class FieldSelectionMergingRuleTests
                         name
                     }
                 }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_StreamFieldOverlapsAcrossFragments()
+    {
+        ExpectErrors(
+            """
+            {
+                __type (type: "Foo") {
+                    ... A
+                    ... B
+                }
+            }
+
+            fragment A on __Type {
+                fields @stream {
+                    name
+                }
+            }
+
+            fragment B on __Type {
+                fields @stream {
+                    description
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_NestedStreamFieldsOverlapUnderMergedParent()
+    {
+        ExpectErrors(
+            """
+            {
+                __type (type: "Foo") {
+                    fields {
+                        args @stream {
+                            name
+                        }
+                    }
+                    fields {
+                        args @stream {
+                            description
+                        }
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_When_StreamFieldsUseDifferentResponseNames()
+    {
+        ExpectValid(
+            """
+            {
+                __type (type: "Foo") {
+                    a: fields @stream {
+                        name
+                    }
+                    b: fields @stream {
+                        name
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_When_SingleStreamFieldIsSelected()
+    {
+        ExpectValid(
+            """
+            {
+                __type (type: "Foo") {
+                    name
+                    name
+                    fields @stream(initialCount: 1) {
+                        name
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_StreamFieldsOverlapAcrossConcreteParentTypes()
+    {
+        ExpectErrors(
+            s_streamSchema,
+            """
+            {
+                ab {
+                    ... on A {
+                        list @stream
+                    }
+                    ... on B {
+                        list @stream
+                    }
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Report_When_DisabledStreamFieldOverlapsPlainField()
+    {
+        ExpectErrors(
+            s_streamSchema,
+            """
+            {
+                a {
+                    list @stream(if: false)
+                    list
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public void Validate_Should_Pass_When_FragmentWithStreamFieldIsSpreadTwice()
+    {
+        ExpectValid(
+            s_streamSchema,
+            """
+            {
+                a {
+                    ... F
+                    ... F
+                }
+            }
+
+            fragment F on A {
+                list @stream
             }
             """);
     }
@@ -1460,6 +1596,50 @@ public class FieldSelectionMergingRuleTests
     }
 
     [Fact]
+    public void Validate_Should_NotReportError_When_ManyArgumentsAreInDifferentOrder()
+    {
+        // arrange
+        var rule = new OverlappingFieldsCanBeMergedRule(
+            maxAllowedFieldMergeComparisons: 100_000,
+            enableCovariantFieldMerging: false);
+        var ascending = string.Concat(Enumerable.Range(0, 12).Select(i => $"a{i:00}: 0 "));
+        var descending = string.Concat(Enumerable.Range(0, 12).Reverse().Select(i => $"a{i:00}: 0 "));
+        var document = Utf8GraphQLParser.Parse(
+            $$"""{ x: __typename({{ascending}}) x: __typename({{descending}}) }""");
+        var context = ValidationUtils.CreateContext(document);
+
+        // act
+        rule.Validate(context, document);
+
+        // assert
+        Assert.Empty(context.Errors);
+    }
+
+    [Fact]
+    public void Validate_Should_ReportError_When_ManyArgumentsDifferInOneValue()
+    {
+        // arrange
+        var rule = new OverlappingFieldsCanBeMergedRule(
+            maxAllowedFieldMergeComparisons: 100_000,
+            enableCovariantFieldMerging: false);
+        var first = string.Concat(Enumerable.Range(0, 12).Select(i => $"a{i:00}: 0 "));
+        var second = string.Concat(Enumerable.Range(0, 12).Select(i => $"a{i:00}: {(i == 7 ? 1 : 0)} "));
+        var document = Utf8GraphQLParser.Parse(
+            $$"""{ x: __typename({{first}}) x: __typename({{second}}) }""");
+        var context = ValidationUtils.CreateContext(document);
+
+        // act
+        rule.Validate(context, document);
+
+        // assert
+        var error = Assert.Single(context.Errors);
+        Assert.Equal(
+            "Fields `x` conflict because they have differing arguments. "
+            + "Use different aliases on the fields to fetch both if this was intentional. ",
+            error.Message);
+    }
+
+    [Fact]
     public void Default_Budget_Allows_Normal_Queries()
     {
         // arrange - default constructor (100,000 budget)
@@ -1724,6 +1904,29 @@ public class FieldSelectionMergingRuleTests
                     item: Item
                     requiredItem: RequiredItem
                     resource: Resource
+                }
+                """)
+            .Use(_ => _ => default)
+            .Create();
+
+    private static readonly ISchemaDefinition s_streamSchema =
+        SchemaBuilder.New()
+            .ModifyOptions(o => o.EnableStream = true)
+            .AddDocumentFromString(
+                """
+                type A {
+                    list: [String]
+                }
+
+                type B {
+                    list: [String]
+                }
+
+                union AOrB = A | B
+
+                type Query {
+                    a: A
+                    ab: AOrB
                 }
                 """)
             .Use(_ => _ => default)

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using HotChocolate;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Configuration;
@@ -51,6 +52,8 @@ public static class HotChocolateFusionServiceCollectionExtensions
     {
         services.AddOptions();
 
+        services.TryAddSingleton(TimeProvider.System);
+
         services.TryAddSingleton<ObjectPoolProvider, DefaultObjectPoolProvider>();
         services.TryAddSingleton(sp =>
         {
@@ -63,9 +66,13 @@ public static class HotChocolateFusionServiceCollectionExtensions
     private static void AddRequestExecutorManager(
         IServiceCollection services)
     {
+        KeepClosedType(typeof(OptionsMonitor<FusionGatewaySetup>));
+        KeepClosedType(typeof(OptionsFactory<FusionGatewaySetup>));
+
         services.TryAddSingleton(
             static sp => new FusionRequestExecutorManager(
                 sp.GetRequiredService<IOptionsMonitor<FusionGatewaySetup>>(),
+                sp.GetRequiredService<TimeProvider>(),
                 sp));
         services.TryAddSingleton<IRequestExecutorProvider>(
             static sp => sp.GetRequiredService<FusionRequestExecutorManager>());
@@ -76,6 +83,9 @@ public static class HotChocolateFusionServiceCollectionExtensions
     private static void AddSourceSchemaScope(
         IServiceCollection services)
     {
+        KeepClosedType(typeof(OptionsMonitor<HttpClientFactoryOptions>));
+        KeepClosedType(typeof(OptionsFactory<HttpClientFactoryOptions>));
+
         services.AddSingleton<ISourceSchemaClientFactory>(
             static sp => new HttpSourceSchemaClientFactory(
                 sp.GetRequiredService<IHttpClientFactory>(),
@@ -85,6 +95,12 @@ public static class HotChocolateFusionServiceCollectionExtensions
             static sp => new DefaultSourceSchemaClientScopeFactory(
                 sp.GetServices<ISourceSchemaClientFactory>().ToArray()));
     }
+
+    // References a closed generic type that dependency injection creates at run time,
+    // so that a Native AOT binary contains the type.
+    private static void KeepClosedType(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type type)
+        => GC.KeepAlive(type);
 
     private static DefaultFusionGatewayBuilder CreateBuilder(
         IServiceCollection services,

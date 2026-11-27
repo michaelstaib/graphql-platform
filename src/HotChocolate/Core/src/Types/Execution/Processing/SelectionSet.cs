@@ -41,6 +41,7 @@ public sealed class SelectionSet : ISelectionSet
         }
 
         _selections = selections;
+        DeferUsageSetCount = CountDeferUsageSets(selections);
         _responseNameLookup = _selections.ToFrozenDictionary(t => t.ResponseName);
         _utf8ResponseNameLookup = SelectionLookup.Create(this);
     }
@@ -62,6 +63,12 @@ public sealed class SelectionSet : ISelectionSet
 
     /// <inheritdoc />
     public bool HasIncrementalParts => (_flags & Flags.HasDeferredSelections) == Flags.HasDeferredSelections;
+
+    /// <summary>
+    /// Gets the number of distinct defer usage sets among the selections of this selection set.
+    /// Selections that are not deferred do not count.
+    /// </summary>
+    internal int DeferUsageSetCount { get; }
 
     /// <summary>
     /// Gets the type context of this selection set.
@@ -273,6 +280,39 @@ public sealed class SelectionSet : ISelectionSet
         }
 
         _flags |= Flags.Sealed;
+    }
+
+    private static int CountDeferUsageSets(Selection[] selections)
+    {
+        var count = 0;
+
+        for (var i = 0; i < selections.Length; i++)
+        {
+            var set = selections[i].DeferUsageSet;
+
+            if (set is null)
+            {
+                continue;
+            }
+
+            var isNew = true;
+
+            for (var j = 0; j < i; j++)
+            {
+                if (ReferenceEquals(selections[j].DeferUsageSet, set))
+                {
+                    isNew = false;
+                    break;
+                }
+            }
+
+            if (isNew)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     [Flags]
