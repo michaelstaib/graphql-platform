@@ -113,11 +113,10 @@ public class DeferUsageSetTests
         // arrange
         var a = new DeferUsage("A", null, 0) { Ordinal = 0 };
         var b = new DeferUsage("B", null, 1) { Ordinal = 1 };
-        var aCopy = new DeferUsage("A", null, 0) { Ordinal = 0 };
 
         // act
         var set = new DeferUsageSet([a, b], 0);
-        var equal = new DeferUsageSet([aCopy, b], 1);
+        var equal = new DeferUsageSet([a, b], 1);
         var other = new DeferUsageSet([a], 2);
 
         // assert
@@ -125,6 +124,39 @@ public class DeferUsageSetTests
         Assert.Equal(set.GetHashCode(), equal.GetHashCode());
         Assert.NotEqual(set, other);
         Assert.NotEqual(a, new DeferUsage("A", null, 1));
+    }
+
+    [Fact]
+    public void Equals_Should_ReturnFalse_When_UsagesAreDistinctInstancesWithEqualValues()
+    {
+        // arrange
+        var first = new DeferUsage("a", null, 0);
+        var second = new DeferUsage("a", null, 0);
+
+        // act
+        var equal = first.Equals(second);
+
+        // assert
+        Assert.False(equal);
+        Assert.True(first.Equals(first));
+        Assert.NotEqual(first.GetHashCode(), second.GetHashCode());
+    }
+
+    [Fact]
+    public void GetOrCreateUsage_Should_ReturnSameInstance_When_ValuesAreEqual()
+    {
+        // arrange
+        var registry = new DeferUsageRegistry();
+        var parent = registry.GetOrCreateUsage("A", null, 0);
+        var first = registry.GetOrCreateUsage("B", parent, 1);
+
+        // act
+        var second = registry.GetOrCreateUsage("B", parent, 1);
+        var other = registry.GetOrCreateUsage("B", registry.GetOrCreateUsage("A", null, 2), 1);
+
+        // assert
+        Assert.Same(first, second);
+        Assert.NotSame(first, other);
     }
 
     [Theory]

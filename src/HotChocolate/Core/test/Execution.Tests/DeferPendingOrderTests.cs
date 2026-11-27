@@ -191,6 +191,41 @@ public class DeferPendingOrderTests
             ]);
     }
 
+    [Fact]
+    public async Task Defer_Should_DeliverInnerFragment_When_EqualFragmentsAreNestedAtDifferentDepths()
+    {
+        // act
+        var entries = await ExecuteAsync(
+            """
+            {
+              ... @defer { a { ... @defer { z } } }
+              a { ... @defer { z bad } }
+            }
+            """);
+
+        // assert
+        entries.MatchInlineSnapshots(
+            [
+                """
+                {
+                  "a": {}
+                }
+                """,
+                """
+                {
+                  "id": "2",
+                  "path": [
+                    "a"
+                  ],
+                  "data": {
+                    "z": "z",
+                    "bad": "bad"
+                  }
+                }
+                """
+            ]);
+    }
+
     // returns the initial data followed by each pending entry, in announcement order,
     // with the data delivered for its id merged in.
     private static async Task<List<string>> ExecuteAsync(string query)
@@ -200,13 +235,16 @@ public class DeferPendingOrderTests
             .AddDocumentFromString(
                 """
                 type Query { a: A x: String y: String }
-                type A { x: String y: String }
+                type A { x: String y: String z: String bad: String a: A }
                 """)
             .AddResolver("Query", "a", _ => new object())
             .AddResolver("Query", "x", _ => "qx")
             .AddResolver("Query", "y", _ => "qy")
             .AddResolver("A", "x", _ => "x")
             .AddResolver("A", "y", _ => "y")
+            .AddResolver("A", "z", _ => "z")
+            .AddResolver("A", "bad", _ => "bad")
+            .AddResolver("A", "a", _ => new object())
             .ModifyOptions(o => o.EnableDefer = true)
             .BuildRequestExecutorAsync(cancellationToken: TestContext.Current.CancellationToken);
 
