@@ -24,6 +24,8 @@ public class QueryableProjectionVisitor : ProjectionVisitor<QueryableProjectionC
 
         if (!selections.Any())
         {
+            // An instance of a possible type without selections is passed on unprojected.
+            scope.AddAbstractType(objectType.RuntimeType, new Queue<MemberAssignment>());
             return Continue;
         }
 
