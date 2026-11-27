@@ -3,7 +3,7 @@ Result:
 {
   "data": {
     "root": [
-      null,
+      {},
       {
         "fooProp": "FooProp"
       }
@@ -14,6 +14,6 @@ Result:
 
 SQL:
 ---------------
-SELECT "d"."d" = 'foo', "d"."FooProp"
+SELECT "d"."d" = 'bar', "d"."Id", "d"."Name", "d"."d", "d"."BarProp", "d"."FooProp", "d"."d" = 'foo'
 FROM "Data" AS "d"
 ---------------

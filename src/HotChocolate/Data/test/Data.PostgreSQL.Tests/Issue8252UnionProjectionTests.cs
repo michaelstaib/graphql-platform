@@ -87,7 +87,7 @@ public sealed class Issue8252UnionProjectionTests(PostgreSqlResource resource)
               "data": {
                 "contents": {
                   "items": [
-                    null,
+                    {},
                     {
                       "text": "Hello World"
                     }
