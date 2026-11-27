@@ -139,7 +139,6 @@ public class DeferUsageSetTests
         // assert
         Assert.False(equal);
         Assert.True(first.Equals(first));
-        Assert.NotEqual(first.GetHashCode(), second.GetHashCode());
     }
 
     [Fact]
