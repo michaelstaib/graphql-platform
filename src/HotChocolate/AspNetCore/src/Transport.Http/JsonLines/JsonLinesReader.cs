@@ -97,6 +97,18 @@ internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<O
                     buffer = buffer.Slice(nextPosition);
                 } while (!buffer.IsEmpty);
 
+                // The body has ended, so the bytes after the last line feed are the last record.
+                if (result.IsCompleted && !IsEmptyLine(buffer))
+                {
+#if FUSION
+                    yield return ParseDocument(arenaSource.GetNextArena(), buffer);
+#else
+                    var document = ParseDocument(buffer);
+                    yield return OperationResult.Parse(document);
+#endif
+                    consumed = buffer.End;
+                }
+
                 // Tell the reader how much we've consumed and examined
                 reader.AdvanceTo(consumed, examined);
             } while (!result.IsCompleted);
