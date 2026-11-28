@@ -227,7 +227,6 @@ public class GraphQLHttpResponseArenaReadTests
     public async Task ReadAsResult_Should_ReadToEndOfBody_When_ContentLengthIsDeclared(int fragmentLength)
     {
         // arrange
-        // a declared length above 16 KiB is read into the data chunks of the document
         var payload = CreatePayload(20_000);
         var bytes = Encoding.UTF8.GetBytes(payload);
         var stream = new FragmentedStream(bytes, fragmentLength, asynchronous: false)
@@ -267,6 +266,110 @@ public class GraphQLHttpResponseArenaReadTests
         // assert
         Assert.Equal(payload, document.Root.GetRawText());
         Assert.True(stream.IsDisposed);
+    }
+
+    [Theory]
+    [InlineData(40_000, 39_999, int.MaxValue)]
+    [InlineData(40_000, 39_999, 137)]
+    [InlineData(150_000, 20_000, 4096)]
+    [InlineData(140_000, 131_071, int.MaxValue)]
+    public async Task ReadAsResult_Should_PreservePayload_When_BodyIsLongerThanDeclared(
+        int payloadLength,
+        int contentLength,
+        int fragmentLength)
+    {
+        // arrange
+        var payload = CreatePayload(payloadLength);
+        var stream = new FragmentedStream(Encoding.UTF8.GetBytes(payload), fragmentLength, asynchronous: false);
+        using var response = CreateResponse(stream, contentLength, "utf-8");
+        using var arena = new MemoryArena();
+
+        // act
+        using var document = await response.ReadAsResultAsync(arena, TestContext.Current.CancellationToken);
+        arena.Seal();
+
+        // assert
+        Assert.Equal(payload, document.Root.GetRawText());
+        Assert.Equal(payloadLength, stream.BytesRead);
+        Assert.True(stream.IsDisposed);
+    }
+
+    [Theory]
+    [InlineData(16 * 1024)]
+    [InlineData((16 * 1024) + 1)]
+    [InlineData(131_071)]
+    [InlineData(131_072)]
+    [InlineData(131_073)]
+    public async Task ReadAsResult_Should_PreservePayload_When_DeclaredLengthIsNearALimit(int payloadLength)
+    {
+        // arrange
+        // 131,072 bytes are one arena page, and a body that declares fewer is read into a single chunk
+        var payload = CreatePayload(payloadLength);
+        var stream = new FragmentedStream(Encoding.UTF8.GetBytes(payload), 4096, asynchronous: false);
+        using var response = CreateResponse(stream, payloadLength, "utf-8");
+        using var arena = new MemoryArena();
+
+        // act
+        using var document = await response.ReadAsResultAsync(arena, TestContext.Current.CancellationToken);
+        arena.Seal();
+
+        // assert
+        Assert.Equal(payload, document.Root.GetRawText());
+        Assert.Equal(payloadLength, stream.BytesRead);
+        Assert.True(stream.IsDisposed);
+    }
+
+    [Theory]
+    [InlineData(200)]
+    [InlineData(20_000)]
+    [InlineData(100_000)]
+    public async Task ReadAsResult_Should_ReadBodyWithOneRead_When_ContentLengthIsDeclared(int payloadLength)
+    {
+        // arrange
+        var payload = CreatePayload(payloadLength);
+        var stream = new FragmentedStream(Encoding.UTF8.GetBytes(payload), int.MaxValue, asynchronous: false);
+        using var response = CreateResponse(stream, payloadLength, "utf-8");
+        using var arena = new MemoryArena();
+
+        // act
+        using var document = await response.ReadAsResultAsync(arena, TestContext.Current.CancellationToken);
+        arena.Seal();
+
+        // assert
+        // the first read is offered the whole body and the second read finds the end of the body
+        Assert.Equal(payload, document.Root.GetRawText());
+        Assert.Equal(2, stream.ReadCount);
+    }
+
+    [Fact]
+    public async Task ReadAsResult_Should_RentTheDeclaredLength_When_ContentLengthIsDeclared()
+    {
+        // arrange
+        var longPayload = CreatePayload(100_000);
+        var shortPayload = CreatePayload(200);
+        using var longArena = new MemoryArena();
+        using var shortArena = new MemoryArena();
+        using var longResponse = CreateResponse(
+            new FragmentedStream(Encoding.UTF8.GetBytes(longPayload), 4096, asynchronous: false),
+            longPayload.Length,
+            "utf-8");
+        using var shortResponse = CreateResponse(
+            new FragmentedStream(Encoding.UTF8.GetBytes(shortPayload), 4096, asynchronous: false),
+            shortPayload.Length,
+            "utf-8");
+
+        // act
+        using var longDocument = await longResponse.ReadAsResultAsync(
+            longArena,
+            TestContext.Current.CancellationToken);
+        using var shortDocument = await shortResponse.ReadAsResultAsync(
+            shortArena,
+            TestContext.Current.CancellationToken);
+
+        // assert
+        // both payloads have the same tokens, so their arenas differ by the bytes of the longer value
+        Assert.Equal(1, longArena.RentedPageCount);
+        Assert.Equal(GetUsedBytes(shortArena) + 100_000 - 200, GetUsedBytes(longArena));
     }
 
     [Theory]
@@ -446,6 +549,13 @@ public class GraphQLHttpResponseArenaReadTests
         // The payload is read in full and cannot be parsed.
         Assert.IsAssignableFrom<JsonException>(exception);
         Assert.Equal(capacity, stream.BytesRead);
+    }
+
+    private static long GetUsedBytes(MemoryArena arena)
+    {
+        // a zero-length rental reports the cursor of the current page.
+        var cursor = arena.Rent(0);
+        return ((long)(arena.RentedPageCount - 1) * JsonMemory.BufferSize) + cursor.Offset;
     }
 
     private static string CreateTrickyPayload()
