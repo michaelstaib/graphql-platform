@@ -1,5 +1,3 @@
-using System.Buffers;
-
 namespace HotChocolate.Fusion.Text.Json;
 
 /// <summary>
@@ -7,7 +5,6 @@ namespace HotChocolate.Fusion.Text.Json;
 /// </summary>
 internal readonly struct SourceResultShapeSelector
 {
-    private const int MaxPrefixLength = 64;
     private const int MaxIndexDigits = 9;
 
     private readonly SourceResultShape? _shape;
@@ -41,14 +38,14 @@ internal readonly struct SourceResultShapeSelector
     /// Gets the expected shape of the result in <paramref name="record"/>, or <c>null</c> when
     /// nothing is expected of it.
     /// </summary>
-    public SourceResultShape? GetShape(in ReadOnlySequence<byte> record)
+    public SourceResultShape? GetShape(ReadOnlySpan<byte> record)
     {
         if (_shapes is null)
         {
             return _shape;
         }
 
-        return TryReadRequestIndex(in record, out var index) && (uint)index < (uint)_count
+        return TryReadRequestIndex(record, out var index) && (uint)index < (uint)_count
             ? _shapes[index]
             : null;
     }
@@ -57,22 +54,7 @@ internal readonly struct SourceResultShapeSelector
     /// Reads the value of <c>requestIndex</c> when it is the first property of the result in
     /// <paramref name="record"/> and a non-negative integer.
     /// </summary>
-    internal static bool TryReadRequestIndex(in ReadOnlySequence<byte> record, out int index)
-    {
-        var first = record.FirstSpan;
-
-        if (record.IsSingleSegment || first.Length >= MaxPrefixLength)
-        {
-            return TryReadRequestIndex(first, out index);
-        }
-
-        Span<byte> prefix = stackalloc byte[MaxPrefixLength];
-        var length = (int)Math.Min(record.Length, MaxPrefixLength);
-        record.Slice(0, length).CopyTo(prefix);
-        return TryReadRequestIndex(prefix[..length], out index);
-    }
-
-    private static bool TryReadRequestIndex(ReadOnlySpan<byte> record, out int index)
+    internal static bool TryReadRequestIndex(ReadOnlySpan<byte> record, out int index)
     {
         var name = "\"requestIndex\""u8;
         index = 0;
@@ -112,7 +94,7 @@ internal readonly struct SourceResultShapeSelector
             position++;
         }
 
-        // The value is an integer without a leading zero that ends within the bytes that were read.
+        // The value is an integer without a leading zero that ends within the record.
         if (position == start
             || position == record.Length
             || (record[start] == (byte)'0' && position - start > 1))

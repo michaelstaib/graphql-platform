@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 
 namespace HotChocolate.Fusion.Text.Json;
@@ -17,10 +16,10 @@ public class SourceResultShapeSelectorTests
         int expectedIndex)
     {
         // arrange
-        var sequence = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(record));
+        var bytes = Encoding.UTF8.GetBytes(record);
 
         // act
-        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out var index);
+        var success = SourceResultShapeSelector.TryReadRequestIndex(bytes, out var index);
 
         // assert
         Assert.True(success);
@@ -50,10 +49,10 @@ public class SourceResultShapeSelectorTests
         string record)
     {
         // arrange
-        var sequence = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(record));
+        var bytes = Encoding.UTF8.GetBytes(record);
 
         // act
-        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out _);
+        var success = SourceResultShapeSelector.TryReadRequestIndex(bytes, out _);
 
         // assert
         Assert.False(success);
@@ -65,46 +64,10 @@ public class SourceResultShapeSelectorTests
         // arrange
         // the name requestIndex with its first letter as an escape sequence
         var record = "{\"" + (char)92 + "u0072equestIndex\":1}";
-        var sequence = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(record));
+        var bytes = Encoding.UTF8.GetBytes(record);
 
         // act
-        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out _);
-
-        // assert
-        Assert.False(success);
-    }
-
-    [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(7)]
-    [InlineData(16)]
-    [InlineData(17)]
-    [InlineData(18)]
-    public void TryReadRequestIndex_Should_ReturnIndex_When_RecordIsSplitIntoSegments(int segmentLength)
-    {
-        // arrange
-        var record = Encoding.UTF8.GetBytes("""{"requestIndex":12,"data":{"user":{"id":1}}}""");
-        var sequence = CreateSequence(record, segmentLength);
-
-        // act
-        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out var index);
-
-        // assert
-        Assert.True(success);
-        Assert.Equal(12, index);
-    }
-
-    [Fact]
-    public void TryReadRequestIndex_Should_ReturnFalse_When_IndexDoesNotEndWithinTheReadPrefix()
-    {
-        // arrange
-        // the whitespace moves the index beyond the bytes that are read of a record in segments
-        var record = Encoding.UTF8.GetBytes("{" + new string(' ', 80) + "\"requestIndex\":1}");
-        var sequence = CreateSequence(record, segmentLength: 8);
-
-        // act
-        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out _);
+        var success = SourceResultShapeSelector.TryReadRequestIndex(bytes, out _);
 
         // assert
         Assert.False(success);
@@ -124,10 +87,10 @@ public class SourceResultShapeSelectorTests
         // the third shape lies beyond the count and the last position has no shape
         SourceResultShape?[] shapes = [CreateShape("a"), CreateShape("b"), CreateShape("c"), null];
         var selector = new SourceResultShapeSelector(shapes, count: 2);
-        var sequence = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(record));
+        var bytes = Encoding.UTF8.GetBytes(record);
 
         // act
-        var shape = selector.GetShape(in sequence);
+        var shape = selector.GetShape(bytes);
 
         // assert
         Assert.Same(expectedShape < 0 ? null : shapes[expectedShape], shape);
@@ -142,10 +105,10 @@ public class SourceResultShapeSelectorTests
         // arrange
         var expected = CreateShape("a");
         var selector = new SourceResultShapeSelector(expected);
-        var sequence = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(record));
+        var bytes = Encoding.UTF8.GetBytes(record);
 
         // act
-        var shape = selector.GetShape(in sequence);
+        var shape = selector.GetShape(bytes);
 
         // assert
         Assert.Same(expected, shape);
@@ -156,10 +119,10 @@ public class SourceResultShapeSelectorTests
     {
         // arrange
         var selector = default(SourceResultShapeSelector);
-        var sequence = new ReadOnlySequence<byte>("""{"requestIndex":0,"data":null}"""u8.ToArray());
+        var bytes = """{"requestIndex":0,"data":null}"""u8.ToArray();
 
         // act
-        var shape = selector.GetShape(in sequence);
+        var shape = selector.GetShape(bytes);
 
         // assert
         Assert.Null(shape);
@@ -170,33 +133,5 @@ public class SourceResultShapeSelectorTests
         var builder = new SourceResultShape.Builder();
         var data = builder.AddObject([fieldName], [SourceResultShape.NoNode], identify: true);
         return builder.Build(builder.AddObject(["data"], [data], identify: false));
-    }
-
-    private static ReadOnlySequence<byte> CreateSequence(byte[] data, int segmentLength)
-    {
-        var first = new Segment(data.AsMemory(0, Math.Min(segmentLength, data.Length)));
-        var last = first;
-
-        for (var offset = segmentLength; offset < data.Length; offset += segmentLength)
-        {
-            last = last.Append(data.AsMemory(offset, Math.Min(segmentLength, data.Length - offset)));
-        }
-
-        return new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
-    }
-
-    private sealed class Segment : ReadOnlySequenceSegment<byte>
-    {
-        public Segment(ReadOnlyMemory<byte> memory)
-        {
-            Memory = memory;
-        }
-
-        public Segment Append(ReadOnlyMemory<byte> memory)
-        {
-            var next = new Segment(memory) { RunningIndex = RunningIndex + Memory.Length };
-            Next = next;
-            return next;
-        }
     }
 }

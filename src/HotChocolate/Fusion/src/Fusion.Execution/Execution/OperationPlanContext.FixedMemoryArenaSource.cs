@@ -4,7 +4,7 @@ namespace HotChocolate.Fusion.Execution;
 
 public sealed partial class OperationPlanContext
 {
-    private sealed class FixedMemoryArenaSource : IMemoryArenaSource
+    private sealed class FixedMemoryArenaSource : IFixedMemoryArenaSource
     {
         private IMemoryArena? _arena;
 
