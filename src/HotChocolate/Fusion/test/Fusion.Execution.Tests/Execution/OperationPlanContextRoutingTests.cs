@@ -3,6 +3,7 @@ using HotChocolate.Buffers;
 using HotChocolate.Execution;
 using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Language;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Transport.Http;
@@ -480,7 +481,14 @@ public sealed class OperationPlanContextRoutingTests : FusionTestBase
             // The request executor always attaches a memory arena to the request before a plan
             // runs. The arena is supplied explicitly here because this fixture does not go through
             // the request executor that would otherwise attach it to the request context.
-            context.Initialize(requestContext, _variables, _operationPlan, cts, new MemoryArena());
+            context.Initialize(
+                requestContext,
+                _variables,
+                variableIndex: -1,
+                PolicyEvaluationResult.Empty,
+                _operationPlan,
+                cts,
+                new MemoryArena());
             _rentedContexts.Add(context);
             return context;
         }

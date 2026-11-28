@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using HotChocolate.Execution;
+using HotChocolate.Fusion.Execution.Clients.AliasBatching;
 using HotChocolate.Fusion.Transport.Http;
 using HotChocolate.Fusion.Types;
 using Microsoft.Extensions.Http;
@@ -21,6 +22,7 @@ internal sealed class HttpSourceSchemaClientFactory
     private readonly object _sync = new();
 #endif
     private readonly ConditionalWeakTable<HttpSourceSchemaClientConfiguration, SharedClientEntry> _sharedClients = [];
+    private readonly ConditionalWeakTable<HttpSourceSchemaClientConfiguration, AliasBatchQueryCache> _aliasBatchQueryCaches = [];
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOptionsMonitor<HttpClientFactoryOptions>? _httpClientFactoryOptions;
     private readonly IDisposable? _optionsChangeRegistration;
@@ -48,7 +50,28 @@ internal sealed class HttpSourceSchemaClientFactory
         return new HttpSourceSchemaClient(
             GraphQLHttpClient.Create(httpClient, disposeHttpClient: true),
             configuration,
-            schema.GetRequestOptions().AnnotateOperationKind);
+            schema.GetRequestOptions().AnnotateOperationKind,
+            GetAliasBatchQueryCache(configuration));
+    }
+
+    /// <summary>
+    /// Gets the cache that the clients of <paramref name="configuration"/> share, or
+    /// <see langword="null"/> when its clients never send alias-batched requests.
+    /// </summary>
+    internal AliasBatchQueryCache? GetAliasBatchQueryCache(HttpSourceSchemaClientConfiguration configuration)
+    {
+        var capabilities = configuration.Capabilities;
+
+        // Variable batching and request batching take precedence over alias batching,
+        // so a source schema that supports both never receives an alias-batched request.
+        if (!capabilities.HasFlag(SourceSchemaClientCapabilities.AliasBatching)
+            || (capabilities.HasFlag(SourceSchemaClientCapabilities.VariableBatching)
+                && capabilities.HasFlag(SourceSchemaClientCapabilities.RequestBatching)))
+        {
+            return null;
+        }
+
+        return _aliasBatchQueryCaches.GetValue(configuration, static _ => new AliasBatchQueryCache());
     }
 
     public bool TryGetSharedClient(
@@ -102,9 +125,30 @@ internal sealed class HttpSourceSchemaClientFactory
         // The client this one replaces is never disposed, because requests that took it before it
         // expired may still be sending with it, and disposing it would cancel them. Its handler
         // belongs to the IHttpClientFactory, so the garbage collector reclaims the replaced client.
-        var client = CreateClient(schema, configuration);
+        var client = CreateSharedClient(schema, configuration);
         var expiresAt = now + (long)(maxAge.TotalSeconds * Stopwatch.Frequency);
         return new SharedClientEntry(new SharedSourceSchemaClient(client, expiresAt), annotateOperationKind);
+    }
+
+    private ISourceSchemaClient CreateSharedClient(
+        FusionSchemaDefinition schema,
+        HttpSourceSchemaClientConfiguration configuration)
+    {
+        if (_httpClientFactory is not IHttpMessageHandlerFactory handlerFactory)
+        {
+            return CreateClient(schema, configuration);
+        }
+
+        // A shared client has no HttpClient configuration callbacks, so this is the client that the
+        // IHttpClientFactory creates.
+        var handler = handlerFactory.CreateHandler(configuration.HttpClientName);
+        var httpClient = new HttpClient(handler, disposeHandler: false) { BaseAddress = configuration.BaseAddress };
+
+        return new HttpSourceSchemaClient(
+            new DefaultGraphQLHttpClient(httpClient, handler),
+            configuration,
+            schema.GetRequestOptions().AnnotateOperationKind,
+            GetAliasBatchQueryCache(configuration));
     }
 
     private void InvalidateSharedClients()

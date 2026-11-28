@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Mocha.Events;
 using Mocha.Features;
 
 namespace Mocha.Sagas;
@@ -253,10 +254,27 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
             state = await LoadStateAsync(correlationId, context, ct);
             if (state is null)
             {
+                // No state means the saga has ended, for example when it sent the command on its
+                // transition into a final state. The acknowledgement is consumed with nothing to apply it to.
+                if (@event is AcknowledgedEvent)
+                {
+                    _logger!.DiscardedAcknowledgementWithoutState(Name, correlationId);
+                }
+
                 return false;
             }
 
             _logger!.LoadedSagaStateForCorrelationId(Name, correlationId);
+
+            // Only a state with OnAnyReply or OnReply<AcknowledgedEvent> handles the acknowledgement of a
+            // command. In any other state it is discarded here, before the transition, so the state is
+            // not changed, its on-entry actions do not run again and nothing is saved.
+            if (@event is AcknowledgedEvent
+                && FindTransition(GetCurrentState(state), typeof(AcknowledgedEvent), context, out var _) is null)
+            {
+                _logger!.DiscardedAcknowledgement(Name, state.Id, state.State);
+                return true;
+            }
         }
         else
         {
@@ -372,13 +390,46 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
 
         using var _ = OpenTelemetry.Source.StartActivity($"{Name} transition {eventType.Name}");
 
-        var firstEvent = eventType;
+        if (FindTransition(currentState, eventType, context, out var transitionEventType) is not { } transition)
+        {
+            throw new SagaExecutionException(
+                this,
+                $"No transition defined for event '{eventType.Name}' in state '{currentState.State}'.");
+        }
+
+        _logger!.TransitioningState(Name, currentState.State, transitionEventType.Name);
+
+        transition.Action(state, @event);
+        state.State = transition.TransitionTo;
+
+        PublishEvents(context, transition.Publish, state);
+        SendEvents(context, transition.Send, state);
+    }
+
+    /// <summary>
+    /// Finds the transition of a state for an event type, falling back to the transitions of its base types.
+    /// A fault does not select the transition of <c>OnAnyReply</c>.
+    /// </summary>
+    /// <param name="state">The state whose transitions are searched.</param>
+    /// <param name="eventType">The CLR type of the event.</param>
+    /// <param name="context">The consume context that tells whether the event is a fault.</param>
+    /// <param name="transitionEventType">The event type the found transition is registered for.</param>
+    /// <returns>The transition, or <see langword="null"/> if the state has none for the event.</returns>
+    private static SagaTransition? FindTransition(
+        SagaState state,
+        Type eventType,
+        IConsumeContext context,
+        out Type transitionEventType)
+    {
+        // A transition for a base type handles the derived event, and OnAnyReply is registered for object,
+        // the last base type.
         SagaTransition? transition;
-        while (!currentState.Transitions.TryGetValue(eventType, out transition) && eventType.BaseType is not null)
+        while (!state.Transitions.TryGetValue(eventType, out transition) && eventType.BaseType is not null)
         {
             eventType = eventType.BaseType;
         }
 
+        // OnAnyReply handles successful replies only. A fault is handled by OnFault.
         if (eventType == typeof(object)
             && transition?.TransitionKind is SagaTransitionKind.Reply
             && context.Headers.GetMessageKind() == MessageKind.Fault)
@@ -386,20 +437,8 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
             transition = null;
         }
 
-        if (transition is null)
-        {
-            throw new SagaExecutionException(
-                this,
-                $"No transition defined for event '{firstEvent.Name}' in state '{currentState.State}'.");
-        }
-
-        _logger!.TransitioningState(Name, currentState.State, eventType.Name);
-
-        transition.Action(state, @event);
-        state.State = transition.TransitionTo;
-
-        await PublishEventsAsync(context, transition.Publish, state, ct);
-        await SendEventsAsync(context, transition.Send, state, ct);
+        transitionEventType = eventType;
+        return transition;
     }
 
     /// <summary>
@@ -423,8 +462,8 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
 
         if (nextState.OnEntry is { } onEntry)
         {
-            await PublishEventsAsync(context, onEntry.Publish, state, ct);
-            await SendEventsAsync(context, onEntry.Send, state, ct);
+            PublishEvents(context, onEntry.Publish, state);
+            SendEvents(context, onEntry.Send, state);
         }
 
         if (nextState.IsFinal)
@@ -461,7 +500,7 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
 
                 // we do not add the saga-id header to the response, as the saga is already
                 // finished
-                await context.GetBus().ReplyAsync(response, options, ct);
+                context.GetSagaFeature().PendingDispatches.Add((bus, ct) => bus.ReplyAsync(response, options, ct));
             }
 
             await context.GetSagaFeature().Store.DeleteAsync(this, state.Id, ct);
@@ -508,11 +547,7 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
         return await context.GetSagaFeature().Store.LoadAsync<TState>(this, correlationId, ct);
     }
 
-    private async Task PublishEventsAsync(
-        IConsumeContext context,
-        ImmutableArray<SagaEventPublish> publish,
-        TState state,
-        CancellationToken ct)
+    private void PublishEvents(IConsumeContext context, ImmutableArray<SagaEventPublish> publish, TState state)
     {
         if (publish.Length == 0)
         {
@@ -541,7 +576,7 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
 
             var eventType = context.Runtime.GetMessageType(message.GetType());
             var endpoint = context.Runtime.GetPublishEndpoint(eventType);
-            var replyEndpoint = endpoint.Transport.ReplyReceiveEndpoint?.Source.Address;
+            var replyEndpoint = _replyAddresses?.GetValueOrDefault(endpoint.Transport);
 
             options = options with { FaultEndpoint = replyEndpoint };
 
@@ -549,15 +584,11 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
 
             _logger!.PublishingEvent(Name, message.GetType().Name);
 
-            await context.GetBus().PublishAsync(message, options, ct);
+            context.GetSagaFeature().PendingDispatches.Add((bus, ct) => bus.PublishAsync(message, options, ct));
         }
     }
 
-    private async Task SendEventsAsync(
-        IConsumeContext context,
-        ImmutableArray<SagaEventSend> sends,
-        TState state,
-        CancellationToken ct)
+    private void SendEvents(IConsumeContext context, ImmutableArray<SagaEventSend> sends, TState state)
     {
         if (sends.Length == 0)
         {
@@ -587,16 +618,16 @@ public abstract partial class Saga<TState> : Saga where TState : SagaStateBase
             var requestType = context.Runtime.GetMessageType(message.GetType());
             var endpoint = context.Runtime.GetSendEndpoint(requestType);
 
-            // Route replies and faults to the shared reply endpoint, where the saga's reply routes
-            // are bound and correlated by the saga header.
-            var replyEndpoint = endpoint.Transport.ReplyReceiveEndpoint?.Source.Address;
+            // Route replies and faults to the saga's reply endpoint, where the saga's reply routes
+            // correlate them by the saga header.
+            var replyEndpoint = _replyAddresses?.GetValueOrDefault(endpoint.Transport);
             options = options with { ReplyEndpoint = replyEndpoint, FaultEndpoint = replyEndpoint };
 
             options.Headers.Set(SagaContextData.SagaId, state.Id.ToString("D"));
 
             _logger!.SendingEvent(Name, message.GetType().Name);
 
-            await context.GetBus().SendAsync(message, options, ct);
+            context.GetSagaFeature().PendingDispatches.Add((bus, ct) => bus.SendAsync(message, options, ct));
         }
     }
 }
@@ -655,6 +686,12 @@ internal static partial class Logs
 
     [LoggerMessage(LogLevel.Information, "Saga completed {SagaName} {SagaId}")]
     public static partial void SagaCompleted(this ILogger logger, string sagaName, Guid sagaId);
+
+    [LoggerMessage(LogLevel.Debug, "Discarded an acknowledgement that no transition handles {SagaName} {SagaId} {State}")]
+    public static partial void DiscardedAcknowledgement(this ILogger logger, string sagaName, Guid sagaId, string state);
+
+    [LoggerMessage(LogLevel.Debug, "Discarded an acknowledgement for a saga without state {SagaName} {SagaId}")]
+    public static partial void DiscardedAcknowledgementWithoutState(this ILogger logger, string sagaName, Guid sagaId);
 
     [LoggerMessage(LogLevel.Warning, "Failed to cancel scheduled message {Token} for saga {SagaName} ({SagaId})")]
     public static partial void FailedToCancelScheduledMessage(

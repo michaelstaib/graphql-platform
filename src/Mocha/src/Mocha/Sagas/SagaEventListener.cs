@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Mocha.Events;
 
 namespace Mocha.Sagas;
 
@@ -18,12 +19,23 @@ public sealed class SagaConsumer(Saga saga) : Consumer(saga.GetType())
     {
         descriptor.Name(saga.Name);
 
+        var hasReplyTransition = false;
+        var hasAcknowledgementTransition = false;
+
         foreach (var state in saga.States)
         {
             foreach (var transition in state.Value.Transitions)
             {
                 var eventType = transition.Key;
                 var transitionKind = transition.Value.TransitionKind;
+
+                if (transitionKind == SagaTransitionKind.Reply)
+                {
+                    hasReplyTransition = true;
+
+                    // OnAnyReply (object) and OnReply<AcknowledgedEvent> already select acknowledgements.
+                    hasAcknowledgementTransition |= eventType.IsAssignableFrom(typeof(AcknowledgedEvent));
+                }
 
                 descriptor.AddRoute(r =>
                 {
@@ -40,13 +52,24 @@ public sealed class SagaConsumer(Saga saga) : Consumer(saga.GetType())
 
                     if (transitionKind == SagaTransitionKind.Reply)
                     {
-                        // A reply lands on the shared reply endpoint alongside non saga (RPC) replies.
                         // The saga-id header marks replies to the saga's own requests, so the route
                         // selects only those. A typed reply additionally narrows by its message type.
                         r.Condition(CreateReplyCondition(eventType));
                     }
                 });
             }
+        }
+
+        // A saga with a reply transition stamps its own endpoint as the reply address of every command
+        // it sends. A handler without a response type replies to that address with an AcknowledgedEvent,
+        // and this route selects it, so the acknowledgement reaches the saga instead of the skipped queue.
+        // The saga discards the acknowledgements that no transition handles.
+        if (hasReplyTransition && !hasAcknowledgementTransition)
+        {
+            descriptor.AddRoute(r =>
+                r.MessageType(typeof(AcknowledgedEvent))
+                    .Kind(InboundRouteKind.Reply)
+                    .Condition(CreateReplyCondition(typeof(AcknowledgedEvent))));
         }
     }
 
@@ -90,10 +113,21 @@ public sealed class SagaConsumer(Saga saga) : Consumer(saga.GetType())
 
         var ct = context.CancellationToken;
 
+        // a retried attempt starts without the messages of the failed attempt
+        sagaFeature.PendingDispatches.Clear();
+
         await using var transaction = await sagaFeature.Store.StartTransactionAsync(ct);
 
         await saga.HandleEvent(context);
 
         await transaction.CommitAsync(ct);
+
+        // The messages leave after the state is committed, so a reply cannot arrive before the state
+        // that handles it exists.
+        var bus = context.GetBus();
+        foreach (var dispatch in sagaFeature.PendingDispatches)
+        {
+            await dispatch(bus, ct);
+        }
     }
 }

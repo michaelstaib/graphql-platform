@@ -136,6 +136,12 @@ public sealed class DocumentValidatorContext : IFeatureProvider
     public bool FatalErrorDetected { get; set; }
 
     /// <summary>
+    /// Defines that the result of the running non-cacheable rule is the same for every request
+    /// that uses the current document.
+    /// </summary>
+    internal bool IsRequestIndependent { get; set; }
+
+    /// <summary>
     /// The maximum number of locations per error.
     /// </summary>
     public int MaxLocationsPerError => _maxLocationsPerError;
@@ -306,6 +312,7 @@ public sealed class DocumentValidatorContext : IFeatureProvider
         Document = null!;
         UnexpectedErrorsDetected = false;
         FatalErrorDetected = false;
+        IsRequestIndependent = false;
         _features.Reset();
 
         Path.Clear();
@@ -389,6 +396,15 @@ public sealed class DocumentValidatorContext : IFeatureProvider
         {
             _maxAllowedFragmentVisits = maxAllowedFragmentVisits;
         }
+
+        /// <summary>
+        /// Returns <c>true</c> if the fragment of <paramref name="spread"/> exists and was not
+        /// visited yet, but the fragment visits are used up.
+        /// </summary>
+        internal bool IsRefusedByVisitLimit(FragmentSpreadNode spread)
+            => _fragmentVisits >= _maxAllowedFragmentVisits
+                && !_visited.Contains(spread.Name.Value)
+                && _fragments.ContainsKey(spread.Name.Value);
 
         internal void Reset()
         {

@@ -1,13 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import type { MouseEvent } from "react";
-import { ChevronDownIcon } from "@/src/icons/ChevronDown";
+import type { MouseEvent, ReactNode } from "react";
 import { WarningIcon } from "@/src/icons/Warning";
 import { useBenchmarkPreferences } from "@/src/components/benchmarks/BenchmarkPreferences";
 import { BenchmarkColumnHint } from "@/src/components/benchmarks/BenchmarkColumnHint";
-import { BenchmarkPreviewBadge } from "@/src/components/benchmarks/BenchmarkPreviewBadge";
+import { BenchmarkHintButton } from "@/src/components/benchmarks/BenchmarkHintButton";
 import {
+  BenchmarkHintTooltip,
+  HOVERED_HINT_BUTTON,
+} from "@/src/components/benchmarks/BenchmarkHintTooltip";
+import { BenchmarkPreviewBadge } from "@/src/components/benchmarks/BenchmarkPreviewBadge";
+import { SUBSECTION_HEADING } from "@/src/components/benchmarks/benchmarkHeadings";
+import { togglePin } from "@/src/components/benchmarks/useSeriesHighlight";
+import {
+  formatKibibytes,
   formatLatency,
   formatMemory,
   formatNumber,
@@ -15,6 +22,7 @@ import {
   isMeasured,
   isReliable,
   isWinner,
+  memoryPerRequest,
   type ResultsGroup,
 } from "@/src/components/benchmarks/benchmarkView";
 import {
@@ -28,7 +36,7 @@ import {
 } from "@/src/helpers/benchmarkReport";
 
 const theme = {
-  heading: "font-heading text-h6 text-cc-heading pb-3 font-semibold",
+  heading: SUBSECTION_HEADING,
   scroller: "overflow-x-auto",
   table: "w-full min-w-256 table-fixed text-left text-sm",
   caption: "sr-only",
@@ -61,38 +69,42 @@ const theme = {
     "border-cc-card-border bg-cc-white/5 border-b [&>th]:shadow-[inset_3px_0_0_0_var(--color-cc-accent)]",
 } as const;
 
-/** Toggles the selected series for a click on a result row, ignoring clicks on its links and controls. */
+/** Toggles the selection of a series for a click on a result row, ignoring clicks on its links and controls. */
 function useRowSelection() {
   const { setPinnedSeries } = useBenchmarkPreferences();
   return (event: MouseEvent<HTMLElement>, id: string) => {
     if ((event.target as HTMLElement).closest("a, button, summary")) {
       return;
     }
-    setPinnedSeries((current) => (current === id ? undefined : id));
+    setPinnedSeries((current) => togglePin(current, id));
   };
 }
 
-/** Returns the row style: the winner and failure styles without a selection, otherwise an accent bar on the selected row while the others fade. */
+/** Returns the id of a column hint tooltip, which the desktop table and the mobile list of a table share. */
+const columnHintId = (headingId: string, column: number) =>
+  `${headingId}-hint-${column}`;
+
+/** Returns the row style: the winner and failure styles without a selection, otherwise an accent bar on the selected rows while the others fade. */
 const rowClass = (
-  selected: string | undefined,
+  selected: readonly string[],
   id: string,
   winner: boolean,
   failed: boolean,
 ) =>
-  selected === id
+  selected.includes(id)
     ? theme.selectedRow
-    : `${failed ? theme.failedRow : winner && selected === undefined ? theme.winnerRow : theme.row} ${selected === undefined ? "" : theme.faded}`;
+    : `${failed ? theme.failedRow : winner && selected.length === 0 ? theme.winnerRow : theme.row} ${selected.length === 0 ? "" : theme.faded}`;
 
 /** Returns the mobile counterpart of {@link rowClass} for a result list item. */
 const mobileRowClass = (
-  selected: string | undefined,
+  selected: readonly string[],
   id: string,
   winner: boolean,
   failed: boolean,
 ) =>
-  selected === id
+  selected.includes(id)
     ? "bg-cc-white/5 shadow-[inset_3px_0_0_0_var(--color-cc-accent)]"
-    : `${failed ? "bg-cc-danger/5 shadow-[inset_3px_0_0_0_var(--color-cc-danger)]" : winner && selected === undefined ? "bg-cc-accent/10 shadow-[inset_3px_0_0_0_var(--color-cc-accent)]" : ""} ${selected === undefined ? "" : theme.faded}`;
+    : `${failed ? "bg-cc-danger/5 shadow-[inset_3px_0_0_0_var(--color-cc-danger)]" : winner && selected.length === 0 ? "bg-cc-accent/10 shadow-[inset_3px_0_0_0_var(--color-cc-accent)]" : ""} ${selected.length === 0 ? "" : theme.faded}`;
 
 interface BenchmarkResultsTableProps {
   readonly id: string;
@@ -100,23 +112,26 @@ interface BenchmarkResultsTableProps {
   readonly caption: string;
   readonly group: ResultsGroup;
   readonly variants: ReadonlyMap<string, BenchmarkCatalogEntry>;
-  /** The selected variant shown in this scenario, or undefined when none is selected. */
-  readonly selected: string | undefined;
+  /** The selected variants shown in this scenario, empty when none is selected. */
+  readonly selected: readonly string[];
   readonly measuredRuns: number | undefined;
   readonly gatewayThreads: number | undefined;
   /** A sentence appended to the requests per second explanation, or undefined for none. */
   readonly throughputNote?: string;
+  /** A control shown at the end of the heading row, or undefined for none. */
+  readonly action?: ReactNode;
 }
 
 const COLUMNS = [
-  { label: "Router/gateway", width: "w-[25%]" },
-  { label: "Median requests/s", width: "w-[15%]" },
+  { label: "Router/gateway", width: "w-[20%]" },
+  { label: "Median requests/s", width: "w-[12%]" },
   { label: "p95 latency", width: "w-[9%]" },
-  { label: "p99.9 latency", width: "w-[10%]" },
-  { label: "Peak memory", width: "w-[10%]" },
-  { label: "Average CPU", width: "w-[11%]" },
+  { label: "p99.9 latency", width: "w-[9.5%]" },
+  { label: "Peak memory", width: "w-[9.5%]" },
+  { label: "Memory/request", width: "w-[11%]" },
+  { label: "Average CPU", width: "w-[10%]" },
   { label: "Reliability", width: "w-[9%]" },
-  { label: "Run variance", width: "w-[11%]" },
+  { label: "Run variance", width: "w-[10%]" },
 ] as const;
 
 const columnHints = (
@@ -128,10 +143,24 @@ const columnHints = (
   "95% of requests completed within this time.",
   "99.9% of requests completed within this time.",
   "The highest sampled resident memory (RSS) of the router process and its child processes.",
+  "Peak memory divided by median requests per second. Lower means less memory for the same throughput.",
   `Average utilization of the router’s ${gatewayThreads ?? "allocated"} hardware threads. 100% means both of its cores are fully busy on both threads.`,
   "The share of requests that passed the checks for HTTP status, GraphQL errors and response structure.",
   "How much throughput varied across the measured runs, as the coefficient of variation.",
 ];
+
+/** A chevron pointing down, as a mask. */
+const CHEVRON_DOWN = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M233.4 406.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L256 338.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z'/%3E%3C/svg%3E")`;
+
+/** Shows the column hint that a hovered or keyboard focused hint button of the same table references, and draws the chevron of the metrics toggle. */
+const RESULTS_STYLES =
+  Array.from(
+    { length: COLUMNS.length },
+    (_, index) =>
+      `[data-hints]:has(${HOVERED_HINT_BUTTON}[data-hint-key="${index}"]) [data-hint][data-hint-key="${index}"],:root:not(:has([data-hint-button]:hover)) [data-hints]:has([data-hint-button][data-hint-key="${index}"]:focus-visible:not([data-hint-dismissed])) [data-hint][data-hint-key="${index}"]{display:block}`,
+  ).join("") +
+  `[data-metrics-toggle]::before{content:"";width:.625rem;height:.625rem;background:currentColor;mask:${CHEVRON_DOWN} center/contain no-repeat}` +
+  "details[open]>[data-metrics-toggle]::before{rotate:180deg}";
 
 /** One composition table of a scenario: every row, its throughput bar, latency, resources, reliability and variance. */
 export function BenchmarkResultsTable({
@@ -144,6 +173,7 @@ export function BenchmarkResultsTable({
   measuredRuns,
   gatewayThreads,
   throughputNote,
+  action,
 }: BenchmarkResultsTableProps) {
   const hints = columnHints(gatewayThreads, throughputNote);
   const features = decisiveFeatures(variants);
@@ -168,19 +198,42 @@ export function BenchmarkResultsTable({
   );
 
   return (
-    <div data-benchmark-scroll-anchor={`table-${id}`}>
-      <h3 id={headingId} className={theme.heading}>
-        {group.id === "composite-schema" ? (
-          <Link
-            href="https://graphql.github.io/graphql-federation-spec/"
-            className="hover:text-cc-accent underline-offset-4 hover:underline"
-          >
-            {title}
-          </Link>
-        ) : (
-          title
-        )}
-      </h3>
+    <div data-benchmark-scroll-anchor={`table-${id}`} data-hints>
+      <style href="benchmark-results" precedence="default">
+        {RESULTS_STYLES}
+      </style>
+      {hints.map(
+        (hint, index) =>
+          hint !== undefined && (
+            <BenchmarkHintTooltip
+              key={index}
+              id={columnHintId(headingId, index)}
+              hintKey={String(index)}
+            >
+              {hint}
+            </BenchmarkHintTooltip>
+          ),
+      )}
+      <div className="flex items-start justify-between gap-4 pb-4">
+        <div>
+          <h3 id={headingId} className={theme.heading}>
+            {group.id === "composite-schema" ? (
+              <Link
+                href="https://graphql.github.io/graphql-federation-spec/"
+                className="hover:text-cc-accent underline-offset-4 hover:underline"
+              >
+                {title}
+              </Link>
+            ) : (
+              title
+            )}
+          </h3>
+          <p className="text-caption text-cc-ink-dim mt-1 max-w-3xl">
+            {group.description}
+          </p>
+        </div>
+        {action}
+      </div>
       <BenchmarkMobileResults
         group={group}
         variants={variants}
@@ -213,9 +266,11 @@ export function BenchmarkResultsTable({
                   <span className="whitespace-nowrap">
                     {column.label}
                     {hints[index] !== undefined && (
-                      <BenchmarkColumnHint label={column.label}>
-                        {hints[index]}
-                      </BenchmarkColumnHint>
+                      <BenchmarkHintButton
+                        label={column.label}
+                        tooltipId={columnHintId(headingId, index)}
+                        hintKey={String(index)}
+                      />
                     )}
                   </span>
                 </th>
@@ -228,7 +283,11 @@ export function BenchmarkResultsTable({
               const runs = row.throughput?.runsRps?.length ?? measuredRuns;
               const winner = isWinner(row, group);
               const failed = row.status === "failed";
+              const preview = isPreview(entry.variant);
               const value = `${theme.cell} ${theme.value} text-right whitespace-nowrap tabular-nums`;
+              const perRequest = isMeasured(row)
+                ? memoryPerRequest(row)
+                : undefined;
               return (
                 <tr
                   key={row.variant}
@@ -261,7 +320,10 @@ export function BenchmarkResultsTable({
                   ) : (
                     <>
                       <td className={`${theme.cell} ${pad(1)}`}>
-                        <div className="flex items-center gap-3">
+                        <div
+                          className="flex items-center gap-3"
+                          data-nosnippet={preview ? "" : undefined}
+                        >
                           <span
                             className={`w-12 shrink-0 text-right tabular-nums ${winner ? theme.winnerRps : failed ? theme.failedRps : theme.rps}`}
                           >
@@ -286,61 +348,85 @@ export function BenchmarkResultsTable({
                         </div>
                       </td>
                       <td className={`${value} ${pad(2)}`}>
-                        {row.latencyMs ? (
-                          <>
-                            {formatLatency(row.latencyMs.p95)}
-                            {unit("ms")}
-                          </>
-                        ) : (
-                          notReported
-                        )}
+                        <NoSnippet active={preview}>
+                          {row.latencyMs ? (
+                            <>
+                              {formatLatency(row.latencyMs.p95)}
+                              {unit("ms")}
+                            </>
+                          ) : (
+                            notReported
+                          )}
+                        </NoSnippet>
                       </td>
                       <td className={`${value} ${pad(3)}`}>
-                        {row.latencyMs ? (
-                          <>
-                            {formatLatency(row.latencyMs.p99_9)}
-                            {unit("ms")}
-                          </>
-                        ) : (
-                          notReported
-                        )}
+                        <NoSnippet active={preview}>
+                          {row.latencyMs ? (
+                            <>
+                              {formatLatency(row.latencyMs.p99_9)}
+                              {unit("ms")}
+                            </>
+                          ) : (
+                            notReported
+                          )}
+                        </NoSnippet>
                       </td>
                       <td className={`${value} ${pad(4)}`}>
-                        {row.memory ? (
-                          <>
-                            {formatMemory(row.memory.peakRssKiB)}
-                            {unit("MiB")}
-                          </>
-                        ) : (
-                          notReported
-                        )}
+                        <NoSnippet active={preview}>
+                          {row.memory ? (
+                            <>
+                              {formatMemory(row.memory.peakRssKiB)}
+                              {unit("MiB")}
+                            </>
+                          ) : (
+                            notReported
+                          )}
+                        </NoSnippet>
                       </td>
                       <td className={`${value} ${pad(5)}`}>
-                        {row.cpu ? (
-                          <>
-                            {row.cpu.avgUtilizationPercent.toFixed(2)}
-                            {unit("%")}
-                          </>
-                        ) : (
-                          notReported
-                        )}
+                        <NoSnippet active={preview}>
+                          {perRequest !== undefined ? (
+                            <>
+                              {formatKibibytes(perRequest)}
+                              {unit("KiB")}
+                            </>
+                          ) : (
+                            notReported
+                          )}
+                        </NoSnippet>
+                      </td>
+                      <td className={`${value} ${pad(6)}`}>
+                        <NoSnippet active={preview}>
+                          {row.cpu ? (
+                            <>
+                              {row.cpu.avgUtilizationPercent.toFixed(2)}
+                              {unit("%")}
+                            </>
+                          ) : (
+                            notReported
+                          )}
+                        </NoSnippet>
                       </td>
                       <td
-                        className={`${value} ${pad(6)} ${isReliable(row) ? "" : theme.danger}`}
+                        className={`${value} ${pad(7)} ${isReliable(row) ? "" : theme.danger}`}
                       >
-                        {formatReliability(
-                          row.requests.successful,
-                          row.requests.total,
-                        )}
+                        <NoSnippet active={preview}>
+                          {formatReliability(
+                            row.requests.successful,
+                            row.requests.total,
+                          )}
+                        </NoSnippet>
                       </td>
-                      <td className={`${value} ${pad(7)}`}>
-                        {runs !== 1 ? (
-                          `±${row.throughput.cvPercent.toFixed(1)}%`
-                        ) : (
-                          <span title="Variation cannot be estimated from one measured run">
-                            —
-                          </span>
-                        )}
+                      <td className={`${value} ${pad(8)}`}>
+                        <NoSnippet active={preview}>
+                          {runs !== 1 ? (
+                            `±${row.throughput.cvPercent.toFixed(1)}%`
+                          ) : (
+                            <span title="Variation cannot be estimated from one measured run">
+                              —
+                            </span>
+                          )}
+                        </NoSnippet>
                       </td>
                     </>
                   )}
@@ -362,14 +448,14 @@ interface RouterIdentityProps {
 function RouterIdentity({ entry, features }: RouterIdentityProps) {
   const name = variantName(entry);
   const link = gatewayLink(entry.gateway);
+  const preview = isPreview(entry.variant);
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div
+      className="flex flex-wrap items-center gap-x-2 gap-y-1"
+      data-nosnippet={preview ? "" : undefined}
+    >
       <span className="inline-flex items-center gap-1.5">
-        {isPreview(
-          entry.variant.version,
-          entry.variant.platform,
-          entry.variant.preview,
-        ) && <BenchmarkPreviewBadge />}
+        {preview && <BenchmarkPreviewBadge />}
         {link ? (
           <Link href={link} className={theme.nameLink}>
             {name}
@@ -437,8 +523,8 @@ function BenchmarkFailureBadge({
 interface BenchmarkMobileResultsProps {
   readonly group: ResultsGroup;
   readonly variants: ReadonlyMap<string, BenchmarkCatalogEntry>;
-  /** The selected variant shown in this scenario, or undefined when none is selected. */
-  readonly selected: string | undefined;
+  /** The selected variants shown in this scenario, empty when none is selected. */
+  readonly selected: readonly string[];
   readonly measuredRuns: number | undefined;
   readonly hints: readonly (string | undefined)[];
   readonly headingId: string;
@@ -460,9 +546,13 @@ function BenchmarkMobileResults({
         <span>Router</span>
         <span className="whitespace-nowrap">
           Median requests/s
-          <BenchmarkColumnHint label="Median requests/s">
-            {hints[1]}
-          </BenchmarkColumnHint>
+          {hints[1] !== undefined && (
+            <BenchmarkHintButton
+              label="Median requests/s"
+              tooltipId={columnHintId(headingId, 1)}
+              hintKey="1"
+            />
+          )}
         </span>
       </div>
       <ul aria-labelledby={headingId}>
@@ -471,6 +561,10 @@ function BenchmarkMobileResults({
           const winner = isWinner(row, group);
           const failed = row.status === "failed";
           const runs = row.throughput?.runsRps?.length ?? measuredRuns;
+          const preview = isPreview(entry.variant);
+          const perRequest = isMeasured(row)
+            ? memoryPerRequest(row)
+            : undefined;
           const metrics = isMeasured(row)
             ? [
                 row.latencyMs ? `${formatLatency(row.latencyMs.p95)} ms` : "—",
@@ -478,6 +572,9 @@ function BenchmarkMobileResults({
                   ? `${formatLatency(row.latencyMs.p99_9)} ms`
                   : "—",
                 row.memory ? `${formatMemory(row.memory.peakRssKiB)} MiB` : "—",
+                perRequest !== undefined
+                  ? `${formatKibibytes(perRequest)} KiB`
+                  : "—",
                 row.cpu ? `${row.cpu.avgUtilizationPercent.toFixed(2)}%` : "—",
                 formatReliability(row.requests.successful, row.requests.total),
                 runs === 1 ? "—" : `±${row.throughput.cvPercent.toFixed(1)}%`,
@@ -490,91 +587,106 @@ function BenchmarkMobileResults({
               className={`border-cc-card-border cursor-pointer border-b px-3 py-4 ${mobileRowClass(selected, row.variant, winner, failed)}`}
               onClick={(event) => onRowClick(event, row.variant)}
             >
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 text-sm">
-                <div>
-                  <RouterIdentity
-                    entry={entry}
-                    features={features.get(row.variant)!}
-                  />
-                  {failed && isMeasured(row) && (
-                    <BenchmarkFailureBadge
-                      completedRuns={row.throughput.runsRps?.length}
-                      measuredRuns={measuredRuns}
+              <div data-nosnippet={preview ? "" : undefined}>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 text-sm">
+                  <div>
+                    <RouterIdentity
+                      entry={entry}
+                      features={features.get(row.variant)!}
                     />
+                    {failed && isMeasured(row) && (
+                      <BenchmarkFailureBadge
+                        completedRuns={row.throughput.runsRps?.length}
+                        measuredRuns={measuredRuns}
+                      />
+                    )}
+                  </div>
+                  {isMeasured(row) && (
+                    <div className="min-w-20 text-right">
+                      <p
+                        className={
+                          winner
+                            ? theme.winnerRps
+                            : failed
+                              ? theme.failedRps
+                              : theme.rps
+                        }
+                      >
+                        {formatNumber(row.throughput.medianRps)}
+                        {winner && (
+                          <span className="sr-only">, highest reported</span>
+                        )}
+                      </p>
+                      <div
+                        className={`${theme.barTrack} mt-2`}
+                        aria-hidden="true"
+                      >
+                        <div
+                          className={`h-full ${winner ? theme.winnerBar : failed ? theme.failedBar : theme.bar}`}
+                          style={{
+                            width: `${group.maxRps === 0 ? 0 : (row.throughput.medianRps / group.maxRps) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
-                {isMeasured(row) && (
-                  <div className="min-w-20 text-right">
-                    <p
-                      className={
-                        winner
-                          ? theme.winnerRps
-                          : failed
-                            ? theme.failedRps
-                            : theme.rps
-                      }
-                    >
-                      {formatNumber(row.throughput.medianRps)}
-                      {winner && (
-                        <span className="sr-only">, highest reported</span>
-                      )}
-                    </p>
-                    <div
-                      className={`${theme.barTrack} mt-2`}
-                      aria-hidden="true"
-                    >
-                      <div
-                        className={`h-full ${winner ? theme.winnerBar : failed ? theme.failedBar : theme.bar}`}
-                        style={{
-                          width: `${group.maxRps === 0 ? 0 : (row.throughput.medianRps / group.maxRps) * 100}%`,
-                        }}
-                      />
-                    </div>
+                {!isMeasured(row) ? (
+                  <div className="mt-3 text-left text-sm">
+                    <BenchmarkFailure />
                   </div>
+                ) : (
+                  <details className="mt-3">
+                    <summary
+                      data-metrics-toggle
+                      className="text-cc-ink-dim hover:text-cc-prose focus-visible:outline-cc-accent flex w-fit cursor-pointer list-none items-center gap-1.5 rounded text-xs focus-visible:outline-2 [&::-webkit-details-marker]:hidden"
+                    >
+                      All metrics
+                      <span className="sr-only"> for {variantName(entry)}</span>
+                    </summary>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+                      {metrics.map((metric, index) => (
+                        <div key={COLUMNS[index + 2].label}>
+                          <dt className="text-cc-ink-dim">
+                            {COLUMNS[index + 2].label}
+                            {hints[index + 2] !== undefined && (
+                              <BenchmarkHintButton
+                                label={COLUMNS[index + 2].label}
+                                tooltipId={columnHintId(headingId, index + 2)}
+                                hintKey={String(index + 2)}
+                              />
+                            )}
+                          </dt>
+                          <dd
+                            className={`mt-1 font-mono ${index === 5 && !isReliable(row) ? theme.danger : "text-cc-heading"}`}
+                            title={
+                              index === 6 && runs === 1
+                                ? "Variation cannot be estimated from one measured run"
+                                : undefined
+                            }
+                          >
+                            {metric}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </details>
                 )}
               </div>
-              {!isMeasured(row) ? (
-                <div className="mt-3 text-left text-sm">
-                  <BenchmarkFailure />
-                </div>
-              ) : (
-                <details className="group mt-3">
-                  <summary className="text-cc-ink-dim hover:text-cc-prose focus-visible:outline-cc-accent flex w-fit cursor-pointer list-none items-center gap-1.5 rounded text-xs focus-visible:outline-2 [&::-webkit-details-marker]:hidden">
-                    <ChevronDownIcon
-                      aria-hidden="true"
-                      className="size-2.5 fill-current group-open:rotate-180"
-                    />
-                    All metrics
-                    <span className="sr-only"> for {variantName(entry)}</span>
-                  </summary>
-                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-                    {metrics.map((metric, index) => (
-                      <div key={COLUMNS[index + 2].label}>
-                        <dt className="text-cc-ink-dim">
-                          {COLUMNS[index + 2].label}
-                          <BenchmarkColumnHint label={COLUMNS[index + 2].label}>
-                            {hints[index + 2]}
-                          </BenchmarkColumnHint>
-                        </dt>
-                        <dd
-                          className={`mt-1 font-mono ${index === 4 && !isReliable(row) ? theme.danger : "text-cc-heading"}`}
-                          title={
-                            index === 5 && runs === 1
-                              ? "Variation cannot be estimated from one measured run"
-                              : undefined
-                          }
-                        >
-                          {metric}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                </details>
-              )}
             </li>
           );
         })}
       </ul>
     </div>
   );
+}
+
+interface NoSnippetProps {
+  readonly active: boolean;
+  readonly children: ReactNode;
+}
+
+/** Keeps its children out of search result snippets when active. */
+function NoSnippet({ active, children }: NoSnippetProps) {
+  return active ? <span data-nosnippet="">{children}</span> : children;
 }

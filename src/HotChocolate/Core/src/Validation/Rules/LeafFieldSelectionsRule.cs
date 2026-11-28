@@ -7,7 +7,7 @@ internal sealed class LeafFieldSelectionsRule : IDocumentValidatorRule
 {
     private readonly bool _enableEmptySelectionSets;
 
-    public LeafFieldSelectionsRule(bool enableEmptySelectionSets = false)
+    public LeafFieldSelectionsRule(bool enableEmptySelectionSets)
     {
         _enableEmptySelectionSets = enableEmptySelectionSets;
     }
@@ -29,7 +29,7 @@ internal sealed class LeafFieldSelectionsRule : IDocumentValidatorRule
             {
                 if (operationDef.SelectionSet.Selections.Count == 0)
                 {
-                    if (!_enableEmptySelectionSets || operationDef.Operation == OperationType.Subscription)
+                    if (!_enableEmptySelectionSets)
                     {
                         context.ReportError(
                             context.NoSelectionOnRootType(
@@ -102,6 +102,22 @@ internal sealed class LeafFieldSelectionsRule : IDocumentValidatorRule
     {
         var namedParentType = parentType.NamedType();
 
+        // __typename can be selected on unions and interfaces, which don't have this field,
+        // so we need this special case for it.
+        if (IntrospectionFieldNames.TypeName.Equals(field.Name.Value, StringComparison.Ordinal))
+        {
+            if (field.SelectionSet is not null)
+            {
+                context.ReportError(
+                    context.LeafFieldsCannotHaveSelections(
+                        field,
+                        namedParentType,
+                        new NonNullType(context.Schema.Types["String"])));
+            }
+
+            return;
+        }
+
         if (namedParentType is not IComplexTypeDefinition complex
             || !complex.Fields.TryGetField(field.Name.Value, out var fieldDef))
         {
@@ -131,7 +147,7 @@ internal sealed class LeafFieldSelectionsRule : IDocumentValidatorRule
                 if (!_enableEmptySelectionSets)
                 {
                     context.ReportError(
-                        context.NoSelectionOnCompositeField(field, complex, fieldDef.Type));
+                        context.EmptySelectionSetOnCompositeField(field, complex, fieldDef.Type));
                 }
             }
             else

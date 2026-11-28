@@ -1,0 +1,367 @@
+title: Execute_Should_Reenter_Requiring_Schema_When_Nested_Required_Field_Follows_Remote_First_Level
+request:
+  document: |
+    {
+      orders {
+        id
+        customer {
+          id
+        }
+        price
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "orders": [
+          {
+            "id": 1,
+            "customer": {
+              "id": 20
+            },
+            "price": 98
+          },
+          {
+            "id": 2,
+            "customer": {
+              "id": 30
+            },
+            "price": 197
+          },
+          {
+            "id": 3,
+            "customer": {
+              "id": 20
+            },
+            "price": 298
+          }
+        ]
+      }
+    }
+sourceSchemas:
+  - name: a
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orderById(id: Int!): Order @lookup @internal
+        customerById(id: Int!): Customer @lookup @internal
+      }
+
+      type Customer @key(fields: "id") {
+        id: Int! @shareable
+        discount: Int!
+      }
+
+      type Order @key(fields: "id") {
+        price(discount: Int! @require(field: "customer.discount")): Int!
+        id: Int! @shareable
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_ebccb198_2($__fusion_1_id: Int!, $__fusion_2_discount: Int!) {
+              orderById(id: $__fusion_1_id) {
+                price(discount: $__fusion_2_discount)
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_1_id": 1,
+                "__fusion_2_discount": 2
+              },
+              {
+                "__fusion_1_id": 2,
+                "__fusion_2_discount": 3
+              },
+              {
+                "__fusion_1_id": 3,
+                "__fusion_2_discount": 2
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "orderById": {
+                    "price": 98
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "orderById": {
+                    "price": 197
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "orderById": {
+                    "price": 298
+                  }
+                }
+              }
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          document: |
+            query Op_ebccb198_3($__fusion_3_id: Int!) {
+              customerById(id: $__fusion_3_id) {
+                discount
+              }
+            }
+          variables: |
+            [
+              {
+                "__fusion_3_id": 20
+              },
+              {
+                "__fusion_3_id": 30
+              }
+            ]
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "customerById": {
+                    "discount": 2
+                  }
+                }
+              }
+            - |
+              {
+                "data": {
+                  "customerById": {
+                    "discount": 3
+                  }
+                }
+              }
+  - name: b
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        orders: [Order!]!
+      }
+
+      type Customer {
+        id: Int! @shareable
+      }
+
+      type Order {
+        id: Int! @shareable
+        customer: Customer!
+      }
+    interactions:
+      - request:
+          accept: application/jsonl; charset=utf-8, text/event-stream; charset=utf-8, application/graphql-response+json; charset=utf-8, application/json; charset=utf-8
+          kind: OperationBatch
+          items:
+            - document: |
+                query Op_ebccb198_1 {
+                  orders {
+                    id
+                    customer {
+                      id
+                    }
+                  }
+                }
+            - document: |
+                query Op_ebccb198_4 {
+                  orders {
+                    customer {
+                      id
+                    }
+                  }
+                }
+        response:
+          contentType: application/jsonl; charset=utf-8
+          results:
+            - |
+              {
+                "data": {
+                  "orders": [
+                    {
+                      "id": 1,
+                      "customer": {
+                        "id": 20
+                      }
+                    },
+                    {
+                      "id": 2,
+                      "customer": {
+                        "id": 30
+                      }
+                    },
+                    {
+                      "id": 3,
+                      "customer": {
+                        "id": 20
+                      }
+                    }
+                  ]
+                }
+              }
+            - |
+              {
+                "data": {
+                  "orders": [
+                    {
+                      "customer": {
+                        "id": 20
+                      }
+                    },
+                    {
+                      "customer": {
+                        "id": 30
+                      }
+                    },
+                    {
+                      "customer": {
+                        "id": 20
+                      }
+                    }
+                  ]
+                }
+              }
+operationPlan:
+  id: eb11316359f2c0b70e0c2918752eadb447d876f9a6a5e94ad76eb27c5b793ab0
+  operation:
+    - document: |
+        {
+          orders {
+            id
+            id @fusion__requirement
+            customer {
+              id
+            }
+            customer @fusion__requirement {
+              discount @fusion__requirement
+              id @fusion__requirement
+            }
+            price
+          }
+        }
+      kind: Query
+      id: 78a85fbcfea4c59cd72a9f76ac533b1b
+      hash: ebccb1982ad41bbb4a98b4dc2b90a971
+      shortHash: ebccb198
+  searchSpace: 1
+  expandedNodes: 2
+  nodes:
+    - id: 2
+      type: Operation
+      schema: a
+      operation:
+        name: Op_ebccb198_2
+        kind: Query
+        document: |
+          query Op_ebccb198_2($__fusion_1_id: Int!, $__fusion_2_discount: Int!) {
+            orderById(id: $__fusion_1_id) {
+              price(discount: $__fusion_2_discount)
+            }
+          }
+        hash: 5de936ee0f5a06a31ca768d624c3ed27120e9e7490c4f881e24d84963b548c93
+        shortHash: 5de936ee
+        xxHash: 1767124354406809897
+      lookupTypeName: Order
+      resultSelectionSet: >-
+        { price }
+      source: $.orderById
+      target: $.orders
+      requirements:
+        - name: __fusion_1_id
+          type: Int!
+          path: $.orders
+          selectionMap: >-
+            id
+        - name: __fusion_2_discount
+          type: Int!
+          path: $.orders
+          selectionMap: >-
+            customer.discount
+      dependencies:
+        - id: 3
+        - id: 5
+    - id: 3
+      type: Operation
+      schema: a
+      operation:
+        name: Op_ebccb198_3
+        kind: Query
+        document: |
+          query Op_ebccb198_3($__fusion_3_id: Int!) {
+            customerById(id: $__fusion_3_id) {
+              discount
+            }
+          }
+        hash: ea6bb9bc199a57a74861db2f028741b8a91bfb652c36821bb674e2ff54014a9c
+        shortHash: ea6bb9bc
+        xxHash: 5723685320215033243
+      lookupTypeName: Customer
+      resultSelectionSet: >-
+        { discount }
+      source: $.customerById
+      target: $.orders.customer
+      requirements:
+        - name: __fusion_3_id
+          type: Int!
+          path: $.orders.customer
+          selectionMap: >-
+            id
+      dependencies:
+        - id: 5
+    - id: 1
+      type: Operation
+      schema: b
+      operation:
+        name: Op_ebccb198_1
+        kind: Query
+        document: |
+          query Op_ebccb198_1 {
+            orders {
+              id
+              customer {
+                id
+              }
+            }
+          }
+        hash: 93d49148107e9208938bade9303aeeed9a82fed0e22b0bec4d58c952deedaef2
+        shortHash: 93d49148
+        xxHash: 15420976556609687270
+      resultSelectionSet: >-
+        { orders }
+      batchingGroupId: 5
+    - id: 4
+      type: Operation
+      schema: b
+      operation:
+        name: Op_ebccb198_4
+        kind: Query
+        document: |
+          query Op_ebccb198_4 {
+            orders {
+              customer {
+                id
+              }
+            }
+          }
+        hash: 028b8d05df46fdbfbd894322abbe7d80f809accc5c8a94f8c40801c8296a2b68
+        shortHash: 028b8d05
+        xxHash: 997904245805771983
+      resultSelectionSet: >-
+        { orders }
+      batchingGroupId: 5

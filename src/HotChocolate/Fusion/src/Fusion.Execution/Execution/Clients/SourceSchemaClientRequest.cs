@@ -35,8 +35,8 @@ public readonly record struct SourceSchemaClientRequest()
     public required Utf8OperationDocument OperationDocument { get; init; }
 
     /// <summary>
-    /// Gets the variable value sets for this operation. Multiple entries indicate
-    /// that the operation should be executed once per variable set (variable batching).
+    /// Gets the variable value sets for this operation, which are only valid while the request executes.
+    /// Multiple entries indicate that the operation should be executed once per variable set (variable batching).
     /// </summary>
     public ImmutableArray<VariableValues> Variables { get; init; } = [];
 
@@ -58,4 +58,10 @@ public readonly record struct SourceSchemaClientRequest()
     /// other variable of the operation carries a value per variable value set.
     /// </summary>
     internal ImmutableArray<string> ForwardedVariables { get; init; } = [];
+
+    /// <summary>
+    /// Gets the shapes that the results of the operation are expected to have, or <c>null</c>
+    /// when nothing is expected of them.
+    /// </summary>
+    internal OperationResultShape? ResultShape { get; init; }
 }

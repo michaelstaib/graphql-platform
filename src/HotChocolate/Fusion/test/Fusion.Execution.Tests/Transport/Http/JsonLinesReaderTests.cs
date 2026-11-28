@@ -255,7 +255,11 @@ public class JsonLinesReaderTests : IDisposable
         await ReadValuesAsync(CreateRecord("a") + "\n", int.MaxValue, new FixedMemoryArenaSource(expectedArena));
         var arena = CreateArena();
         using var message = CreateMessage(new FailingStream(body));
-        var reader = new JsonLinesReader(message, new FixedMemoryArenaSource(arena), Timeout.InfiniteTimeSpan);
+        var reader = new JsonLinesReader(
+            message,
+            new FixedMemoryArenaSource(arena),
+            Timeout.InfiniteTimeSpan,
+            shapes: default);
         var values = new List<string>();
 
         // act
@@ -322,7 +326,7 @@ public class JsonLinesReaderTests : IDisposable
         var record = CreateRecord("a") + "\n";
         var body = Encoding.UTF8.GetBytes(record + record);
         using var message = CreateMessage(new DripStream(new MemoryStream(body), record.Length));
-        var reader = new JsonLinesReader(message, CreateArenaSource(kind), Timeout.InfiniteTimeSpan);
+        var reader = new JsonLinesReader(message, CreateArenaSource(kind), Timeout.InfiniteTimeSpan, shapes: default);
         using var cts = new CancellationTokenSource();
         await using var enumerator = reader.GetAsyncEnumerator(cts.Token);
         var hasFirst = await enumerator.MoveNextAsync();
@@ -347,7 +351,7 @@ public class JsonLinesReaderTests : IDisposable
         // arrange
         var body = CreateBody(recordCount: 10, maxValueLength: 100);
         using var message = CreateMessage(new DripStream(new MemoryStream(Encoding.UTF8.GetBytes(body)), 64));
-        var reader = new JsonLinesReader(message, CreateArenaSource(kind), Timeout.InfiniteTimeSpan);
+        var reader = new JsonLinesReader(message, CreateArenaSource(kind), Timeout.InfiniteTimeSpan, shapes: default);
         var values = new List<string>();
 
         // act
@@ -379,7 +383,7 @@ public class JsonLinesReaderTests : IDisposable
     private static async Task<List<string>> ReadValuesAsync(Stream stream, IMemoryArenaSource arenaSource)
     {
         using var message = CreateMessage(stream);
-        var reader = new JsonLinesReader(message, arenaSource, Timeout.InfiniteTimeSpan);
+        var reader = new JsonLinesReader(message, arenaSource, Timeout.InfiniteTimeSpan, shapes: default);
         var values = new List<string>();
 
         await foreach (var document in reader.WithCancellation(TestContext.Current.CancellationToken))

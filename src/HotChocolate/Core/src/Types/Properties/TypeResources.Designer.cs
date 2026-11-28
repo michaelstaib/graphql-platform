@@ -998,6 +998,15 @@ namespace HotChocolate.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Invalid circular reference. The directive definition &apos;@{0}&apos; references itself via: {1}..
+        /// </summary>
+        internal static string ErrorHelper_DirectiveDefinitionIndirectSelfReference {
+            get {
+                return ResourceManager.GetString("ErrorHelper_DirectiveDefinitionIndirectSelfReference", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to The directive definition &apos;@{0}&apos; must not reference itself..
         /// </summary>
         internal static string ErrorHelper_DirectiveDefinitionSelfApplication {
@@ -3001,6 +3010,15 @@ namespace HotChocolate.Properties {
         internal static string ThrowHelper_SubscribeAttribute_TopicTypeUnspecified {
             get {
                 return ResourceManager.GetString("ThrowHelper_SubscribeAttribute_TopicTypeUnspecified", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to The topic resolved from the arguments of `{0}` is the topic of another subscription field..
+        /// </summary>
+        internal static string ThrowHelper_SubscribeResolver_TopicOfOtherField {
+            get {
+                return ResourceManager.GetString("ThrowHelper_SubscribeResolver_TopicOfOtherField", resourceCulture);
             }
         }
         

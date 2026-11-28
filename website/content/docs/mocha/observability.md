@@ -5,7 +5,7 @@ description: "Instrument Mocha with OpenTelemetry for distributed tracing, metri
 
 Mocha integrates with OpenTelemetry to give you distributed traces, metrics, and structured logging across every stage of the messaging pipeline. When a message is dispatched, received, or consumed, Mocha emits spans and metrics that let you trace message flows end-to-end across services, measure throughput, and diagnose failures.
 
-Observability is opt-in. Call `.AddInstrumentation()` on the bus builder to activate the built-in `OpenTelemetryDiagnosticObserver`. Without it, Mocha uses a no-op observer that adds zero overhead.
+Tracing and metrics are opt-in through `.AddInstrumentation()`. Operational logs use `ILogger` independently of instrumentation.
 
 # Enable tracing and metrics
 
@@ -23,29 +23,35 @@ builder.Services
     .AddRabbitMQ();
 ```
 
-`.AddInstrumentation()` registers the `OpenTelemetryDiagnosticObserver` as a singleton `IBusDiagnosticObserver`. This observer creates `Activity` spans for dispatch, receive, and consume operations, and records metrics via the `Mocha` meter.
+`.AddInstrumentation()` registers Mocha's built-in diagnostic event listener as a singleton `IMessagingDiagnosticEventListener`. This listener creates `Activity` spans for dispatch, receive, and consume operations, and records metrics via the `Mocha` meter.
 
-## Subscribe to the Mocha activity source
+## Subscribe to Mocha spans and metrics
 
-The .NET OpenTelemetry SDK only collects spans from activity sources you explicitly subscribe to. Add the `"Mocha"` source to your tracing configuration:
+The .NET OpenTelemetry SDK only collects spans from activity sources you explicitly subscribe to. Install the `Mocha.OpenTelemetry` package:
+
+```shell
+dotnet add package Mocha.OpenTelemetry
+```
+
+Call `AddMochaInstrumentation()` on the OpenTelemetry builder to subscribe to bus and mediator spans and to bus metrics:
 
 ```csharp
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+
 builder.Services
     .AddOpenTelemetry()
-    .WithTracing(tracing =>
-    {
-        tracing
-            .AddSource("Mocha") // Subscribe to Mocha spans
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation();
-    })
-    .WithMetrics(metrics =>
-    {
-        metrics
-            .AddMeter("Mocha") // Subscribe to Mocha metrics
-            .AddAspNetCoreInstrumentation();
-    });
+    .AddMochaInstrumentation()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation())
+    .WithMetrics(metrics => metrics.AddAspNetCoreInstrumentation());
 ```
+
+The helper does not register the bus or mediator or configure an exporter. Keep `AddInstrumentation()` on each Mocha runtime you use. Bus apps need a direct reference to `Mocha` or a transport package, since `Mocha.OpenTelemetry` no longer includes the bus runtime.
+
+To subscribe only to bus spans or only to bus metrics, call `AddMochaInstrumentation()` on the tracing or metrics builder instead.
 
 > [!NOTE]
 > Mocha follows the [OpenTelemetry messaging semantic conventions](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/), which are currently in development status. Attribute names may change in future OTel releases.
@@ -56,9 +62,9 @@ After publishing a message, open your tracing backend (Aspire Dashboard, Jaeger,
 
 1. **`publish {destination}`** - Created by the dispatch pipeline when the message is sent. This span belongs to the publishing service.
 2. **`receive {endpoint}`** - Created by the receive pipeline when the message arrives at an endpoint. This span belongs to the consuming service and links back to the publish span.
-3. **`consumer {handler}`** - Created as a child of the receive span when your handler processes the message.
+3. **`consume {handler}`** - Created as a child of the receive span when your handler processes the message.
 
-In the Aspire Dashboard, you will see the `publish` span from the publishing service linked to the `receive` span in the consumer service, with a child `consumer` span for the handler execution. The three spans appear as a single distributed trace that crosses service boundaries.
+In the Aspire Dashboard, you will see the `publish` span from the publishing service linked to the `receive` span in the consumer service, with a child `consume` span for the handler execution. The three spans appear as a single distributed trace that crosses service boundaries.
 
 # How trace context propagates
 
@@ -75,22 +81,22 @@ sequenceDiagram
     A->>Broker: Message + W3C trace headers
     Broker->>B: Deliver message
     B->>B: receive span (Client, linked to parent)
-    B->>B: consumer span (Consumer)
+    B->>B: consume span (Consumer)
 ```
 
 Tracing and metrics are injected by middleware in all three pipelines: `DispatchInstrumentation`, `ReceiveInstrumentation`, and `ConsumerInstrumentation`. See [Middleware and Pipelines](./middleware-and-pipelines.md) for how these fit into the pipeline architecture and how to reorder or replace them.
 
-# How to implement a custom diagnostic observer
+# How to implement a custom diagnostic event listener
 
-To collect custom telemetry or integrate with a non-OpenTelemetry backend, implement `IBusDiagnosticObserver`. Each method is called at the start of its pipeline stage and returns an `IDisposable` that the pipeline disposes when the operation completes. This pattern lets you measure duration, track in-flight operations, and clean up resources.
+To collect custom telemetry or integrate with a non-OpenTelemetry backend, derive from `MessagingDiagnosticEventListener` and override the events you need, or implement `IMessagingDiagnosticEventListener` directly. `Dispatch`, `Receive`, and `Consume` are called at the start of their pipeline stage and return an `IDisposable` that the pipeline disposes when the operation completes. This pattern lets you measure duration, track in-flight operations, and clean up resources. `DispatchError`, `ReceiveError`, and `ConsumeError` are called when the stage throws.
 
 ```csharp
 using Mocha;
 using Mocha.Middlewares;
 
-public sealed class CustomDiagnosticObserver : IBusDiagnosticObserver
+public sealed class CustomDiagnosticListener : MessagingDiagnosticEventListener
 {
-    public IDisposable Dispatch(IDispatchContext context)
+    public override IDisposable Dispatch(IDispatchContext context)
     {
         var startTime = DateTimeOffset.UtcNow;
         Console.WriteLine($"Dispatching to {context.DestinationAddress}");
@@ -102,25 +108,25 @@ public sealed class CustomDiagnosticObserver : IBusDiagnosticObserver
         });
     }
 
-    public IDisposable Receive(IReceiveContext context)
+    public override IDisposable Receive(IReceiveContext context)
     {
         Console.WriteLine($"Receiving from {context.Endpoint.Address}");
         return new Scope(() => Console.WriteLine("Receive completed"));
     }
 
-    public IDisposable Consume(IConsumeContext context)
+    public override IDisposable Consume(IConsumeContext context)
     {
         Console.WriteLine($"Consumer processing message {context.MessageId}");
         return new Scope(() => Console.WriteLine("Consumer completed"));
     }
 
-    public void OnDispatchError(IDispatchContext context, Exception exception)
+    public override void DispatchError(IDispatchContext context, Exception exception)
         => Console.WriteLine($"Dispatch error: {exception.Message}");
 
-    public void OnReceiveError(IReceiveContext context, Exception exception)
+    public override void ReceiveError(IReceiveContext context, Exception exception)
         => Console.WriteLine($"Receive error: {exception.Message}");
 
-    public void OnConsumeError(IConsumeContext context, Exception exception)
+    public override void ConsumeError(IConsumeContext context, Exception exception)
         => Console.WriteLine($"Consume error: {exception.Message}");
 
     private sealed class Scope(Action onDispose) : IDisposable
@@ -130,10 +136,12 @@ public sealed class CustomDiagnosticObserver : IBusDiagnosticObserver
 }
 ```
 
-Register your observer instead of (or alongside) the built-in one:
+Register your listener on the message bus builder. With `AddInstrumentation()` it runs alongside the built-in listener, and all registered listeners are called in registration order:
 
 ```csharp
-builder.Services.AddSingleton<IBusDiagnosticObserver, CustomDiagnosticObserver>();
+builder.Services
+    .AddMessageBus()
+    .AddDiagnosticEventListener<CustomDiagnosticListener>();
 ```
 
 # Configure with Nitro
@@ -146,20 +154,15 @@ dotnet add package ChilliCream.Nitro.OpenTelemetry
 ```
 
 ```csharp
+using OpenTelemetry;
+
 builder.Services
     .AddNitro()
     .AddOpenTelemetry();
 
 builder.Services
     .AddOpenTelemetry()
-    .WithTracing(tracing =>
-    {
-        tracing.AddSource("Mocha");
-    })
-    .WithMetrics(metrics =>
-    {
-        metrics.AddMeter("Mocha");
-    });
+    .AddMochaInstrumentation();
 
 builder.Logging.AddOpenTelemetry(logging =>
 {
@@ -191,6 +194,10 @@ builder.Services
 When OpenTelemetry is configured with `AddOpenTelemetry().WithLogging()`, your `ILogger` structured log entries automatically include `TraceId` and `SpanId` fields. This means every log line written inside a handler or middleware is automatically correlated to the active span, making it possible to jump from a log entry in your logging backend directly to the corresponding trace.
 
 The Aspire configuration block above already includes `builder.Logging.AddOpenTelemetry(...)`, which enables this behavior. No additional code is needed in your handlers.
+
+Log entries written while a message is received, including the entries of your handlers, also carry the message's `MessageId`, `MessageType`, `CorrelationId`, `ConversationId`, `Endpoint`, and `Transport` in a logger scope.
+
+Keep `IncludeScopes = true` in your OpenTelemetry logging configuration to export Mocha's message and connection correlation fields.
 
 For more detail on .NET distributed tracing concepts and how `Activity` maps to spans, see [.NET Distributed Tracing Concepts](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-concepts).
 

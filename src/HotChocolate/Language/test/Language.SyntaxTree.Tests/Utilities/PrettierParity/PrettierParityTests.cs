@@ -19,13 +19,19 @@ public class PrettierParityTests
     [InlineData("interface/many-interfaces.graphql")]
     [InlineData("enum/enum.graphql")]
     [InlineData("scalar/scalar.graphql")]
+    [InlineData("selection-set/empty-1.graphql")] // note: blank line added between top-level decls, AST does not preserve input grouping trivia
+    [InlineData("selection-set/empty-2.graphql")]
+    [InlineData("selection-set/empty-3.graphql")]
+    [InlineData("selection-set/empty-4.graphql")]
+    [InlineData("selection-set/empty-5.graphql")]
+    [InlineData("selection-set/empty-6.graphql")]
     [InlineData("union-types/union_types.graphql")] // note: trailing comment lines removed, AST does not model comments
     [InlineData("fields/fields.graphql")]
     [InlineData("fragments/fragments.graphql")]
     [InlineData("variable-definitions/variable_definitions.graphql")]
     [InlineData("hello/hello.graphql")]
     [InlineData("deprecation/directives.graphql")] // note: header comment removed and blank lines added between every top-level decl, AST does not preserve trivia
-    [InlineData("type-extension-definition/type-extendsion-syntax.graphql")]
+    [InlineData("type-extension-definition/type-extension-syntax.graphql")]
     public void Format_Should_Match_Prettier(string fixture)
     {
         // arrange

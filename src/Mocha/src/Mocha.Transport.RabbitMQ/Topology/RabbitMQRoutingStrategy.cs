@@ -8,8 +8,14 @@ namespace Mocha.Transport.RabbitMQ;
 /// </summary>
 public sealed class RabbitMQRoutingStrategy : RoutingStrategy<RabbitMQMessagingTransport>
 {
+    /// <summary>
+    /// The expiry of a generated reply queue without consumers. It is longer than the default response timeout
+    /// of a request, which is two minutes.
+    /// </summary>
+    private static readonly TimeSpan s_replyQueueExpiration = TimeSpan.FromMinutes(5);
+
     private RabbitMQMessagingTopology _topology =>
-        field ??= (RabbitMQMessagingTopology)Transport.Topology;
+        field ??= Transport.Topology;
 
     /// <inheritdoc />
     public override DispatchEndpointConfiguration? CreateEndpointConfiguration(
@@ -142,7 +148,7 @@ public sealed class RabbitMQRoutingStrategy : RoutingStrategy<RabbitMQMessagingT
         IMessagingConfigurationContext context,
         InboundRoute route)
     {
-        if (route.Kind == InboundRouteKind.Reply)
+        if (route is { Kind: InboundRouteKind.Reply, Consumer: ReplyConsumer })
         {
             var instanceEndpointName = context.Naming.GetInstanceEndpoint(context.Host.InstanceId);
             return new RabbitMQReceiveEndpointConfiguration
@@ -210,22 +216,31 @@ public sealed class RabbitMQRoutingStrategy : RoutingStrategy<RabbitMQMessagingT
 
         if (rabbitConfiguration.IsTemporary)
         {
-            EnsureNoDurableQueueConflict(rabbitConfiguration);
+            EnsureNoTemporaryQueueConflict(rabbitConfiguration);
         }
+
+        // Generated temporary reply queues expire without consumers and inherit quorum replication settings.
+        var isReplyQueue = rabbitEndpoint.Kind == ReceiveEndpointKind.Reply;
+        var isTemporaryReplyQueue = isReplyQueue && rabbitConfiguration.IsTemporary;
 
         var queue = _topology.GetOrAddQueue(
             rabbitConfiguration.QueueName,
             _ => new RabbitMQQueueConfiguration
             {
-                Durable = rabbitConfiguration.IsTemporary ? false : null,
-                AutoDelete = rabbitConfiguration.IsTemporary,
+                AutoDelete = rabbitConfiguration.IsTemporary && !isTemporaryReplyQueue,
                 AutoProvision = rabbitConfiguration.AutoProvision,
-                Origin = TopologyOrigin.Endpoint
+                Origin = TopologyOrigin.Endpoint,
+                IsReplyQueue = isReplyQueue
             });
 
-        if (rabbitConfiguration.IsTemporary && queue.Origin is not TopologyOrigin.Declared)
+        if (isTemporaryReplyQueue && queue.Origin is not TopologyOrigin.Declared)
         {
-            queue.MarkTemporary();
+            queue.MarkExpiring(rabbitConfiguration.TemporaryExpiry ?? s_replyQueueExpiration);
+        }
+        else if (rabbitConfiguration.IsTemporary && queue.Origin is not TopologyOrigin.Declared)
+        {
+            queue.MarkTemporary(rabbitConfiguration.TemporaryExpiry ??
+                RabbitMQReceiveEndpointConfiguration.TemporaryDefaults.Expiry);
         }
 
         if (rabbitEndpoint.Kind == ReceiveEndpointKind.Default)
@@ -474,7 +489,7 @@ public sealed class RabbitMQRoutingStrategy : RoutingStrategy<RabbitMQMessagingT
         }
     }
 
-    private void EnsureNoDurableQueueConflict(RabbitMQReceiveEndpointConfiguration rabbitConfiguration)
+    private void EnsureNoTemporaryQueueConflict(RabbitMQReceiveEndpointConfiguration rabbitConfiguration)
     {
         var existingQueue = _topology.Queues.FirstOrDefault(q => q.Name == rabbitConfiguration.QueueName);
         if (existingQueue is not { Origin: TopologyOrigin.Declared })
@@ -482,13 +497,9 @@ public sealed class RabbitMQRoutingStrategy : RoutingStrategy<RabbitMQMessagingT
             return;
         }
 
-        if (existingQueue.Durable || !existingQueue.AutoDelete)
+        if (!existingQueue.AutoDelete)
         {
-            throw new InvalidOperationException(
-                $"Queue '{rabbitConfiguration.QueueName}' is explicitly declared as durable or "
-                + "non-auto-delete, which conflicts with receive endpoint "
-                + $"'{rabbitConfiguration.Name}' being marked Temporary(). Declare the queue as "
-                + "non-durable and auto-delete, or remove Temporary() from the endpoint.");
+            throw ThrowHelper.TemporaryEndpointQueueConflict(existingQueue.Name, rabbitConfiguration.Name);
         }
     }
 

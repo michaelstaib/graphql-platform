@@ -18,7 +18,11 @@ namespace HotChocolate.Transport.Http;
 #endif
 
 #if FUSION
-internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaSource arenaSource, TimeSpan readTimeout)
+internal sealed class JsonLinesReader(
+    HttpResponseMessage message,
+    IMemoryArenaSource arenaSource,
+    TimeSpan readTimeout,
+    SourceResultShapeSelector shapes)
     : IAsyncEnumerable<SourceResultDocument>
 {
     // A record of at most this many bytes is parsed as a single span, a longer record is filled into
@@ -86,7 +90,10 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                     // The pending bytes are the final record, which has no line terminator.
                     if (!IsWhitespaceOnly(scratch.AsSpan(0, pending)))
                     {
-                        var finalDocument = CopyAndParse(arenaSource.GetNextArena(), scratch.AsSpan(0, pending));
+                        var finalDocument = CopyAndParse(
+                            arenaSource.GetNextArena(),
+                            scratch.AsSpan(0, pending),
+                            shapes);
                         yield return finalDocument;
                     }
 
@@ -128,7 +135,7 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
 
                         if (!IsWhitespaceOnly(block.Span[lineStart..lineEnd]))
                         {
-                            var document = ParseInPlace(arena, block, lineStart, lineEnd - lineStart);
+                            var document = ParseInPlace(arena, block, lineStart, lineEnd - lineStart, shapes);
                             yield return document;
                         }
 
@@ -150,7 +157,8 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                     {
                         var document = CopyAndParse(
                             arenaSource.GetNextArena(),
-                            scratch.AsSpan(recordStart, recordEnd - recordStart));
+                            scratch.AsSpan(recordStart, recordEnd - recordStart),
+                            shapes);
                         yield return document;
                     }
 
@@ -171,21 +179,31 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
         }
     }
 
-    private static SourceResultDocument ParseInPlace(IMemoryArena arena, MemorySegment block, int start, int length)
+    private static SourceResultDocument ParseInPlace(
+        IMemoryArena arena,
+        MemorySegment block,
+        int start,
+        int length,
+        SourceResultShapeSelector shapes)
     {
         var segments = arena.RentSegmentTable(1);
-        segments[0] = new MemorySegment(block.Buffer, block.Offset + start, length);
+        var record = segments[0] = new MemorySegment(block.Buffer, block.Offset + start, length);
 
         return SourceResultDocument.ParseFilled(
             arena,
             segments,
             usedChunks: 1,
-            lastLength: length);
+            lastLength: length,
+            shapes.GetShape(record.Span));
     }
 
-    private static SourceResultDocument CopyAndParse(IMemoryArena arena, ReadOnlySpan<byte> record)
+    private static SourceResultDocument CopyAndParse(
+        IMemoryArena arena,
+        ReadOnlySpan<byte> record,
+        SourceResultShapeSelector shapes)
     {
         var length = record.Length;
+        var shape = shapes.GetShape(record);
 
         if (length > 0 && length <= MaxSingleSpanRecordLength)
         {
@@ -199,7 +217,8 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
                 arena,
                 segments,
                 usedChunks: 1,
-                lastLength: length);
+                lastLength: length,
+                shape);
         }
 
         var chunks = arena.RentSegmentTable(64);
@@ -241,7 +260,8 @@ internal sealed class JsonLinesReader(HttpResponseMessage message, IMemoryArenaS
             arena,
             chunks,
             usedChunks: chunkIndex + 1,
-            lastLength: currentChunkPosition);
+            lastLength: currentChunkPosition,
+            shape);
     }
 
     // Returns the start of the first line that is not whitespace-only, or the length of the span when

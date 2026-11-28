@@ -5,8 +5,8 @@ namespace Mocha;
 
 internal static class OpenTelemetry
 {
-    public static readonly ActivitySource Source = new("Mocha");
-    public static readonly Meter Meter = new("Mocha");
+    public static readonly ActivitySource Source = new(MochaTelemetryNames.MessageBus);
+    public static readonly Meter Meter = new(MochaTelemetryNames.MessageBus);
 
     public static IHeaders WithActivity(this IHeaders headers)
     {
@@ -24,6 +24,27 @@ internal static class OpenTelemetry
         if (!string.IsNullOrEmpty(activity.TraceStateString))
         {
             headers.TryAdd(MessageHeaders.Tracestate, activity.TraceStateString);
+        }
+
+        return headers;
+    }
+
+    public static IHeaders OverrideActivity(this IHeaders headers)
+    {
+        if (Activity.Current is not { } activity)
+        {
+            return headers;
+        }
+
+        var traceparent = TraceparentHelper.FormatTraceparent(activity);
+        if (traceparent is not null)
+        {
+            headers.Set(MessageHeaders.Traceparent, traceparent);
+        }
+
+        if (!string.IsNullOrEmpty(activity.TraceStateString))
+        {
+            headers.Set(MessageHeaders.Tracestate, activity.TraceStateString);
         }
 
         return headers;

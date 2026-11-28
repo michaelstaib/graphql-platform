@@ -85,27 +85,48 @@ public sealed class RabbitMQQueue : TopologyResource<RabbitMQQueueConfiguration>
     }
 
     /// <summary>
-    /// Marks this queue as non-durable and auto-delete.
+    /// Marks this queue as auto-delete and sets the queue expiry after which the broker removes it
+    /// when it has no consumers.
     /// </summary>
-    internal void MarkTemporary()
+    internal void MarkTemporary(TimeSpan expiry)
     {
-        Durable = false;
         AutoDelete = true;
+        Arguments = Arguments.SetItem("x-expires", (int)expiry.TotalMilliseconds);
+    }
+
+    /// <summary>
+    /// Marks this queue as not auto-delete, and makes the broker delete it once it has been unused for
+    /// <paramref name="expiration"/>.
+    /// </summary>
+    /// <param name="expiration">How long the queue may stay without consumers before the broker deletes it.</param>
+    internal void MarkExpiring(TimeSpan expiration)
+    {
+        AutoDelete = false;
+        Arguments = Arguments.SetItem("x-expires", (int)expiration.TotalMilliseconds);
     }
 
     /// <summary>
     /// Declares this queue on the broker using the specified channel.
     /// </summary>
     /// <param name="channel">The RabbitMQ channel to use for declaring the queue.</param>
+    /// <param name="connection">The connection that owns the channel.</param>
     /// <param name="cancellationToken">A token to cancel the provisioning operation.</param>
-    public async Task ProvisionAsync(IChannel channel, CancellationToken cancellationToken)
+    public async Task ProvisionAsync(IChannel channel, IConnection connection, CancellationToken cancellationToken)
     {
+        var arguments = Arguments;
+
+        // RabbitMQ 3.x rejects a delivery limit of -1. It applies no limit when the argument is absent.
+        if (connection.IsRabbitMQ3() && arguments.TryGetValue("x-delivery-limit", out var limit) && limit is -1)
+        {
+            arguments = arguments.Remove("x-delivery-limit");
+        }
+
         await channel.QueueDeclareAsync(
             CachedName.Value,
             Durable,
             Exclusive,
             AutoDelete,
-            Arguments,
+            arguments,
             cancellationToken: cancellationToken);
     }
 }

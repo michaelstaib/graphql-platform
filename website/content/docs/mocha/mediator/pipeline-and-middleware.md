@@ -480,18 +480,27 @@ builder.Services
 
 This registers the `ActivityMediatorDiagnosticListener`, which follows the [OpenTelemetry messaging semantic conventions](https://opentelemetry.io/docs/specs/semconv/messaging/messaging-spans/):
 
-- Creates an [`Activity`](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-concepts) (OpenTelemetry span) named `"{MessageTypeName} send"` for commands/queries or `"{MessageTypeName} publish"` for notifications
-- Tags the span with `messaging.system` = `"mocha.mediator"`, `messaging.operation.type` = `"send"` or `"publish"`, and `messaging.message.type` = the message type name
+- Creates an [`Activity`](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/distributed-tracing-concepts) (OpenTelemetry span) named `"send {MessageTypeName}"` for commands/queries or `"publish {MessageTypeName}"` for notifications
+- Tags the span with `messaging.system` = `"mocha.mediator"`, `messaging.operation.name` and `messaging.operation.type` = `"send"` or `"publish"`, and `messaging.message.type` = the message type name
 - Sets `ActivityStatusCode.Ok` on success
 - On error: adds an `exception` event with `exception.type` and `exception.message` tags, and sets `ActivityStatusCode.Error`
 
-Configure your OpenTelemetry exporter to collect from the `Mocha.Mediator` source:
+Install `Mocha.OpenTelemetry` to collect mediator spans through OpenTelemetry:
+
+```shell
+dotnet add package Mocha.OpenTelemetry
+```
+
+Call `AddMochaInstrumentation()` on the OpenTelemetry builder. You can use the same helper in a mediator-only app because it does not register or require the bus. The mediator emits spans, not metrics.
 
 ```csharp
+using OpenTelemetry;
+
 builder.Services.AddOpenTelemetry()
-    .WithTracing(t => t.AddSource("Mocha.Mediator"))
-    .WithMetrics(m => m.AddMeter("Mocha.Mediator"));
+    .AddMochaInstrumentation();
 ```
+
+To subscribe only to mediator spans, use `AddMochaMediatorInstrumentation()` on the tracing builder from `Mocha.Mediator.OpenTelemetry`.
 
 ## Custom diagnostic event listeners
 
@@ -553,7 +562,7 @@ This is the default behavior. The `EntityFrameworkTransactionMiddleware` exclude
 
 ## No OpenTelemetry traces appear
 
-The `MediatorDiagnosticMiddleware` is always present, but it uses a no-op listener by default. You must call `.AddInstrumentation()` to register the `ActivityMediatorDiagnosticListener`. You also need to configure your OpenTelemetry SDK to collect from the `Mocha.Mediator` source via `#!csharp .AddSource("Mocha.Mediator")`.
+The `MediatorDiagnosticMiddleware` is always present, but it uses a no-op listener by default. Call `AddInstrumentation()` on the mediator builder to enable its spans, and `AddMochaInstrumentation()` on the OpenTelemetry builder to collect them. Configure a trace exporter to send the spans to your backend.
 
 ## Services resolved in the factory vs. at runtime
 

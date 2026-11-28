@@ -12,60 +12,70 @@ namespace HotChocolate.Fusion.Text.Json;
 public sealed partial class SourceResultDocument : IDisposable
 {
     private static readonly Encoding s_utf8Encoding = Encoding.UTF8;
-    private MetaDb _parsedData;
+    private ReadOnlyMetaDb _parsedData;
+
+    // the packed value of the cursor directly after the last parsed row
+    private readonly uint _parsedDataEnd;
     private readonly MemorySegment[] _segments;
     private readonly int _usedChunks;
     private int _disposed;
 
-    private SourceResultDocument(MetaDb parsedData, MemorySegment[] segments, int usedChunks)
+    private SourceResultDocument(
+        MetaDb parsedData,
+        MemorySegment[] segments,
+        int usedChunks,
+        SourceResultShape? shape)
     {
-        _parsedData = parsedData;
+        _parsedData = parsedData.Freeze();
+        _parsedDataEnd = parsedData.EndCursor.Value;
         _segments = segments;
         _usedChunks = usedChunks;
+        Shape = shape;
     }
+
+    /// <summary>
+    /// Gets the shape that the document was expected to have when it was parsed, or <c>null</c>
+    /// when nothing was expected of it.
+    /// </summary>
+    internal SourceResultShape? Shape { get; }
 
     internal int Id { get; set; } = -1;
 
     public SourceResultElement Root => new(this, Cursor.Zero);
 
-    // A data location packs the chunk index in the high 12 bits and the byte offset within the
-    // chunk in the low 17 bits. The chunk size follows the same geometric schedule as the metadb,
-    // so it is derived from the chunk index (chunk i holds 1 << (10 + Min(i, 7)) bytes). The data
-    // store is written without gaps; a value that does not fit the remaining space of a chunk spans
-    // into the following chunks, and the read path walks the boundaries.
+    // A data location holds the chunk index in bits 17 to 28 and the byte offset within the chunk in
+    // bits 0 to 16. The data is stored without gaps, so a value can span chunks.
     private const int DataOffsetBits = 17;
     private const int DataChunkBits = 12;
     private const int DataOffsetMask = (1 << DataOffsetBits) - 1;
     internal const int DataMaxChunks = 1 << DataChunkBits;
-    private const int DataMaxChunkOrdinal = (int)ChunkSize.Size128K;
+    private const int DataRampLength = ChunkSchedule.RampLength;
+    private const int DataMaxChunkBytes = 1 << (10 + (int)ChunkSize.Size128K);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int GetDataChunkSize(int chunkIndex)
-        => 1 << (10 + Math.Min(chunkIndex, DataMaxChunkOrdinal));
+        => 1 << (10 + (int)ChunkSchedule.SizeFor(chunkIndex));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int EncodeDataLocation(int chunkIndex, int offset)
         => (chunkIndex << DataOffsetBits) | offset;
 
-    // The cumulative number of bytes held by all data chunks before a given chunk index, following
-    // the same geometric schedule as the chunks themselves. The ramp (chunks 0..7) is a small
-    // prefix table; from chunk 8 on every chunk holds the same number of bytes, so the tail is
-    // closed-form. This lets a packed location be mapped to the gap-free linear byte position it
-    // represents, which the composite-value readers need to measure the span of an object or array.
+    // The number of bytes in all data chunks before the chunk at the index, for the chunks up to
+    // DataRampLength.
     private static readonly int[] s_dataRampPrefix = BuildDataRampPrefix();
 
     private static int[] BuildDataRampPrefix()
     {
-        var prefix = new int[DataMaxChunkOrdinal + 1];
+        var prefix = new int[DataRampLength + 1];
         var cumulative = 0;
 
-        for (var chunk = 0; chunk < DataMaxChunkOrdinal; chunk++)
+        for (var chunk = 0; chunk < DataRampLength; chunk++)
         {
             prefix[chunk] = cumulative;
             cumulative += GetDataChunkSize(chunk);
         }
 
-        prefix[DataMaxChunkOrdinal] = cumulative;
+        prefix[DataRampLength] = cumulative;
         return prefix;
     }
 
@@ -75,8 +85,7 @@ public sealed partial class SourceResultDocument : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int LinearToPacked(long linear)
     {
-        // Walk the geometric ramp, then close-form the constant-size tail.
-        for (var chunk = 0; chunk < DataMaxChunkOrdinal; chunk++)
+        for (var chunk = 0; chunk < DataRampLength; chunk++)
         {
             var chunkBytes = GetDataChunkSize(chunk);
 
@@ -88,9 +97,8 @@ public sealed partial class SourceResultDocument : IDisposable
             linear -= chunkBytes;
         }
 
-        var maxChunkBytes = GetDataChunkSize(DataMaxChunkOrdinal);
-        var tailChunk = DataMaxChunkOrdinal + (int)(linear / maxChunkBytes);
-        var tailOffset = (int)(linear % maxChunkBytes);
+        var tailChunk = DataRampLength + (int)(linear / DataMaxChunkBytes);
+        var tailOffset = (int)(linear % DataMaxChunkBytes);
         return EncodeDataLocation(tailChunk, tailOffset);
     }
 
@@ -103,10 +111,10 @@ public sealed partial class SourceResultDocument : IDisposable
         var chunkIndex = location >>> DataOffsetBits;
         var offset = location & DataOffsetMask;
 
-        var bytesBefore = chunkIndex <= DataMaxChunkOrdinal
+        var bytesBefore = chunkIndex <= DataRampLength
             ? s_dataRampPrefix[chunkIndex]
-            : s_dataRampPrefix[DataMaxChunkOrdinal]
-                + ((long)(chunkIndex - DataMaxChunkOrdinal) * GetDataChunkSize(DataMaxChunkOrdinal));
+            : s_dataRampPrefix[DataRampLength]
+                + ((long)(chunkIndex - DataRampLength) * DataMaxChunkBytes);
 
         return bytesBefore + offset;
     }
@@ -153,6 +161,21 @@ public sealed partial class SourceResultDocument : IDisposable
         CheckExpectedType(JsonTokenType.StartObject, row.TokenType);
 
         return row.SizeOrLength;
+    }
+
+    /// <summary>
+    /// Gets the node of <see cref="Shape"/> whose expected fields are exactly the properties of
+    /// the object at <paramref name="cursor"/>, in their order. The row of the object is
+    /// <paramref name="row"/>. It is <see cref="SourceResultShape.NoNode"/> when the object is not
+    /// identified, which is always the case for a document without a <see cref="Shape"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal int GetObjectShapeNode(Cursor cursor, DbRow row)
+    {
+        Debug.Assert(row.TokenType is JsonTokenType.StartObject);
+
+        // The parser stores the node in the end row of the object.
+        return _parsedData.Get(cursor + (row.NumberOfRows - 1)).ShapeNode;
     }
 
     internal SourceResultElement GetArrayIndexElement(Cursor startCursor, int arrayIndex)
@@ -386,18 +409,21 @@ public sealed partial class SourceResultDocument : IDisposable
         // quote and the size covers both quotes. The unquoted value is obtained by slicing one byte
         // in on each side, which keeps every stored location pointing at a real byte and avoids any
         // arithmetic on the packed location.
+        var value = ReadRawValue(row.Location, row.SizeOrLength);
+
         if (!includeQuotes && row.TokenType is JsonTokenType.String or JsonTokenType.PropertyName)
         {
-            return ReadRawValue(row.Location, row.SizeOrLength)[1..^1];
+            return value[1..^1];
         }
 
-        return ReadRawValue(row.Location, row.SizeOrLength);
+        return value;
     }
 
     /// <summary>
     /// Reads raw data from the data chunks. Data contained in a single chunk is returned as a
     /// slice over that chunk; data that spans chunk boundaries is copied into a fresh buffer.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal ReadOnlySpan<byte> ReadRawValue(int location, int size)
     {
         var startChunkIndex = location >>> DataOffsetBits;
@@ -417,6 +443,15 @@ public sealed partial class SourceResultDocument : IDisposable
             return MemoryMarshal.CreateReadOnlySpan(ref start, size);
         }
 
+        return ReadRawValueAcrossChunks(startChunkIndex, offsetInStartChunk, size);
+    }
+
+    /// <summary>
+    /// Copies raw data that spans data chunk boundaries into a fresh buffer.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ReadOnlySpan<byte> ReadRawValueAcrossChunks(int startChunkIndex, int offsetInStartChunk, int size)
+    {
         Span<byte> buffer = new byte[size];
         var bytesRead = 0;
         var chunkIndex = startChunkIndex;
@@ -486,7 +521,10 @@ public sealed partial class SourceResultDocument : IDisposable
             return;
         }
 
-        _parsedData.Dispose();
+        // The arena owns the chunk memory, so the rows are only dropped here.
+        var end = Cursor.FromValue(_parsedDataEnd);
+        MetaDbEventSource.Log.MetaDbDisposed(1, end.Chunk + 1, end.Row);
+        _parsedData = default;
     }
 
     public override string ToString()

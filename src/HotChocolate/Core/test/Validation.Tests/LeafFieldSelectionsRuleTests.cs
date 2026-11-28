@@ -4,7 +4,9 @@ using HotChocolate.Validation.Rules;
 namespace HotChocolate.Validation;
 
 public class LeafFieldSelectionsRuleTests()
-    : DocumentValidatorVisitorTestBase(builder => builder.AddRule<LeafFieldSelectionsRule>())
+    : DocumentValidatorVisitorTestBase(
+        builder => builder.AddRule(
+            (_, _) => new LeafFieldSelectionsRule(enableEmptySelectionSets: false)))
 {
     [Fact]
     public void Validate_Should_AcceptEmptySelectionSets_WhenEnabled()
@@ -12,6 +14,7 @@ public class LeafFieldSelectionsRuleTests()
         ExpectValidWithEmptySelectionSets("{ }");
         ExpectValidWithEmptySelectionSets("query Q { }");
         ExpectValidWithEmptySelectionSets("mutation { }");
+        ExpectValidWithEmptySelectionSets("subscription { }");
         ExpectValidWithEmptySelectionSets("{ human(id: \"1\") { } }");
         ExpectValidWithEmptySelectionSets("{ human(id: \"1\") { ... on Human { } } }");
         ExpectValidWithEmptySelectionSets(
@@ -19,9 +22,6 @@ public class LeafFieldSelectionsRuleTests()
     }
 
     [Theory]
-    [InlineData(
-        "subscription { }",
-        "Operation `Unnamed` has an empty selection set. Root types without selections are disallowed.")]
     [InlineData(
         "{ human }",
         "Field \"human\" of type \"Human\" must have a selection of subfields. Did you mean \"human { ... }\"?")]
@@ -33,7 +33,7 @@ public class LeafFieldSelectionsRuleTests()
         string expectedMessage)
     {
         // arrange
-        var rule = CreateRuleWithEmptySelectionSets();
+        var rule = new LeafFieldSelectionsRule(enableEmptySelectionSets: true);
         var document = Utf8GraphQLParser.Parse(sourceText);
         var context = ValidationUtils.CreateContext(document, maxAllowedErrors: int.MaxValue);
 
@@ -42,6 +42,48 @@ public class LeafFieldSelectionsRuleTests()
 
         // assert
         Assert.Equal(expectedMessage, Assert.Single(context.Errors).Message);
+    }
+
+    [Theory]
+    [InlineData("{ dog { __typename { name } } }")]
+    [InlineData("{ human { pets { __typename { name } } } }")]
+    [InlineData("{ catOrDog { __typename { name } } }")]
+    [InlineData("{ catOrDog { ...f } } fragment f on CatOrDog { __typename { name } }")]
+    public void Validate_Should_RejectSelectionsOnTypeName_When_ParentIsAnyCompositeType(string sourceText)
+    {
+        // arrange
+        var rule = new LeafFieldSelectionsRule(enableEmptySelectionSets: true);
+        var document = Utf8GraphQLParser.Parse(sourceText);
+        var context = ValidationUtils.CreateContext(document);
+
+        // act
+        rule.Validate(context, document);
+
+        // assert
+        Assert.Equal(
+            "Field \"__typename\" must not have a selection since type \"String!\" has no subfields.",
+            Assert.Single(context.Errors).Message);
+    }
+
+    [Fact]
+    public void TypeNameOnAbstractTypes()
+    {
+        ExpectValid(
+            """
+            {
+              dog {
+                __typename
+              }
+              human {
+                pets {
+                  __typename
+                }
+              }
+              catOrDog {
+                __typename
+              }
+            }
+            """);
     }
 
     [Fact]
@@ -112,8 +154,8 @@ public class LeafFieldSelectionsRuleTests()
             }
             """,
             t => Assert.Equal(
-                "Field \"human\" of type \"Human\" must have a selection of subfields. Did you "
-                + "mean \"human { ... }\"?",
+                "Field \"human\" of type \"Human\" has an empty selection set. Composite fields "
+                + "without selections are disallowed.",
                 t.Message));
     }
 
@@ -142,8 +184,8 @@ public class LeafFieldSelectionsRuleTests()
             }
             """,
             t => Assert.Equal(
-                "Field \"pet\" of type \"Human\" must have a selection of subfields. Did you mean "
-                + "\"pet { ... }\"?",
+                "Field \"pet\" of type \"Human\" has an empty selection set. Composite fields "
+                + "without selections are disallowed.",
                 t.Message));
     }
 
@@ -172,8 +214,8 @@ public class LeafFieldSelectionsRuleTests()
             }
             """,
             t => Assert.Equal(
-                "Field \"catOrDog\" of type \"CatOrDog\" must have a selection of subfields. Did "
-                + "you mean \"catOrDog { ... }\"?",
+                "Field \"catOrDog\" of type \"CatOrDog\" has an empty selection set. Composite "
+                + "fields without selections are disallowed.",
                 t.Message));
     }
 
@@ -202,8 +244,8 @@ public class LeafFieldSelectionsRuleTests()
             }
             """,
             t => Assert.Equal(
-                "Field \"pets\" of type \"[Pet]\" must have a selection of subfields. Did you "
-                + "mean \"pets { ... }\"?",
+                "Field \"pets\" of type \"[Pet]\" has an empty selection set. Composite fields "
+                + "without selections are disallowed.",
                 t.Message));
     }
 
@@ -467,7 +509,7 @@ public class LeafFieldSelectionsRuleTests()
     private void ExpectValidWithEmptySelectionSets(string sourceText)
     {
         // arrange
-        var rule = CreateRuleWithEmptySelectionSets();
+        var rule = new LeafFieldSelectionsRule(enableEmptySelectionSets: true);
         var document = Utf8GraphQLParser.Parse(sourceText);
         var context = ValidationUtils.CreateContext(document);
 
@@ -477,14 +519,5 @@ public class LeafFieldSelectionsRuleTests()
         // assert
         Assert.False(context.UnexpectedErrorsDetected);
         Assert.Empty(context.Errors);
-    }
-
-    private static IDocumentValidatorRule CreateRuleWithEmptySelectionSets()
-    {
-        return DocumentValidatorBuilder.New()
-            .AddRule((_, o) => new LeafFieldSelectionsRule(o.EnableEmptySelectionSets))
-            .ModifyOptions(o => o.EnableEmptySelectionSets = true)
-            .Build()
-            .Rules[0];
     }
 }

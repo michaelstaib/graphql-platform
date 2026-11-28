@@ -12,6 +12,7 @@ using HotChocolate.Fusion.Execution.Clients;
 using HotChocolate.Fusion.Execution.Nodes;
 using HotChocolate.Fusion.Execution.Nodes.Serialization;
 using HotChocolate.Fusion.Execution.Results;
+using HotChocolate.Fusion.Policies;
 using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Types;
 using HotChocolate.Language;
@@ -54,6 +55,7 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     private int _disposed;
     private int _activeNodeSlotCount;
     private int _nodeSlotCapacity;
+    private int _variableIndex;
     private MemoryArena? _memory;
     private readonly FixedMemoryArenaSource _memorySource = new();
 #pragma warning disable IDE0370 // Remove unnecessary suppression
@@ -74,6 +76,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 #pragma warning disable IDE0370 // Remove unnecessary suppression
     public IVariableValueCollection Variables { get; private set; } = default!;
 #pragma warning restore IDE0370 // Remove unnecessary suppression
+
+    /// <summary>
+    /// Gets the policy evaluation result of the variable set being executed.
+    /// </summary>
+    internal PolicyEvaluationResult PolicyEvaluationResult { get; private set; } = PolicyEvaluationResult.Empty;
 
     /// <summary>
     /// Gets the schema definition associated with this execution.
@@ -145,6 +152,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal ExecutionState ExecutionState => _executionState;
 
+    /// <summary>
+    /// Gets the error handler of the schema this context executes against.
+    /// </summary>
+    internal IErrorHandler ErrorHandler => _errorHandler;
+
     internal bool IsNodeSkipped(int nodeId)
         => _executionState.IsNodeSkipped(nodeId);
 
@@ -176,6 +188,12 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     /// Gets a value indicating whether operation plan telemetry is being collected for this request.
     /// </summary>
     public bool CollectTelemetry => _collectTelemetry;
+
+    /// <summary>
+    /// Gets or sets whether the execution token is canceled within <see cref="ExecutionDeadline.MaxTimeout"/>
+    /// of the start of any source schema request that this execution sends.
+    /// </summary>
+    internal bool HasExecutionDeadline { get; set; }
 
     /// <summary>
     /// Gets the feature collection associated with the current request.
@@ -378,6 +396,13 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
 
     internal void EnqueuePendingMerge(PendingMerge merge)
         => _executionState.EnqueueMerge(merge);
+
+    /// <summary>
+    /// Enqueues a pending merge without signaling the executor.
+    /// The node must report its completion afterwards, which signals the executor.
+    /// </summary>
+    internal void EnqueuePendingMergeBeforeCompletion(PendingMerge merge)
+        => _executionState.EnqueueMergeBeforeCompletion(merge);
 
     internal ImmutableArray<VariableValues> CreateVariableValueSets(
         SelectionPath selectionSet,
@@ -892,6 +917,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
     {
         _resultStore.FinalizePocketedErrors();
 
+        if (PolicyEvaluationResult.RequiresFinalization)
+        {
+            _resultStore.FinalizeDeniedSelections(PolicyEvaluationResult);
+        }
+
         var environment = Schema.TryGetEnvironment();
 
         var trace = _collectTelemetry
@@ -916,7 +946,11 @@ public sealed partial class OperationPlanContext : IFeatureProvider, IAsyncDispo
                 resultDocument.Data.IsNullOrInvalidated || resultDocument.Data.IsNullMarker,
                 resultDocument,
                 retainMemoryForDefer ? null : resultDocument),
-            _resultStore.Errors?.ToImmutableList());
+            _resultStore.Errors?.ToImmutableList())
+        {
+            RequestIndex = RequestContext.RequestIndex > -1 ? RequestContext.RequestIndex : null,
+            VariableIndex = _variableIndex > -1 ? _variableIndex : null
+        };
 
         if (!retainMemoryForDefer)
         {

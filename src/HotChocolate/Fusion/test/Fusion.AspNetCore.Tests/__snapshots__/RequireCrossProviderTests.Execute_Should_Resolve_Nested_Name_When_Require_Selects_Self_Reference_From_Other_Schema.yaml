@@ -1,0 +1,182 @@
+title: Execute_Should_Resolve_Nested_Name_When_Require_Selects_Self_Reference_From_Other_Schema
+request:
+  document: |
+    {
+      entity {
+        entity {
+          name
+        }
+      }
+    }
+response:
+  body: |
+    {
+      "data": {
+        "entity": {
+          "entity": {
+            "name": "2:30"
+          }
+        }
+      }
+    }
+sourceSchemas:
+  - name: a
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        entity: Entity! @shareable
+        entityById(id: ID!): Entity @lookup @internal
+      }
+
+      type Entity @key(fields: "id") @shareable {
+        name(entityAge: Int! @require(field: "entity.age")): String!
+        id: ID
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_289f866e_2($__fusion_1_id: ID!, $__fusion_2_entityAge: Int!) {
+              entityById(id: $__fusion_1_id) {
+                name(entityAge: $__fusion_2_entityAge)
+              }
+            }
+          variables: |
+            {
+              "__fusion_1_id": "2",
+              "__fusion_2_entityAge": 30
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "entityById": {
+                    "name": "2:30"
+                  }
+                }
+              }
+  - name: b
+    schema: |
+      schema {
+        query: Query
+      }
+
+      type Query {
+        entity: Entity @shareable
+      }
+
+      type Entity @shareable {
+        entity: Entity!
+        id: ID
+        age: Int!
+      }
+    interactions:
+      - request:
+          accept: application/graphql-response+json; charset=utf-8, application/json; charset=utf-8, application/jsonl; charset=utf-8, text/event-stream; charset=utf-8
+          document: |
+            query Op_289f866e_1 {
+              entity {
+                entity {
+                  id
+                  entity {
+                    age
+                  }
+                }
+              }
+            }
+        response:
+          results:
+            - |
+              {
+                "data": {
+                  "entity": {
+                    "entity": {
+                      "id": "2",
+                      "entity": {
+                        "age": 30
+                      }
+                    }
+                  }
+                }
+              }
+operationPlan:
+  id: f7d221a80ea37c460d174c311e05eaef6e462e307c2a6aea3dda17749b864414
+  operation:
+    - document: |
+        {
+          entity {
+            entity {
+              name
+              id @fusion__requirement
+              entity @fusion__requirement {
+                age @fusion__requirement
+              }
+            }
+          }
+        }
+      kind: Query
+      id: 0812d14ce12cd33f0859855a22897ec4
+      hash: 289f866e7ab7e2ad3f7b275068888d95
+      shortHash: 289f866e
+  searchSpace: 2
+  expandedNodes: 5
+  nodes:
+    - id: 1
+      type: Operation
+      schema: b
+      operation:
+        name: Op_289f866e_1
+        kind: Query
+        document: |
+          query Op_289f866e_1 {
+            entity {
+              entity {
+                id
+                entity {
+                  age
+                }
+              }
+            }
+          }
+        hash: 9ea2e836c0f7c3f38cfa3efe36e69b189c2dd969720421393f2ee33446bf98d5
+        shortHash: 9ea2e836
+        xxHash: 393907845540798109
+      resultSelectionSet: >-
+        { entity }
+    - id: 2
+      type: Operation
+      schema: a
+      operation:
+        name: Op_289f866e_2
+        kind: Query
+        document: |
+          query Op_289f866e_2($__fusion_1_id: ID!, $__fusion_2_entityAge: Int!) {
+            entityById(id: $__fusion_1_id) {
+              name(entityAge: $__fusion_2_entityAge)
+            }
+          }
+        hash: 8232a4ca8abe1e5d8f036a448de28ab37933fea11bef0a856e0284e6b58fb342
+        shortHash: 8232a4ca
+        xxHash: 12573983363667702327
+      lookupTypeName: Entity
+      resultSelectionSet: >-
+        { name }
+      source: $.entityById
+      target: $.entity.entity
+      requirements:
+        - name: __fusion_1_id
+          type: ID!
+          path: $.entity.entity
+          selectionMap: >-
+            id
+        - name: __fusion_2_entityAge
+          type: Int!
+          path: $.entity.entity
+          selectionMap: >-
+            entity.age
+      dependencies:
+        - id: 1

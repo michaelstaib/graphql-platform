@@ -170,7 +170,7 @@ internal static class ErrorHelper
 
         public IError LeafFieldsCannotHaveSelections(
             FieldNode node,
-            IComplexTypeDefinition declaringType,
+            ITypeDefinition declaringType,
             IType fieldType)
         {
             return ErrorBuilder.New()
@@ -246,6 +246,26 @@ internal static class ErrorHelper
             return ErrorBuilder.New()
                 .SetMessage(
                     Resources.ErrorHelper_NoSelectionOnCompositeField,
+                    node.Name.Value,
+                    fieldType.ToTypeNode().ToString())
+                .AddLocation(node)
+                .SetPath(context.CreateErrorPath())
+                .SetExtension("declaringType", declaringType.Name)
+                .SetExtension("field", node.Name.Value)
+                .SetExtension("type", fieldType.FullTypeName())
+                .SetExtension("responseName", (node.Alias ?? node.Name).Value)
+                .SpecifiedBy("sec-Field-Selections")
+                .Build();
+        }
+
+        public IError EmptySelectionSetOnCompositeField(
+            FieldNode node,
+            IComplexTypeDefinition declaringType,
+            IType fieldType)
+        {
+            return ErrorBuilder.New()
+                .SetMessage(
+                    Resources.ErrorHelper_EmptySelectionSetOnCompositeField,
                     node.Name.Value,
                     fieldType.ToTypeNode().ToString())
                 .AddLocation(node)
@@ -715,6 +735,49 @@ internal static class ErrorHelper
                     .SetMessage("Maximum allowed coordinate cycle depth was exceeded.")
                     .SetCode(ErrorCodes.Validation.MaxCoordinateCycleDepthOverflow)
                     .AddLocation(selection)
+                    .SetPath(context.CreateErrorPath())
+                    .Build());
+        }
+
+        public void ReportMaxFragmentVisitsOverflow(ISyntaxNode selection)
+        {
+            context.FatalErrorDetected = true;
+
+            context.ReportError(
+                ErrorBuilder.New()
+                    .SetMessage("Maximum allowed fragment visits were exceeded.")
+                    .SetCode(ErrorCodes.Validation.MaxFragmentVisitsOverflow)
+                    .AddLocation(selection)
+                    .SetPath(context.CreateErrorPath())
+                    .Build());
+        }
+
+        public void ReportMaxSelectionSetDepthOverflow(ISyntaxNode node, int maxAllowedSelectionSetDepth)
+        {
+            context.FatalErrorDetected = true;
+
+            context.ReportError(
+                ErrorBuilder.New()
+                    .SetMessage(
+                        "The document exceeds the maximum allowed selection set depth of {0}.",
+                        maxAllowedSelectionSetDepth)
+                    .SetCode(ErrorCodes.Validation.MaxSelectionSetDepthOverflow)
+                    .AddLocation(node)
+                    .SetPath(context.CreateErrorPath())
+                    .Build());
+        }
+
+        public void ReportMaxSelectionCountOverflow(ISyntaxNode node, int maxAllowedSelections)
+        {
+            context.FatalErrorDetected = true;
+
+            context.ReportError(
+                ErrorBuilder.New()
+                    .SetMessage(
+                        "The document exceeds the maximum allowed number of selections of {0}.",
+                        maxAllowedSelections)
+                    .SetCode(ErrorCodes.Validation.MaxSelectionCountOverflow)
+                    .AddLocation(node)
                     .SetPath(context.CreateErrorPath())
                     .Build());
         }

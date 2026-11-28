@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using HotChocolate.Fusion.Execution.Nodes;
 using static HotChocolate.Fusion.Properties.FusionExecutionResources;
 
 namespace HotChocolate.Fusion.Text.Json;
@@ -16,6 +18,7 @@ internal readonly ref struct SourceResultElementSnapshot
     internal readonly SourceResultDocument.Cursor _cursor;
     internal readonly SourceResultDocument.DbRow _row;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal SourceResultElementSnapshot(
         SourceResultDocument parent,
         SourceResultDocument.Cursor cursor,
@@ -36,7 +39,11 @@ internal readonly ref struct SourceResultElementSnapshot
     /// <summary>
     /// The <see cref="JsonValueKind"/> the value is.
     /// </summary>
-    public JsonValueKind ValueKind => _row.TokenType.ToValueKind();
+    public JsonValueKind ValueKind
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _row.TokenType.ToValueKind();
+    }
 
     /// <summary>
     /// Get the value at a specified index when the current value is a
@@ -77,6 +84,26 @@ internal readonly ref struct SourceResultElementSnapshot
     /// The parent <see cref="SourceResultDocument"/> has been disposed.
     /// </exception>
     public int GetPropertyCount() => _parent.GetPropertyCount(_row);
+
+    /// <summary>
+    /// Gets for every property of this object, in the order of the properties, the selection of
+    /// <paramref name="selectionSet"/> whose response name is the name of the property, or
+    /// <c>null</c> for a property that the selection set does not select. Returns <c>null</c> when
+    /// the properties of the object have to be looked up by their names.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal Selection?[]? GetPropertySelections(SelectionSet selectionSet)
+    {
+        var shape = _parent.Shape;
+
+        if (shape is null)
+        {
+            return null;
+        }
+
+        var node = _parent.GetObjectShapeNode(_cursor, _row);
+        return node < 0 ? null : shape.GetSelections(node, selectionSet);
+    }
 
     /// <summary>
     /// Gets the value of a required property with name <paramref name="propertyName"/>.
@@ -475,6 +502,42 @@ internal readonly ref struct SourceResultElementSnapshot
     /// The current value is not a JSON object.
     /// </exception>
     public SourceResultElement.ObjectEnumerator EnumerateObject() => Element.EnumerateObject();
+
+    /// <summary>
+    /// Returns an enumerator over the properties of the current JSON object that exposes
+    /// each property value as a snapshot.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The current value is not a JSON object.
+    /// </exception>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal SourcePropertySnapshotEnumerator EnumeratePropertySnapshots()
+    {
+        if (_row.TokenType is not JsonTokenType.StartObject)
+        {
+            throw ThrowHelper.SourceElementIsNotAnObject();
+        }
+
+        return new SourcePropertySnapshotEnumerator(_parent, _cursor, _row);
+    }
+
+    /// <summary>
+    /// Returns an enumerator over the elements of the current JSON array that exposes
+    /// each element as a snapshot.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The current value is not a JSON array.
+    /// </exception>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal SourceElementSnapshotEnumerator EnumerateElementSnapshots()
+    {
+        if (_row.TokenType is not JsonTokenType.StartArray)
+        {
+            throw ThrowHelper.SourceElementIsNotAnArray(_row.TokenType);
+        }
+
+        return new SourceElementSnapshotEnumerator(_parent, _cursor, _row);
+    }
 
     /// <inheritdoc />
     public override string ToString()

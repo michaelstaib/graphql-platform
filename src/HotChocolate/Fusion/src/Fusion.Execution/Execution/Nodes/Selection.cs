@@ -20,6 +20,7 @@ public sealed class Selection : ISelection
     private readonly ulong[]? _wideIncludeFlags;
     private readonly int _wideIncludeFlagsStride;
     private readonly byte[] _utf8JsonPropertyName;
+    private readonly int _utf8JsonPropertyNameLength;
     private readonly ulong _deferMask;
     private readonly ulong[]? _wideDeferMask;
     private readonly DeliveryGroup[] _deliveryGroups;
@@ -90,6 +91,11 @@ public sealed class Selection : ISelection
         _deliveryGroups = deliveryGroups ?? s_emptyDeliveryGroups;
         _flags = isInternal ? Flags.Internal : Flags.None;
 
+        if (field is FusionOutputFieldDefinition { HasPolicy: true })
+        {
+            _flags |= Flags.HasPolicies;
+        }
+
         var type = field.Type;
         _type = type;
 
@@ -116,9 +122,7 @@ public sealed class Selection : ISelection
             _flags |= Flags.EnumValue;
         }
 
-        if (namedType is FusionObjectTypeDefinition { IsValueType: true }
-            or FusionInterfaceTypeDefinition { IsValueType: true }
-            or FusionUnionTypeDefinition { IsValueType: true })
+        if (namedType.IsSharedValueType())
         {
             _flags |= Flags.ValueTypeNamedType;
         }
@@ -140,6 +144,7 @@ public sealed class Selection : ISelection
         }
 
         _utf8JsonPropertyName = Utf8StringCache.GetJsonPropertyName(responseName);
+        _utf8JsonPropertyNameLength = _utf8JsonPropertyName.Length - Utf8StringCache.JsonPropertyNamePadding;
     }
 
     /// <inheritdoc />
@@ -149,15 +154,32 @@ public sealed class Selection : ISelection
     public string ResponseName { get; }
 
     internal ReadOnlySpan<byte> Utf8ResponseName
-        => MemoryMarshal.CreateReadOnlySpan(
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => MemoryMarshal.CreateReadOnlySpan(
             ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_utf8JsonPropertyName), 1),
-            _utf8JsonPropertyName.Length - 3);
+            _utf8JsonPropertyNameLength - 3);
+    }
 
     /// <summary>
     /// Gets the response name as a minimized JSON property name token: the quoted
     /// UTF-8 name followed by a colon.
     /// </summary>
-    internal ReadOnlySpan<byte> Utf8JsonPropertyName => _utf8JsonPropertyName;
+    internal ReadOnlySpan<byte> Utf8JsonPropertyName
+        => MemoryMarshal.CreateReadOnlySpan(
+            ref MemoryMarshal.GetArrayDataReference(_utf8JsonPropertyName),
+            _utf8JsonPropertyNameLength);
+
+    /// <summary>
+    /// Gets <see cref="Utf8JsonPropertyName"/> followed by
+    /// <see cref="Utf8StringCache.JsonPropertyNamePadding"/> zero bytes.
+    /// </summary>
+    internal ReadOnlySpan<byte> PaddedUtf8JsonPropertyName => _utf8JsonPropertyName;
+
+    /// <summary>
+    /// Gets the length of <see cref="Utf8JsonPropertyName"/> in bytes.
+    /// </summary>
+    internal int Utf8JsonPropertyNameLength => _utf8JsonPropertyNameLength;
 
     /// <inheritdoc />
     public bool IsInternal => (_flags & Flags.Internal) == Flags.Internal;
@@ -187,6 +209,11 @@ public sealed class Selection : ISelection
     /// Gets a value indicating whether the selection's field type is non-nullable.
     /// </summary>
     internal bool IsNonNull => (_flags & Flags.NonNull) == Flags.NonNull;
+
+    /// <summary>
+    /// Gets a value indicating whether the field of this selection carries a policy requirement.
+    /// </summary>
+    internal bool HasPolicies => (_flags & Flags.HasPolicies) == Flags.HasPolicies;
 
     /// <summary>
     /// Gets the selection's field type with its non-null wrapper removed.
@@ -252,26 +279,26 @@ public sealed class Selection : ISelection
     /// The child selection set, or <c>null</c> when this selection has no child
     /// selection set.
     /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public SelectionSet? GetSelectionSet(IComplexTypeDefinition typeContext)
+    {
+        // _childSelectionSet is only set for non-leaf fields whose named type is a concrete object type.
+        // When it is set, we can return it right away because that child selection set is plan-stable.
+        // A concurrent recompute produces the same instance, so no synchronization is needed.
+        return _childSelectionSet ?? ResolveSelectionSet(typeContext);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private SelectionSet? ResolveSelectionSet(IComplexTypeDefinition typeContext)
     {
         if ((_flags & Flags.Leaf) == Flags.Leaf)
         {
             return null;
         }
 
-        // _childSelectionSet is only set for non-leaf fields whose named type is a concrete object type.
-        // When it is set, we can return it right away because that child selection set is plan-stable.
-        // A concurrent recompute produces the same instance, so no synchronization is needed.
-        var childSelectionSet = _childSelectionSet;
-
-        if (childSelectionSet is not null)
-        {
-            return childSelectionSet;
-        }
-
         if (_namedType is IObjectTypeDefinition)
         {
-            childSelectionSet = DeclaringSelectionSet.DeclaringOperation.GetSelectionSet(this, typeContext);
+            var childSelectionSet = DeclaringSelectionSet.DeclaringOperation.GetSelectionSet(this, typeContext);
             _childSelectionSet = childSelectionSet;
             return childSelectionSet;
         }
@@ -779,6 +806,7 @@ nextItem:
         ValueTypeNamedType = 32,
         NonNullListElement = 64,
         RequiresWideIncludeFlags = 128,
-        RequiresWideDeferFlags = 256
+        RequiresWideDeferFlags = 256,
+        HasPolicies = 512
     }
 }

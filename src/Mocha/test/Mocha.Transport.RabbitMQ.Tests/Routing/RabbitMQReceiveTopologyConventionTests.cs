@@ -125,7 +125,7 @@ public class RabbitMQReceiveTopologyConventionTests
             })
             .BuildRuntime();
         var transport = runtime.Transports.OfType<RabbitMQMessagingTransport>().Single();
-        var topology = (RabbitMQMessagingTopology)transport.Topology;
+        var topology = transport.Topology;
         var replyExchange = runtime.Naming.GetPublishEndpointName(typeof(StockInfoResult));
 
         // act
@@ -136,11 +136,11 @@ public class RabbitMQReceiveTopologyConventionTests
     }
 
     [Fact]
-    public void DiscoverTopology_Should_MaterializeNonDurableAutoDeleteQueue_When_RouteIsReply()
+    public void DiscoverTopology_Should_MaterializeDurableExpiringQueue_When_RouteIsReply()
     {
         // arrange
-        // The generated reply endpoint sets IsTemporary, and the reply queue must go through the
-        // same non-durable, auto-delete lifecycle path as any other temporary endpoint.
+        // The reply queue expires instead of being deleted with its last consumer, so it survives a
+        // consumer that re-attaches.
         var services = new ServiceCollection();
         services.AddInMemorySagas();
         var builder = services.AddMessageBus();
@@ -153,7 +153,7 @@ public class RabbitMQReceiveTopologyConventionTests
             })
             .BuildRuntime();
         var transport = runtime.Transports.OfType<RabbitMQMessagingTransport>().Single();
-        var topology = (RabbitMQMessagingTopology)transport.Topology;
+        var topology = transport.Topology;
         var replyEndpoint = transport.ReceiveEndpoints
             .OfType<RabbitMQReceiveEndpoint>()
             .Single(e => e.Kind == ReceiveEndpointKind.Reply);
@@ -162,8 +162,10 @@ public class RabbitMQReceiveTopologyConventionTests
         var queue = topology.Queues.Single(q => q.Name == replyEndpoint.Queue.Name);
 
         // assert
-        Assert.False(queue.Durable);
-        Assert.True(queue.AutoDelete);
+        Assert.True(queue.Durable);
+        Assert.False(queue.Exclusive);
+        Assert.False(queue.AutoDelete);
+        Assert.Equal(new Dictionary<string, object?> { ["x-expires"] = 300000 }, queue.Arguments);
     }
 
     [Fact]
@@ -243,7 +245,7 @@ public class RabbitMQReceiveTopologyConventionTests
         var endpoint = transport.ReceiveEndpoints
             .OfType<RabbitMQReceiveEndpoint>()
             .First(e => e.Kind == ReceiveEndpointKind.Default);
-        return ((RabbitMQMessagingTopology)transport.Topology, endpoint.Queue.Name);
+        return (transport.Topology, endpoint.Queue.Name);
     }
 
     private static MessagingRuntime CreateRuntime(

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -10,8 +11,10 @@ namespace HotChocolate.Fusion.Text.Json;
 
 public sealed partial class CompositeResultDocument : IDisposable
 {
+    private const int InitialSourceCapacity = 32;
     private static readonly Encoding s_utf8Encoding = Encoding.UTF8;
-    private readonly List<SourceResultDocument> _sources = [];
+    private SourceResultDocument[] _sources = [];
+    private int _sourceCount;
     private readonly Operation _operation;
     private readonly ulong _includeFlags;
     private readonly ulong _deferFlags;
@@ -21,6 +24,7 @@ public sealed partial class CompositeResultDocument : IDisposable
     internal MetaDb _metaDb;
     private NullMarkerState _nullMarkerState;
     private int _layoutVersion;
+    private int _shapeVersion;
     private int _disposed;
 
     internal CompositeResultDocument(
@@ -69,6 +73,13 @@ public sealed partial class CompositeResultDocument : IDisposable
     /// replaced. While it is unchanged, every element keeps the path it had when it was read.
     /// </summary>
     internal int LayoutVersion => _layoutVersion;
+
+    /// <summary>
+    /// Gets a version that changes whenever an object or a list is assigned to a value or a value
+    /// that references an object or a list is replaced. While it is unchanged, walking the same
+    /// field path from the root reaches the same objects.
+    /// </summary>
+    internal int ShapeVersion => _shapeVersion;
 
     /// <summary>
     /// Stops this document from renting path segment arrays from the request scoped pool.
@@ -300,6 +311,7 @@ public sealed partial class CompositeResultDocument : IDisposable
         return false;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool IsNullOrInvalidated(Cursor current)
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, this);
@@ -453,7 +465,8 @@ public sealed partial class CompositeResultDocument : IDisposable
             // introspection field). Its concrete type comes from the enclosing selection set,
             // which the merge has already specialized to the runtime type.
             var typeName = _operation.GetSelectionSetById(row.Location).Type.Name;
-            return Utf8StringCache.GetJsonPropertyName(typeName).AsSpan(..^1);
+            var token = Utf8StringCache.GetJsonPropertyName(typeName);
+            return token.AsSpan(0, token.Length - Utf8StringCache.JsonPropertyNamePadding - 1);
         }
 
         throw new NotSupportedException();
@@ -470,6 +483,27 @@ public sealed partial class CompositeResultDocument : IDisposable
         var template = selectionSet.ObjectTemplate;
         Debug.Assert(template.Rows.Length > 0, "The selection set is in an invalid state.");
 
+        var selections = selectionSet.Selections;
+
+        var startObjectCursor = template.ConditionalSelections.IsEmpty
+            ? _metaDb.AppendObjectBlock(template.Rows, parent.Value, excludedRowOffsets: [])
+            : AppendConditionalObjectBlock(parent, template, selections);
+
+        objectContext = new CompositeObjectContext(
+            this,
+            startObjectCursor,
+            selectionSet,
+            (selections.Length * 2) + 1);
+
+        return new CompositeResultElement(this, startObjectCursor);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private Cursor AppendConditionalObjectBlock(
+        Cursor parent,
+        ObjectTemplate template,
+        ReadOnlySpan<Selection> selections)
+    {
         // The template rows are canonical: they never carry IsExcluded. Each document evaluates
         // its own skip/include and defer state and hands the block-relative property row offsets
         // of the selections it excludes to the block append, which stamps the flag alongside the
@@ -479,46 +513,34 @@ public sealed partial class CompositeResultDocument : IDisposable
             ? stackalloc int[conditionalSelections.Length]
             : new int[conditionalSelections.Length];
         var excludedCount = 0;
-        var selections = selectionSet.Selections;
 
-        if (conditionalSelections.Length > 0)
+        if (_wideIncludeFlags is null && _wideDeferFlags is null)
         {
-            if (_wideIncludeFlags is null && _wideDeferFlags is null)
+            foreach (var index in conditionalSelections)
             {
-                foreach (var index in conditionalSelections)
+                if (IsExcluded(selections[index]))
                 {
-                    if (IsExcluded(selections[index]))
-                    {
-                        // The property row of selection index i is row (i * 2) + 1 of the object block.
-                        excludedRowOffsets[excludedCount++] = (index * 2) + 1;
-                    }
+                    // The property row of selection index i is row (i * 2) + 1 of the object block.
+                    excludedRowOffsets[excludedCount++] = (index * 2) + 1;
                 }
             }
-            else
+        }
+        else
+        {
+            foreach (var index in conditionalSelections)
             {
-                foreach (var index in conditionalSelections)
+                if (IsExcludedWide(selections[index]))
                 {
-                    if (IsExcludedWide(selections[index]))
-                    {
-                        // The property row of selection index i is row (i * 2) + 1 of the object block.
-                        excludedRowOffsets[excludedCount++] = (index * 2) + 1;
-                    }
+                    // The property row of selection index i is row (i * 2) + 1 of the object block.
+                    excludedRowOffsets[excludedCount++] = (index * 2) + 1;
                 }
             }
         }
 
-        var startObjectCursor = _metaDb.AppendObjectBlock(
+        return _metaDb.AppendObjectBlock(
             template.Rows,
             parent.Value,
             excludedRowOffsets[..excludedCount]);
-
-        objectContext = new CompositeObjectContext(
-            this,
-            startObjectCursor,
-            selectionSet,
-            (selections.Length * 2) + 1);
-
-        return new CompositeResultElement(this, startObjectCursor);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -573,10 +595,58 @@ public sealed partial class CompositeResultDocument : IDisposable
         return new CompositeResultElement(this, cursor);
     }
 
+    /// <summary>
+    /// Creates an object for <paramref name="selectionSet"/> and assigns it to the undefined
+    /// slot at <paramref name="target"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void InitializeObject(
+        Cursor target,
+        SelectionSet selectionSet,
+        out CompositeObjectContext objectContext)
+    {
+        Debug.Assert(
+            _metaDb.GetElementTokenType(target) is ElementTokenType.None,
+            "Only an undefined slot can be initialized.");
+
+        var obj = CreateObject(target, selectionSet, out objectContext);
+        _shapeVersion++;
+
+        _metaDb.ReplacePreserveParent(
+            cursor: target,
+            tokenType: ElementTokenType.Reference,
+            location: obj.Cursor.Value);
+    }
+
+    /// <summary>
+    /// Creates an array of <paramref name="length"/> undefined elements and assigns it to the
+    /// undefined slot at <paramref name="target"/>.
+    /// </summary>
+    /// <returns>
+    /// An enumerator over the elements of the new array.
+    /// </returns>
+    internal CompositeResultElement.ArrayEnumerator InitializeArray(Cursor target, int length)
+    {
+        Debug.Assert(
+            _metaDb.GetElementTokenType(target) is ElementTokenType.None,
+            "Only an undefined slot can be initialized.");
+
+        var array = CreateArray(target, length);
+        _shapeVersion++;
+
+        _metaDb.ReplacePreserveParent(
+            cursor: target,
+            tokenType: ElementTokenType.Reference,
+            location: array.Cursor.Value);
+
+        return new CompositeResultElement.ArrayEnumerator(this, array.Cursor, length);
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void AssignCompositeValue(CompositeResultElement target, CompositeResultElement value)
     {
         TrackValueReplacement(target.Cursor);
+        _shapeVersion++;
         _metaDb.ReplacePreserveParent(
             cursor: target.Cursor,
             tokenType: ElementTokenType.Reference,
@@ -598,18 +668,18 @@ public sealed partial class CompositeResultDocument : IDisposable
 
         if (parent.Id == -1)
         {
-            Debug.Assert(!_sources.Contains(parent), "The source document is marked as unbound but is already registered.");
-            parent.Id = _sources.Count;
-            _sources.Add(parent);
+            Debug.Assert(!IsSourceRegistered(parent), "The source document is marked as unbound but is already registered.");
+            RegisterSource(parent);
         }
 
-        Debug.Assert(_sources.Contains(parent), "Expected the source document of the source element to be registered.");
+        Debug.Assert(IsSourceRegistered(parent), "Expected the source document of the source element to be registered.");
 
         var tokenType = sourceRow.TokenType.ToElementTokenType();
         TrackValueReplacement(target.Cursor);
 
         if (tokenType is ElementTokenType.StartObject or ElementTokenType.StartArray)
         {
+            _shapeVersion++;
             _metaDb.ReplacePreserveParent(
                 cursor: target.Cursor,
                 tokenType: tokenType,
@@ -657,6 +727,7 @@ public sealed partial class CompositeResultDocument : IDisposable
     /// <c>true</c> if the source holds a non-null leaf value that was assigned;
     /// otherwise, <c>false</c> and the target is unchanged.
     /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryAssignLeafValue(Cursor target, Cursor source)
     {
         var row = _metaDb.Get(source);
@@ -666,15 +737,28 @@ public sealed partial class CompositeResultDocument : IDisposable
             return false;
         }
 
+        AssignLeafValue(target, row);
+        return true;
+    }
+
+    /// <summary>
+    /// Assigns the leaf value row <paramref name="source"/> to the slot at <paramref name="target"/>
+    /// without copying the value data. The row must be one that
+    /// <see cref="GetLeafValueState(Cursor, out DbRow)"/> classified as assignable.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void AssignLeafValue(Cursor target, in DbRow source)
+    {
+        Debug.Assert(IsAssignableLeafValue(source), "The source row must hold an assignable leaf value.");
+
         TrackValueReplacement(target);
         _metaDb.ReplacePreserveParent(
             cursor: target,
-            tokenType: row.TokenType,
-            location: row.Location,
-            sizeOrLength: row.SizeOrLength,
-            sourceDocumentId: row.SourceDocumentId,
-            flags: row.Flags);
-        return true;
+            tokenType: source.TokenType,
+            location: source.Location,
+            sizeOrLength: source.SizeOrLength,
+            sourceDocumentId: source.SourceDocumentId,
+            flags: source.Flags);
     }
 
     /// <summary>
@@ -682,8 +766,15 @@ public sealed partial class CompositeResultDocument : IDisposable
     /// <see cref="TryAssignLeafValue(Cursor, Cursor)"/>.
     /// </summary>
     internal LeafValueState GetLeafValueState(Cursor cursor)
+        => GetLeafValueState(cursor, out _);
+
+    /// <summary>
+    /// Classifies the slot at <paramref name="cursor"/> for
+    /// <see cref="TryAssignLeafValue(Cursor, Cursor)"/> and gets its row.
+    /// </summary>
+    internal LeafValueState GetLeafValueState(Cursor cursor, out DbRow row)
     {
-        var row = _metaDb.Get(cursor);
+        row = _metaDb.Get(cursor);
 
         if (IsAssignableLeafValue(row))
         {
@@ -698,6 +789,7 @@ public sealed partial class CompositeResultDocument : IDisposable
             : LeafValueState.Unsupported;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool IsAssignableLeafValue(DbRow row)
         => (row.TokenType is ElementTokenType.String
                 or ElementTokenType.Number
@@ -713,6 +805,7 @@ public sealed partial class CompositeResultDocument : IDisposable
     /// <returns>
     /// <c>true</c> if the value is readable; otherwise, <c>false</c>.
     /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetRawLeafValue(Cursor cursor, out ElementTokenType tokenType, out ReadOnlySpan<byte> value)
     {
         var row = _metaDb.Get(cursor);
@@ -745,11 +838,28 @@ public sealed partial class CompositeResultDocument : IDisposable
     /// <returns>
     /// <c>true</c> if the cursor refers to an object with a selection set; otherwise, <c>false</c>.
     /// </returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetSelectionSetObject(
         Cursor cursor,
         out Cursor startCursor,
         out int selectionSetId,
         out int numberOfRows)
+        => TryGetSelectionSetObject(cursor, out startCursor, out selectionSetId, out numberOfRows, out _);
+
+    /// <summary>
+    /// Resolves the object at <paramref name="cursor"/> to the first row of an object that a
+    /// selection set describes. <paramref name="isInvalidated"/> is <c>true</c> when the object
+    /// was invalidated.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> if the cursor refers to an object with a selection set; otherwise, <c>false</c>.
+    /// </returns>
+    internal bool TryGetSelectionSetObject(
+        Cursor cursor,
+        out Cursor startCursor,
+        out int selectionSetId,
+        out int numberOfRows,
+        out bool isInvalidated)
     {
         startCursor = cursor;
         var row = _metaDb.GetValue(ref startCursor);
@@ -759,11 +869,13 @@ public sealed partial class CompositeResultDocument : IDisposable
         {
             selectionSetId = 0;
             numberOfRows = 0;
+            isInvalidated = false;
             return false;
         }
 
         selectionSetId = row.OperationReferenceId;
         numberOfRows = row.NumberOfRows;
+        isInvalidated = (row.Flags & ElementFlags.Invalidated) == ElementFlags.Invalidated;
         return true;
     }
 
@@ -771,11 +883,52 @@ public sealed partial class CompositeResultDocument : IDisposable
     /// Gets the row offset of the value slot of <paramref name="selection"/> from the first row
     /// of an object that <paramref name="selectionSet"/> describes.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int GetValueRowOffset(SelectionSet selectionSet, Selection selection)
     {
         Debug.Assert(selection.Id > selectionSet.Id);
         return ((selection.Id - selectionSet.Id - 1) * 2) + 2;
     }
+
+    private void RegisterSource(SourceResultDocument source)
+    {
+        var count = _sourceCount;
+
+        if (count > DbRow.MaxSourceDocumentId)
+        {
+            throw ThrowHelper.TooManySourceDocuments();
+        }
+
+        if (count == _sources.Length)
+        {
+            GrowSources();
+        }
+
+        source.Id = count;
+        _sources[count] = source;
+        _sourceCount = count + 1;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GrowSources()
+    {
+        ObjectDisposedException.ThrowIf(_disposed == 1, this);
+
+        var current = _sources;
+        var grown = ArrayPool<SourceResultDocument>.Shared.Rent(
+            current.Length == 0 ? InitialSourceCapacity : current.Length * 2);
+
+        if (current.Length > 0)
+        {
+            current.AsSpan(0, _sourceCount).CopyTo(grown);
+            ArrayPool<SourceResultDocument>.Shared.Return(current, clearArray: true);
+        }
+
+        _sources = grown;
+    }
+
+    private bool IsSourceRegistered(SourceResultDocument source)
+        => Array.IndexOf(_sources, source, 0, _sourceCount) >= 0;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void TrackValueReplacement(Cursor target)
@@ -784,6 +937,7 @@ public sealed partial class CompositeResultDocument : IDisposable
             is ElementTokenType.Reference or ElementTokenType.StartObject or ElementTokenType.StartArray)
         {
             _layoutVersion++;
+            _shapeVersion++;
         }
     }
 
@@ -813,5 +967,14 @@ public sealed partial class CompositeResultDocument : IDisposable
         }
 
         _metaDb.Dispose();
+
+        var sources = _sources;
+        _sources = [];
+        _sourceCount = 0;
+
+        if (sources.Length > 0)
+        {
+            ArrayPool<SourceResultDocument>.Shared.Return(sources, clearArray: true);
+        }
     }
 }

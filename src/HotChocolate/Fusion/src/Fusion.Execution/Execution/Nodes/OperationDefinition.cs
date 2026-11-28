@@ -10,6 +10,8 @@ internal abstract class OperationDefinition : IOperationPlanNode
     private readonly OperationRequirement[] _requirements;
     private readonly string[] _forwardedVariables;
     private readonly ExecutionNodeCondition[] _conditions;
+    private readonly ExecutionNodeCondition[][] _conditionAlternatives;
+    private OperationResultShape? _resultShape;
     private int[] _parentDependencies = [];
     private IOperationPlanNode[] _dependents = [];
     private IOperationPlanNode[] _dependencies = [];
@@ -29,6 +31,7 @@ internal abstract class OperationDefinition : IOperationPlanNode
         string[] forwardedVariables,
         ResultSelectionSet resultSelectionSet,
         ExecutionNodeCondition[] conditions,
+        ExecutionNodeCondition[][] conditionAlternatives,
         bool requiresFileUpload)
     {
         Id = id;
@@ -41,6 +44,7 @@ internal abstract class OperationDefinition : IOperationPlanNode
         _forwardedVariables = forwardedVariables;
         ResultSelectionSet = resultSelectionSet;
         _conditions = conditions;
+        _conditionAlternatives = conditionAlternatives;
         RequiresFileUpload = requiresFileUpload;
     }
 
@@ -103,9 +107,21 @@ internal abstract class OperationDefinition : IOperationPlanNode
     public ResultSelectionSet ResultSelectionSet { get; }
 
     /// <summary>
+    /// Gets the shapes that the results of this operation are expected to have.
+    /// </summary>
+    public OperationResultShape ResultShape => _resultShape ?? InitializeResultShape();
+
+    /// <summary>
     /// Gets the conditions that control whether this operation is skipped.
     /// </summary>
     public ReadOnlySpan<ExecutionNodeCondition> Conditions => _conditions;
+
+    /// <summary>
+    /// Gets the alternative condition sets of this operation. The operation runs only when
+    /// every entry of <see cref="Conditions"/> passes and, if this list is not empty, at least
+    /// one alternative has all of its conditions passing.
+    /// </summary>
+    public ReadOnlySpan<ExecutionNodeCondition[]> ConditionAlternatives => _conditionAlternatives;
 
     /// <summary>
     /// Gets whether this operation contains one or more variables that reference
@@ -224,5 +240,11 @@ internal abstract class OperationDefinition : IOperationPlanNode
         Array.Sort(_dependents, static (a, b) => a.Id.CompareTo(b.Id));
         Array.Sort(_optionalDependencies, static (a, b) => a.Id.CompareTo(b.Id));
         Array.Sort(_parentDependencies, static (a, b) => a.CompareTo(b));
+    }
+
+    private OperationResultShape InitializeResultShape()
+    {
+        var created = OperationResultShape.Create(Document);
+        return Interlocked.CompareExchange(ref _resultShape, created, null) ?? created;
     }
 }
