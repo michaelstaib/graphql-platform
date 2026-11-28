@@ -316,6 +316,152 @@ public class JsonLinesReaderTests : IDisposable
         Assert.Equal(4, stream.NonEmptyReads);
     }
 
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_YieldNoRecordBeforeTheBodyEnds_When_SourceIsFixed()
+    {
+        // arrange
+        var endOfBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stream = new GatedStream(Encoding.UTF8.GetBytes(CreateBody(["a", "b"])), endOfBody.Task);
+        using var message = CreateMessage(stream);
+        var reader = new JsonLinesReader(
+            message,
+            new FixedMemoryArenaSource(CreateArena()),
+            Timeout.InfiniteTimeSpan,
+            shapes: default);
+        await using var enumerator = reader.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        // act
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await Task.WhenAny(moveNext, stream.EndOfBodyRequested);
+        var yieldedBeforeEnd = moveNext.IsCompleted;
+        endOfBody.SetResult();
+        var hasFirst = await moveNext;
+        using var first = enumerator.Current;
+
+        // assert
+        Assert.False(yieldedBeforeEnd);
+        Assert.True(hasFirst);
+        Assert.Equal("a", GetValue(first));
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_ThrowOperationCanceled_When_CanceledBeforeTheBodyEnds()
+    {
+        // arrange
+        var endOfBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stream = new GatedStream(Encoding.UTF8.GetBytes(CreateBody(["a", "b"])), endOfBody.Task);
+        using var message = CreateMessage(stream);
+        var reader = new JsonLinesReader(
+            message,
+            new FixedMemoryArenaSource(CreateArena()),
+            Timeout.InfiniteTimeSpan,
+            shapes: default);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        await using var enumerator = reader.GetAsyncEnumerator(cts.Token);
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await Task.WhenAny(moveNext, stream.EndOfBodyRequested);
+
+        // act
+        await cts.CancelAsync();
+        async Task Act() => await moveNext;
+
+        // assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Act);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_YieldRecordBeforeTheBodyEnds_When_SourceIsPerDocument()
+    {
+        // arrange
+        var endOfBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stream = new GatedStream(Encoding.UTF8.GetBytes(CreateBody(["a", "b"])), endOfBody.Task);
+        using var message = CreateMessage(stream);
+        var reader = new JsonLinesReader(
+            message,
+            new PerDocumentArenaSource(CreateArena),
+            Timeout.InfiniteTimeSpan,
+            shapes: default);
+        await using var enumerator = reader.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        // act
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await Task.WhenAny(moveNext, stream.EndOfBodyRequested);
+        var yieldedBeforeEnd = moveNext.IsCompleted;
+        endOfBody.SetResult();
+        var hasFirst = await moveNext;
+        using var first = enumerator.Current;
+
+        // assert
+        Assert.True(yieldedBeforeEnd);
+        Assert.True(hasFirst);
+        Assert.Equal("a", GetValue(first));
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_YieldRecordsBeforeTheBodyEnds_When_KeptRecordsExceedOneArenaPage()
+    {
+        // arrange
+        // 200 records of about 1,000 bytes are more than the 131,072 bytes of one arena page.
+        var values = Enumerable.Repeat(new string('x', 1000), 200).ToArray();
+        var endOfBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stream = new GatedStream(Encoding.UTF8.GetBytes(CreateBody(values)), endOfBody.Task);
+        using var message = CreateMessage(stream);
+        var reader = new JsonLinesReader(
+            message,
+            new FixedMemoryArenaSource(CreateArena()),
+            Timeout.InfiniteTimeSpan,
+            shapes: default);
+        await using var enumerator = reader.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        // act
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        await Task.WhenAny(moveNext, stream.EndOfBodyRequested);
+        var yieldedBeforeEnd = moveNext.IsCompleted;
+        var endRequested = stream.EndOfBodyRequested.IsCompleted;
+        endOfBody.SetResult();
+        var hasFirst = await moveNext;
+        using var first = enumerator.Current;
+
+        // assert
+        Assert.True(yieldedBeforeEnd);
+        Assert.False(endRequested);
+        Assert.True(hasFirst);
+        Assert.Equal(values[0], GetValue(first));
+    }
+
+    [Theory]
+    [InlineData(64)]
+    [InlineData(4096)]
+    [InlineData(int.MaxValue)]
+    public async Task GetAsyncEnumerator_Should_KeepRecordOrder_When_ALongRecordFollowsShortRecords(
+        int maxBytesPerRead)
+    {
+        // arrange
+        string[] values = ["a", "b", new string('x', 20_000), "c"];
+
+        // act
+        var result = await ReadValuesAsync(
+            CreateBody(values),
+            maxBytesPerRead,
+            new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        Assert.Equal(values, result);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_KeptRecordsExceedOneArenaPage()
+    {
+        // arrange
+        var values = CreateValues(recordCount: 400, maxValueLength: 1500);
+
+        // act
+        var result = await ReadValuesAsync(CreateBody(values), 4096, new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        Assert.Equal(values, result);
+    }
+
     [Theory]
     [InlineData(ArenaSourceKind.Fixed)]
     [InlineData(ArenaSourceKind.PerDocument)]
@@ -810,6 +956,64 @@ public class JsonLinesReaderTests : IDisposable
             }
 
             return inner.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class GatedStream(byte[] body, Task endOfBody) : Stream
+    {
+        private readonly TaskCompletionSource _endOfBodyRequested =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _position;
+
+        public Task EndOfBodyRequested => _endOfBodyRequested.Task;
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (buffer.IsEmpty)
+            {
+                return 0;
+            }
+
+            if (_position == body.Length)
+            {
+                _endOfBodyRequested.TrySetResult();
+                await endOfBody.WaitAsync(cancellationToken);
+                return 0;
+            }
+
+            var length = Math.Min(buffer.Length, body.Length - _position);
+            body.AsMemory(_position, length).CopyTo(buffer);
+            _position += length;
+            return length;
         }
 
         public override void Flush()

@@ -1,6 +1,7 @@
 #if FUSION
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using HotChocolate.Buffers;
 using HotChocolate.Fusion.Text.Json;
 #else
@@ -35,6 +36,12 @@ internal sealed class JsonLinesReader(
     // A body that declares at most this many bytes is read whole into a single arena chunk.
     private const int MaxDeclaredBodyLength = JsonMemory.BufferSize;
 
+    // The arena chunks of a stream whose documents share one arena are kept unparsed until the body
+    // has ended or they hold more than this many bytes.
+    private const int MaxKeptRecordsLength = JsonMemory.BufferSize;
+
+    private const int InitialKeptChunkCount = 16;
+
     public async IAsyncEnumerator<SourceResultDocument> GetAsyncEnumerator(
         CancellationToken cancellationToken = default)
     {
@@ -44,13 +51,20 @@ internal sealed class JsonLinesReader(
             : new ReadTimeoutStream(responseStream, readTimeout);
 
         // When all documents of the stream share one arena, the complete records of a read are copied
-        // into one arena chunk and parsed in place. Otherwise, each record is copied into the arena of
-        // its document.
+        // into one arena chunk, and the chunks are parsed in place when the body has ended. Otherwise,
+        // each record is copied into the arena of its document.
         var sharesArena = arenaSource is IFixedMemoryArenaSource;
 
         // The scratch buffer starts with the pending bytes of the partial record carried between reads.
         byte[]? scratch = null;
         var pending = 0;
+
+        // The arena chunks whose records are not parsed yet.
+        IMemoryArena? keptArena = null;
+        MemorySegment[]? kept = null;
+        var keptCount = 0;
+        var keptLength = 0;
+        ExceptionDispatchInfo? readFailure = null;
 
         try
         {
@@ -142,9 +156,74 @@ internal sealed class JsonLinesReader(
                     scratch = grown;
                 }
 
-                var bytesRead = await stream
-                    .ReadAsync(scratch.AsMemory(pending), cancellationToken)
-                    .ConfigureAwait(false);
+                int bytesRead;
+
+                try
+                {
+                    bytesRead = await stream
+                        .ReadAsync(scratch.AsMemory(pending), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (keptCount > 0 && ex is not OperationCanceledException)
+                {
+                    // The kept records were read before the failure, so they are parsed before it is thrown.
+                    readFailure = ExceptionDispatchInfo.Capture(ex);
+                    bytesRead = 0;
+                }
+
+                var length = pending + bytesRead;
+                var completeEnd = 0;
+
+                if (bytesRead > 0)
+                {
+                    var lastNewline = scratch.AsSpan(pending, bytesRead).LastIndexOf((byte)'\n');
+
+                    if (lastNewline < 0)
+                    {
+                        // No record is complete yet, so the record continues in the scratch buffer.
+                        pending = length;
+                        continue;
+                    }
+
+                    completeEnd = pending + lastNewline + 1;
+                }
+
+                var keepsRecords = sharesArena && bytesRead > 0 && completeEnd <= MaxSingleSpanRecordLength;
+
+                if (keptCount > 0 && (!keepsRecords || keptLength + completeEnd > MaxKeptRecordsLength))
+                {
+                    // The kept chunks hold the records that precede the records of this read.
+                    for (var i = 0; i < keptCount; i++)
+                    {
+                        var block = kept![i];
+                        var lineStart = 0;
+
+                        while (lineStart < block.Length)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+
+                            var lineEnd = lineStart + block.Span[lineStart..].IndexOf((byte)'\n');
+
+                            if (!IsWhitespaceOnly(block.Span[lineStart..lineEnd]))
+                            {
+                                var document = ParseInPlace(
+                                    keptArena!,
+                                    block,
+                                    lineStart,
+                                    lineEnd - lineStart,
+                                    shapes);
+                                yield return document;
+                            }
+
+                            lineStart = lineEnd + 1;
+                        }
+                    }
+
+                    keptCount = 0;
+                    keptLength = 0;
+                }
+
+                readFailure?.Throw();
 
                 if (bytesRead == 0)
                 {
@@ -161,48 +240,31 @@ internal sealed class JsonLinesReader(
                     yield break;
                 }
 
-                var length = pending + bytesRead;
-                var lastNewline = scratch.AsSpan(pending, bytesRead).LastIndexOf((byte)'\n');
-
-                if (lastNewline < 0)
-                {
-                    // No record is complete yet, so the record continues in the scratch buffer.
-                    pending = length;
-                    continue;
-                }
-
-                var completeEnd = pending + lastNewline + 1;
-
-                if (sharesArena && completeEnd <= MaxSingleSpanRecordLength)
+                if (keepsRecords)
                 {
                     var blockStart = SkipBlankLines(scratch.AsSpan(0, completeEnd));
-                    var arena = arenaSource.GetNextArena();
-                    var block = default(MemorySegment);
 
                     if (blockStart < completeEnd)
                     {
-                        block = arena.Rent(completeEnd - blockStart);
+                        keptArena ??= arenaSource.GetNextArena();
+                        var block = keptArena.Rent(completeEnd - blockStart);
                         scratch.AsSpan(blockStart, completeEnd - blockStart).CopyTo(block.Span);
+
+                        if (kept is null)
+                        {
+                            kept = keptArena.RentSegmentTable(InitialKeptChunkCount);
+                        }
+                        else if (keptCount == kept.Length)
+                        {
+                            keptArena.GrowSegmentTable(ref kept);
+                        }
+
+                        kept[keptCount++] = block;
+                        keptLength += block.Length;
                     }
 
                     pending = length - completeEnd;
                     scratch.AsSpan(completeEnd, pending).CopyTo(scratch);
-
-                    var lineStart = 0;
-
-                    while (lineStart < block.Length)
-                    {
-                        var lineEnd = lineStart + block.Span[lineStart..].IndexOf((byte)'\n');
-
-                        if (!IsWhitespaceOnly(block.Span[lineStart..lineEnd]))
-                        {
-                            var document = ParseInPlace(arena, block, lineStart, lineEnd - lineStart, shapes);
-                            yield return document;
-                        }
-
-                        lineStart = lineEnd + 1;
-                    }
-
                     continue;
                 }
 
