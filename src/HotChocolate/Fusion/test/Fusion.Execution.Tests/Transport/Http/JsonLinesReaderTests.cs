@@ -372,6 +372,147 @@ public class JsonLinesReaderTests : IDisposable
         Assert.Equal([new string('x', 1), new string('x', 38)], values);
     }
 
+    [Theory]
+    [InlineData(1, ArenaSourceKind.Fixed)]
+    [InlineData(1, ArenaSourceKind.PerDocument)]
+    [InlineData(100, ArenaSourceKind.Fixed)]
+    [InlineData(100, ArenaSourceKind.PerDocument)]
+    [InlineData(4096, ArenaSourceKind.Fixed)]
+    [InlineData(4096, ArenaSourceKind.PerDocument)]
+    [InlineData(int.MaxValue, ArenaSourceKind.Fixed)]
+    [InlineData(int.MaxValue, ArenaSourceKind.PerDocument)]
+    public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_BodyDeclaresItsLength(
+        int maxBytesPerRead,
+        ArenaSourceKind kind)
+    {
+        // arrange
+        var values = CreateValues(recordCount: 60, maxValueLength: 700);
+        var body = Encoding.UTF8.GetBytes(CreateBody(values));
+        var stream = new DripStream(new MemoryStream(body), maxBytesPerRead);
+
+        // act
+        var result = await ReadDeclaredValuesAsync(stream, body.Length, CreateArenaSource(kind));
+
+        // assert
+        Assert.Equal(values, result);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(int.MaxValue)]
+    public async Task GetAsyncEnumerator_Should_YieldFinalRecord_When_DeclaredBodyEndsWithoutNewline(
+        int maxBytesPerRead)
+    {
+        // arrange
+        var body = Encoding.UTF8.GetBytes(CreateRecord("a") + "\n" + CreateRecord("b"));
+        var stream = new DripStream(new MemoryStream(body), maxBytesPerRead);
+
+        // act
+        var result = await ReadDeclaredValuesAsync(stream, body.Length, new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        Assert.Equal(["a", "b"], result);
+    }
+
+    [Theory]
+    [InlineData(-30)]
+    [InlineData(-1)]
+    [InlineData(1)]
+    [InlineData(500)]
+    public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_BodyLengthDiffersFromDeclaredLength(
+        int difference)
+    {
+        // arrange
+        // a negative difference declares fewer bytes than the body has and ends within a record
+        var values = CreateValues(recordCount: 5, maxValueLength: 200);
+        var body = Encoding.UTF8.GetBytes(CreateBody(values));
+        var stream = new DripStream(new MemoryStream(body), 64);
+
+        // act
+        var result = await ReadDeclaredValuesAsync(
+            stream,
+            body.Length + difference,
+            new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        Assert.Equal(values, result);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_YieldRecord_When_DeclaredBodyHasARecordLongerThanOneSpan()
+    {
+        // arrange
+        string[] values = ["a", new string('x', 20_000), "b"];
+        var body = Encoding.UTF8.GetBytes(CreateBody(values));
+        var stream = new DripStream(new MemoryStream(body), 4096);
+
+        // act
+        var result = await ReadDeclaredValuesAsync(stream, body.Length, new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        Assert.Equal(values, result);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_DeclaredLengthExceedsOneArenaPage()
+    {
+        // arrange
+        var values = CreateValues(recordCount: 400, maxValueLength: 900);
+        var body = Encoding.UTF8.GetBytes(CreateBody(values));
+        var stream = new CountingStream(new DripStream(new MemoryStream(body), 4096));
+
+        // act
+        var result = await ReadDeclaredValuesAsync(stream, body.Length, new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        // a body of more than one arena page is read through the scratch buffer.
+        Assert.Equal(values, result);
+        Assert.Equal(16 * 1024, stream.FirstBufferLength);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_ReadTheBodyIntoOneArenaChunk_When_BodyDeclaresItsLength()
+    {
+        // arrange
+        var body = Encoding.UTF8.GetBytes(CreateBody(["a", "b", "c"]));
+        var stream = new CountingStream(new MemoryStream(body));
+
+        // act
+        var result = await ReadDeclaredValuesAsync(stream, body.Length, new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        // the first read is offered the whole body and the second read returns the end of the stream.
+        Assert.Equal(["a", "b", "c"], result);
+        Assert.Equal(body.Length, stream.FirstBufferLength);
+        Assert.Equal(2, stream.NonEmptyReads);
+        Assert.Equal(0, stream.ZeroByteReads);
+    }
+
+    [Theory]
+    [InlineData(64)]
+    [InlineData(4096)]
+    [InlineData(int.MaxValue)]
+    public async Task GetAsyncEnumerator_Should_UseBodyBytesOfArena_When_BodyDeclaresItsLength(int maxBytesPerRead)
+    {
+        // arrange
+        var body = Encoding.UTF8.GetBytes(CreateBody(recordCount: 40, maxValueLength: 900));
+        var declaredArena = CreateArena();
+        var undeclaredArena = CreateArena();
+
+        // act
+        await ReadDeclaredValuesAsync(
+            new DripStream(new MemoryStream(body), maxBytesPerRead),
+            body.Length,
+            new FixedMemoryArenaSource(declaredArena));
+        await ReadValuesAsync(
+            new DripStream(new MemoryStream(body), maxBytesPerRead),
+            new FixedMemoryArenaSource(undeclaredArena));
+
+        // assert
+        Assert.Equal(GetUsedBytes(undeclaredArena), GetUsedBytes(declaredArena));
+    }
+
     private static Task<List<string>> ReadValuesAsync(
         string body,
         int maxBytesPerRead,
@@ -383,6 +524,23 @@ public class JsonLinesReaderTests : IDisposable
     private static async Task<List<string>> ReadValuesAsync(Stream stream, IMemoryArenaSource arenaSource)
     {
         using var message = CreateMessage(stream);
+        return await ReadValuesAsync(message, arenaSource);
+    }
+
+    private static async Task<List<string>> ReadDeclaredValuesAsync(
+        Stream stream,
+        long declaredLength,
+        IMemoryArenaSource arenaSource)
+    {
+        using var message = CreateMessage(stream);
+        message.Content.Headers.ContentLength = declaredLength;
+        return await ReadValuesAsync(message, arenaSource);
+    }
+
+    private static async Task<List<string>> ReadValuesAsync(
+        HttpResponseMessage message,
+        IMemoryArenaSource arenaSource)
+    {
         var reader = new JsonLinesReader(message, arenaSource, Timeout.InfiniteTimeSpan, shapes: default);
         var values = new List<string>();
 
@@ -494,6 +652,8 @@ public class JsonLinesReaderTests : IDisposable
 
         public int NonEmptyReads { get; private set; }
 
+        public int FirstBufferLength { get; private set; }
+
         public override bool CanRead => true;
 
         public override bool CanSeek => false;
@@ -519,6 +679,11 @@ public class JsonLinesReaderTests : IDisposable
             }
             else
             {
+                if (NonEmptyReads == 0)
+                {
+                    FirstBufferLength = buffer.Length;
+                }
+
                 NonEmptyReads++;
             }
 

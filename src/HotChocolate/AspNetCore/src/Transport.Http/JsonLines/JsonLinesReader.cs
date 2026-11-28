@@ -32,6 +32,9 @@ internal sealed class JsonLinesReader(
 
     private const int ScratchBufferLength = 16 * 1024;
 
+    // A body that declares at most this many bytes is read whole into a single arena chunk.
+    private const int MaxDeclaredBodyLength = JsonMemory.BufferSize;
+
     public async IAsyncEnumerator<SourceResultDocument> GetAsyncEnumerator(
         CancellationToken cancellationToken = default)
     {
@@ -51,6 +54,60 @@ internal sealed class JsonLinesReader(
 
         try
         {
+            var declaredLength = sharesArena ? message.Content.Headers.ContentLength : null;
+
+            if (declaredLength is > 0 and <= MaxDeclaredBodyLength)
+            {
+                // The body is read into one arena chunk of the declared length, and its complete records
+                // are parsed in place.
+                var arena = arenaSource.GetNextArena();
+                var block = arena.Rent((int)declaredLength.Value);
+                var filled = 0;
+
+                while (filled < block.Length)
+                {
+                    var bytesRead = await stream
+                        .ReadAsync(block.Memory[filled..], cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (bytesRead == 0)
+                    {
+                        break;
+                    }
+
+                    filled += bytesRead;
+                }
+
+                var completeEnd = block.Span[..filled].LastIndexOf((byte)'\n') + 1;
+                var lineStart = 0;
+
+                while (lineStart < completeEnd)
+                {
+                    var lineEnd = lineStart + block.Span[lineStart..completeEnd].IndexOf((byte)'\n');
+                    var lineLength = lineEnd - lineStart;
+
+                    if (!IsWhitespaceOnly(block.Span.Slice(lineStart, lineLength)))
+                    {
+                        var document = lineLength <= MaxSingleSpanRecordLength
+                            ? ParseInPlace(arena, block, lineStart, lineLength, shapes)
+                            : CopyAndParse(arena, block.Span.Slice(lineStart, lineLength), shapes);
+                        yield return document;
+                    }
+
+                    lineStart = lineEnd + 1;
+                }
+
+                // The bytes after the last line terminator continue in the scratch buffer, as do the
+                // bytes of a body that is longer than it declared.
+                pending = filled - completeEnd;
+
+                if (pending > 0)
+                {
+                    scratch = ArrayPool<byte>.Shared.Rent(Math.Max(ScratchBufferLength, pending));
+                    block.Span.Slice(completeEnd, pending).CopyTo(scratch);
+                }
+            }
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
