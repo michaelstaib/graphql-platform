@@ -66,6 +66,8 @@ internal sealed class JsonLinesReader(
 
                 while (filled < block.Length)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     var bytesRead = await stream
                         .ReadAsync(block.Memory[filled..], cancellationToken)
                         .ConfigureAwait(false);
@@ -83,14 +85,16 @@ internal sealed class JsonLinesReader(
 
                 while (lineStart < completeEnd)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+
                     var lineEnd = lineStart + block.Span[lineStart..completeEnd].IndexOf((byte)'\n');
                     var lineLength = lineEnd - lineStart;
 
                     if (!IsWhitespaceOnly(block.Span.Slice(lineStart, lineLength)))
                     {
-                        var document = lineLength <= MaxSingleSpanRecordLength
-                            ? ParseInPlace(arena, block, lineStart, lineLength, shapes)
-                            : CopyAndParse(arena, block.Span.Slice(lineStart, lineLength), shapes);
+                        // The chunk is at most one arena page, which is the longest span a document
+                        // reads as a single data chunk, so a record of any length is parsed in place.
+                        var document = ParseInPlace(arena, block, lineStart, lineLength, shapes);
                         yield return document;
                     }
 

@@ -455,6 +455,83 @@ public class JsonLinesReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task GetAsyncEnumerator_Should_StoreRecordOnce_When_DeclaredBodyHasARecordLongerThanOneSpan()
+    {
+        // arrange
+        var longBody = Encoding.UTF8.GetBytes(CreateBody(["a", new string('x', 20_000), "b"]));
+        var shortBody = Encoding.UTF8.GetBytes(CreateBody(["a", "x", "b"]));
+        var longArena = CreateArena();
+        var shortArena = CreateArena();
+
+        // act
+        await ReadDeclaredValuesAsync(
+            new MemoryStream(longBody),
+            longBody.Length,
+            new FixedMemoryArenaSource(longArena));
+        await ReadDeclaredValuesAsync(
+            new MemoryStream(shortBody),
+            shortBody.Length,
+            new FixedMemoryArenaSource(shortArena));
+
+        // assert
+        // both bodies have the same tokens, so their arenas differ by the bytes of the longer record.
+        Assert.Equal(GetUsedBytes(shortArena) + longBody.Length - shortBody.Length, GetUsedBytes(longArena));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(int.MaxValue)]
+    public async Task GetAsyncEnumerator_Should_SkipBlankLines_When_DeclaredBodyUsesCarriageReturns(
+        int maxBytesPerRead)
+    {
+        // arrange
+        var body = Encoding.UTF8.GetBytes(
+            "\n\r\n"
+            + CreateRecord("a") + "\r\n"
+            + " \t\r\n"
+            + "\n"
+            + CreateRecord("b") + "\r\n"
+            + "  \r");
+        var stream = new DripStream(new MemoryStream(body), maxBytesPerRead);
+
+        // act
+        var result = await ReadDeclaredValuesAsync(stream, body.Length, new FixedMemoryArenaSource(CreateArena()));
+
+        // assert
+        Assert.Equal(["a", "b"], result);
+    }
+
+    [Fact]
+    public async Task GetAsyncEnumerator_Should_ThrowOperationCanceled_When_CanceledBetweenRecordsOfDeclaredBody()
+    {
+        // arrange
+        // both records arrive with the first read, so no further read observes the cancellation.
+        var body = Encoding.UTF8.GetBytes(CreateBody(["a", "b"]));
+        using var message = CreateMessage(new MemoryStream(body));
+        message.Content.Headers.ContentLength = body.Length;
+        var reader = new JsonLinesReader(
+            message,
+            new FixedMemoryArenaSource(CreateArena()),
+            Timeout.InfiniteTimeSpan,
+            shapes: default);
+        using var cts = new CancellationTokenSource();
+        await using var enumerator = reader.GetAsyncEnumerator(cts.Token);
+        var hasFirst = await enumerator.MoveNextAsync();
+        using var first = enumerator.Current;
+        var value = GetValue(first);
+
+        // act
+        await cts.CancelAsync();
+        async Task Act() => await enumerator.MoveNextAsync();
+
+        // assert
+        Assert.True(hasFirst);
+        Assert.Equal("a", value);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(Act);
+    }
+
+    [Fact]
     public async Task GetAsyncEnumerator_Should_YieldEveryRecord_When_DeclaredLengthExceedsOneArenaPage()
     {
         // arrange
