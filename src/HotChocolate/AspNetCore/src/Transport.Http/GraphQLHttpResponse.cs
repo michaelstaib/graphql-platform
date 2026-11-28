@@ -451,11 +451,13 @@ public sealed class GraphQLHttpResponse : IDisposable
             || contentLength <= 0
             || contentLength > MaxSingleSpanResponseLength)
         {
+            // A body that declares its length ends without a further wait, so only a body without a
+            // declared length is completed at the end of its root value.
             return await ReadIntoArenaAsync(
                 stream,
                 arena,
                 shape,
-                completeAtRootEnd: _message.Version.Major == 1,
+                completeAtRootEnd: _message.Version.Major == 1 && contentLength is null,
                 ct).ConfigureAwait(false);
         }
 
@@ -659,9 +661,9 @@ public sealed class GraphQLHttpResponse : IDisposable
         var scanner = default(JsonRootEndScanner);
         var rootEnded = false;
 
-        // With completeAtRootEnd (HTTP/1.x), the read stops once the root value has ended and only whitespace
-        // followed it in the same read, and disposing the stream drains the rest of the body. Otherwise the
-        // read continues to the end of the body.
+        // With completeAtRootEnd (HTTP/1.x without a declared length), the read stops once the root value has
+        // ended and only whitespace followed it in the same read, and disposing the stream drains the rest of
+        // the body. Otherwise the read continues to the end of the body.
         while (!rootEnded)
         {
             cancellationToken.ThrowIfCancellationRequested();
