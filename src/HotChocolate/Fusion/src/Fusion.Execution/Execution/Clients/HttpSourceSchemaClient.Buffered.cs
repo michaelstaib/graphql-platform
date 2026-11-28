@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using HotChocolate.Buffers;
 using HotChocolate.Fusion.Execution.Nodes;
+using HotChocolate.Fusion.Text.Json;
 using HotChocolate.Fusion.Transport;
 using HotChocolate.Fusion.Transport.Http;
 using HotChocolate.Language;
@@ -69,6 +70,7 @@ public sealed partial class HttpSourceSchemaClient
                 context,
                 node,
                 variables,
+                resultShape,
                 httpRequest.Body,
                 httpResponse,
                 sink,
@@ -90,6 +92,7 @@ public sealed partial class HttpSourceSchemaClient
         OperationPlanContext context,
         ExecutionNode node,
         ImmutableArray<VariableValues> variables,
+        SourceResultShape? resultShape,
         IRequestBody body,
         GraphQLHttpResponse httpResponse,
         ISourceSchemaResultSink sink,
@@ -97,10 +100,14 @@ public sealed partial class HttpSourceSchemaClient
     {
         var mapper = new VariableBatchResultMapper(variables, body, _supportsVariableBatching);
 
-        await foreach (var document in httpResponse
-            .ReadAsResultStreamAsync(context.MemorySource)
-            .WithCancellation(cancellationToken)
-            .ConfigureAwait(false))
+        // Every document of the stream answers the operation of the request.
+        var documents = httpResponse.ReadAsResultStreamAsync(
+            context.MemorySource,
+            requireStreaming: false,
+            Timeout.InfiniteTimeSpan,
+            new SourceResultShapeSelector(resultShape));
+
+        await foreach (var document in documents.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (!mapper.TryMap(document, out var result))
             {
@@ -155,6 +162,7 @@ public sealed partial class HttpSourceSchemaClient
     {
         var (httpRequest, buffer) = CreateBufferedHttpBatchRequest(context, requests);
         GraphQLHttpResponse? httpResponse = null;
+        SourceResultShape?[]? rentedShapes = null;
 
         try
         {
@@ -166,10 +174,13 @@ public sealed partial class HttpSourceSchemaClient
                 httpRequest.Body,
                 _supportsVariableBatching);
 
-            await foreach (var document in httpResponse
-                .ReadAsResultStreamAsync(context.MemorySource)
-                .WithCancellation(cancellationToken)
-                .ConfigureAwait(false))
+            var documents = httpResponse.ReadAsResultStreamAsync(
+                context.MemorySource,
+                requireStreaming: false,
+                Timeout.InfiniteTimeSpan,
+                RentResultShapes(requests, httpRequest.Body, out rentedShapes));
+
+            await foreach (var document in documents.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 mapper.Begin(document);
 
@@ -184,6 +195,7 @@ public sealed partial class HttpSourceSchemaClient
         }
         finally
         {
+            ReturnResultShapes(rentedShapes);
             httpResponse?.Dispose();
             buffer?.Dispose();
         }

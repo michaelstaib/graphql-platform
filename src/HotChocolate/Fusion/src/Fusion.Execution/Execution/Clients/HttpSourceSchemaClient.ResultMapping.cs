@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -138,6 +139,71 @@ public sealed partial class HttpSourceSchemaClient
         }
 
         throw ThrowHelper.RequestIndexOutOfRange(operationIndex);
+    }
+
+    /// <summary>
+    /// Creates the selector of the expected shapes of the documents that answer
+    /// <paramref name="body"/>. <paramref name="rented"/> is the array that the selector reads,
+    /// which must be returned with <see cref="ReturnResultShapes"/> when the documents are read,
+    /// or <c>null</c> when the selector needs none.
+    /// </summary>
+    /// <param name="requests">The requests of the batch.</param>
+    /// <param name="body">
+    /// The body that was sent, as <see cref="ResolveOperation"/> describes it.
+    /// </param>
+    /// <param name="rented">The array that the selector reads, or <c>null</c>.</param>
+    private static SourceResultShapeSelector RentResultShapes(
+        ImmutableArray<SourceSchemaClientRequest> requests,
+        IRequestBody body,
+        out SourceResultShape?[]? rented)
+    {
+        if (requests.Length == 1 || body is not OperationBatchRequest batch)
+        {
+            // Every document answers the operation of the only request.
+            rented = null;
+            return new SourceResultShapeSelector(requests.ItemRef(0).ResultShape?.Single);
+        }
+
+        var count = batch.Requests.Length;
+        rented = ArrayPool<SourceResultShape?>.Shared.Rent(count);
+        var shapes = rented.AsSpan(0, count);
+
+        if (count == requests.Length)
+        {
+            // Every request has exactly one operation when the counts match.
+            for (var i = 0; i < count; i++)
+            {
+                shapes[i] = requests.ItemRef(i).ResultShape?.Single;
+            }
+        }
+        else
+        {
+            // Otherwise every request has one operation for each of its variable value sets.
+            var position = 0;
+
+            for (var i = 0; i < requests.Length && position < count; i++)
+            {
+                ref readonly var request = ref requests.ItemRef(i);
+                var operationCount = Math.Min(count - position, Math.Max(1, request.Variables.Length));
+                shapes.Slice(position, operationCount).Fill(request.ResultShape?.Single);
+                position += operationCount;
+            }
+
+            shapes[position..].Clear();
+        }
+
+        return new SourceResultShapeSelector(rented, count);
+    }
+
+    /// <summary>
+    /// Returns the array that <see cref="RentResultShapes"/> rented.
+    /// </summary>
+    private static void ReturnResultShapes(SourceResultShape?[]? rented)
+    {
+        if (rented is not null)
+        {
+            ArrayPool<SourceResultShape?>.Shared.Return(rented, clearArray: true);
+        }
     }
 
     private static bool TryGetResultPath(

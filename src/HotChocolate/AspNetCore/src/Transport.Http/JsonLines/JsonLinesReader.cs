@@ -19,7 +19,11 @@ namespace HotChocolate.Transport.Http;
 #endif
 
 #if FUSION
-internal class JsonLinesReader(HttpResponseMessage message, IMemoryArenaSource arenaSource, TimeSpan readTimeout)
+internal class JsonLinesReader(
+    HttpResponseMessage message,
+    IMemoryArenaSource arenaSource,
+    TimeSpan readTimeout,
+    SourceResultShapeSelector shapes)
     : IAsyncEnumerable<SourceResultDocument>
 #else
 internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<OperationResult>
@@ -84,7 +88,7 @@ internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<O
                     if (!IsEmptyLine(line))
                     {
 #if FUSION
-                        yield return ParseDocument(arenaSource.GetNextArena(), line);
+                        yield return ParseDocument(arenaSource.GetNextArena(), line, shapes.GetShape(in line));
 #else
                         var document = ParseDocument(line);
                         yield return OperationResult.Parse(document);
@@ -108,7 +112,10 @@ internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<O
     }
 
 #if FUSION
-    private static SourceResultDocument ParseDocument(IMemoryArena arena, ReadOnlySequence<byte> lineBuffer)
+    private static SourceResultDocument ParseDocument(
+        IMemoryArena arena,
+        ReadOnlySequence<byte> lineBuffer,
+        SourceResultShape? shape)
     {
         var length = lineBuffer.Length;
 
@@ -135,7 +142,8 @@ internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<O
                 arena,
                 segments,
                 usedChunks: 1,
-                lastLength: lineLength);
+                lastLength: lineLength,
+                shape);
         }
 
         // Fallback: larger records (and the degenerate empty line) are filled across the geometric data
@@ -186,7 +194,8 @@ internal class JsonLinesReader(HttpResponseMessage message) : IAsyncEnumerable<O
             arena,
             chunks,
             usedChunks: chunkIndex + 1,
-            lastLength: currentChunkPosition);
+            lastLength: currentChunkPosition,
+            shape);
     }
 #else
     private static JsonDocumentOwner ParseDocument(ReadOnlySequence<byte> lineBuffer)

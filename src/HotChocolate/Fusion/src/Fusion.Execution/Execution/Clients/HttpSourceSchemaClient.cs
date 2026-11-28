@@ -353,6 +353,7 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
     {
         var arenaSource = context.MemorySource;
         GraphQLHttpResponse? httpResponse = null;
+        SourceResultShape?[]? rentedShapes = null;
 
         try
         {
@@ -364,7 +365,13 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
                 httpRequest.Body,
                 _supportsVariableBatching);
 
-            await foreach (var result in httpResponse.ReadAsResultStreamAsync(arenaSource).WithCancellation(cancellationToken))
+            var documents = httpResponse.ReadAsResultStreamAsync(
+                arenaSource,
+                requireStreaming: false,
+                Timeout.InfiniteTimeSpan,
+                RentResultShapes(requests, httpRequest.Body, out rentedShapes));
+
+            await foreach (var result in documents.WithCancellation(cancellationToken))
             {
                 mapper.Begin(result);
 
@@ -376,6 +383,7 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
         }
         finally
         {
+            ReturnResultShapes(rentedShapes);
             httpResponse?.Dispose();
             buffer?.Dispose();
         }
@@ -786,8 +794,14 @@ public sealed partial class HttpSourceSchemaClient : ISourceSchemaClient
 
         var mapper = new VariableBatchResultMapper(variables, body, _supportsVariableBatching);
 
-        await foreach (var document in response.ReadAsResultStreamAsync(context.MemorySource)
-            .WithCancellation(cancellationToken))
+        // Every document of the stream answers the operation of the request.
+        var documents = response.ReadAsResultStreamAsync(
+            context.MemorySource,
+            requireStreaming: false,
+            Timeout.InfiniteTimeSpan,
+            new SourceResultShapeSelector(resultShape));
+
+        await foreach (var document in documents.WithCancellation(cancellationToken))
         {
             if (!mapper.TryMap(document, out var result))
             {
