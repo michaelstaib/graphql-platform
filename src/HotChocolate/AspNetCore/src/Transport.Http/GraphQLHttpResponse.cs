@@ -760,6 +760,19 @@ public sealed class GraphQLHttpResponse : IDisposable
         IMemoryArenaSource arenaSource,
         bool requireStreaming,
         TimeSpan readTimeout)
+        => ReadAsResultStreamAsync(arenaSource, requireStreaming, readTimeout, shapes: default);
+
+    /// <summary>
+    /// Reads the GraphQL response like
+    /// <see cref="ReadAsResultStreamAsync(IMemoryArenaSource, bool, TimeSpan)"/> and records for
+    /// each document of a JSON Lines response which of its objects have the shape that
+    /// <paramref name="shapes"/> selects for it.
+    /// </summary>
+    internal IAsyncEnumerable<SourceResultDocument> ReadAsResultStreamAsync(
+        IMemoryArenaSource arenaSource,
+        bool requireStreaming,
+        TimeSpan readTimeout,
+        SourceResultShapeSelector shapes)
     {
         ArgumentNullException.ThrowIfNull(arenaSource);
 
@@ -786,7 +799,7 @@ public sealed class GraphQLHttpResponse : IDisposable
         if (mediaType.Equals(ContentType.GraphQLJsonLine, StringComparison.OrdinalIgnoreCase)
             || mediaType.Equals(ContentType.JsonLine, StringComparison.OrdinalIgnoreCase))
         {
-            return new JsonLinesReader(_message, arenaSource, readTimeout);
+            return new JsonLinesReader(_message, arenaSource, readTimeout, shapes);
         }
 
         if (requireStreaming)
