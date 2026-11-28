@@ -221,6 +221,33 @@ public class GraphQLHttpResponseArenaReadTests
     }
 
     [Theory]
+    [InlineData(137)]
+    [InlineData(4096)]
+    [InlineData(int.MaxValue)]
+    public async Task ReadAsResult_Should_ReadToEndOfBody_When_ContentLengthIsDeclared(int fragmentLength)
+    {
+        // arrange
+        // a declared length above 16 KiB is read into the data chunks of the document
+        var payload = CreatePayload(20_000);
+        var bytes = Encoding.UTF8.GetBytes(payload);
+        var stream = new FragmentedStream(bytes, fragmentLength, asynchronous: false)
+        {
+            EndOfBody = Task.CompletedTask
+        };
+        using var response = CreateResponse(stream, bytes.Length, "utf-8");
+        using var arena = new MemoryArena();
+
+        // act
+        using var document = await response.ReadAsResultAsync(arena, TestContext.Current.CancellationToken);
+        arena.Seal();
+
+        // assert
+        Assert.Equal(payload, document.Root.GetRawText());
+        Assert.True(stream.EndOfBodyRequested);
+        Assert.True(stream.IsDisposed);
+    }
+
+    [Theory]
     [InlineData(80)]
     [InlineData(128)]
     [InlineData(200)]
