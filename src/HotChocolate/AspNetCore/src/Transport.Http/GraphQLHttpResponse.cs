@@ -1,8 +1,7 @@
 #if FUSION
-using System.Buffers;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
-using System.IO.Pipelines;
 using HotChocolate.Buffers;
 using HotChocolate.Fusion.Text.Json;
 #else
@@ -31,14 +30,9 @@ public sealed class GraphQLHttpResponse : IDisposable
     private const string EventStreamUtf8ContentType = $"{ContentType.EventStream}; charset={Utf8}";
     private const string GraphQLJsonLineUtf8ContentType = $"{ContentType.GraphQLJsonLine}; charset={Utf8}";
     private const string JsonLineUtf8ContentType = $"{ContentType.JsonLine}; charset={Utf8}";
-    private const int MaxSingleSpanResponseLength = 16 * 1024;
 
-    private static readonly StreamPipeReaderOptions s_options = new(
-        pool: MemoryPool<byte>.Shared,
-        bufferSize: 4096,
-        minimumReadSize: 1,
-        leaveOpen: true,
-        useZeroByteReads: true);
+    // A result that declares fewer bytes than this is read whole into a single arena chunk.
+    private const int MaxSingleChunkResponseLength = JsonMemory.BufferSize;
 #endif
     private readonly HttpResponseMessage _message;
 
@@ -447,9 +441,7 @@ public sealed class GraphQLHttpResponse : IDisposable
 #if FUSION
         var contentLength = _message.Content.Headers.ContentLength;
 
-        if (contentLength is null
-            || contentLength <= 0
-            || contentLength > MaxSingleSpanResponseLength)
+        if (contentLength is not (> 0 and < MaxSingleChunkResponseLength))
         {
             // A body that declares its length ends without a further wait, so only a body without a
             // declared length is completed at the end of its root value.
@@ -458,178 +450,46 @@ public sealed class GraphQLHttpResponse : IDisposable
                 arena,
                 shape,
                 completeAtRootEnd: _message.Version.Major == 1 && contentLength is null,
+                prefix: default,
                 ct).ConfigureAwait(false);
         }
 
-        var reader = PipeReader.Create(stream, s_options);
+        // The chunk has one byte more than the body declares, so the read that finds the end of the
+        // body also finds a body that is longer than it declared.
+        var chunk = arena.Rent((int)contentLength.Value + 1);
+        var position = 0;
 
-        try
+        while (position < chunk.Length)
         {
-            // A response whose Content-Length fits within MaxSingleSpanResponseLength is filled once
-            // into a single exact-length arena chunk and parsed in place as one span. The payload length
-            // is only trusted after the body completes with exactly the claimed length.
-            if (contentLength is > 0 and <= MaxSingleSpanResponseLength)
+            ct.ThrowIfCancellationRequested();
+
+            var bytesRead = await stream.ReadAsync(chunk.Memory[position..], ct).ConfigureAwait(false);
+
+            if (bytesRead == 0)
             {
-                while (true)
-                {
-                    var probe = await reader.ReadAsync(ct);
-                    var probeBuffer = probe.Buffer;
+                var segments = arena.RentSegmentTable(1);
+                segments[0] = new MemorySegment(chunk.Buffer, chunk.Offset, position);
 
-                    if (probe.IsCompleted && probeBuffer.Length == contentLength.Value)
-                    {
-                        var length = (int)contentLength.Value;
-                        var chunk = arena.Rent(length);
-                        probeBuffer.CopyTo(chunk.Span);
-                        reader.AdvanceTo(probeBuffer.End);
-
-                        var segments = arena.RentSegmentTable(1);
-                        segments[0] = chunk;
-
-                        return SourceResultDocument.ParseFilled(
-                            arena,
-                            segments,
-                            usedChunks: 1,
-                            lastLength: length,
-                            shape);
-                    }
-
-                    if (probe.IsCompleted || probeBuffer.Length > contentLength.Value)
-                    {
-                        // Lying Content-Length: the body completed with fewer bytes than the header
-                        // claimed (short) or already exceeds it (long). Nothing was consumed, so release
-                        // the examined mark and fall back to the geometric path, which re-reads the whole
-                        // body from the start.
-                        reader.AdvanceTo(probeBuffer.Start, probeBuffer.Start);
-                        break;
-                    }
-
-                    // Not enough of the body yet and no lie detected: consume nothing, examine everything,
-                    // and read more.
-                    reader.AdvanceTo(probeBuffer.Start, probeBuffer.End);
-                }
+                return SourceResultDocument.ParseFilled(
+                    arena,
+                    segments,
+                    usedChunks: 1,
+                    lastLength: position,
+                    shape);
             }
 
-            // The payload is streamed into the document's own gap-free geometric arena chunks so the
-            // chunk schedule matches the packed data-location encoding.
-            var chunks = arena.RentSegmentTable(64);
-            var chunkIndex = 0;
-            var chunkSize = SourceResultDocument.GetDataChunkSize(chunkIndex);
-            var current = chunks[chunkIndex] = arena.Rent(chunkSize);
-            var currentChunkPosition = 0;
-
-            while (true)
-            {
-                var result = await reader.ReadAsync(ct);
-                var buffer = result.Buffer;
-
-                if (buffer.IsEmpty && result.IsCompleted)
-                {
-                    break;
-                }
-
-                if (buffer.IsSingleSegment)
-                {
-                    var source = buffer.FirstSpan;
-
-                    if (chunkSize - currentChunkPosition >= source.Length)
-                    {
-                        source.CopyTo(current.Span[currentChunkPosition..]);
-                        currentChunkPosition += source.Length;
-                    }
-                    else
-                    {
-                        var segmentOffset = 0;
-
-                        while (segmentOffset < source.Length)
-                        {
-                            var spaceInCurrentChunk = chunkSize - currentChunkPosition;
-                            var bytesToCopy = Math.Min(spaceInCurrentChunk, source.Length - segmentOffset);
-
-                            // we copy the data we have into the current chunk.
-                            source.Slice(segmentOffset, bytesToCopy)
-                                .CopyTo(current.Span[currentChunkPosition..]);
-                            currentChunkPosition += bytesToCopy;
-                            segmentOffset += bytesToCopy;
-
-                            // if the current chunk is full, we roll to the next geometric chunk
-                            // and store it in the chunk table.
-                            if (currentChunkPosition == chunkSize)
-                            {
-                                if (chunkIndex + 1 >= SourceResultDocument.DataMaxChunks)
-                                {
-                                    throw new InvalidOperationException(
-                                        "The source result document has exceeded its maximum data capacity.");
-                                }
-
-                                if (chunkIndex + 1 >= chunks.Length)
-                                {
-                                    arena.GrowSegmentTable(ref chunks);
-                                }
-
-                                chunkIndex++;
-                                chunkSize = SourceResultDocument.GetDataChunkSize(chunkIndex);
-                                current = chunks[chunkIndex] = arena.Rent(chunkSize);
-                                currentChunkPosition = 0;
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    foreach (var segment in buffer)
-                    {
-                        var source = segment.Span;
-                        var segmentOffset = 0;
-
-                        while (segmentOffset < source.Length)
-                        {
-                            var spaceInCurrentChunk = chunkSize - currentChunkPosition;
-                            var bytesToCopy = Math.Min(spaceInCurrentChunk, source.Length - segmentOffset);
-
-                            // we copy the data we have into the current chunk.
-                            source.Slice(segmentOffset, bytesToCopy)
-                                .CopyTo(current.Span[currentChunkPosition..]);
-                            currentChunkPosition += bytesToCopy;
-                            segmentOffset += bytesToCopy;
-
-                            // if the current chunk is full, we roll to the next geometric chunk
-                            // and store it in the chunk table.
-                            if (currentChunkPosition == chunkSize)
-                            {
-                                if (chunkIndex + 1 >= SourceResultDocument.DataMaxChunks)
-                                {
-                                    throw new InvalidOperationException(
-                                        "The source result document has exceeded its maximum data capacity.");
-                                }
-
-                                if (chunkIndex + 1 >= chunks.Length)
-                                {
-                                    arena.GrowSegmentTable(ref chunks);
-                                }
-
-                                chunkIndex++;
-                                chunkSize = SourceResultDocument.GetDataChunkSize(chunkIndex);
-                                current = chunks[chunkIndex] = arena.Rent(chunkSize);
-                                currentChunkPosition = 0;
-                            }
-                        }
-                    }
-                }
-
-                reader.AdvanceTo(buffer.End);
-            }
-
-            return SourceResultDocument.ParseFilled(
-                arena,
-                chunks,
-                usedChunks: chunkIndex + 1,
-                lastLength: currentChunkPosition,
-                shape);
+            position += bytesRead;
         }
-        finally
-        {
-            await reader.CompleteAsync();
-        }
+
+        // The body is longer than it declared, so it continues in the data chunks of a document of
+        // any length.
+        return await ReadIntoArenaAsync(
+            stream,
+            arena,
+            shape,
+            completeAtRootEnd: false,
+            chunk.Memory,
+            ct).ConfigureAwait(false);
 #else
         var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
 
@@ -651,8 +511,12 @@ public sealed class GraphQLHttpResponse : IDisposable
         IMemoryArena arena,
         SourceResultShape? shape,
         bool completeAtRootEnd,
+        ReadOnlyMemory<byte> prefix,
         CancellationToken cancellationToken)
     {
+        Debug.Assert(prefix.Length <= JsonMemory.BufferSize);
+        Debug.Assert(prefix.IsEmpty || !completeAtRootEnd);
+
         var chunks = arena.RentSegmentTable(64);
         var chunkIndex = 0;
         var chunkSize = SourceResultDocument.GetDataChunkSize(chunkIndex);
@@ -660,6 +524,24 @@ public sealed class GraphQLHttpResponse : IDisposable
         var position = 0;
         var scanner = default(JsonRootEndScanner);
         var rootEnded = false;
+
+        // The prefix holds the bytes of the body that were read before. It is at most one arena page
+        // long, which the first chunks of the segment table hold.
+        while (!prefix.IsEmpty)
+        {
+            var bytesToCopy = Math.Min(chunkSize - position, prefix.Length);
+            prefix.Span[..bytesToCopy].CopyTo(current.Span[position..]);
+            prefix = prefix[bytesToCopy..];
+            position += bytesToCopy;
+
+            if (position == chunkSize)
+            {
+                chunkIndex++;
+                chunkSize = SourceResultDocument.GetDataChunkSize(chunkIndex);
+                current = chunks[chunkIndex] = arena.Rent(chunkSize);
+                position = 0;
+            }
+        }
 
         // With completeAtRootEnd (HTTP/1.x without a declared length), the read stops once the root value has
         // ended and only whitespace followed it in the same read, and disposing the stream drains the rest of
