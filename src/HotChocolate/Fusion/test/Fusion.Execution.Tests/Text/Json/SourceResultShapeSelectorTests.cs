@@ -96,11 +96,49 @@ public class SourceResultShapeSelectorTests
     }
 
     [Fact]
-    public void TryReadRequestIndex_Should_ReturnFalse_When_IndexDoesNotEndWithinTheReadPrefix()
+    public void TryReadRequestIndex_Should_ReturnIndex_When_FirstSegmentIsLongerThanTheReadPrefix()
     {
         // arrange
-        // the whitespace moves the index beyond the bytes that are read of a record in segments
-        var record = Encoding.UTF8.GetBytes("{" + new string(' ', 80) + "\"requestIndex\":1}");
+        var record = Encoding.UTF8.GetBytes(
+            "{\"requestIndex\":12,\"data\":{\"value\":\"" + new string('x', 200) + "\"}}");
+        var sequence = CreateSequence(record, segmentLength: 100);
+
+        // act
+        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out var index);
+
+        // assert
+        Assert.True(success);
+        Assert.Equal(12, index);
+    }
+
+    [Fact]
+    public void TryReadRequestIndex_Should_ReturnIndex_When_IndexEndsWithinTheReadPrefix()
+    {
+        // arrange
+        // 64 bytes are read of a record in segments, and the comma after the index is the last of them
+        var record = Encoding.UTF8.GetBytes("{" + new string(' ', 45) + "\"requestIndex\":12,\"data\":null}");
+        var sequence = CreateSequence(record, segmentLength: 8);
+
+        // act
+        var success = SourceResultShapeSelector.TryReadRequestIndex(in sequence, out var index);
+
+        // assert
+        Assert.True(success);
+        Assert.Equal(12, index);
+    }
+
+    [Theory]
+    [InlineData(46)]
+    [InlineData(47)]
+    [InlineData(48)]
+    [InlineData(80)]
+    public void TryReadRequestIndex_Should_ReturnFalse_When_IndexDoesNotEndWithinTheReadPrefix(int whitespaceLength)
+    {
+        // arrange
+        // 64 bytes are read of a record in segments: the whitespace moves the end of the index, one of
+        // its digits, both digits, or the name beyond them
+        var record = Encoding.UTF8.GetBytes(
+            "{" + new string(' ', whitespaceLength) + "\"requestIndex\":12,\"data\":null}");
         var sequence = CreateSequence(record, segmentLength: 8);
 
         // act
